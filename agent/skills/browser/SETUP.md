@@ -32,7 +32,7 @@ screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
 DISPLAY=:99 browser launch --stealth
 ```
 
-Add the Xvfb start line to `~/agent/prompts/restart.md` so it comes back up on container restart.
+Add the Xvfb start line to the `## Services` section of `~/agent/skills/restart/SKILL.md` so it comes back up on container restart.
 
 ## Remote assist (user takeover)
 

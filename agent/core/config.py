@@ -81,10 +81,6 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "core" / "prompts"
 
     @property
-    def prompts_dir(self) -> pl.Path:
-        return self.agent_dir / "prompts"
-
-    @property
     def dreamer_dir(self) -> pl.Path:
         return self.agent_dir / "dreamer"
 

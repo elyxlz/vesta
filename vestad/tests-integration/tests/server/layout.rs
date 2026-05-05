@@ -59,7 +59,6 @@ fn fresh_agent_has_expected_directory_structure() {
         "/root/agent/logs",
         "/root/agent/notifications",
         "/root/agent/dreamer",
-        "/root/agent/prompts",
         "/root/agent/skills",
         "/root/agent/core",
     ] {

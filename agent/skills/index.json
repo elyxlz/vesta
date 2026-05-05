@@ -5,7 +5,7 @@
   },
   {
     "name": "personality",
-    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
+    "description": "The agent's voice. One file per option in presets/, edit directly to drift it."
   },
   {
     "name": "agentmail",
@@ -80,6 +80,10 @@
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
+    "name": "restart",
+    "description": "What to do after a container restart. Holds the per-skill service startup commands."
+  },
+  {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
   },
@@ -125,7 +129,7 @@
   },
   {
     "name": "what-day",
-    "description": "Determine the day of the week for any date."
+    "description": "Determine the day of the week for any date, always do this whenever mentioning or reasoning through weekdays and dates."
   },
   {
     "name": "whatsapp",

@@ -123,7 +123,9 @@ sleep 3
 whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
 ```
 
-## 6. Add to restart.md
+## 6. Register the service
+
+Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 
 ```
 screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications

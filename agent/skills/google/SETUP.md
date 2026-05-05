@@ -8,7 +8,7 @@
 4. Place the credentials file at `~/.google/credentials.json`
 5. Install: `uv tool install ~/agent/skills/google/cli`
 6. Start background daemon: `screen -dmS google google serve`
-7. Add to `~/agent/prompts/restart.md`:
+7. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
    screen -dmS google google serve --notifications-dir ~/agent/notifications
    ```

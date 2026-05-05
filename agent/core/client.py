@@ -3,11 +3,9 @@ import collections
 import datetime as dt
 import json
 import os
-import pathlib as pl
 import signal
 import time
 import typing as tp
-import zoneinfo
 from collections.abc import Mapping
 
 from claude_agent_sdk import (
@@ -552,23 +550,6 @@ _SEARCH_CONVERSATION_HISTORY_SCHEMA = {
 }
 
 
-_SET_TIMEZONE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "timezone": {"type": "string", "description": "IANA timezone, e.g. 'Europe/London' or 'America/New_York'"},
-    },
-    "required": ["timezone"],
-}
-
-
-def _persist_tz_in_bashrc(tz: str) -> None:
-    bashrc = pl.Path.home() / ".bashrc"
-    existing = bashrc.read_text() if bashrc.exists() else ""
-    kept = [line for line in existing.splitlines() if not line.lstrip().startswith("export TZ=")]
-    kept.append(f"export TZ={tz}")
-    bashrc.write_text("\n".join(kept) + "\n")
-
-
 def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
@@ -580,22 +561,6 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
         os.kill(os.getpid(), signal.SIGTERM)
         return {"content": [{"type": "text", "text": "Container restart initiated."}]}
 
-    @tool(
-        "set_timezone",
-        "Set the agent's timezone (IANA, e.g. 'Europe/London'). Updates the running process and persists to ~/.bashrc, no restart needed.",
-        _SET_TIMEZONE_SCHEMA,
-    )
-    async def set_timezone(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        tz = str(args["timezone"]).strip()
-        try:
-            zoneinfo.ZoneInfo(tz)
-        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
-            return {"content": [{"type": "text", "text": f"Invalid IANA timezone: {tz!r}"}]}
-        os.environ["TZ"] = tz
-        time.tzset()
-        _persist_tz_in_bashrc(tz)
-        return {"content": [{"type": "text", "text": f"Timezone set to {tz} (active in current process, persisted to ~/.bashrc)"}]}
-
     @tool("search_conversation_history", _SEARCH_CONVERSATION_HISTORY_DESCRIPTION, _SEARCH_CONVERSATION_HISTORY_SCHEMA)
     async def search_conversation_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         query = str(args["query"])
@@ -606,7 +571,7 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
         return {"content": [{"type": "text", "text": _format_search_results(results)}]}
 
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, set_timezone, search_conversation_history])
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
 
 
 def _make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:

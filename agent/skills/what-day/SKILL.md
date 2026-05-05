@@ -1,6 +1,6 @@
 ---
 name: what-day
-description: Determine the day of the week for any date.
+description: Determine the day of the week for any date, always do this whenever mentioning or reasoning through weekdays and dates.
 ---
 
 # What Day

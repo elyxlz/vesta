@@ -64,7 +64,7 @@ tasks remind update <id> --message "New message"
 - `--at` + `--tz`: absolute datetime (both required together)
 - `--recurring`: hourly | daily | weekly | monthly | yearly
   - hourly needs no datetime; others require `--at` + `--tz`
-- Always use the user's timezone from MEMORY.md section 5, not UTC
+- Always use the user's timezone from MEMORY.md section 4, not UTC
 - `--task <id>`: link reminder to a task (optional)
 - `--message`: alternative to positional message argument
 
@@ -126,7 +126,7 @@ screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $
 
 One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
-**Restart**: Add to `~/agent/prompts/restart.md`:
+**Restart**: Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 ```
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
 ```

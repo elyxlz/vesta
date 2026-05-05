@@ -8,12 +8,9 @@ def get_memory_path(config: vm.VestaConfig) -> pl.Path:
 
 
 def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
-    agent_path = config.prompts_dir / f"{name}.md"
-    if agent_path.exists():
-        return agent_path.read_text()
-    core_path = config.core_prompts_dir / f"{name}.md"
-    if core_path.exists():
-        return core_path.read_text()
+    path = config.core_prompts_dir / f"{name}.md"
+    if path.exists():
+        return path.read_text()
     return None
 
 
