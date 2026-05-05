@@ -62,9 +62,9 @@ Edit `~/.spotify/organize.json` to customize:
 - `skip_playlists`: playlists to exclude from auto-sorting
 - `genre_rules`: keyword → playlist name mappings for genre-based sorting
 
-## Step 6: Add to restart.md
+## Step 6: Register the service
 
-If using the watch daemon, add to `~/agent/prompts/restart.md`:
+If using the watch daemon, add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 ```
 screen -dmS spotify-watch spotify organize watch
 ```

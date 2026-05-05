@@ -76,6 +76,10 @@
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
+    "name": "restart",
+    "description": "What to do after a container restart, plus the user-managed list of services to bring back up."
+  },
+  {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
   },
@@ -121,7 +125,7 @@
   },
   {
     "name": "what-day",
-    "description": "Determine the day of the week for any date."
+    "description": "Determine the day of the week for any date, always do this whenever mentioning or reasoning through weekdays and dates."
   },
   {
     "name": "whatsapp",

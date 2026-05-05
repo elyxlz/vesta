@@ -9,7 +9,6 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 - **Memory**: ~/agent/MEMORY.md
 - **Skills**: ~/agent/skills/ (each has a SKILL.md)
-- **Prompts**: ~/agent/prompts/
 - **Dreamer summaries**: ~/agent/dreamer/
 
 ## Order of operations
@@ -72,11 +71,11 @@ Rules for dreamer-added widgets:
 
 Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
 
-## Personality (in MEMORY.md)
+## Personality
 
-The `## 1. Personality` section can drift with the relationship. Small tweaks based on what's landed or misfired are welcome here. Surgical edits only, not rewrites. Preset swaps are the user's call, via the `personality` skill. The Charter above it is off-limits, that's the invariant spine.
+Find the active preset name in `~/agent/skills/restart/SKILL.md`'s `## Personality` block, then drift `~/agent/core/skills/personality/presets/<name>.md` directly. That file is the source of truth, edit in place. Surgical tweaks only, not rewrites. Swaps are the user's call. The Charter in MEMORY.md is off-limits, that's the invariant spine.
 
-**Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections so the preset bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
+**Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 
 ## User State (in MEMORY.md)
 
@@ -105,8 +104,10 @@ MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every sy
 - Past events pretending to be upcoming
 - Verbose dated entries that should be patterns by now
 - Duplicates and contradictions
-- # TODO: mention conslidating / indexing information that lives in more than one pleace
-- # TODO: encourage splitting memory into more files and referencing those, like creating a CONTACTS.md and referencing it.
+
+**Consolidate:**
+- If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
+- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md"). MEMORY.md is for things needed at all times, not the full archive.
 
 **Keep:**
 - Core identity, preferences, relationships, security rules

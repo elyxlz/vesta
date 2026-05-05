@@ -17,6 +17,7 @@ from .api import start_ws_server
 from .client import format_crash_detail
 from .helpers import load_prompt
 from .loops import message_processor, monitor_loop, queue_greeting
+from .migrations import queue_migrations
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
@@ -98,9 +99,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
+    migrations_queued = await queue_migrations(message_queue, config=config)
     greeting_reason = "first_start" if first_start else restart_reason
     setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
-    if not setup_queued:
+    if not migrations_queued and not setup_queued:
         state.first_setup_complete.set()
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))

@@ -57,7 +57,9 @@ shipped yet, see issue #464 for the followup.
 screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve
 ```
 
-## 6. Add to restart.md
+## 6. Register the service
+
+Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 
 ```
 screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve

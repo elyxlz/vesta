@@ -1,41 +1,25 @@
 ---
 name: personality
-description: Swap or tune the agent's voice; edits only MEMORY.md's Personality section.
+description: The agent's voice. Pick one on first start; edit the file directly to drift it.
 ---
 
 # Personality
 
-Voice, not spine. Presets are starting points, drift with the relationship is expected.
+Voice, not spine. Each file in `presets/` is a complete personality, the source of truth for how the agent sounds. The active one is recorded in the `restart` skill's `## Personality` section and re-read on every restart.
 
-## When
+## Files
 
-- User asks to switch ("try extra", "make it dry") or tune ("fewer emoji", "use capital letters").
-- First start, with `$AGENT_SEED_PERSONALITY` from `/run/vestad-env`.
+`~/agent/core/skills/personality/presets/*.md`. Each file owns its full voice: YAML frontmatter (emoji, title, description, sample, order), then the body (`### Voice`, `### Rules`, `### How it sounds`).
 
-## Presets
+`ls` to see what's available, `Read` one for its body.
 
-Live in `~/agent/core/skills/personality/presets/`. `ls` lists what's shipped, `Read` one for its body.
+## Pick one (first start, or a swap)
 
-## Apply a preset
+1. Resolve the name. First start: `$AGENT_SEED_PERSONALITY` from `/run/vestad-env`. Swap: the user's request ("try dry", "switch to chill").
+2. `Read` `~/agent/core/skills/personality/presets/<name>.md` to confirm it exists and to load the voice into context.
+3. `Edit` `~/agent/skills/restart/SKILL.md`: replace the contents of the `## Personality` section with a single line naming the active preset, e.g. `classic`.
+4. Adopt the voice immediately. If swapping, confirm in one short message in the new voice.
 
-Each preset starts with a YAML frontmatter block delimited by `---`, then the body:
+## Drift / tweak
 
-```
----
-emoji: 😏
-title: dry
-description: ...
----
-
-### Voice
-...
-```
-
-1. `Read` the preset file.
-2. Skip the YAML frontmatter (everything between the first two `---` lines) and the blank line after. Take everything from the first `###` onward.
-3. `Edit` `~/agent/MEMORY.md`: replace the body under `## 1. Personality` (everything between that header and `## 2.`) with that body. Keep the `## 1. Personality` header. Leave the Charter and every other section alone.
-4. Confirm in one short message, in the new voice.
-
-## Freeform
-
-For blends or point edits, don't rewrite the whole section. Read the current body, make the minimal edit, save.
+The active file is the source of truth. To bend the voice (fewer emoji, more capital letters, a new opener), `Edit` the preset file in place. Surgical edits, not rewrites. The Charter in MEMORY.md is off-limits, that's the invariant spine.
