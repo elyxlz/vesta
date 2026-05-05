@@ -93,6 +93,8 @@ To skip the interactive prompt (e.g. in scripts), pre-export `EMAIL_CLIENT_APP_P
 ```bash
 email-client list --account personal --folder INBOX --limit 3
 email-client-send --account personal --to "<user-email>" --subject "email-client test" --body "self-send to verify smtp"
+email-client-send --account personal --to "<user-email>" --subject "with attachment" --body "see file" --attach /etc/hostname
+email-client attachments --account personal --uid <uid-of-the-attached-send>
 ```
 
 To verify reply threading without actually firing a message, use `--dry-run` against a real UID from the smoke-test send above:

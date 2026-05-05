@@ -53,6 +53,20 @@ email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 
 Omit `--account` to use the default account from `accounts.json`. `list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body.
 
+### Attachments
+
+```bash
+email-client attachments --uid 12345                              # list only
+email-client attachments --uid 12345 --folder Archive             # different folder
+email-client attachments --uid 12345 --download                   # save all
+email-client attachments --uid 12345 --download --out-dir /tmp/x  # custom dir
+email-client attachments --uid 12345 --download --part 2          # one specific
+```
+
+Listing returns a JSON array of `{part_index, name, content_type, size_bytes}` for every part the skill considers an attachment. A part counts when it has `Content-Disposition: attachment`, OR a filename, OR is an inline `image/*` with a name. Plain text and HTML body parts are excluded unless they are explicitly tagged as attachments.
+
+`--download` writes payloads to disk. Default location is `$EMAIL_CLIENT_DIR/attachments/<uid>/`; override with `--out-dir <path>`. `--part <index>` (using the `part_index` from the listing) saves a single attachment instead of all of them. Filenames are sanitized (path separators stripped) and de-duplicated when two attachments share a name. The download response prints saved paths as JSON.
+
 ## Mailbox edits
 
 ```bash

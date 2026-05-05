@@ -6,6 +6,9 @@ Fastmail, generic IMAP) via the profile registry in ``providers.py``,
 and multiple accounts simultaneously via the per-account state layout
 in ``$EMAIL_CLIENT_DIR/accounts/<name>/``.
 
+Subcommands: list-folders, list, get, search, attachments, mark, move,
+archive, delete, auth.
+
 Provider is auto-detected from the account's email domain, or pinned
 via the per-account ``config.json`` (or ``--provider`` on ``auth.py``).
 
@@ -436,6 +439,148 @@ def cmd_get(args):
     M.logout()
 
 
+def _is_attachment_part(part) -> bool:
+    """Return True if a parsed email part should be treated as an attachment.
+
+    Matches when Content-Disposition is ``attachment``, OR the part has
+    a filename, OR it is an inline ``image/*`` part with a name. Skips
+    multipart containers and plain text/html bodies that lack an
+    explicit attachment disposition or name.
+    """
+    if part.is_multipart():
+        return False
+    disp = (part.get("Content-Disposition") or "").lower()
+    filename = part.get_filename()
+    ctype = (part.get_content_type() or "").lower()
+    if "attachment" in disp:
+        return True
+    if filename:
+        # filename present even on inline parts (e.g. inline images)
+        # counts as an attachment, but skip the mail body itself.
+        if ctype in ("text/plain", "text/html") and "attachment" not in disp:
+            return False
+        return True
+    if ctype.startswith("image/") and (part.get_param("name") or filename):
+        return True
+    return False
+
+
+def _safe_filename(name: str | None, fallback: str) -> str:
+    """Sanitize a filename for safe disk write: strip path separators and nulls."""
+    if not name:
+        return fallback
+    cleaned = name.replace("\x00", "").replace("/", "_").replace("\\", "_")
+    cleaned = cleaned.lstrip(". ").strip()
+    return cleaned or fallback
+
+
+def _walk_attachments(parsed) -> list[dict]:
+    """Return a list of attachment metadata for a parsed email message.
+
+    Each entry carries ``part_index`` (0-based index in walk order over
+    non-multipart parts), ``name``, ``content_type``, ``size_bytes``,
+    plus the raw ``payload`` bytes for download callers.
+    """
+    out: list[dict] = []
+    idx = -1
+    for part in parsed.walk():
+        if part.is_multipart():
+            continue
+        idx += 1
+        if not _is_attachment_part(part):
+            continue
+        payload = part.get_payload(decode=True) or b""
+        raw_name = _decode(part.get_filename()) or part.get_param("name") or ""
+        out.append(
+            {
+                "part_index": idx,
+                "name": _safe_filename(raw_name, f"part-{idx}.bin"),
+                "content_type": part.get_content_type(),
+                "size_bytes": len(payload),
+                "payload": payload,
+            }
+        )
+    return out
+
+
+def cmd_attachments(args):
+    """List or download attachments on a single message UID.
+
+    Default behavior: list. With ``--download`` save all attachments
+    to ``$EMAIL_CLIENT_DIR/attachments/<uid>/`` (override with
+    ``--out-dir``). With ``--part`` save just one specific attachment
+    (matched by ``part_index`` from the listing).
+    """
+    M = connect(getattr(args, "account", None))
+    try:
+        M.select(f'"{args.folder}"', readonly=True)
+        typ, data = M.uid("FETCH", args.uid, "(RFC822)")
+        if not data or not data[0]:
+            sys.exit(f"uid {args.uid!r} not found in folder {args.folder!r}")
+        raw = data[0][1]
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+    parsed = message_from_bytes(raw)
+    items = _walk_attachments(parsed)
+
+    if not args.download:
+        # Listing only: drop raw payload bytes.
+        listing = [
+            {k: v for k, v in it.items() if k != "payload"} for it in items
+        ]
+        print(json.dumps(listing, indent=2, ensure_ascii=False))
+        return
+
+    if args.part is not None:
+        items = [it for it in items if it["part_index"] == args.part]
+        if not items:
+            sys.exit(
+                f"no attachment with part_index={args.part} on uid={args.uid}"
+            )
+
+    if not items:
+        print(json.dumps({"saved": [], "uid": args.uid}, indent=2))
+        return
+
+    if args.out_dir:
+        out_dir = pathlib.Path(args.out_dir).expanduser()
+    else:
+        out_dir = _state_dir() / "attachments" / str(args.uid)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved: list[dict] = []
+    used: set[str] = set()
+    for it in items:
+        name = it["name"]
+        # Avoid clobbering when two attachments share a filename.
+        candidate = name
+        n = 1
+        while candidate in used or (out_dir / candidate).exists():
+            stem, _, ext = name.rpartition(".")
+            if ext and stem:
+                candidate = f"{stem}.{n}.{ext}"
+            else:
+                candidate = f"{name}.{n}"
+            n += 1
+        used.add(candidate)
+        target = out_dir / candidate
+        target.write_bytes(it["payload"])
+        saved.append(
+            {
+                "part_index": it["part_index"],
+                "name": candidate,
+                "content_type": it["content_type"],
+                "size_bytes": it["size_bytes"],
+                "path": str(target),
+            }
+        )
+    print(json.dumps({"uid": args.uid, "saved": saved}, indent=2, ensure_ascii=False))
+
+
 def cmd_search(args):
     M = connect(getattr(args, "account", None))
     M.select(f'"{args.folder}"', readonly=True)
@@ -683,6 +828,31 @@ def main():
     _add_account_arg(p)
 
     p = sub.add_parser(
+        "attachments",
+        help="list or download attachments on a single message UID",
+    )
+    p.add_argument("--folder", default="INBOX")
+    p.add_argument("--uid", required=True)
+    p.add_argument(
+        "--download",
+        action="store_true",
+        help="save attachments to disk instead of just listing them",
+    )
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="override download directory "
+        "(default $EMAIL_CLIENT_DIR/attachments/<uid>/)",
+    )
+    p.add_argument(
+        "--part",
+        type=int,
+        default=None,
+        help="only download a specific attachment by its part_index",
+    )
+    _add_account_arg(p)
+
+    p = sub.add_parser(
         "mark",
         help="set/clear \\Seen or \\Flagged on one or more UIDs",
     )
@@ -768,6 +938,7 @@ def main():
         "list": cmd_list,
         "get": cmd_get,
         "search": cmd_search,
+        "attachments": cmd_attachments,
         "mark": cmd_mark,
         "move": cmd_move,
         "archive": cmd_archive,
