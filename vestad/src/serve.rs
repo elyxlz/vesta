@@ -588,11 +588,49 @@ async fn rename_agent_handler(
         save_settings(&settings);
     }
 
+    if let Err(e) = drop_rename_notification(&state.docker, &new_name, &name).await {
+        tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
+    }
+
     docker::start_agent(&state.docker, &new_name)
         .await
         .map_err(map_docker_err)?;
 
     Ok(Json(serde_json::json!({"name": new_name})))
+}
+
+/// Drop a high-priority notification into the renamed agent so it self-updates
+/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
+/// to write the notification doesn't block the rename.
+async fn drop_rename_notification(
+    docker: &bollard::Docker,
+    new_name: &str,
+    old_name: &str,
+) -> Result<(), String> {
+    let cname = docker::container_name(new_name);
+    let epoch = crate::time_utils::now_epoch_secs();
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch as i64)
+        .map_err(|e| format!("epoch out of range: {e}"))?
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("format timestamp: {e}"))?;
+    let payload = serde_json::json!({
+        "timestamp": timestamp,
+        "source": "vestad",
+        "type": "rename",
+        "interrupt": true,
+        "old_name": old_name,
+        "new_name": new_name,
+        "message": format!(
+            "you have been renamed from '{old_name}' to '{new_name}'. \
+             AGENT_NAME is now '{new_name}'. update your MEMORY.md and any prompt files \
+             under ~/agent/prompts/ that reference your old name."
+        ),
+    });
+    let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
+    let file_name = format!("rename-{epoch}.json");
+    docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // --- Auth endpoints ---

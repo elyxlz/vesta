@@ -80,6 +80,43 @@ fn rename_updates_container_label() {
 }
 
 #[test]
+fn rename_drops_notification() {
+    let c = SERVER.client();
+    let mut agent = TestAgent::create(&c, &unique_agent("rename-notif")).unwrap();
+    let old_name = agent.name.clone();
+    let new_name = unique_agent("rename-notif-target");
+
+    c.rename_agent(&old_name, &new_name).unwrap();
+
+    let new_container = agent_container_name(&new_name);
+    let listing = exec_in_container(&new_container, "ls /root/agent/notifications/").unwrap();
+    let notif_file = listing
+        .lines()
+        .map(str::trim)
+        .find(|f| f.starts_with("rename-") && f.ends_with(".json"))
+        .unwrap_or_else(|| panic!("no rename-*.json notification found in:\n{listing}"))
+        .to_string();
+
+    let body = exec_in_container(
+        &new_container,
+        &format!("cat /root/agent/notifications/{notif_file}"),
+    )
+    .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(parsed["source"], "vestad");
+    assert_eq!(parsed["type"], "rename");
+    assert_eq!(parsed["interrupt"], true);
+    assert_eq!(parsed["old_name"], old_name);
+    assert_eq!(parsed["new_name"], new_name);
+    let msg = parsed["message"].as_str().unwrap();
+    assert!(msg.contains(&old_name), "message missing old name: {msg}");
+    assert!(msg.contains(&new_name), "message missing new name: {msg}");
+    assert!(parsed["timestamp"].as_str().unwrap().contains('T'));
+
+    agent.name = new_name;
+}
+
+#[test]
 fn rename_to_same_name_fails() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("rename-same")).unwrap();
