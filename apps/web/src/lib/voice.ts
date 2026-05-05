@@ -290,6 +290,7 @@ export function preloadAudio(): Promise<void> {
 
 export interface TranscriberOptions {
   agentName: string;
+  accumulate?: boolean;
   onTranscript: (text: string) => void;
   onTurnEnd: (text: string) => void;
   onTurnStart: () => void;
@@ -308,6 +309,7 @@ export class Transcriber {
   private audioCtx: AudioContext | null = null;
   private socket: WebSocket | null = null;
   private transcript = "";
+  private committed = "";
   private active = false;
 
   constructor(opts: TranscriberOptions) {
@@ -318,6 +320,7 @@ export class Transcriber {
     if (this.active) return;
     this.active = true;
     this.transcript = "";
+    this.committed = "";
 
     if (!navigator.mediaDevices) {
       this.active = false;
@@ -378,13 +381,22 @@ export class Transcriber {
         }
         if (data.transcript) {
           this.transcript = data.transcript;
-          this.opts.onTranscript(this.transcript);
+          const display = this.opts.accumulate && this.committed
+            ? `${this.committed} ${this.transcript}`
+            : this.transcript;
+          this.opts.onTranscript(display);
         }
         if (data.event === "EndOfTurn") {
           const text = this.transcript.trim();
-          if (text) this.opts.onTurnEnd(text);
           this.transcript = "";
-          this.opts.onTranscript("");
+          if (!text) return;
+          this.opts.onTurnEnd(text);
+          if (this.opts.accumulate) {
+            this.committed = this.committed ? `${this.committed} ${text}` : text;
+            this.opts.onTranscript(this.committed);
+          } else {
+            this.opts.onTranscript("");
+          }
         }
         return;
       }

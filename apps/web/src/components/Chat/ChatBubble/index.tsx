@@ -1,3 +1,4 @@
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Markdown } from "@/lib/markdown";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -6,10 +7,13 @@ import { ToolCallLabel } from "../ToolCallLabel";
 export function ChatBubble({
   event,
   className,
+  fullscreen,
 }: {
   event: VestaEvent;
   className?: string;
+  fullscreen?: boolean;
 }) {
+  const isMobile = useIsMobile();
   if (event.type === "history" || event.type === "status") return null;
 
   const ts = event.ts
@@ -53,10 +57,16 @@ export function ChatBubble({
     >
       <div
         className={cn(
-          "flex items-end max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-relaxed",
+          "flex items-end max-w-[85%] rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5 text-sm leading-relaxed",
+          fullscreen &&
+            isMobile &&
+            "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
           isUser
             ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "bg-secondary text-secondary-foreground rounded-bl-sm",
+            : cn(
+                "text-secondary-foreground rounded-bl-sm",
+                fullscreen && isMobile ? "bg-card" : "bg-secondary",
+              ),
         )}
       >
         <div className="min-w-0 break-words">
