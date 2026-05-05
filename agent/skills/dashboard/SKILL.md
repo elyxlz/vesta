@@ -144,6 +144,11 @@ fi
 curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
+## Cache gotchas (read once)
+
+- **Do NOT pass `--base`** to vite preview. Vestad strips the `/agents/{name}/{service}/` prefix when proxying, so the local server must serve at `/`. With `--base` set, `/assets/...` requests come in stripped and 404. The HTML uses relative `./assets/...` already (vite config `base: "./"`), which resolves correctly under the proxy path in the browser.
+- **Cloudflare caches 404 responses for ~4 hours via the public tunnel.** If you accidentally serve a broken build that 404s on assets, even after fixing the build, the tunnel will keep serving the cached 404 until either (a) the URL changes, (b) the cache expires, or (c) you bust with a `?v=...` query. Vite's content hashes change automatically when source changes, so normally this isn't an issue. If you ever get a stuck 404 with no source change, temporarily add `Date.now()` to `entryFileNames` in `vite.config.ts`, rebuild, then revert.
+
 ## Troubleshooting
 *   **Dashboard not showing?** `screen -ls | grep dashboard`
 *   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`

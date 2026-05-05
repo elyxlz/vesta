@@ -2,20 +2,29 @@
 
 ## 1. Install dependencies
 
+`apt-get update` first if the index is stale (base image often is).
+
 ```bash
-apt-get install -y gcc ffmpeg
+apt-get update
+apt-get install -y gcc g++ cmake ffmpeg
 ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
 curl -fsSL "https://go.dev/dl/$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1).linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
 export PATH="/usr/local/go/bin:$PATH"
 ```
 
+`g++` and `cmake` are NOT pulled in by `gcc` alone. Without them the whisper.cpp configure fails silently (cmake) or with `No CMAKE_CXX_COMPILER could be found` (g++).
+
 ## 2. Build whisper.cpp (static libraries)
 
 The WhatsApp CLI links whisper.cpp statically via CGO for voice note transcription.
 
+The Go binding under `bindings/go` is pinned to a specific whisper.cpp commit in `cli/go.mod` (look for the `github.com/ggerganov/whisper.cpp` line, e.g. `v0.0.0-YYYYMMDDhhmmss-<short_sha>`). Master is usually ahead and breaks the binding (`undefined: whisper.Params`, etc.). Check out the matching commit before configuring:
+
 ```bash
 git clone https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp
 cd /opt/whisper.cpp
+PIN=$(grep 'ggerganov/whisper.cpp' ~/agent/skills/whatsapp/cli/go.mod | head -1 | awk -F'-' '{print $NF}')
+git checkout "$PIN"
 
 cmake -B build-static -S . \
   -DCMAKE_BUILD_TYPE=Release \
@@ -79,7 +88,7 @@ A QR code image is saved to `~/.whatsapp/qr-code.png`. Upload it to a temporary 
 curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/.whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
 ```
 
-**QR codes expire in ~20 seconds.** Warn the user to have WhatsApp ready before opening the link.
+**QR codes expire in ~20 seconds.** Confirm the user is on the **Linked Devices > Link a Device** screen with the camera ready BEFORE you call `authenticate`. Sequence: ask "ready?" → wait for confirmation → run `authenticate` + upload + send link in a single chained command, no preamble. If they scan and get **"Could not link device, try again later"**, the daemon's WS to whatsapp.com went stale: restart the daemon (see Troubleshooting below) before the next attempt, otherwise every retry fails the same way.
 
 ### Phone pairing (fallback)
 

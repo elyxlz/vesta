@@ -22,7 +22,15 @@ env:
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
+  # When release.yml dispatches, it (1) pushes a "Bump version to X" commit
+  # to master and (2) creates a release tag. Both fire CI: a `push` event for
+  # the commit and a `release` event for the tag, on different refs (so
+  # different concurrency groups). The release run produces the artifacts
+  # and is load-bearing; the push run is a redundant validation pass over
+  # the same SHA. Skip the push run for these commits so we don't pay for
+  # two parallel CIs per release.
   detect-changes:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     outputs:
       cli: ${{ steps.filter.outputs.cli }}
@@ -46,7 +54,11 @@ jobs:
               - '.github/workflows/ci.yml'
 
   # ── Version check ──────────────────────────────────────────────────────
+  # Same skip as detect-changes; version-check has no `needs:` so the gate
+  # has to be explicit here. All build-* and check-* jobs `needs:` either
+  # detect-changes or version-check, so the skip cascades to them.
   version-check:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

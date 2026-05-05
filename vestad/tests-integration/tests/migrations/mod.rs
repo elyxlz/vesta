@@ -1,3 +1,2 @@
-mod common;
 mod normalize;
-mod upgrade;
+mod sparse_checkout;

@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, is_up, unique_agent};
+use vesta_tests::{TestAgent, SERVER, SHARED_RO_AGENT, is_up, unique_agent};
 use vesta_tests::types::BackupType;
 
 #[test]
@@ -34,11 +34,8 @@ fn backup_list() {
 #[test]
 fn backup_list_empty() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("bk-empty")).unwrap();
-
-    let backups = c.list_backups(&agent.name).unwrap();
+    let backups = c.list_backups(&SHARED_RO_AGENT).unwrap();
     assert!(backups.is_empty());
-    drop(agent);
 }
 
 #[test]
@@ -92,19 +89,13 @@ fn backup_delete() {
 #[test]
 fn backup_delete_nonexistent_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("bk-del-bad")).unwrap();
-
-    let result = c.delete_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
+    let result = c.delete_backup(&SHARED_RO_AGENT, "vesta-backup:fake-manual-20260101-000000");
     assert!(result.is_err());
-    drop(agent);
 }
 
 #[test]
 fn backup_restore_nonexistent_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("bk-res-bad")).unwrap();
-
-    let result = c.restore_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
+    let result = c.restore_backup(&SHARED_RO_AGENT, "vesta-backup:fake-manual-20260101-000000");
     assert!(result.is_err());
-    drop(agent);
 }

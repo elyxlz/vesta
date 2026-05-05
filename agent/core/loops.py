@@ -216,6 +216,9 @@ async def _process_interruptible(
 
                 if queue_task in done:
                     pending.append(queue_task.result())
+                    if state.compacting:
+                        logger.client(f"Compaction in flight, deferring interrupt ({len(pending)} pending)")
+                        continue
                     state.interrupt_event.set()
                     logger.client(f"Interrupting: new message queued ({len(pending)} pending)")
                     await process_task
@@ -272,6 +275,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                 finally:
                     state.client = None
                     state.interrupt_event = None
+                    state.compacting = False
                     logger.client("Client session closed")
             break
         except (ClaudeSDKError, OSError, RuntimeError) as exc:

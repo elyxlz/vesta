@@ -16,6 +16,18 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
+/// Name of a shared, never-mutated agent created once per test process. Use for
+/// read-only assertions about a fresh agent (env files, container layout) so we
+/// don't pay create+destroy on every test. The agent is left unauthenticated;
+/// cleanup happens at the next run via `cleanup_orphan_test_containers`.
+pub static SHARED_RO_AGENT: LazyLock<String> = LazyLock::new(|| {
+    let client = SERVER.client();
+    let raw = unique_agent("ro-shared");
+    client
+        .create_agent(&raw)
+        .unwrap_or_else(|e| panic!("failed to create shared read-only agent: {e}"))
+});
+
 static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
 static TEST_AGENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 

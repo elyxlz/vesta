@@ -10,8 +10,10 @@ if [ -d "$DEST" ]; then
     exit 0
 fi
 
-# Add the skill to sparse checkout so it appears from the git repo.
-# This means upstream merges will update it, and local changes are tracked.
+# SETUP.md initialises sparse-checkout with `!/agent/skills/*/` so uninstalled
+# skills stay off disk. `sparse-checkout add` appends a re-include pattern
+# after that exclude (later patterns win), pulling this skill into the worktree
+# while leaving the rest excluded. Future merges will track this skill normally.
 echo "Installing '$SKILL_NAME' via sparse checkout..."
 
 REPO_ROOT=$(git -C ~ rev-parse --show-toplevel)

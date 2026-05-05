@@ -1,7 +1,6 @@
 mod health;
 mod lifecycle;
 mod auth;
-mod names;
 mod backup;
 mod websocket;
 mod ports;

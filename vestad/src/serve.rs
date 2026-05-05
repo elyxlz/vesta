@@ -535,8 +535,7 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let manage_core_code = state.settings.read().await.manages_core_code(&name);
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_core_code)
+    docker::rebuild_agent(&state.docker, &name, &state.env_config)
         .await
         .map_err(map_docker_err)?;
     docker::start_agent(&state.docker, &name)
@@ -1266,46 +1265,6 @@ async fn get_agent_settings_handler(
     })))
 }
 
-#[derive(Deserialize)]
-struct PatchAgentSettingsBody {
-    manage_agent_code: Option<bool>,
-}
-
-async fn patch_agent_settings_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<PatchAgentSettingsBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    let (old_manage_core_code, new_manage_core_code) = {
-        let mut settings = state.settings.write().await;
-        let old = settings.manages_core_code(&name);
-        if let Some(val) = body.manage_agent_code {
-            settings.agents.entry(name.clone()).or_default().manage_agent_code = val;
-        }
-        let new = settings.manages_core_code(&name);
-        save_settings(&settings);
-        (old, new)
-    };
-
-    // Rebuild if the mount config changed
-    if old_manage_core_code != new_manage_core_code {
-        let was_running = docker::container_status(&state.docker, &docker::container_name(&name)).await
-            == docker::ContainerStatus::Running;
-        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_core_code).await {
-            tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
-        } else if was_running {
-            docker::start_agent(&state.docker, &name).await.ok();
-        }
-    }
-
-    Ok(Json(serde_json::json!({
-        "manage_agent_code": new_manage_core_code,
-    })))
-}
-
 async fn get_agent_backup_settings_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1453,7 +1412,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
         .route("/agents/{name}/settings", get(get_agent_settings_handler))
-        .route("/agents/{name}/settings", axum::routing::patch(patch_agent_settings_handler))
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))

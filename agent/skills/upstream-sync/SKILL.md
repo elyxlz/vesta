@@ -11,7 +11,7 @@ Bring your local workspace into order, checkpoint your current state on your bra
 
 ## Ownership
 
-`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths) and root `.gitignore`. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
+`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths and uninstalled skills) and root `.gitignore`. Skill directories under `agent/skills/*/` are opt-in: only installed skills are on disk and in `git status`. `agent/skills/index.json` is always visible: it's the registry of available skills, regardless of what's installed. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and `.claude/`. Commits focus on `agent/`.
 
@@ -19,7 +19,18 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
 ## Sync steps
 
-1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first.
+1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first. Then narrow the sparse pattern to installed-only if it isn't already:
+   ```bash
+   if ! grep -qx '!/agent/skills/\*/' ~/.git/info/sparse-checkout 2>/dev/null; then
+     INSTALLED=$(find ~/agent/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -u)
+     {
+       printf '%s\n' '/agent/' '!/agent/core/' '!/agent/pyproject.toml' '!/agent/uv.lock' '!/agent/skills/*/' '/.gitignore'
+       for s in $INSTALLED; do printf '/agent/skills/%s/\n' "$s"; done
+     } > ~/.git/info/sparse-checkout
+     git -C ~ sparse-checkout reapply
+   fi
+   ```
+   This is a one-shot migration: it rewrites the sparse pattern to scope `agent/skills/*/` to only currently-installed skills, so future merges don't pull in newly-added upstream skills. Idempotent: the `grep` guard skips re-runs.
 
 2. **Checkpoint local work.** The merge fails with uncommitted changes; the checkpoint also gives you a clean base.
    ```bash
@@ -58,7 +69,25 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
    Then: `git -C ~ commit --no-edit`
 
-6. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge.
+6. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
+
+   - `agent/skills/index.json` is generated from disk. A textual merge of two arrays sometimes produces invalid or stale JSON, and any new skill directory pulled in from upstream needs an entry. Regenerate from the merged tree:
+     ```bash
+     cd ~/agent && uv run python skills/generate-index.py
+     ```
+   - `git merge` re-stats the working tree, which clears the `skip-worktree` bit on some bind-mounted paths. Re-apply **only when those paths are actually bind-mounted** (vestad-managed containers); on unmanaged containers they are real tracked files and must remain editable / committable:
+     ```bash
+     if mount | grep -q '/root/agent/core '; then
+       git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
+     fi
+     ```
+
+   If the regen changed `index.json`, commit it on top of the merge:
+   ```bash
+   git -C ~ add agent/skills/index.json && git -C ~ commit -m "chore: refresh skills/index.json post-sync"
+   ```
+
+7. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
 
 ## Branch model
 

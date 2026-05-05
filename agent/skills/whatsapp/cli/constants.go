@@ -14,7 +14,7 @@ const (
 	ConnectRetryDelay    = 1 * time.Second
 
 	StaleCheckInterval    = 10 * time.Minute
-	StaleMessageThreshold = 30 * time.Minute
+	StaleMessageThreshold = 4 * time.Hour
 
 	MaxSenderCacheSize    = 10_000
 	SenderCacheEvictBatch = 2_000
@@ -41,11 +41,11 @@ const (
 	SocketTimeout     = 5 * time.Minute
 	SocketDialTimeout = 2 * time.Second
 
-	DeliveryStatusSent      = "sent"
-	DeliveryStatusDelivered = "delivered"
-	DeliveryStatusRead      = "read"
-	DeliveryStatusPlayed    = "played"
-	DeliveryStatusFiltered  = "filtered"
+	DeliveryStatusSent        = "sent"
+	DeliveryStatusDelivered   = "delivered"
+	DeliveryStatusRead        = "read"
+	DeliveryStatusPlayed      = "played"
+	DeliveryStatusUnconfirmed = "unconfirmed"
 
 	MediaTypeImage    = "image"
 	MediaTypeVideo    = "video"
