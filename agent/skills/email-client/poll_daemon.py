@@ -37,7 +37,6 @@ from imap_client import (  # noqa: E402
     account_dir,
     connect,
     list_accounts,
-    load_accounts_index,
 )
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
@@ -169,10 +168,6 @@ def main():
         if idx_mtime != last_index_mtime:
             last_index_mtime = idx_mtime
             accounts = list_accounts()
-            if not accounts:
-                # Triggers single-account migration on first call if applicable.
-                load_accounts_index()
-                accounts = list_accounts()
             log(f"polling accounts: {accounts}")
 
         if not accounts:

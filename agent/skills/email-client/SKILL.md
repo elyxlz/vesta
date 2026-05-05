@@ -96,8 +96,6 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
       high_uid.txt
 ```
 
-A legacy single-account install (token at `$EMAIL_CLIENT_DIR/token.json` or at `~/.imap-mail/token.json`) is auto-migrated into `accounts/default/` on first run with a stderr note.
-
 ## Configuration
 
 Most settings live per account in `accounts/<name>/config.json`. Environment variables provide defaults that apply to whichever account is being used:
@@ -114,8 +112,6 @@ Most settings live per account in `accounts/<name>/config.json`. Environment var
 - `EMAIL_CLIENT_FROM_NAME`: display name on outbound mail (default the username portion of the email)
 - `EMAIL_CLIENT_POLL_INTERVAL`: seconds between polls (default 15)
 - `EMAIL_CLIENT_APP_PASSWORD`: pre-supply the app password to the auth flow instead of being prompted (handy in scripts)
-
-For one release the legacy `IMAP_MAIL_*` env-var names are still honored with a stderr deprecation warning. Rename them in `~/.bashrc` when convenient.
 
 The token file at `accounts/<name>/token.json` always carries a `provider` key alongside the credential payload (access/refresh token for OAuth providers, `app_password` for app-password providers), so the daemon knows which strategy to use even if env vars change later.
 

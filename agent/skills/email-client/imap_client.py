@@ -19,15 +19,6 @@ Environment overrides (set in ``~/.bashrc``):
     EMAIL_CLIENT_OAUTH_SCOPES     override scope list (whitespace-separated)
     EMAIL_CLIENT_FROM_NAME        display name on outbound mail
     EMAIL_CLIENT_POLL_INTERVAL    daemon poll seconds
-
-For one release the legacy ``IMAP_MAIL_*`` names are still honored with
-a stderr deprecation warning. The legacy state dir ``~/.imap-mail`` is
-auto-migrated to ``~/.email-client/accounts/default/`` on first run.
-
-Backwards compatibility: a token file written by the v0.1 release
-(no ``provider`` key) is treated as ``microsoft-personal``. A
-single-account token at ``$EMAIL_CLIENT_DIR/token.json`` is migrated
-into ``$EMAIL_CLIENT_DIR/accounts/default/`` on first run.
 """
 from __future__ import annotations
 
@@ -46,38 +37,16 @@ from email.header import decode_header
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from providers import (  # noqa: E402
-    THUNDERBIRD_MS_CLIENT_ID,
     apply_env_overrides,
     detect_provider,
     get_profile,
     resolve_provider,
 )
 
-# Re-exported for backwards compatibility with tools that imported these
-# names from the v0.1 release.
-THUNDERBIRD_CLIENT_ID = THUNDERBIRD_MS_CLIENT_ID
-DEFAULT_AUTHORITY = "https://login.microsoftonline.com/consumers"
-DEFAULT_HOST = "outlook.office365.com"
-DEFAULT_SCOPES = [
-    "https://outlook.office.com/IMAP.AccessAsUser.All",
-    "https://outlook.office.com/SMTP.Send",
-]
-
 
 def _env(name: str, default: str | None = None, *, required: bool = False) -> str:
-    """Read an env var, with legacy IMAP_MAIL_* fallback for new EMAIL_CLIENT_* names."""
-    val = os.environ.get(name)
-    if not val and name.startswith("EMAIL_CLIENT_"):
-        legacy = "IMAP_MAIL_" + name[len("EMAIL_CLIENT_") :]
-        val = os.environ.get(legacy)
-        if val:
-            print(
-                f"email-client: warning: {legacy} is deprecated, "
-                f"rename to {name} in your shell rc",
-                file=sys.stderr,
-            )
-    if not val:
-        val = default
+    """Read an EMAIL_CLIENT_* env var with optional default."""
+    val = os.environ.get(name) or default
     if required and not val:
         sys.exit(f"missing required env var {name}")
     return val or ""
@@ -88,31 +57,14 @@ def _state_dir() -> pathlib.Path:
 
     Resolution order:
       1. ``$EMAIL_CLIENT_DIR``
-      2. ``$IMAP_MAIL_DIR`` (legacy, with deprecation warning)
-      3. ``~/.email-client``
-      4. ``~/.imap-mail`` if it exists and ~/.email-client does not
-         (legacy single-account install, with stderr migration hint)
+      2. ``~/.email-client``
     """
-    explicit = os.environ.get("EMAIL_CLIENT_DIR") or os.environ.get("IMAP_MAIL_DIR")
+    explicit = os.environ.get("EMAIL_CLIENT_DIR")
     if explicit:
-        if "IMAP_MAIL_DIR" in os.environ and "EMAIL_CLIENT_DIR" not in os.environ:
-            print(
-                "email-client: warning: IMAP_MAIL_DIR is deprecated, "
-                "rename to EMAIL_CLIENT_DIR in your shell rc",
-                file=sys.stderr,
-            )
         d = pathlib.Path(explicit)
         d.mkdir(parents=True, exist_ok=True)
         return d
     new = pathlib.Path.home() / ".email-client"
-    legacy = pathlib.Path.home() / ".imap-mail"
-    if not new.exists() and legacy.exists():
-        print(
-            f"email-client: using legacy state dir {legacy}; "
-            f"consider moving it to {new} (or set EMAIL_CLIENT_DIR)",
-            file=sys.stderr,
-        )
-        return legacy
     new.mkdir(parents=True, exist_ok=True)
     return new
 
@@ -129,15 +81,8 @@ def _accounts_index_path() -> pathlib.Path:
 
 
 def load_accounts_index() -> dict:
-    """Return the accounts index dict.
-
-    Triggers an auto-migration if the index is missing but a legacy
-    single-account token.json exists at the state-dir root or at
-    ~/.imap-mail/token.json.
-    """
+    """Return the accounts index dict, or an empty index if missing."""
     p = _accounts_index_path()
-    if not p.exists():
-        _maybe_migrate_legacy_single_account()
     if not p.exists():
         return {"accounts": [], "default": None}
     return json.loads(p.read_text())
@@ -146,54 +91,6 @@ def load_accounts_index() -> dict:
 def save_accounts_index(idx: dict) -> None:
     p = _accounts_index_path()
     p.write_text(json.dumps(idx, indent=2))
-
-
-def _maybe_migrate_legacy_single_account() -> None:
-    """Migrate a single-account install to the multi-account layout.
-
-    Looks for ``$EMAIL_CLIENT_DIR/token.json`` first, then
-    ``~/.imap-mail/token.json``. If found, copies the token plus the
-    high-UID watermark into ``accounts/default/`` and writes
-    ``accounts.json``. Idempotent; safe to call repeatedly.
-    """
-    state = _state_dir()
-    idx_path = state / "accounts.json"
-    if idx_path.exists():
-        return
-    candidates = [state / "token.json"]
-    legacy_root = pathlib.Path.home() / ".imap-mail"
-    if legacy_root != state:
-        candidates.append(legacy_root / "token.json")
-    src_token = next((c for c in candidates if c.exists()), None)
-    if not src_token:
-        return
-    dst_dir = state / "accounts" / "default"
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    src_dir = src_token.parent
-    dst_token = dst_dir / "token.json"
-    dst_token.write_text(src_token.read_text())
-    dst_token.chmod(0o600)
-    src_high = src_dir / "high_uid.txt"
-    if src_high.exists():
-        (dst_dir / "high_uid.txt").write_text(src_high.read_text())
-    cfg = {}
-    try:
-        tok = json.loads(src_token.read_text())
-        if tok.get("user"):
-            cfg["user"] = tok["user"]
-        if tok.get("provider"):
-            cfg["provider"] = tok["provider"]
-    except Exception:
-        pass
-    (dst_dir / "config.json").write_text(json.dumps(cfg, indent=2))
-    idx_path.write_text(
-        json.dumps({"accounts": ["default"], "default": "default"}, indent=2)
-    )
-    print(
-        f"email-client: migrated single-account install at {src_token} "
-        f"to {dst_dir}; the legacy file is left in place for safety",
-        file=sys.stderr,
-    )
 
 
 def list_accounts() -> list[str]:
@@ -268,8 +165,8 @@ def account_user(account: str) -> str:
     """Return the email address for an account.
 
     Order of precedence: per-account config.json["user"], then the
-    token.json["user"] field, then the env var ``EMAIL_CLIENT_USER``
-    (legacy ``IMAP_MAIL_USER``). Errors loud if none resolves.
+    token.json["user"] field, then the env var ``EMAIL_CLIENT_USER``.
+    Errors loud if none resolves.
     """
     cfg = load_config(account)
     if cfg.get("user"):
@@ -293,7 +190,7 @@ def account_profile(account: str) -> tuple[str, dict]:
       1. per-account ``config.json`` ``provider`` field
       2. token-pinned provider
       3. auto-detect from the account's email domain
-      4. ``microsoft-personal`` fallback (legacy)
+      4. ``microsoft-personal`` final fallback
 
     Env-var overrides on host/port/scopes still apply on top.
     """
@@ -325,15 +222,6 @@ def account_profile(account: str) -> tuple[str, dict]:
         profile["oauth_scopes"] = list(cfg["oauth_scopes"])
     profile = apply_env_overrides(profile, dict(os.environ))
     return name, profile
-
-
-# Backwards-compat shim: the old single-account API. Redirects to the
-# default account.
-def current_profile() -> tuple[str, dict]:
-    acc = default_account()
-    if acc:
-        return account_profile(acc)
-    return resolve_provider(dict(os.environ))
 
 
 def _refresh_microsoft(tok: dict, profile: dict, account: str) -> dict:
@@ -381,15 +269,11 @@ def _refresh_google(tok: dict, profile: dict, account: str) -> dict:
     return res
 
 
-def get_access_token(
-    account: str | None = None, scopes: list[str] | None = None
-) -> str:
+def get_access_token(account: str | None = None) -> str:
     """Return a fresh OAuth2 access token for the given account.
 
     Only meaningful for OAuth providers (microsoft-personal, gmail).
     For app-password providers, callers should use :func:`get_app_password`.
-    The ``scopes`` argument is accepted for backwards compatibility and
-    ignored when the provider profile already specifies its scopes.
     """
     acc = resolve_account(account)
     name, profile = account_profile(acc)
@@ -583,12 +467,6 @@ def cmd_search(args):
         )
     print(json.dumps(out, indent=2, ensure_ascii=False))
     M.logout()
-
-
-# Compatibility shim. Older callers may import _detect_provider from
-# this module; keep the symbol live and forward to providers.py.
-def _detect_provider(email: str) -> str | None:
-    return detect_provider(email)
 
 
 # -- auth subcommands (multi-account management) -------------------

@@ -2,8 +2,6 @@
 
 One-time setup per account. Takes about 2 minutes. Picks the right auth flow for the user's mail provider automatically.
 
-If you are upgrading from the single-account `imap-mail` skill: the next time the daemon or CLI runs it auto-migrates `~/.imap-mail/token.json` (or `~/.email-client/token.json`) into `~/.email-client/accounts/default/` and writes `accounts.json`. The legacy file is left in place so you can roll back. The legacy `IMAP_MAIL_*` env vars still work for one release with a stderr warning. Just keep going.
-
 ## 1. Install the CLI
 
 ```bash
@@ -117,4 +115,3 @@ The daemon reads `~/.email-client/accounts.json` each tick, so adding new accoun
 - Notifications don't appear: confirm `~/agent/notifications/` is the right path for your agent (it's the standard one) and the daemon is in `screen -ls`.
 - Mailbox has a million emails and `email-client list --limit 200` is slow: that's expected, IMAP `SEARCH ALL` then `FETCH` is O(n). Use `search --query 'SINCE <date>'` to scope.
 - `unknown account 'foo'`: run `email-client auth list` to see what's registered. Add the missing one with `email-client auth add --account foo`.
-- Stderr says `IMAP_MAIL_* is deprecated`: rename the env vars in `~/.bashrc` from `IMAP_MAIL_` to `EMAIL_CLIENT_`. The legacy names will be removed in a future release.

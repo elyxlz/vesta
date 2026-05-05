@@ -3,8 +3,7 @@
 
 Provider host/port and auth strategy come from the resolved provider
 profile. The user can override host/port via ``EMAIL_CLIENT_SMTP_HOST``
-and ``EMAIL_CLIENT_SMTP_PORT`` (legacy ``IMAP_MAIL_SMTP_*`` still work
-with a deprecation warning). Multi-account: pass ``--account <name>``
+and ``EMAIL_CLIENT_SMTP_PORT``. Multi-account: pass ``--account <name>``
 to send from a specific account; without it the daemon's default
 account is used.
 """
@@ -26,10 +25,6 @@ from imap_client import (  # noqa: E402
     get_app_password,
     resolve_account,
 )
-
-# Re-exported for backwards compatibility with anything importing these.
-DEFAULT_SMTP_HOST = "smtp.office365.com"
-DEFAULT_SMTP_PORT = 587
 
 
 def send(

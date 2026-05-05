@@ -197,10 +197,8 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
         "(Yahoo, iCloud, Fastmail all have this under 'app-specific "
         "passwords' or 'security'), then paste it below.\n"
     )
-    pw = (
-        os.environ.get("EMAIL_CLIENT_APP_PASSWORD")
-        or os.environ.get("IMAP_MAIL_APP_PASSWORD")
-        or getpass.getpass("App password: ")
+    pw = os.environ.get("EMAIL_CLIENT_APP_PASSWORD") or getpass.getpass(
+        "App password: "
     )
     pw = pw.strip()
     if not pw:
