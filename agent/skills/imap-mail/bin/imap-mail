@@ -1,0 +1,4 @@
+#!/bin/bash
+# IMAP read commands. Runs in the persistent uv env at $IMAP_MAIL_DIR/runtime.
+DIR="${IMAP_MAIL_DIR:-$HOME/.imap-mail}"
+cd "$DIR/runtime" && exec uv run --quiet python3 "$DIR/imap_client.py" "$@"
