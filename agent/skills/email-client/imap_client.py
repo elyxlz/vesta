@@ -469,6 +469,148 @@ def cmd_search(args):
     M.logout()
 
 
+# -- mark / move / archive / delete --------------------------------
+
+
+def _normalize_uids(spec: str) -> str:
+    """Return a comma-separated UID set; accepts ``12``, ``12,15,18`` or ``12, 15``."""
+    parts = [p.strip() for p in (spec or "").split(",") if p.strip()]
+    if not parts:
+        sys.exit("--uid is required and must contain at least one UID")
+    for p in parts:
+        if not p.isdigit():
+            sys.exit(f"invalid UID {p!r}; expected integers separated by commas")
+    return ",".join(parts)
+
+
+def _server_capabilities(M: imaplib.IMAP4_SSL) -> set[str]:
+    """Return the IMAP server capability set (uppercased) for the live connection."""
+    typ, data = M.capability()
+    if typ != "OK" or not data:
+        return set()
+    raw = b" ".join(d for d in data if isinstance(d, (bytes, bytearray))).decode(
+        errors="replace"
+    )
+    return {tok.upper() for tok in raw.split()}
+
+
+def cmd_mark(args):
+    M = connect(getattr(args, "account", None))
+    try:
+        typ, _ = M.select(f'"{args.folder}"')
+        if typ != "OK":
+            sys.exit(f"select {args.folder!r} failed")
+        uids = _normalize_uids(args.uid)
+        actions: list[tuple[str, str]] = []
+        if args.read:
+            actions.append(("+FLAGS", r"(\Seen)"))
+        if args.unread:
+            actions.append(("-FLAGS", r"(\Seen)"))
+        if args.flagged:
+            actions.append(("+FLAGS", r"(\Flagged)"))
+        if args.unflagged:
+            actions.append(("-FLAGS", r"(\Flagged)"))
+        if not actions:
+            sys.exit(
+                "pick at least one of --read / --unread / --flagged / --unflagged"
+            )
+        for op, flag in actions:
+            typ, resp = M.uid("STORE", uids, op, flag)
+            if typ != "OK":
+                sys.exit(f"STORE {op} {flag} failed: {resp!r}")
+        print(json.dumps({"ok": True, "uids": uids.split(","), "actions": actions}))
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def _move_uids(
+    M: imaplib.IMAP4_SSL, uids: str, src: str, dst: str
+) -> None:
+    """Move the given UIDs from src to dst, using MOVE if available else COPY+EXPUNGE."""
+    caps = _server_capabilities(M)
+    if "MOVE" in caps:
+        typ, resp = M.uid("MOVE", uids, f'"{dst}"')
+        if typ != "OK":
+            sys.exit(f"MOVE failed: {resp!r}")
+        return
+    typ, resp = M.uid("COPY", uids, f'"{dst}"')
+    if typ != "OK":
+        sys.exit(f"COPY failed: {resp!r}")
+    typ, resp = M.uid("STORE", uids, "+FLAGS", r"(\Deleted)")
+    if typ != "OK":
+        sys.exit(f"STORE +Deleted failed: {resp!r}")
+    typ, resp = M.expunge()
+    if typ != "OK":
+        sys.exit(f"EXPUNGE failed: {resp!r}")
+
+
+def cmd_move(args):
+    M = connect(getattr(args, "account", None))
+    try:
+        typ, _ = M.select(f'"{args.folder}"')
+        if typ != "OK":
+            sys.exit(f"select {args.folder!r} failed")
+        uids = _normalize_uids(args.uid)
+        _move_uids(M, uids, args.folder, args.to_folder)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "uids": uids.split(","),
+                    "from": args.folder,
+                    "to": args.to_folder,
+                }
+            )
+        )
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def cmd_archive(args):
+    args.to_folder = "Archive"
+    cmd_move(args)
+
+
+def cmd_delete(args):
+    M = connect(getattr(args, "account", None))
+    try:
+        typ, _ = M.select(f'"{args.folder}"')
+        if typ != "OK":
+            sys.exit(f"select {args.folder!r} failed")
+        uids = _normalize_uids(args.uid)
+        if args.hard:
+            typ, resp = M.uid("STORE", uids, "+FLAGS", r"(\Deleted)")
+            if typ != "OK":
+                sys.exit(f"STORE +Deleted failed: {resp!r}")
+            typ, resp = M.expunge()
+            if typ != "OK":
+                sys.exit(f"EXPUNGE failed: {resp!r}")
+            print(json.dumps({"ok": True, "uids": uids.split(","), "hard": True}))
+        else:
+            _move_uids(M, uids, args.folder, "Deleted")
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "uids": uids.split(","),
+                        "from": args.folder,
+                        "to": "Deleted",
+                    }
+                )
+            )
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
 # -- auth subcommands (multi-account management) -------------------
 
 
@@ -540,6 +682,56 @@ def main():
     p.add_argument("--limit", type=int, default=20)
     _add_account_arg(p)
 
+    p = sub.add_parser(
+        "mark",
+        help="set/clear \\Seen or \\Flagged on one or more UIDs",
+    )
+    p.add_argument("--folder", default="INBOX")
+    p.add_argument(
+        "--uid",
+        required=True,
+        help="single UID or comma-separated UIDs (e.g. 12,15,18)",
+    )
+    p.add_argument("--read", action="store_true", help="set \\Seen")
+    p.add_argument("--unread", action="store_true", help="clear \\Seen")
+    p.add_argument("--flagged", action="store_true", help="set \\Flagged")
+    p.add_argument("--unflagged", action="store_true", help="clear \\Flagged")
+    _add_account_arg(p)
+
+    p = sub.add_parser(
+        "move",
+        help="move one or more UIDs to another folder (MOVE if supported, "
+        "else COPY+STORE+EXPUNGE)",
+    )
+    p.add_argument("--folder", default="INBOX", help="source folder")
+    p.add_argument("--uid", required=True, help="UID or comma-separated UIDs")
+    p.add_argument(
+        "--to-folder",
+        required=True,
+        help="destination folder (e.g. Archive, Deleted, custom)",
+    )
+    _add_account_arg(p)
+
+    p = sub.add_parser(
+        "archive", help="convenience for move --to-folder Archive"
+    )
+    p.add_argument("--folder", default="INBOX", help="source folder")
+    p.add_argument("--uid", required=True, help="UID or comma-separated UIDs")
+    _add_account_arg(p)
+
+    p = sub.add_parser(
+        "delete",
+        help="soft-delete to Deleted folder; pass --hard to expunge in place",
+    )
+    p.add_argument("--folder", default="INBOX", help="source folder")
+    p.add_argument("--uid", required=True, help="UID or comma-separated UIDs")
+    p.add_argument(
+        "--hard",
+        action="store_true",
+        help="permanently expunge instead of moving to Deleted",
+    )
+    _add_account_arg(p)
+
     pa = sub.add_parser("auth", help="account management")
     asub = pa.add_subparsers(dest="auth_cmd", required=True)
     pa_add = asub.add_parser("add", help="register a new account")
@@ -576,6 +768,10 @@ def main():
         "list": cmd_list,
         "get": cmd_get,
         "search": cmd_search,
+        "mark": cmd_mark,
+        "move": cmd_move,
+        "archive": cmd_archive,
+        "delete": cmd_delete,
     }[args.cmd](args)
 
 
