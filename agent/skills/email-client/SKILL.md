@@ -210,10 +210,32 @@ email-client auth add --account selfhosted \
 # {"imap_host": "mail.example.org", "smtp_host": "mail.example.org"}
 ```
 
+## Microsoft 365 with a custom domain
+
+If the user's address is on a custom domain hosted by Microsoft 365 (e.g. `nour@hercompany.com`, with the mailbox actually on Exchange Online), the skill works through the `generic` provider with these env settings:
+
+```bash
+export EMAIL_CLIENT_PROVIDER=generic
+export EMAIL_CLIENT_OAUTH_CLIENT_ID=9e5f94bc-e8a4-4e73-b8be-63364c29d753
+export EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/common
+export EMAIL_CLIENT_HOST=outlook.office365.com
+export EMAIL_CLIENT_SMTP_HOST=smtp.office365.com
+```
+
+Thunderbird's Microsoft client ID is multi-tenant, so pointing the authority at `/common` (or the specific tenant ID) lets it consent against the user's work tenant. Then run `email-client auth add --account work --provider generic --user nour@hercompany.com` and approve the device-flow code at https://www.microsoft.com/link.
+
+Three things can block this, all on the org's IT side, none of them fixable from inside the skill:
+
+1. **Third-party OAuth client IDs disabled.** Some tenants block apps not registered in their own Azure AD. Symptom: device flow returns `AADSTS50020` or "App needs admin consent". Fix: have admin register an internal app in the company tenant with `Mail.ReadWrite` + `SMTP.Send` delegated permissions, then set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to that app's client ID.
+2. **IMAP/SMTP disabled on the mailbox.** Many enterprise tenants disable both protocols and force Graph API only. Symptom: `LOGIN failed` or `AUTHENTICATE` error after a successful OAuth. Fix: either get IMAP enabled (admin: `Set-CASMailbox -ImapEnabled $true`), or switch to the `microsoft` skill which uses Graph instead.
+3. **Conditional Access policies.** Some tenants require interactive browser MFA on every connection or block non-managed devices entirely. Symptom: device flow lands on a "your sign-in was blocked" page. Fix: org admin needs to whitelist the app or relax the policy. No client-side workaround.
+
+If steps 1-3 all check out and it still doesn't authenticate, capture the full error from `email-client auth add --reauth` and surface it; the relevant detail is usually in the `error_description` field of the OAuth response.
+
 ## When NOT to use this skill
 
 - The user wants Gmail with the full Google API surface (labels, threads, attachments, drafts as Google models them). Use the `google` skill, which talks Gmail API directly. Use this skill when you want a uniform IMAP interface across providers, or when the user's Gmail is fine with raw SMTP send and IMAP read.
-- The user has a Microsoft 365 *work* account (a real Azure tenant with Graph). Use the `microsoft` skill (Graph is more capable, calendars/contacts are included).
+- The user has a Microsoft 365 *work* account where the org has disabled IMAP/SMTP, OR wants calendar/contacts/Graph features. Use the `microsoft` skill (Graph is more capable, calendars/contacts are included). For M365 work accounts where IMAP is enabled, this skill works fine via the custom-domain instructions above.
 - The user wants an agent-owned inbox (no personal email). Use `agentmail`.
 
 This skill is the right choice when you want one provider-agnostic IMAP/SMTP path that works for one or many personal email accounts in parallel.
