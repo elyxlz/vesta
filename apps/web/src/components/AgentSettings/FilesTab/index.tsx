@@ -24,11 +24,7 @@ import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
 import { FileEditor } from "./FileEditor";
 import { SimpleView } from "./SimpleView";
-import {
-  collectDreamPaths,
-  friendlyLabel,
-  isSimpleAllowed,
-} from "./paths";
+import { collectDreamPaths, friendlyLabel, isSimpleAllowed } from "./paths";
 import { buildTree } from "./tree";
 
 type SaveStatus =
@@ -83,10 +79,7 @@ function SkeletonRow({ widthPct = 50 }: { widthPct?: number }) {
   return (
     <div className="flex w-full items-center gap-2.5 px-4 py-3">
       <Skeleton className="size-4 shrink-0 rounded-full" />
-      <Skeleton
-        className="h-3 rounded"
-        style={{ width: `${widthPct}%` }}
-      />
+      <Skeleton className="h-3 rounded" style={{ width: `${widthPct}%` }} />
     </div>
   );
 }
@@ -107,10 +100,7 @@ function SimpleSkeleton() {
         </CardHeader>
         <CardContent className="flex-1 min-h-0 !px-0 !py-0">
           {[44, 56, 36, 48].map((width, i) => (
-            <div
-              key={i}
-              className="border-b border-border/60 last:border-b-0"
-            >
+            <div key={i} className="border-b border-border/60 last:border-b-0">
               <SkeletonRow widthPct={width} />
             </div>
           ))}
@@ -252,9 +242,7 @@ export function FilesTab() {
             >
               <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
                 <FolderTree className="size-4 text-muted-foreground" />
-                <CardTitle className="!text-sm !font-medium">
-                  /root
-                </CardTitle>
+                <CardTitle className="!text-sm !font-medium">/root</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
                 <FileTree

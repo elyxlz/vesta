@@ -12,10 +12,7 @@ export function AgentSettings() {
         <h1 className="text-lg font-semibold">agent settings</h1>
       </div>
 
-      <Tabs
-        defaultValue="general"
-        className="w-full max-w-5xl mx-auto pb-6"
-      >
+      <Tabs defaultValue="general" className="w-full max-w-5xl mx-auto pb-6">
         <TabsList className="self-center">
           <TabsTrigger value="general">general</TabsTrigger>
           <TabsTrigger value="files">files</TabsTrigger>

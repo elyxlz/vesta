@@ -381,9 +381,10 @@ export class Transcriber {
         }
         if (data.transcript) {
           this.transcript = data.transcript;
-          const display = this.opts.accumulate && this.committed
-            ? `${this.committed} ${this.transcript}`
-            : this.transcript;
+          const display =
+            this.opts.accumulate && this.committed
+              ? `${this.committed} ${this.transcript}`
+              : this.transcript;
           this.opts.onTranscript(display);
         }
         if (data.event === "EndOfTurn") {
@@ -392,7 +393,9 @@ export class Transcriber {
           if (!text) return;
           this.opts.onTurnEnd(text);
           if (this.opts.accumulate) {
-            this.committed = this.committed ? `${this.committed} ${text}` : text;
+            this.committed = this.committed
+              ? `${this.committed} ${text}`
+              : text;
             this.opts.onTranscript(this.committed);
           } else {
             this.opts.onTranscript("");

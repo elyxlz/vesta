@@ -9,12 +9,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FileTreeEntry } from "@/api/files";
 import { collectDreamPaths, MEMORY_PATH, SKILLS_PREFIX } from "./paths";
 
@@ -156,10 +151,7 @@ function SkillsCard({
   });
 
   useEffect(() => {
-    if (
-      nav.view === "skill" &&
-      !skills.some((s) => s.path === nav.skillPath)
-    ) {
+    if (nav.view === "skill" && !skills.some((s) => s.path === nav.skillPath)) {
       setNav({ view: "root" });
     }
   }, [skills, nav]);
@@ -223,9 +215,7 @@ function SkillsCard({
               selected={
                 selected !== null && selected.startsWith(`${skill.path}/`)
               }
-              onClick={() =>
-                setNav({ view: "skill", skillPath: skill.path })
-              }
+              onClick={() => setNav({ view: "skill", skillPath: skill.path })}
             />
           ))
         )}

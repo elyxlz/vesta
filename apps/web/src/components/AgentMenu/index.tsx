@@ -52,8 +52,7 @@ export function AgentMenu() {
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
     onDelete: () => setDeleteDialogOpen(true),
-    onDebugInfo:
-      appMode === "advanced" ? () => setDebugOpen(true) : undefined,
+    onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };
 
   const trigger = (
