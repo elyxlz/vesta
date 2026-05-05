@@ -200,13 +200,6 @@ impl Client {
         Ok(())
     }
 
-    pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
-        let body = serde_json::json!({"new_name": new_name});
-        let resp = self.post_json(&format!("/agents/{}/rename", name), &body)?;
-        let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
-        Ok(v["name"].as_str().unwrap_or(new_name).to_string())
-    }
-
     pub fn wait_until_alive(&self, name: &str, timeout_secs: u64) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         let mut backoff = std::time::Duration::from_millis(200);
