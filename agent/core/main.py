@@ -100,7 +100,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     greeting_reason = "first_start" if first_start else restart_reason
     setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
-    if not setup_queued:
+    # Only defer the WS bind when the queued prompt is the first_start setup.
+    # Regular restart greetings often poll the WS port themselves, which would
+    # deadlock if WS were gated on the greeting completing.
+    if not (first_start and setup_queued):
         state.first_setup_complete.set()
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
