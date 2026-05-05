@@ -8,16 +8,11 @@ Install it from upstream via the skills registry. This adds it to the sparse-che
 ~/agent/skills/skills-registry/scripts/skills-install restart
 ```
 
-### 2. Drop the legacy `## Personality` block
+### 2. Drop the legacy `## Personality` block, register the voice via personality SETUP
 
-If `~/agent/skills/restart/SKILL.md` contains a `## Personality` heading (predates the `AGENT_SEED_PERSONALITY` refactor), `Edit` the file:
+If `~/agent/skills/restart/SKILL.md` contains a `## Personality` heading (predates the `AGENT_SEED_PERSONALITY` refactor), `Edit` the file to remove the heading and everything beneath it up to (but not including) the next `##` heading.
 
-- Remove the `## Personality` heading and everything beneath it up to (but not including) the next `##` heading.
-- If the body does not already contain a line starting with `Adopt the voice:`, insert this paragraph (with a blank line on either side) immediately above the `## Services` heading:
-
-```
-Adopt the voice: `Read` `~/agent/core/skills/personality/presets/$AGENT_SEED_PERSONALITY.md` and use it. That file is the source of truth for how you sound, not MEMORY.md.
-```
+Then run `~/agent/core/skills/personality/SETUP.md` to insert the voice-loading line and adopt the voice.
 
 ### 3. Copy the legacy prompt into the skill
 

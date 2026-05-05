@@ -5,7 +5,7 @@ description: The agent's voice. One file per option in presets/, edit directly t
 
 # Personality
 
-Voice, not spine. Each file in `presets/` is a complete personality, the source of truth for how the agent sounds. The active one is whichever matches `$AGENT_SEED_PERSONALITY` in `/run/vestad-env`, picked at agent creation. The `restart` skill loads it on every boot.
+Voice, not spine. Each file in `presets/` is a complete personality, the source of truth for how the agent sounds. The active one is whichever matches `$AGENT_SEED_PERSONALITY` in `/run/vestad-env`, picked at agent creation. `SETUP.md` registers the voice-loading line in the `restart` skill so every boot picks it up.
 
 ## Files
 
