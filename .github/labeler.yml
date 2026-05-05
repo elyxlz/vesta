@@ -10,10 +10,6 @@ cli:
 - changed-files:
   - any-glob-to-any-file: ['cli/**']
 
-vestad:
-- changed-files:
-  - any-glob-to-any-file: ['vestad/**']
-
 ui:
 - changed-files:
   - any-glob-to-any-file: ['apps/web/**']
@@ -26,6 +22,10 @@ mobile:
 - changed-files:
   - any-glob-to-any-file: ['apps/mobile/**']
 
+vestad:
+- changed-files:
+  - any-glob-to-any-file: ['vestad/**']
+
 tests:
 - changed-files:
   - any-glob-to-any-file: ['**/tests/**', '**/__tests__/**']
@@ -33,10 +33,6 @@ tests:
 ci:
 - changed-files:
   - any-glob-to-any-file: ['.github/**']
-
-documentation:
-- changed-files:
-  - any-glob-to-any-file: ['**/*.md']
 
 release:
 - changed-files:
