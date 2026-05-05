@@ -26,6 +26,15 @@ forward starts a new thread (no ``In-Reply-To`` / ``References``) and
 CC and BCC: pass ``--cc`` and ``--bcc`` (each repeatable) to add
 recipients. On replies the original CC list is preserved unless the
 user passes ``--cc`` explicitly, in which case the explicit list wins.
+
+HTML body: pass ``--body-html <html>`` instead of (or alongside)
+``--body``. With both, the message is multipart/alternative carrying
+both parts. With only HTML, a stripped plain-text fallback is
+synthesized so non-HTML clients still see something.
+
+Sent folder sync: by default the message is IMAP-APPENDed to the
+provider's Sent folder after a successful SMTP send so it shows up in
+the user's mail UI. Skip with ``--no-sent-sync``.
 """
 from __future__ import annotations
 
@@ -35,6 +44,7 @@ import os
 import re as _re
 import smtplib
 import sys
+import time
 from email import message_from_bytes
 from email.message import EmailMessage
 
@@ -103,6 +113,15 @@ def _fwd_subject(subject: str) -> str:
     return f"Fwd: {s}" if s else "Fwd:"
 
 
+def _quote_body(body: str, from_header: str, date_header: str) -> str:
+    """Return the quoted reply chunk: separator + ``> ``-prefixed lines."""
+    sender = (from_header or "").strip() or "the sender"
+    when = (date_header or "").strip() or "an earlier date"
+    lines = (body or "").splitlines() or [""]
+    quoted = "\n".join(f"> {ln}" for ln in lines)
+    return f"\n\nOn {when}, {sender} wrote:\n{quoted}\n"
+
+
 def _forward_block(orig: dict) -> str:
     """Return the inlined original message block for a forward."""
     headers = (
@@ -124,13 +143,19 @@ def _forward_block(orig: dict) -> str:
     )
 
 
-def _quote_body(body: str, from_header: str, date_header: str) -> str:
-    """Return the quoted reply chunk: separator + ``> ``-prefixed lines."""
-    sender = (from_header or "").strip() or "the sender"
-    when = (date_header or "").strip() or "an earlier date"
-    lines = (body or "").splitlines() or [""]
-    quoted = "\n".join(f"> {ln}" for ln in lines)
-    return f"\n\nOn {when}, {sender} wrote:\n{quoted}\n"
+def _strip_html(html: str) -> str:
+    """Crude HTML to plain-text fallback for the alt part of an HTML-only send."""
+    s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.I)
+    s = _re.sub(r"<[^>]+>", "", s)
+    s = (
+        s.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+    return _re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
 def fetch_original(
@@ -138,15 +163,16 @@ def fetch_original(
 ) -> dict:
     """Fetch the original message by UID from the given folder.
 
-    Returns a dict with ``message_id``, ``references``, ``from``, ``subject``,
-    ``date``, ``body``. Raises SystemExit on missing UID.
+    Returns a dict with ``message_id``, ``references``, ``from``, ``to``,
+    ``cc``, ``subject``, ``date``, ``body``. Raises SystemExit on
+    missing UID.
     """
     M = connect(account)
     try:
         M.select(f'"{folder}"', readonly=True)
         typ, data = M.uid("FETCH", uid, "(RFC822)")
         if not data or not data[0]:
-            sys.exit(f"reply-to-uid {uid!r} not found in folder {folder!r}")
+            sys.exit(f"uid {uid!r} not found in folder {folder!r}")
         raw = data[0][1]
     finally:
         try:
@@ -166,6 +192,82 @@ def fetch_original(
     }
 
 
+def _append_to_sent(
+    account: str | None, sent_folder: str, raw_bytes: bytes
+) -> tuple[bool, str]:
+    """IMAP-APPEND a sent message to the configured Sent folder.
+
+    Returns (ok, info). Never raises; SMTP send already succeeded by
+    the time we get here, so a failure to copy is logged and swallowed.
+    """
+    try:
+        M = connect(account)
+    except Exception as e:
+        return False, f"connect failed: {e}"
+    try:
+        try:
+            typ, _ = M.append(
+                f'"{sent_folder}"',
+                r"(\Seen)",
+                imaplib_time(time.time()),
+                raw_bytes,
+            )
+            if typ != "OK":
+                return False, f"APPEND returned {typ}"
+            return True, sent_folder
+        except Exception as e:
+            return False, f"APPEND failed: {e}"
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def imaplib_time(t: float) -> str:
+    """Return an IMAP INTERNALDATE-formatted timestamp for ``time.time()``."""
+    import imaplib
+
+    return imaplib.Time2Internaldate(t)
+
+
+def _build_message(
+    *,
+    user: str,
+    display: str,
+    to: str,
+    subject: str,
+    body: str,
+    body_html: str | None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    in_reply_to: str = "",
+    references: str = "",
+) -> EmailMessage:
+    """Assemble the outbound EmailMessage from parts."""
+    msg = EmailMessage()
+    msg["From"] = f"{display} <{user}>"
+    msg["To"] = to
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if bcc:
+        msg["Bcc"] = ", ".join(bcc)
+    msg["Subject"] = subject
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
+    if body and body_html:
+        msg.set_content(body)
+        msg.add_alternative(body_html, subtype="html")
+    elif body_html:
+        msg.set_content(_strip_html(body_html) or " ")
+        msg.add_alternative(body_html, subtype="html")
+    else:
+        msg.set_content(body or "")
+    return msg
+
+
 def send(
     to: str | None,
     subject: str | None,
@@ -175,11 +277,13 @@ def send(
     *,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    body_html: str | None = None,
     reply_to_uid: str | None = None,
     reply_folder: str = "INBOX",
     forward_uid: str | None = None,
     forward_folder: str = "INBOX",
     quote: bool = True,
+    sent_sync: bool = True,
     dry_run: bool = False,
 ) -> None:
     if reply_to_uid and forward_uid:
@@ -239,25 +343,29 @@ def send(
         sys.exit("--to is required when not replying")
     if subject is None:
         sys.exit("--subject is required when not replying")
+    if not body and not body_html:
+        sys.exit("at least one of --body / --body-html must produce content")
 
-    msg = EmailMessage()
-    msg["From"] = f"{display} <{user}>"
-    msg["To"] = to
-    if cc_list:
-        msg["Cc"] = ", ".join(cc_list)
-    if bcc_list:
-        msg["Bcc"] = ", ".join(bcc_list)
-    msg["Subject"] = subject
-    if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-    if references:
-        msg["References"] = references
-    msg.set_content(body)
+    msg = _build_message(
+        user=user,
+        display=display,
+        to=to,
+        subject=subject,
+        body=body,
+        body_html=body_html,
+        cc=cc_list,
+        bcc=bcc_list,
+        in_reply_to=in_reply_to,
+        references=references,
+    )
 
     if dry_run:
         print("--- DRY RUN: message that would be sent ---")
         print(msg.as_string())
         print("--- end dry run ---")
+        if sent_sync:
+            sent_folder = profile.get("sent_folder") or "Sent"
+            print(f"--- DRY RUN: would IMAP APPEND to {sent_folder!r} ---")
         return
 
     s = smtplib.SMTP(smtp_host, smtp_port)
@@ -289,6 +397,28 @@ def send(
     s.quit()
     print("OK")
 
+    if sent_sync:
+        sent_folder = profile.get("sent_folder") or "Sent"
+        # Strip Bcc before APPEND (those addresses must not appear in
+        # the stored copy that the user can later read in their mail UI).
+        copy = _build_message(
+            user=user,
+            display=display,
+            to=to,
+            subject=subject,
+            body=body,
+            body_html=body_html,
+            cc=cc_list,
+            bcc=None,
+            in_reply_to=in_reply_to,
+            references=references,
+        )
+        ok, info = _append_to_sent(acc, sent_folder, copy.as_bytes())
+        if ok:
+            print(f"appended to {info}")
+        else:
+            print(f"warning: sent-sync skipped ({info})", file=sys.stderr)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -316,7 +446,16 @@ def main():
         help="subject (required unless --reply-to-uid is set, in which "
         "case the original subject prefixed with Re: is the default)",
     )
-    ap.add_argument("--body", required=True)
+    ap.add_argument(
+        "--body",
+        default="",
+        help="plain-text body (required unless --body-html is given)",
+    )
+    ap.add_argument(
+        "--body-html",
+        default=None,
+        help="HTML body; combine with --body for multipart/alternative",
+    )
     ap.add_argument("--from-name", default=None)
     ap.add_argument(
         "--account",
@@ -351,6 +490,11 @@ def main():
         help="suppress the quoted original body when replying or forwarding",
     )
     ap.add_argument(
+        "--no-sent-sync",
+        action="store_true",
+        help="skip IMAP APPEND of the sent message into the Sent folder",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="print the would-send message and exit without contacting SMTP",
@@ -364,11 +508,13 @@ def main():
         account=args.account,
         cc=args.cc,
         bcc=args.bcc,
+        body_html=args.body_html,
         reply_to_uid=args.reply_to_uid,
         reply_folder=args.reply_folder,
         forward_uid=args.forward_uid,
         forward_folder=args.forward_folder,
         quote=not args.no_quote,
+        sent_sync=not args.no_sent_sync,
         dry_run=args.dry_run,
     )
 

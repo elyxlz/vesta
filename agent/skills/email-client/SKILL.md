@@ -53,13 +53,35 @@ email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 
 Omit `--account` to use the default account from `accounts.json`. `list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body.
 
+## Mailbox edits
+
+```bash
+email-client mark --uid 12345 --read
+email-client mark --uid 12345 --unread
+email-client mark --uid 12,15,18 --flagged
+email-client mark --uid 12 --unflagged --account work
+email-client move --uid 12345 --to-folder Archive
+email-client archive --uid 12345
+email-client delete --uid 12345                # soft delete to Deleted
+email-client delete --uid 12345 --hard         # permanently expunge
+```
+
+`mark` toggles `\Seen` and `\Flagged` IMAP flags. `move` uses the IMAP `MOVE` extension when the server advertises it, falling back to `COPY` + `STORE +Deleted` + `EXPUNGE`. `archive` is a thin wrapper for `move --to-folder Archive`; `delete` defaults to soft-delete (move to `Deleted`, recoverable from trash) with `--hard` for an in-place expunge. All accept comma-separated UIDs and honor `--account` and `--folder` (default `INBOX`).
+
 ## Send
 
 ```bash
 email-client-send --account personal --to "user@example.com" --subject "Hi" --body "first line\\nsecond line"
+email-client-send --account personal --to alice@example.com --cc bob@example.com --cc carol@example.com --subject "Hi" --body "team note"
+email-client-send --account personal --to alice@example.com --bcc audit@example.com --subject "Quiet ping" --body "fyi"
+email-client-send --account personal --to alice@example.com --subject "Hi" --body "plain fallback" --body-html "<p>rich <b>HTML</b></p>"
 ```
 
 Sends as the configured user for the chosen account. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
+
+`--cc` and `--bcc` accept multiple addresses (repeat the flag). `--body-html` sends an HTML body; combine with `--body` for a multipart/alternative message that includes both; pass `--body-html` alone and a stripped plain-text fallback is synthesized for non-HTML clients.
+
+After a successful SMTP send the message is IMAP-APPENDed to the provider's Sent folder so it shows up in the user's mail UI. Skip with `--no-sent-sync`. The folder name comes from the provider profile (`sent_folder`): Microsoft `Sent`, Gmail `[Gmail]/Sent Mail`, Yahoo `Sent`, iCloud `Sent Messages`, Fastmail `Sent`, generic `Sent`.
 
 ### Reply threading
 
@@ -82,7 +104,21 @@ Override any of these by passing the corresponding flag explicitly. Suppress the
 email-client-send --account personal --reply-to-uid 12345 --body "ack" --no-quote
 email-client-send --account work --reply-folder Archive --reply-to-uid 999 --body "looking now" --dry-run
 email-client-send --account personal --reply-to-uid 12345 --to "alice@example.com" --body "looping in alice"
+email-client-send --account personal --reply-to-uid 12345 --cc dave@example.com --body "adding dave"
 ```
+
+When replying, the original `Cc` list is preserved unless you pass `--cc` explicitly (in which case your list wins).
+
+### Forward
+
+To forward an existing message, pass `--forward-uid <uid>` (and `--forward-folder <folder>` if not in `INBOX`). Forwards always need a fresh recipient, so `--to` is required.
+
+```bash
+email-client-send --account personal --forward-uid 12345 --to alice@example.com --body "fyi, see below"
+email-client-send --account work --forward-uid 999 --forward-folder Archive --to bob@example.com --body "" --no-quote
+```
+
+Forwards default the subject to `Fwd: <original-subject>` (no double prefix), inline the original headers and body below the user's `--body`, and start a new thread (no `In-Reply-To` / `References`). `--no-quote` suppresses the inlined original.
 
 ## Account management
 

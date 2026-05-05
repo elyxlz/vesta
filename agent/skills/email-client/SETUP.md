@@ -99,6 +99,18 @@ To verify reply threading without actually firing a message, use `--dry-run` aga
 
 ```bash
 email-client-send --account personal --reply-to-uid <uid-of-self-send> --body "test reply" --dry-run
+email-client-send --account personal --reply-to-uid <uid> --cc someone@example.com --body "with cc" --dry-run
+email-client-send --account personal --forward-uid <uid> --to someone@example.com --body "fwd" --dry-run
+```
+
+To smoke test mailbox edits:
+
+```bash
+email-client mark --uid <uid> --read
+email-client mark --uid <uid> --flagged
+email-client archive --uid <uid>
+email-client delete --uid <uid>          # soft, recoverable from Deleted
+email-client delete --uid <uid> --hard   # permanent
 ```
 
 If both work, you're good. Repeat for every additional account.
