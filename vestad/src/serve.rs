@@ -23,7 +23,7 @@ pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "rebuild",
-    "auth", "logs", "tree", "backups", "settings", "services",
+    "auth", "logs", "tree", "file", "backups", "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -727,6 +727,13 @@ async fn logs_handler(
 
 // --- File tree ---
 
+#[derive(Serialize)]
+struct TreeEntry {
+    path: String,
+    is_dir: bool,
+    mode: u32,
+}
+
 async fn tree_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -743,6 +750,7 @@ async fn tree_handler(
             "-not".to_string(), "-path".to_string(), "*/__pycache__/*".to_string(),
             "-not".to_string(), "-path".to_string(), "*/.cache/*".to_string(),
             "-not".to_string(), "-path".to_string(), "*/node_modules/*".to_string(),
+            "-printf".to_string(), "%y\t%m\t%p\n".to_string(),
         ]),
         attach_stdout: Some(true),
         attach_stderr: Some(false),
@@ -752,22 +760,287 @@ async fn tree_handler(
     let output = state.docker.start_exec(&exec.id, None).await
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
-    let mut lines = Vec::new();
+    let mut buffer = String::new();
     if let bollard::exec::StartExecResults::Attached { mut output, .. } = output {
         use futures_util::StreamExt;
         while let Some(Ok(chunk)) = output.next().await {
-            let text = chunk.to_string();
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    lines.push(trimmed.to_string());
-                }
+            buffer.push_str(&chunk.to_string());
+        }
+    }
+
+    let mut entries: Vec<TreeEntry> = Vec::new();
+    for line in buffer.lines() {
+        let line = line.trim_end();
+        if line.is_empty() { continue; }
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.len() != 3 { continue; }
+        let is_dir = parts[0] == "d";
+        let mode = u32::from_str_radix(parts[1], 8).unwrap_or(0o644);
+        entries.push(TreeEntry { path: parts[2].to_string(), is_dir, mode });
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+    Ok(Json(serde_json::json!({ "tree": paths, "entries": entries })))
+}
+
+// --- File read / write ---
+
+const FILE_SIZE_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
+
+const SENSITIVE_PATHS: &[&str] = &[
+    "/root/agent/data/events.db",
+    "/root/agent/data/session_id",
+    "/root/.claude/.credentials.json",
+    "/run/vestad-env",
+];
+
+fn validate_file_path(p: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if !p.starts_with("/root/")
+        || p.contains("/../")
+        || p.contains('\0')
+        || p.ends_with("/..")
+        || p == "/root"
+    {
+        return Err(err_response(StatusCode::BAD_REQUEST, "invalid path"));
+    }
+    Ok(())
+}
+
+fn is_readonly_path(p: &str) -> bool {
+    for &prefix in docker::MOUNT_DESTS {
+        if p == prefix || p.starts_with(&format!("{prefix}/")) {
+            return true;
+        }
+    }
+    SENSITIVE_PATHS.contains(&p)
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+struct ExecResult {
+    stdout: Vec<u8>,
+    stderr: String,
+    exit_code: i64,
+}
+
+async fn docker_exec_capture(
+    docker: &bollard::Docker,
+    cname: &str,
+    cmd: Vec<String>,
+    stdin: Option<Vec<u8>>,
+) -> Result<ExecResult, String> {
+    let attach_stdin = stdin.is_some();
+    let exec = docker.create_exec(cname, bollard::exec::CreateExecOptions {
+        cmd: Some(cmd),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        attach_stdin: Some(attach_stdin),
+        ..Default::default()
+    }).await.map_err(|e| e.to_string())?;
+
+    let result = docker.start_exec(&exec.id, None).await.map_err(|e| e.to_string())?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr = String::new();
+
+    if let bollard::exec::StartExecResults::Attached { mut output, mut input } = result {
+        if let Some(data) = stdin {
+            use tokio::io::AsyncWriteExt;
+            input.write_all(&data).await.map_err(|e| e.to_string())?;
+            input.shutdown().await.map_err(|e| e.to_string())?;
+        }
+        drop(input);
+
+        use futures_util::StreamExt;
+        while let Some(chunk) = output.next().await {
+            match chunk.map_err(|e| e.to_string())? {
+                bollard::container::LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
+                bollard::container::LogOutput::StdErr { message } => stderr.push_str(&String::from_utf8_lossy(&message)),
+                _ => {}
             }
         }
     }
 
-    lines.sort();
-    Ok(Json(serde_json::json!({ "tree": lines })))
+    let inspect = docker.inspect_exec(&exec.id).await.map_err(|e| e.to_string())?;
+    let exit_code = inspect.exit_code.unwrap_or(-1);
+    Ok(ExecResult { stdout, stderr, exit_code })
+}
+
+#[derive(Deserialize)]
+struct ReadFileQuery { path: String }
+
+async fn read_file_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Query(q): Query<ReadFileQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    validate_file_path(&q.path)?;
+
+    if SENSITIVE_PATHS.contains(&q.path.as_str()) {
+        return Err(err_response(StatusCode::FORBIDDEN, "file is not readable"));
+    }
+
+    let cname = docker::container_name(&name);
+    docker::ensure_running(&state.docker, &cname).await
+        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
+
+    let stat_cmd = format!("stat -c '%a %s %F' {}", shell_escape(&q.path));
+    let stat = docker_exec_capture(
+        &state.docker, &cname,
+        vec!["sh".into(), "-c".into(), stat_cmd], None,
+    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    if stat.exit_code != 0 {
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("stat failed: {}", stat.stderr.trim())));
+    }
+
+    let stat_line = String::from_utf8_lossy(&stat.stdout);
+    let stat_line = stat_line.trim();
+    let mut iter = stat_line.splitn(3, ' ');
+    let mode_str = iter.next().unwrap_or("0");
+    let size_str = iter.next().unwrap_or("0");
+    let kind = iter.next().unwrap_or("");
+    let mode = u32::from_str_radix(mode_str, 8).unwrap_or(0);
+    let size: u64 = size_str.parse().unwrap_or(0);
+    let is_dir = kind.contains("directory");
+
+    if is_dir {
+        return Err(err_response(StatusCode::BAD_REQUEST, "path is a directory"));
+    }
+    if size > FILE_SIZE_LIMIT {
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({
+            "error": "file too large",
+            "size": size,
+            "limit": FILE_SIZE_LIMIT,
+        }))));
+    }
+
+    let cat_cmd = format!("cat {}", shell_escape(&q.path));
+    let cat = docker_exec_capture(
+        &state.docker, &cname,
+        vec!["sh".into(), "-c".into(), cat_cmd], None,
+    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    if cat.exit_code != 0 {
+        return Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("read failed: {}", cat.stderr.trim())));
+    }
+
+    let readonly = is_readonly_path(&q.path) || (mode & 0o200) == 0;
+    let (content, encoding) = match std::str::from_utf8(&cat.stdout) {
+        Ok(s) => (s.to_string(), "utf-8"),
+        Err(_) => {
+            use base64::Engine;
+            (base64::engine::general_purpose::STANDARD.encode(&cat.stdout), "base64")
+        }
+    };
+
+    Ok(Json(serde_json::json!({
+        "path": q.path,
+        "content": content,
+        "encoding": encoding,
+        "readonly": readonly,
+        "mode": mode,
+        "size": size,
+        "is_dir": false,
+    })))
+}
+
+#[derive(Deserialize)]
+struct WriteFileBody { path: String, content: String }
+
+async fn write_file_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<WriteFileBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    validate_file_path(&body.path)?;
+
+    if is_readonly_path(&body.path) {
+        return Err(err_response(StatusCode::FORBIDDEN, "file is read-only"));
+    }
+
+    let cname = docker::container_name(&name);
+    docker::ensure_running(&state.docker, &cname).await
+        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
+
+    let write_cmd = format!(
+        "tmp=$(mktemp /tmp/.vesta-edit.XXXXXX) && cat > \"$tmp\" && mv -f \"$tmp\" {}",
+        shell_escape(&body.path)
+    );
+
+    let result = docker_exec_capture(
+        &state.docker, &cname,
+        vec!["sh".into(), "-c".into(), write_cmd],
+        Some(body.content.into_bytes()),
+    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    if result.exit_code != 0 {
+        let err = result.stderr.trim();
+        if err.contains("Read-only file system") {
+            return Err(err_response(StatusCode::FORBIDDEN, "file is on a read-only filesystem"));
+        }
+        return Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("write failed: {err}")));
+    }
+
+    Ok(ok_json())
+}
+
+#[cfg(test)]
+mod file_path_tests {
+    use super::*;
+
+    #[test]
+    fn validate_path_accepts_normal() {
+        assert!(validate_file_path("/root/agent/data/foo").is_ok());
+        assert!(validate_file_path("/root/agent/prompts/x.md").is_ok());
+    }
+
+    #[test]
+    fn validate_path_rejects_outside_root() {
+        assert!(validate_file_path("/etc/passwd").is_err());
+        assert!(validate_file_path("/run/vestad-env").is_err());
+        assert!(validate_file_path("/root").is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_traversal() {
+        assert!(validate_file_path("/root/../etc/passwd").is_err());
+        assert!(validate_file_path("/root/agent/..").is_err());
+        assert!(validate_file_path("/root/agent/../../etc").is_err());
+    }
+
+    #[test]
+    fn validate_path_rejects_nul() {
+        assert!(validate_file_path("/root/foo\0bar").is_err());
+    }
+
+    #[test]
+    fn readonly_detects_bind_mounts() {
+        assert!(is_readonly_path("/root/agent/core/main.py"));
+        assert!(is_readonly_path("/root/agent/core"));
+        assert!(is_readonly_path("/root/agent/pyproject.toml"));
+        assert!(is_readonly_path("/root/agent/uv.lock"));
+        assert!(is_readonly_path("/run/vestad-env"));
+    }
+
+    #[test]
+    fn readonly_detects_sensitive_paths() {
+        assert!(is_readonly_path("/root/agent/data/events.db"));
+        assert!(is_readonly_path("/root/agent/data/session_id"));
+        assert!(is_readonly_path("/root/.claude/.credentials.json"));
+    }
+
+    #[test]
+    fn readonly_allows_normal_paths() {
+        assert!(!is_readonly_path("/root/agent/data/foo.json"));
+        assert!(!is_readonly_path("/root/agent/prompts/x.md"));
+        assert!(!is_readonly_path("/root/.claude/settings.json"));
+    }
 }
 
 // --- Unified settings ---
@@ -1406,6 +1679,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
+        .route("/agents/{name}/file", get(read_file_handler))
+        .route("/agents/{name}/file", axum::routing::put(write_file_handler))
         .route("/backups", get(list_all_backups_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))

@@ -10,6 +10,8 @@ import {
 import { useGateway } from "@/providers/GatewayProvider";
 import { wsUrl } from "@/lib/connection";
 import { isTauri } from "@/lib/env";
+import { setAppBadge } from "@/lib/app-badge";
+import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { router } from "@/router";
 import type { VestaEvent } from "@/lib/types";
@@ -87,6 +89,21 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const permissionRef = useRef<boolean>(false);
   const tapsRef = useRef<Map<string, TapEntry>>(new Map());
   const chattingAgentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden) {
+        setAppBadge(false);
+        setFaviconUnseen(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      setAppBadge(false);
+      setFaviconUnseen(false);
+    };
+  }, []);
 
   const aliveKey = useMemo(
     () =>
@@ -185,6 +202,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             return;
           }
           if (event.type !== "chat") return;
+          if (document.hidden) {
+            setAppBadge(true);
+            setFaviconUnseen(true);
+          }
           // Defer to ChatProvider for the agent being actively chatted with —
           // it fires after the typing delay so notification lines up with UI.
           if (chattingAgentRef.current === name) return;

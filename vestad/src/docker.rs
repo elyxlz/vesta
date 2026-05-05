@@ -74,7 +74,7 @@ const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
-const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
 const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",

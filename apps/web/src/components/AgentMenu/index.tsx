@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MoreVertical, SlidersHorizontal } from "lucide-react";
 import { SettingsDialog } from "@/components/Settings";
@@ -8,14 +8,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
-import { apiJson } from "@/api/client";
+import { useAppMode } from "@/stores/use-app-mode";
 import type { MenuState } from "./types";
 import { MobileMenu } from "./MobileMenu";
 import { DesktopMenu } from "./DesktopMenu";
@@ -27,27 +26,12 @@ export function AgentMenu() {
   const { setDeleteDialogOpen } = useModals();
   const { showToolCalls, setShowToolCalls } = useChatContext();
   const gateway = useGateway();
+  const appMode = useAppMode((s) => s.mode);
 
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
-  const [treeLines, setTreeLines] = useState<string[] | null>(null);
-  const [treeLoading, setTreeLoading] = useState(false);
   const isMobile = useIsMobile();
-
-  const fetchTree = useCallback(async () => {
-    setTreeLoading(true);
-    try {
-      const data = await apiJson<{ tree: string[] }>(
-        `/agents/${encodeURIComponent(name)}/tree`,
-      );
-      setTreeLines(data.tree);
-    } catch {
-      setTreeLines(null);
-    } finally {
-      setTreeLoading(false);
-    }
-  }, [name]);
 
   const isRunning =
     agent?.status !== "stopped" &&
@@ -68,7 +52,7 @@ export function AgentMenu() {
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
     onDelete: () => setDeleteDialogOpen(true),
-    onDebugInfo: () => setDebugOpen(true),
+    onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };
 
   const trigger = (
@@ -141,40 +125,12 @@ export function AgentMenu() {
           <DialogHeader>
             <DialogTitle>debug info</DialogTitle>
           </DialogHeader>
-          <Tabs defaultValue="socket">
-            <TabsList>
-              <TabsTrigger value="socket">control socket</TabsTrigger>
-              <TabsTrigger
-                value="tree"
-                onClick={() => {
-                  if (!treeLines && !treeLoading) fetchTree();
-                }}
-              >
-                file tree
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="socket">
-              <p className="text-xs text-muted-foreground mb-2">
-                last updated: {lastUpdated}
-              </p>
-              <pre className="text-xs whitespace-pre-wrap break-all">
-                {debugJson}
-              </pre>
-            </TabsContent>
-            <TabsContent value="tree">
-              {treeLoading ? (
-                <p className="text-xs text-muted-foreground">loading...</p>
-              ) : treeLines ? (
-                <pre className="text-xs whitespace-pre-wrap break-all">
-                  {treeLines.join("\n")}
-                </pre>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  agent must be running to view file tree
-                </p>
-              )}
-            </TabsContent>
-          </Tabs>
+          <p className="text-xs text-muted-foreground mb-2">
+            last updated: {lastUpdated}
+          </p>
+          <pre className="text-xs whitespace-pre-wrap break-all">
+            {debugJson}
+          </pre>
         </DialogContent>
       </Dialog>
     </>

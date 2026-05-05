@@ -59,11 +59,12 @@ fn main() {
     }
 
     if !npm_root.join("node_modules").exists() {
-        run_npm(&npm_root, &["install"]);
+        run_npm(&npm_root, &["install"], &[]);
     }
     run_npm(
         &npm_root,
         &["--workspace", "@vesta/web", "run", "build"],
+        &[("VITE_VESTAD_HOSTED", "true")],
     );
 
     let dist_index = web_dir.join("dist").join("index.html");
@@ -72,8 +73,13 @@ fn main() {
     }
 }
 
-fn run_npm(cwd: &Path, args: &[&str]) {
-    match Command::new("npm").args(args).current_dir(cwd).status() {
+fn run_npm(cwd: &Path, args: &[&str], env: &[(&str, &str)]) {
+    let mut cmd = Command::new("npm");
+    cmd.args(args).current_dir(cwd);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    match cmd.status() {
         Ok(s) if s.success() => (),
         Ok(s) => panic!("`npm {}` exited with status {s}", args.join(" ")),
         Err(e) => panic!(
