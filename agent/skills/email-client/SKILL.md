@@ -61,6 +61,29 @@ email-client-send --account personal --to "user@example.com" --subject "Hi" --bo
 
 Sends as the configured user for the chosen account. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
 
+### Reply threading
+
+To send a proper threaded reply to an existing message, pass `--reply-to-uid <uid>` (and `--reply-folder <folder>` if the original is not in `INBOX`):
+
+```bash
+email-client-send --account personal --reply-to-uid 12345 --body "thanks, will do"
+```
+
+When `--reply-to-uid` is set, the skill fetches the original message via IMAP from the same account and:
+
+- threads the reply via `In-Reply-To` and `References` headers (preserving the existing chain)
+- defaults the subject to `Re: <original subject>` (no double prefix if it already starts with `Re:` / `RE:` / `Re :`)
+- defaults `--to` to the original sender's address if you omit it
+- appends a quoted version of the original body below an `On <date>, <from> wrote:` separator
+
+Override any of these by passing the corresponding flag explicitly. Suppress the quoted body with `--no-quote`. Use `--dry-run` to print the would-send message without actually contacting SMTP, handy for verifying the headers before firing.
+
+```bash
+email-client-send --account personal --reply-to-uid 12345 --body "ack" --no-quote
+email-client-send --account work --reply-folder Archive --reply-to-uid 999 --body "looking now" --dry-run
+email-client-send --account personal --reply-to-uid 12345 --to "alice@example.com" --body "looping in alice"
+```
+
 ## Account management
 
 ```bash

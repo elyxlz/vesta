@@ -95,6 +95,12 @@ email-client list --account personal --folder INBOX --limit 3
 email-client-send --account personal --to "<user-email>" --subject "email-client test" --body "self-send to verify smtp"
 ```
 
+To verify reply threading without actually firing a message, use `--dry-run` against a real UID from the smoke-test send above:
+
+```bash
+email-client-send --account personal --reply-to-uid <uid-of-self-send> --body "test reply" --dry-run
+```
+
 If both work, you're good. Repeat for every additional account.
 
 ## 4. Start the poll daemon
