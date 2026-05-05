@@ -15,6 +15,14 @@ original sender as default recipient, and a quoted version of the
 original body appended below the user's text. Suppress the quote with
 ``--no-quote``.
 
+Forward: pass ``--forward-uid <uid>`` (and optionally
+``--forward-folder <folder>``, default ``INBOX``) to fetch an existing
+message and build a forward of it. The outbound subject is
+``Fwd: <original-subject>`` (no double prefix); body is the user's
+``--body`` plus the original headers and body inlined as a quote. A
+forward starts a new thread (no ``In-Reply-To`` / ``References``) and
+``--to`` is required.
+
 CC and BCC: pass ``--cc`` and ``--bcc`` (each repeatable) to add
 recipients. On replies the original CC list is preserved unless the
 user passes ``--cc`` explicitly, in which case the explicit list wins.
@@ -87,6 +95,35 @@ def _re_subject(subject: str) -> str:
     return f"Re: {s}" if s else "Re:"
 
 
+def _fwd_subject(subject: str) -> str:
+    """Prefix ``Fwd:`` to a subject without doubling up an existing prefix."""
+    s = (subject or "").strip()
+    if _re.match(r"^(fwd|FWD|Fwd|fw|FW|Fw)\s*:", s):
+        return s or "Fwd:"
+    return f"Fwd: {s}" if s else "Fwd:"
+
+
+def _forward_block(orig: dict) -> str:
+    """Return the inlined original message block for a forward."""
+    headers = (
+        f"From: {orig.get('from', '')}\n"
+        f"Date: {orig.get('date', '')}\n"
+        f"Subject: {orig.get('subject', '')}\n"
+        f"To: {orig.get('to', '')}\n"
+    )
+    cc = orig.get("cc") or ""
+    if cc:
+        headers += f"Cc: {cc}\n"
+    body = orig.get("body", "") or ""
+    return (
+        "\n\n---------- Forwarded message ----------\n"
+        + headers
+        + "\n"
+        + body
+        + "\n"
+    )
+
+
 def _quote_body(body: str, from_header: str, date_header: str) -> str:
     """Return the quoted reply chunk: separator + ``> ``-prefixed lines."""
     sender = (from_header or "").strip() or "the sender"
@@ -140,9 +177,13 @@ def send(
     bcc: list[str] | None = None,
     reply_to_uid: str | None = None,
     reply_folder: str = "INBOX",
+    forward_uid: str | None = None,
+    forward_folder: str = "INBOX",
     quote: bool = True,
     dry_run: bool = False,
 ) -> None:
+    if reply_to_uid and forward_uid:
+        sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
     acc = resolve_account(account)
     user = account_user(acc)
     name, profile = account_profile(acc)
@@ -184,6 +225,15 @@ def send(
             cc_list = [c.strip() for c in orig["cc"].split(",") if c.strip()]
         if quote:
             body = (body or "") + _quote_body(orig["body"], orig["from"], orig["date"])
+
+    if forward_uid:
+        orig = fetch_original(acc, forward_folder, forward_uid)
+        if subject is None:
+            subject = _fwd_subject(orig["subject"])
+        if to is None:
+            sys.exit("--to is required when forwarding")
+        if quote:
+            body = (body or "") + _forward_block(orig)
 
     if to is None:
         sys.exit("--to is required when not replying")
@@ -285,9 +335,20 @@ def main():
         help="folder to fetch the original message from (default INBOX)",
     )
     ap.add_argument(
+        "--forward-uid",
+        default=None,
+        help="UID of an existing message to forward "
+        "(fetched via IMAP from --forward-folder); requires --to",
+    )
+    ap.add_argument(
+        "--forward-folder",
+        default="INBOX",
+        help="folder to fetch the forwarded original from (default INBOX)",
+    )
+    ap.add_argument(
         "--no-quote",
         action="store_true",
-        help="suppress appending the quoted original body when replying",
+        help="suppress the quoted original body when replying or forwarding",
     )
     ap.add_argument(
         "--dry-run",
@@ -305,6 +366,8 @@ def main():
         bcc=args.bcc,
         reply_to_uid=args.reply_to_uid,
         reply_folder=args.reply_folder,
+        forward_uid=args.forward_uid,
+        forward_folder=args.forward_folder,
         quote=not args.no_quote,
         dry_run=args.dry_run,
     )
