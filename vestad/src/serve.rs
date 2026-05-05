@@ -544,6 +544,95 @@ async fn rebuild_agent_handler(
     Ok(ok_json())
 }
 
+#[derive(Deserialize)]
+struct RenameBody {
+    new_name: String,
+}
+
+async fn rename_agent_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<RenameBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let new_name = docker::normalize_name(&body.new_name);
+    if new_name.is_empty() {
+        return Err(err_response(StatusCode::BAD_REQUEST, "invalid new agent name"));
+    }
+    if new_name == name {
+        return Err(err_response(StatusCode::BAD_REQUEST, "new name must differ from old name"));
+    }
+    tracing::info!(old = %name, new = %new_name, "renaming agent");
+
+    // Lock both names in lex order to avoid deadlock between concurrent renames.
+    let (first, second) = if name < new_name { (&name, &new_name) } else { (&new_name, &name) };
+    let lock_first = state.agent_lock(first).await;
+    let lock_second = state.agent_lock(second).await;
+    let _g1 = lock_first.write().await;
+    let _g2 = lock_second.write().await;
+
+    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config)
+        .await
+        .map_err(map_docker_err)?;
+
+    {
+        let mut settings = state.settings.write().await;
+        if let Some(v) = settings.agents.remove(&name) {
+            settings.agents.insert(new_name.clone(), v);
+        }
+        if let Some(v) = settings.services.remove(&name) {
+            settings.services.insert(new_name.clone(), v);
+        }
+        if let Some(v) = settings.backup.agents.remove(&name) {
+            settings.backup.agents.insert(new_name.clone(), v);
+        }
+        save_settings(&settings);
+    }
+
+    if let Err(e) = drop_rename_notification(&state.docker, &new_name, &name).await {
+        tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
+    }
+
+    docker::start_agent(&state.docker, &new_name)
+        .await
+        .map_err(map_docker_err)?;
+
+    Ok(Json(serde_json::json!({"name": new_name})))
+}
+
+/// Drop a high-priority notification into the renamed agent so it self-updates
+/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
+/// to write the notification doesn't block the rename.
+async fn drop_rename_notification(
+    docker: &bollard::Docker,
+    new_name: &str,
+    old_name: &str,
+) -> Result<(), String> {
+    let cname = docker::container_name(new_name);
+    let epoch = crate::time_utils::now_epoch_secs();
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch as i64)
+        .map_err(|e| format!("epoch out of range: {e}"))?
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("format timestamp: {e}"))?;
+    let payload = serde_json::json!({
+        "timestamp": timestamp,
+        "source": "vestad",
+        "type": "rename",
+        "interrupt": true,
+        "old_name": old_name,
+        "new_name": new_name,
+        "message": format!(
+            "you have been renamed from '{old_name}' to '{new_name}'. \
+             AGENT_NAME is now '{new_name}'. update your MEMORY.md and any prompt files \
+             under ~/agent/prompts/ that reference your old name."
+        ),
+    });
+    let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
+    let file_name = format!("rename-{epoch}.json");
+    docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // --- Auth endpoints ---
 
 #[derive(Serialize)]
@@ -1401,6 +1490,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
+        .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/auth", post(start_auth_handler))
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
