@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified auth CLI for the imap-mail skill.
+"""Unified auth CLI for the email-client skill.
 
 Picks a flow based on the resolved provider:
 
@@ -11,13 +11,14 @@ Picks a flow based on the resolved provider:
     app-password     Yahoo / iCloud / Fastmail / generic IMAP. Prompts
                      for the app password and stores it.
 
-Run as:
-    uv run python3 auth.py                 # auto-detect from email
-    uv run python3 auth.py --provider gmail
-    uv run python3 auth.py --reauth        # force a fresh login
+Multi-account: every credential lives at
+``$EMAIL_CLIENT_DIR/accounts/<name>/token.json`` so the user can have
+N accounts side by side. The active account is named via ``--account``.
 
-Token file ``$IMAP_MAIL_DIR/token.json`` always carries a ``provider``
-key so the daemon and CLI know which strategy to use afterwards.
+Run as:
+    uv run python3 auth.py --account <name>
+    uv run python3 auth.py --account <name> --provider gmail
+    uv run python3 auth.py --account <name> --reauth    # force a fresh login
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ import getpass
 import http.server
 import json
 import os
-import pathlib
 import secrets
 import socket
 import sys
@@ -36,14 +36,28 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import _env, _state_dir, save_token  # noqa: E402
-from providers import apply_env_overrides, get_profile, resolve_provider  # noqa: E402
+from imap_client import (  # noqa: E402
+    _env,
+    _token_path,
+    account_dir,
+    list_accounts,
+    load_accounts_index,
+    save_accounts_index,
+    save_config,
+    save_token,
+)
+from providers import (  # noqa: E402
+    apply_env_overrides,
+    detect_provider,
+    get_profile,
+    resolve_provider,
+)
 
 
 # -- device flow (Microsoft) ----------------------------------------
 
 
-def auth_device_flow(provider: str, profile: dict) -> dict:
+def auth_device_flow(provider: str, profile: dict, user: str) -> dict:
     import msal
 
     app = msal.PublicClientApplication(
@@ -60,7 +74,7 @@ def auth_device_flow(provider: str, profile: dict) -> dict:
         sys.exit(f"auth failed: {res}")
     res["_expires_at"] = time.time() + res.get("expires_in", 3600)
     res["provider"] = provider
-    res["user"] = _env("IMAP_MAIL_USER")
+    res["user"] = user
     return res
 
 
@@ -84,9 +98,9 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         body = (
-            "imap-mail: auth complete, you can close this tab.\n"
+            "email-client: auth complete, you can close this tab.\n"
             if not type(self).captured["error"]
-            else f"imap-mail: auth error: {type(self).captured['error']}\n"
+            else f"email-client: auth error: {type(self).captured['error']}\n"
         )
         self.wfile.write(body.encode())
 
@@ -102,7 +116,7 @@ def _free_port() -> int:
     return port
 
 
-def auth_loopback_oauth(provider: str, profile: dict) -> dict:
+def auth_loopback_oauth(provider: str, profile: dict, user: str) -> dict:
     port = _free_port()
     redirect_uri = f"http://127.0.0.1:{port}/"
     state = secrets.token_urlsafe(16)
@@ -116,9 +130,8 @@ def auth_loopback_oauth(provider: str, profile: dict) -> dict:
         "access_type": "offline",
         "prompt": "consent",
     }
-    user_hint = _env("IMAP_MAIL_USER")
-    if user_hint:
-        auth_params["login_hint"] = user_hint
+    if user:
+        auth_params["login_hint"] = user
     auth_url = profile["oauth_auth_url"] + "?" + urllib.parse.urlencode(auth_params)
 
     server = http.server.HTTPServer(("127.0.0.1", port), _RedirectHandler)
@@ -169,15 +182,14 @@ def auth_loopback_oauth(provider: str, profile: dict) -> dict:
         sys.exit(f"token exchange failed: {res}")
     res["_expires_at"] = time.time() + res.get("expires_in", 3600)
     res["provider"] = provider
-    res["user"] = user_hint
+    res["user"] = user
     return res
 
 
 # -- app password ---------------------------------------------------
 
 
-def auth_app_password(provider: str, profile: dict) -> dict:
-    user = _env("IMAP_MAIL_USER", required=True)
+def auth_app_password(provider: str, profile: dict, user: str) -> dict:
     print(f"\nProvider: {profile['label']}")
     print(f"Account:  {user}")
     print(
@@ -185,7 +197,11 @@ def auth_app_password(provider: str, profile: dict) -> dict:
         "(Yahoo, iCloud, Fastmail all have this under 'app-specific "
         "passwords' or 'security'), then paste it below.\n"
     )
-    pw = os.environ.get("IMAP_MAIL_APP_PASSWORD") or getpass.getpass("App password: ")
+    pw = (
+        os.environ.get("EMAIL_CLIENT_APP_PASSWORD")
+        or os.environ.get("IMAP_MAIL_APP_PASSWORD")
+        or getpass.getpass("App password: ")
+    )
     pw = pw.strip()
     if not pw:
         sys.exit("empty app password; aborting")
@@ -197,16 +213,111 @@ def auth_app_password(provider: str, profile: dict) -> dict:
     }
 
 
-# -- entrypoint -----------------------------------------------------
+def _resolve_user(provider: str | None, user: str | None) -> str:
+    if user:
+        return user
+    env_user = _env("EMAIL_CLIENT_USER")
+    if env_user:
+        return env_user
+    while True:
+        entered = input("Email address: ").strip()
+        if entered:
+            return entered
+        print("(empty; try again)")
+
+
+def _resolve_named_provider(name: str | None, user: str) -> tuple[str, dict]:
+    """Resolve a provider profile from an explicit name or auto-detect from the user."""
+    env = dict(os.environ)
+    if name:
+        return name, apply_env_overrides(get_profile(name), env)
+    detected = detect_provider(user) or ""
+    if detected:
+        return detected, apply_env_overrides(get_profile(detected), env)
+    # Fall back to env-var resolution, which picks microsoft-personal as last resort.
+    return resolve_provider(env)
+
+
+def run_add(
+    account: str,
+    user: str | None = None,
+    provider: str | None = None,
+    reauth: bool = False,
+) -> None:
+    """Register or refresh an account.
+
+    Writes ``accounts/<account>/{config.json,token.json}`` and updates
+    the top-level ``accounts.json`` index.
+    """
+    account_dir(account)
+    user = _resolve_user(provider, user)
+    name, profile = _resolve_named_provider(provider, user)
+
+    token_path = _token_path(account)
+    if token_path.exists() and not reauth:
+        try:
+            existing = json.loads(token_path.read_text())
+        except Exception:
+            existing = {}
+        if existing.get("provider") == name:
+            print(
+                f"Token already exists for account {account!r} (provider {name}) "
+                f"at {token_path}. Pass --reauth to replace it."
+            )
+            return
+
+    print(f"Authenticating {account!r} as {profile['label']} ({name})...")
+    strategy = profile["auth_strategy"]
+    if strategy == "device-flow":
+        tok = auth_device_flow(name, profile, user)
+    elif strategy == "loopback-oauth":
+        tok = auth_loopback_oauth(name, profile, user)
+    elif strategy == "app-password":
+        tok = auth_app_password(name, profile, user)
+    else:
+        sys.exit(f"unknown auth strategy {strategy!r}")
+
+    save_token(account, tok)
+
+    cfg = {"user": user, "provider": name}
+    save_config(account, cfg)
+
+    idx = load_accounts_index()
+    accs = list(idx.get("accounts") or [])
+    if account not in accs:
+        accs.append(account)
+    idx["accounts"] = accs
+    if not idx.get("default"):
+        idx["default"] = account
+    save_accounts_index(idx)
+
+    print(f"\nOK. Credential written to {token_path} (mode 600).")
+    print(f"Account {account!r} registered (default={idx['default']}).")
+    if strategy != "app-password":
+        print(
+            "Refresh tokens are long-lived; the CLI auto-refreshes "
+            "the access token transparently."
+        )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(prog="email-client-auth")
+    ap.add_argument(
+        "--account",
+        default=None,
+        help="account name (e.g. 'personal', 'work'). Defaults to "
+        "the existing default account, or 'default' if none.",
+    )
+    ap.add_argument(
+        "--user",
+        default=None,
+        help="email address. Defaults to EMAIL_CLIENT_USER, then prompts.",
+    )
     ap.add_argument(
         "--provider",
         default=None,
         help="provider key (e.g. gmail, microsoft-personal). "
-        "Defaults to auto-detect from email or IMAP_MAIL_PROVIDER.",
+        "Defaults to auto-detect from email.",
     )
     ap.add_argument(
         "--reauth",
@@ -215,45 +326,20 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    env = dict(os.environ)
-    if args.provider:
-        env["IMAP_MAIL_PROVIDER"] = args.provider
-    name, profile = resolve_provider(env)
-    # When the user explicitly named a provider, drop env overrides
-    # that might mismatch (host/port from a previous provider) by
-    # rebuilding from the named profile.
-    if args.provider:
-        profile = apply_env_overrides(get_profile(args.provider), env)
-
-    state_dir = _state_dir()
-    token_path = state_dir / "token.json"
-    if token_path.exists() and not args.reauth:
-        existing = json.loads(token_path.read_text())
-        if existing.get("provider") == name and not args.reauth:
-            print(
-                f"Token already exists for provider {name} at {token_path}. "
-                "Pass --reauth to replace it."
-            )
-            return
-
-    print(f"Authenticating as {profile['label']} ({name})...")
-    strategy = profile["auth_strategy"]
-    if strategy == "device-flow":
-        tok = auth_device_flow(name, profile)
-    elif strategy == "loopback-oauth":
-        tok = auth_loopback_oauth(name, profile)
-    elif strategy == "app-password":
-        tok = auth_app_password(name, profile)
-    else:
-        sys.exit(f"unknown auth strategy {strategy!r}")
-
-    save_token(tok)
-    print(f"\nOK. Credential written to {token_path} (mode 600).")
-    if strategy != "app-password":
-        print(
-            "Refresh tokens are long-lived; the CLI auto-refreshes "
-            "the access token transparently."
+    account = args.account
+    if not account:
+        idx = load_accounts_index()
+        account = idx.get("default") or (
+            list_accounts()[0] if list_accounts() else "default"
         )
+        print(f"(no --account given; using {account!r})", file=sys.stderr)
+
+    run_add(
+        account=account,
+        user=args.user,
+        provider=args.provider,
+        reauth=args.reauth,
+    )
 
 
 if __name__ == "__main__":
