@@ -6,7 +6,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -51,10 +50,9 @@ function statusText(status: SaveStatus, dirty: boolean): string {
   }
 }
 
-function statusClass(status: SaveStatus, dirty: boolean): string {
+function statusClass(status: SaveStatus): string {
   if (status.kind === "error") return "text-destructive";
-  if (status.kind === "idle" && dirty) return "text-foreground/70";
-  return "text-muted-foreground/60";
+  return "text-foreground";
 }
 
 function AdvancedSkeleton() {
@@ -282,6 +280,11 @@ export function FilesTab() {
                   read-only
                 </Badge>
               )}
+              {(status.kind !== "idle" || dirty) && (
+                <span className={cn("text-[10px]", statusClass(status))}>
+                  {statusText(status, dirty)}
+                </span>
+              )}
               <Button
                 size="xs"
                 disabled={
@@ -321,14 +324,6 @@ export function FilesTab() {
             />
           )}
         </CardContent>
-
-        {!dreamsActive && (status.kind !== "idle" || dirty) && (
-          <CardFooter className="shrink-0 !px-5 !py-1.5 border-t border-border/60 [.border-t]:!pt-1.5">
-            <span className={cn("text-[10px]", statusClass(status, dirty))}>
-              {statusText(status, dirty)}
-            </span>
-          </CardFooter>
-        )}
       </Card>
     </div>
   );
