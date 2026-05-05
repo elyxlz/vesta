@@ -1,4 +1,0 @@
-#!/bin/bash
-# SMTP send. Runs in the persistent uv env at $IMAP_MAIL_DIR/runtime.
-DIR="${IMAP_MAIL_DIR:-$HOME/.imap-mail}"
-cd "$DIR/runtime" && exec uv run --quiet python3 "$DIR/smtp_send.py" "$@"
