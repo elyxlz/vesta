@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""IMAP poll daemon.
+"""IMAP poll daemon (multi-account).
 
-Polls the user's INBOX every N seconds and writes a notification JSON
-into ~/agent/notifications/ for each new message. Auto-refreshes the
-OAuth token via the imap_client helper. No promo blocklist by default;
-the agent decides what to surface to the user.
+Polls every registered account's INBOX every N seconds and writes a
+notification JSON into ~/agent/notifications/ for each new message.
+Auto-refreshes the OAuth token via the imap_client helper. No promo
+blocklist by default; the agent decides what to surface to the user.
+
+The daemon iterates over every account named in
+``$EMAIL_CLIENT_DIR/accounts.json``. Each account has its own
+high-UID watermark stored at
+``$EMAIL_CLIENT_DIR/accounts/<name>/high_uid.txt``. If an account's
+poll fails the loop logs the error and moves on to the next account.
+
+Notifications are written with the source ``email-client`` and an
+``account`` field naming the source mailbox. The filename includes the
+account name so simultaneous notifications from multiple accounts
+never collide.
 """
 from __future__ import annotations
 
@@ -21,7 +32,13 @@ from email.header import decode_header
 
 # Reuse imap_client helpers.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import _env, _state_dir, connect  # noqa: E402
+from imap_client import (  # noqa: E402
+    _env,
+    account_dir,
+    connect,
+    list_accounts,
+    load_accounts_index,
+)
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
 
@@ -39,11 +56,12 @@ def _decode(s: str | None) -> str:
     return "".join(out)
 
 
-def write_notification(meta: dict) -> None:
+def write_notification(account: str, meta: dict) -> None:
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
-        "source": "imap-mail",
+        "source": "email-client",
         "type": "email",
+        "account": account,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
         "from": meta["from"],
         "to": meta.get("to", ""),
@@ -51,7 +69,9 @@ def write_notification(meta: dict) -> None:
         "date": meta["date"],
         "uid": meta["uid"],
     }
-    fname = f"imap-mail-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    fname = (
+        f"email-client-{account}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    )
     (NOTIF_DIR / fname).write_text(json.dumps(notif, ensure_ascii=False, indent=2))
 
 
@@ -65,16 +85,17 @@ def set_high_uid(path: pathlib.Path, n: int) -> None:
     path.write_text(str(n))
 
 
-def poll_once(M, log, high_uid_path: pathlib.Path) -> None:
+def poll_once(account: str, M, log, high_uid_path: pathlib.Path) -> None:
     M.select("INBOX", readonly=True)
     high = get_high_uid(high_uid_path)
     if high == 0:
-        # First run: seed with the latest UID, do not flood with backlog.
+        # First run for this account: seed with the latest UID, do not
+        # flood with backlog.
         typ, data = M.uid("SEARCH", "ALL")
         ids = data[0].split()
         if ids:
             set_high_uid(high_uid_path, int(ids[-1]))
-            log(f"seeded high_uid={ids[-1].decode()}")
+            log(f"[{account}] seeded high_uid={ids[-1].decode()}")
         return
 
     typ, data = M.uid("SEARCH", f"UID {high + 1}:*")
@@ -85,7 +106,7 @@ def poll_once(M, log, high_uid_path: pathlib.Path) -> None:
     if not new_ids:
         return
     new_ids.sort()
-    log(f"new uids: {new_ids}")
+    log(f"[{account}] new uids: {new_ids}")
     seq = ",".join(str(u) for u in new_ids).encode()
     typ, msgs = M.uid("FETCH", seq, "(UID RFC822.HEADER)")
     if typ != "OK":
@@ -104,9 +125,21 @@ def poll_once(M, log, high_uid_path: pathlib.Path) -> None:
             "subject": _decode(h.get("Subject")),
             "date": h.get("Date"),
         }
-        write_notification(meta)
-        log(f"notified uid={uid} from={meta['from'][:60]} subj={meta['subject'][:60]}")
+        write_notification(account, meta)
+        log(
+            f"[{account}] notified uid={uid} "
+            f"from={meta['from'][:60]} subj={meta['subject'][:60]}"
+        )
     set_high_uid(high_uid_path, max(new_ids))
+
+
+class _AccountConn:
+    """Per-account IMAP connection state with lazy reconnect."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.M = None
+        self.last_reconnect = 0.0
 
 
 def main():
@@ -114,41 +147,72 @@ def main():
     ap.add_argument(
         "--interval",
         type=int,
-        default=int(_env("IMAP_MAIL_POLL_INTERVAL", "15")),
+        default=int(_env("EMAIL_CLIENT_POLL_INTERVAL", "15")),
         help="poll seconds",
     )
     args = ap.parse_args()
 
-    high_uid_path = _state_dir() / "high_uid.txt"
-
     def log(msg: str) -> None:
         print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
-    M = None
-    last_reconnect = 0
+    conns: dict[str, _AccountConn] = {}
+    last_index_mtime = 0.0
+    accounts: list[str] = []
+
     while True:
+        # Re-read accounts.json each iteration so the daemon picks up
+        # added accounts without a restart.
         try:
-            if M is None:
-                M = connect()
-                last_reconnect = time.time()
-                log("connected")
-            poll_once(M, log, high_uid_path)
-        except Exception as e:
-            log(f"error: {e}")
+            idx_mtime = _index_mtime()
+        except Exception:
+            idx_mtime = 0.0
+        if idx_mtime != last_index_mtime:
+            last_index_mtime = idx_mtime
+            accounts = list_accounts()
+            if not accounts:
+                # Triggers single-account migration on first call if applicable.
+                load_accounts_index()
+                accounts = list_accounts()
+            log(f"polling accounts: {accounts}")
+
+        if not accounts:
+            log("no accounts registered; sleeping")
+            time.sleep(args.interval)
+            continue
+
+        for name in accounts:
+            conn = conns.setdefault(name, _AccountConn(name))
+            high_uid_path = account_dir(name) / "high_uid.txt"
             try:
-                if M:
-                    M.logout()
-            except Exception:
-                pass
-            M = None
-        # Reconnect every 25 min as a safety net.
-        if M and time.time() - last_reconnect > 1500:
-            try:
-                M.logout()
-            except Exception:
-                pass
-            M = None
+                if conn.M is None:
+                    conn.M = connect(name)
+                    conn.last_reconnect = time.time()
+                    log(f"[{name}] connected")
+                poll_once(name, conn.M, log, high_uid_path)
+            except Exception as e:
+                log(f"[{name}] error: {e}")
+                try:
+                    if conn.M:
+                        conn.M.logout()
+                except Exception:
+                    pass
+                conn.M = None
+            # Reconnect every 25 min as a safety net.
+            if conn.M and time.time() - conn.last_reconnect > 1500:
+                try:
+                    conn.M.logout()
+                except Exception:
+                    pass
+                conn.M = None
         time.sleep(args.interval)
+
+
+def _index_mtime() -> float:
+    """Return mtime of accounts.json or 0 if missing."""
+    from imap_client import _accounts_index_path
+
+    p = _accounts_index_path()
+    return p.stat().st_mtime if p.exists() else 0.0
 
 
 if __name__ == "__main__":
