@@ -5,7 +5,7 @@
   },
   {
     "name": "personality",
-    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
+    "description": "The agent's voice. Pick one on first start; edit the file directly to drift it."
   },
   {
     "name": "browser",
@@ -77,7 +77,7 @@
   },
   {
     "name": "restart",
-    "description": "What to do after a container restart, plus the user-managed list of services to bring back up."
+    "description": "What to do after a container restart. Records active personality and per-skill service startup commands."
   },
   {
     "name": "skills-registry",
