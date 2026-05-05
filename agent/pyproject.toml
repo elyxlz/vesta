@@ -10,8 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.2",
     "aiohttp>=3.13.5",
-    "claude-agent-sdk>=0.1.65",
-    "pydantic>=2.13.2",
+    "claude-agent-sdk>=0.1.73",
+    "pydantic>=2.13.3",
     "pydantic-settings>=2.14.0",
     "rich>=15.0.0",
     "watchfiles>=1.1.1",
@@ -23,9 +23,9 @@ Repository = "https://github.com/elyxlz/vesta"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.11",
+    "ruff>=0.15.12",
     "pytest>=9.0.3",
-    "ty>=0.0.31",
+    "ty>=0.0.34",
 ]
 
 [tool.pytest.ini_options]
