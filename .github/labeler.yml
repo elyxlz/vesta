@@ -1,0 +1,43 @@
+agent:
+- changed-files:
+  - any-glob-to-any-file: ['agent/**']
+
+skills:
+- changed-files:
+  - any-glob-to-any-file: ['agent/skills/**', 'agent/core/skills/**']
+
+cli:
+- changed-files:
+  - any-glob-to-any-file: ['cli/**']
+
+vestad:
+- changed-files:
+  - any-glob-to-any-file: ['vestad/**']
+
+ui:
+- changed-files:
+  - any-glob-to-any-file: ['apps/web/**']
+
+desktop:
+- changed-files:
+  - any-glob-to-any-file: ['apps/desktop/**']
+
+mobile:
+- changed-files:
+  - any-glob-to-any-file: ['apps/mobile/**']
+
+tests:
+- changed-files:
+  - any-glob-to-any-file: ['**/tests/**', '**/__tests__/**']
+
+ci:
+- changed-files:
+  - any-glob-to-any-file: ['.github/**']
+
+documentation:
+- changed-files:
+  - any-glob-to-any-file: ['**/*.md']
+
+release:
+- changed-files:
+  - any-glob-to-any-file: ['release.sh']
