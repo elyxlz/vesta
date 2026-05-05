@@ -4,6 +4,7 @@ claude-code
 dashboard
 dream
 flights
+email-client
 skills-registry
 tasks
 upstream-pr
