@@ -1,30 +1,32 @@
 ---
-name: imap-mail
-description: Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Read inbox, send mail, get notified on new mail. OAuth2 where supported, app-password fallback otherwise. Requires daemon.
+name: email-client
+description: Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Read inbox, send mail, get notified on new mail. OAuth2 where supported, app-password fallback otherwise. Requires daemon.
 ---
 
-# IMAP Mail
+# Email Client
 
-Provider-agnostic IMAP and SMTP for the user's personal email. Supports:
+Provider-agnostic IMAP and SMTP for the user's personal email accounts. Supports any number of accounts side by side. Each account gets its own credential, watermark, and notification stream.
+
+Supported providers:
 
 - **Microsoft personal** (`outlook.com`, `hotmail.com`, `live.com`) via OAuth2 device flow + Mozilla Thunderbird's public client ID
 - **Gmail** via OAuth2 loopback flow + Thunderbird's public Google client ID
 - **Yahoo Mail** via app password
 - **iCloud Mail** via app password
 - **Fastmail** via app password
-- **Generic IMAP/SMTP** (any host, any auth) via env-driven config
+- **Generic IMAP/SMTP** (any host, any auth) via per-account config
 
-The provider is auto-detected from the user's email domain. Override with the `--provider` flag on `auth.py` or `IMAP_MAIL_PROVIDER` in the environment.
+The provider is auto-detected from each account's email domain. Override per account via `--provider` on `email-client auth add`, or with `EMAIL_CLIENT_PROVIDER` in the environment.
 
 The skill ships three commands:
 
-- `imap-mail list-folders / list / get / search` for read access
-- `imap-mail-send` for outbound mail
-- A poll daemon that watches `INBOX` and writes a notification JSON to `~/agent/notifications/` on every new message, so the agent gets paged in real time
+- `email-client list-folders / list / get / search` for read access
+- `email-client-send` for outbound mail
+- A poll daemon that watches every registered account's `INBOX` and writes a notification JSON to `~/agent/notifications/` on every new message, so the agent gets paged in real time
 
-The daemon shares the same token cache and refreshes OAuth access tokens transparently. Once the user has run `auth.py` once, no re-auth is needed for the lifetime of the refresh token (Microsoft ~90 days, Google effectively until revoked) or until the app password is rotated.
+The daemon shares the same per-account token cache and refreshes OAuth access tokens transparently. Once the user has run `email-client auth add` once per account, no re-auth is needed for the lifetime of the refresh token (Microsoft ~90 days, Google effectively until revoked) or until the app password is rotated.
 
-**Setup**: see [SETUP.md](SETUP.md). It covers all auth strategies and walks each one end to end. Setup is one-time, takes about 2 minutes.
+**Setup**: see [SETUP.md](SETUP.md). It covers all auth strategies and walks each one end to end. Setup is one-time per account, takes about 2 minutes.
 
 ## Why XOAUTH2 + Thunderbird's client IDs
 
@@ -39,73 +41,100 @@ For Yahoo, iCloud, Fastmail, and generic IMAP, the providers expose either no OA
 ## Read commands
 
 ```bash
-imap-mail list-folders
-imap-mail list --folder INBOX --limit 20
-imap-mail list --folder Sent --limit 50
-imap-mail get --folder INBOX --uid 12345
-imap-mail get --folder INBOX --uid 12345 --body-chars 8000
-imap-mail search --folder INBOX --query 'FROM "stripe"'
-imap-mail search --folder INBOX --query 'SUBJECT "wedding"'
-imap-mail search --folder INBOX --query 'SINCE 1-Jan-2026'
+email-client list-folders --account personal
+email-client list --account personal --folder INBOX --limit 20
+email-client list --account work --folder Sent --limit 50
+email-client get --account personal --folder INBOX --uid 12345
+email-client get --account personal --folder INBOX --uid 12345 --body-chars 8000
+email-client search --account work --folder INBOX --query 'FROM "stripe"'
+email-client search --account personal --folder INBOX --query 'SUBJECT "wedding"'
+email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body.
+Omit `--account` to use the default account from `accounts.json`. `list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body.
 
 ## Send
 
 ```bash
-imap-mail-send --to "user@example.com" --subject "Hi" --body "first line\\nsecond line"
+email-client-send --account personal --to "user@example.com" --subject "Hi" --body "first line\\nsecond line"
 ```
 
-Sends as the configured user. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
+Sends as the configured user for the chosen account. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
+
+## Account management
+
+```bash
+email-client auth add --account personal              # auto-detect provider from email
+email-client auth add --account work --provider gmail # force a provider
+email-client auth list                                # JSON array of registered accounts
+email-client auth remove --account old
+```
+
+The first added account becomes the default. To change the default, edit `$EMAIL_CLIENT_DIR/accounts.json` directly.
 
 ## Notifications
 
-The poll daemon (`screen -dmS imap-mail ... poll_daemon.py`) checks `INBOX` every 15s, tracks the highest UID seen, and writes one JSON file per new email into `~/agent/notifications/`. The notification has source `imap-mail`, type `email`, and includes `from`, `subject`, `date`, `uid`. The agent CLI picks it up the way it does any other notification source.
+The poll daemon (`screen -dmS email-client ... poll_daemon.py`) checks every registered account's `INBOX` every 15s, keeps a per-account high-UID watermark, and writes one JSON file per new email into `~/agent/notifications/`. The notification has source `email-client`, type `email`, an `account` field naming the source mailbox, and includes `from`, `subject`, `date`, `uid`. The agent CLI picks it up the way it does any other notification source.
 
-The daemon keeps a high-UID watermark at `$IMAP_MAIL_DIR/high_uid.txt`. First run seeds with the latest UID (no backlog flood); subsequent runs only emit new arrivals.
+Filenames look like `email-client-personal-1746480000000-abc123.json` so concurrent notifications across accounts never collide.
+
+The daemon keeps each account's high-UID watermark at `$EMAIL_CLIENT_DIR/accounts/<name>/high_uid.txt`. First run for an account seeds with the latest UID (no backlog flood); subsequent runs only emit new arrivals.
+
+## State layout
+
+```
+$EMAIL_CLIENT_DIR/                # default ~/.email-client
+  accounts.json                   # {"accounts": ["personal","work"], "default": "personal"}
+  accounts/
+    personal/
+      config.json                 # {"user": "...", "provider": "...", optional host overrides}
+      token.json                  # OAuth token or {"app_password": "..."} (mode 600)
+      high_uid.txt                # daemon poll watermark
+    work/
+      config.json
+      token.json
+      high_uid.txt
+```
+
+A legacy single-account install (token at `$EMAIL_CLIENT_DIR/token.json` or at `~/.imap-mail/token.json`) is auto-migrated into `accounts/default/` on first run with a stderr note.
 
 ## Configuration
 
-All paths and addresses are environment-driven so the skill is user-agnostic:
+Most settings live per account in `accounts/<name>/config.json`. Environment variables provide defaults that apply to whichever account is being used:
 
-- `IMAP_MAIL_USER`: the email address (required, e.g. `someone@gmail.com`)
-- `IMAP_MAIL_PROVIDER`: provider key (default auto-detected from the email domain). Known keys: `microsoft-personal`, `gmail`, `yahoo-app-password`, `icloud-app-password`, `fastmail-app-password`, `generic`.
-- `IMAP_MAIL_DIR`: where token + state live (default `~/.imap-mail`)
-- `IMAP_MAIL_HOST`: IMAP host override (provider default otherwise)
-- `IMAP_MAIL_SMTP_HOST`: SMTP host override (provider default otherwise)
-- `IMAP_MAIL_SMTP_PORT`: SMTP port override (default 587 STARTTLS)
-- `IMAP_MAIL_OAUTH_CLIENT_ID`: OAuth client ID override
-- `IMAP_MAIL_OAUTH_AUTHORITY`: Microsoft OAuth authority override (e.g. `/common` for mixed work+personal)
-- `IMAP_MAIL_OAUTH_SCOPES`: whitespace-separated scope list override
-- `IMAP_MAIL_FROM_NAME`: display name on outbound mail (default the username portion of the email)
-- `IMAP_MAIL_POLL_INTERVAL`: seconds between polls (default 15)
-- `IMAP_MAIL_APP_PASSWORD`: pre-supply the app password to `auth.py` instead of being prompted (handy in scripts)
+- `EMAIL_CLIENT_DIR`: where token + state live (default `~/.email-client`)
+- `EMAIL_CLIENT_USER`: default email address (used at `auth add` time when `--user` is omitted)
+- `EMAIL_CLIENT_PROVIDER`: default provider key
+- `EMAIL_CLIENT_HOST`: IMAP host override
+- `EMAIL_CLIENT_SMTP_HOST`: SMTP host override
+- `EMAIL_CLIENT_SMTP_PORT`: SMTP port override (default 587 STARTTLS)
+- `EMAIL_CLIENT_OAUTH_CLIENT_ID`: OAuth client ID override
+- `EMAIL_CLIENT_OAUTH_AUTHORITY`: Microsoft OAuth authority override (e.g. `/common` for mixed work+personal)
+- `EMAIL_CLIENT_OAUTH_SCOPES`: whitespace-separated scope list override
+- `EMAIL_CLIENT_FROM_NAME`: display name on outbound mail (default the username portion of the email)
+- `EMAIL_CLIENT_POLL_INTERVAL`: seconds between polls (default 15)
+- `EMAIL_CLIENT_APP_PASSWORD`: pre-supply the app password to the auth flow instead of being prompted (handy in scripts)
 
-Set these in `~/.bashrc` so the daemon and CLI both see them.
+For one release the legacy `IMAP_MAIL_*` env-var names are still honored with a stderr deprecation warning. Rename them in `~/.bashrc` when convenient.
 
-The token file at `~/.imap-mail/token.json` always carries a `provider` key alongside the credential payload (access/refresh token for OAuth providers, `app_password` for app-password providers), so the daemon knows which strategy to use even if env vars change later.
+The token file at `accounts/<name>/token.json` always carries a `provider` key alongside the credential payload (access/refresh token for OAuth providers, `app_password` for app-password providers), so the daemon knows which strategy to use even if env vars change later.
 
 ## Sample setups
 
 ```bash
-# Gmail
-export IMAP_MAIL_USER="someone@gmail.com"
-# (provider auto-detects to "gmail")
+# Single account (Gmail)
+export EMAIL_CLIENT_USER="someone@gmail.com"
+email-client auth add --account personal
 
-# Hotmail / Outlook personal
-export IMAP_MAIL_USER="someone@hotmail.co.uk"
-# (provider auto-detects to "microsoft-personal")
+# Two accounts: personal Gmail + work Outlook
+email-client auth add --account personal --user someone@gmail.com
+email-client auth add --account work --user someone@outlook.com
 
-# Yahoo
-export IMAP_MAIL_USER="someone@yahoo.com"
-# (provider auto-detects to "yahoo-app-password")
-
-# Custom IMAP server (corporate, self-hosted)
-export IMAP_MAIL_USER="someone@example.org"
-export IMAP_MAIL_PROVIDER="generic"
-export IMAP_MAIL_HOST="mail.example.org"
-export IMAP_MAIL_SMTP_HOST="mail.example.org"
+# Custom IMAP server (corporate, self-hosted) as a third account
+email-client auth add --account selfhosted \
+  --user me@example.org --provider generic
+# then edit ~/.email-client/accounts/selfhosted/config.json to add
+# {"imap_host": "mail.example.org", "smtp_host": "mail.example.org"}
 ```
 
 ## When NOT to use this skill
@@ -114,4 +143,4 @@ export IMAP_MAIL_SMTP_HOST="mail.example.org"
 - The user has a Microsoft 365 *work* account (a real Azure tenant with Graph). Use the `microsoft` skill (Graph is more capable, calendars/contacts are included).
 - The user wants an agent-owned inbox (no personal email). Use `agentmail`.
 
-This skill is the right choice when you want one provider-agnostic IMAP/SMTP path that works for any personal email account.
+This skill is the right choice when you want one provider-agnostic IMAP/SMTP path that works for one or many personal email accounts in parallel.
