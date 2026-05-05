@@ -8,7 +8,7 @@ One-time setup per account. Takes about 2 minutes. Picks the right auth flow for
 mkdir -p ~/.email-client/runtime
 cd ~/.email-client/runtime
 uv init --bare --python 3.11
-uv add msal aiohttp
+uv add imap_tools msal aiohttp
 ln -sf ~/agent/skills/email-client/imap_client.py ~/.email-client/imap_client.py
 ln -sf ~/agent/skills/email-client/smtp_send.py ~/.email-client/smtp_send.py
 ln -sf ~/agent/skills/email-client/poll_daemon.py ~/.email-client/poll_daemon.py
@@ -19,7 +19,7 @@ sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-c
 chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
 ```
 
-`msal` is only needed for Microsoft providers. The Gmail loopback flow and app-password providers use only stdlib.
+`imap_tools` wraps the IMAP layer for read/manage. `msal` is only needed for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
 
 ## 2. Add the first account
 

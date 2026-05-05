@@ -12,6 +12,9 @@ archive, delete, auth.
 Provider is auto-detected from the account's email domain, or pinned
 via the per-account ``config.json`` (or ``--provider`` on ``auth.py``).
 
+The IMAP layer uses ``imap_tools`` (MailBox API). OAuth refresh and
+SMTP send still use stdlib (smtplib + msal/urllib).
+
 Environment overrides (set in ``~/.bashrc``):
     EMAIL_CLIENT_DIR              token + state dir (default ~/.email-client)
     EMAIL_CLIENT_HOST             override IMAP host
@@ -26,17 +29,15 @@ Environment overrides (set in ``~/.bashrc``):
 from __future__ import annotations
 
 import argparse
-import imaplib
 import json
 import os
 import pathlib
-import re
 import sys
 import time
 import urllib.parse
 import urllib.request
-from email import message_from_bytes
-from email.header import decode_header
+
+from imap_tools import AND, MailBox, MailMessageFlags
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from providers import (  # noqa: E402
@@ -319,7 +320,13 @@ def get_app_password(account: str | None = None) -> str:
     return pw
 
 
-def connect(account: str | None = None) -> imaplib.IMAP4_SSL:
+def connect(account: str | None = None, *, initial_folder: str | None = "INBOX") -> MailBox:
+    """Return a logged-in ``imap_tools.MailBox`` for the chosen account.
+
+    Picks XOAUTH2 or app-password automatically based on the resolved
+    provider profile. The mailbox is selected on ``initial_folder``
+    (defaults to ``INBOX``); pass ``None`` to skip folder selection.
+    """
     acc = resolve_account(account)
     user = account_user(acc)
     name, profile = account_profile(acc)
@@ -330,139 +337,25 @@ def connect(account: str | None = None) -> imaplib.IMAP4_SSL:
             f"provider {name} (account {acc!r}) has no IMAP host configured; "
             "set imap_host in the per-account config.json or EMAIL_CLIENT_HOST"
         )
-    M = imaplib.IMAP4_SSL(host, port)
+    mb = MailBox(host, port=port)
     if profile["auth_strategy"] == "app-password":
-        pw = get_app_password(acc)
-        M.login(user, pw)
+        mb.login(user, get_app_password(acc), initial_folder=initial_folder)
     else:
-        access = get_access_token(acc)
-        auth = f"user={user}\x01auth=Bearer {access}\x01\x01".encode()
-        M.authenticate("XOAUTH2", lambda _: auth)
-    return M
+        mb.xoauth2(user, get_access_token(acc), initial_folder=initial_folder)
+    return mb
 
 
-def _decode(s: str | None) -> str:
-    if not s:
-        return ""
-    parts = decode_header(s)
-    out = []
-    for text, enc in parts:
-        if isinstance(text, bytes):
-            out.append(text.decode(enc or "utf-8", errors="replace"))
-        else:
-            out.append(text)
-    return "".join(out)
+# -- helpers --------------------------------------------------------
 
 
-def cmd_folders(args):
-    M = connect(getattr(args, "account", None))
-    typ, folders = M.list()
-    for f in folders:
-        print(f.decode(errors="replace"))
-    M.logout()
+def _from_full(msg) -> str:
+    """Return the original ``From`` header as ``Name <email>`` (or just email)."""
+    return msg.from_values.full if msg.from_values else ""
 
 
-def cmd_list(args):
-    M = connect(getattr(args, "account", None))
-    M.select(f'"{args.folder}"', readonly=True)
-    typ, data = M.search(None, "ALL")
-    ids = data[0].split()
-    if args.limit:
-        ids = ids[-args.limit :]
-    if not ids:
-        print("[]")
-        M.logout()
-        return
-    seq = b",".join(ids)
-    typ, msgs = M.fetch(seq, "(UID RFC822.HEADER)")
-    out = []
-    for item in msgs:
-        if not isinstance(item, tuple):
-            continue
-        meta = item[0].decode(errors="replace")
-        m_uid = re.search(r"UID (\d+)", meta)
-        uid = m_uid.group(1) if m_uid else None
-        h = message_from_bytes(item[1])
-        out.append(
-            {
-                "uid": uid,
-                "from": _decode(h.get("From")),
-                "to": _decode(h.get("To")),
-                "subject": _decode(h.get("Subject")),
-                "date": h.get("Date"),
-            }
-        )
-    print(json.dumps(out, indent=2, ensure_ascii=False))
-    M.logout()
-
-
-def cmd_get(args):
-    M = connect(getattr(args, "account", None))
-    M.select(f'"{args.folder}"', readonly=True)
-    typ, data = M.uid("FETCH", args.uid, "(RFC822)")
-    if not data or not data[0]:
-        sys.exit("not found")
-    raw = data[0][1]
-    h = message_from_bytes(raw)
-    body = ""
-    if h.is_multipart():
-        for part in h.walk():
-            if part.get_content_type() == "text/plain":
-                body = part.get_payload(decode=True).decode(
-                    part.get_content_charset() or "utf-8", errors="replace"
-                )
-                break
-        if not body:
-            for part in h.walk():
-                if part.get_content_type() == "text/html":
-                    body = part.get_payload(decode=True).decode(
-                        part.get_content_charset() or "utf-8", errors="replace"
-                    )
-                    break
-    else:
-        body = h.get_payload(decode=True).decode(
-            h.get_content_charset() or "utf-8", errors="replace"
-        )
-    print(
-        json.dumps(
-            {
-                "from": _decode(h.get("From")),
-                "to": _decode(h.get("To")),
-                "subject": _decode(h.get("Subject")),
-                "date": h.get("Date"),
-                "body": body[: args.body_chars],
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
-    M.logout()
-
-
-def _is_attachment_part(part) -> bool:
-    """Return True if a parsed email part should be treated as an attachment.
-
-    Matches when Content-Disposition is ``attachment``, OR the part has
-    a filename, OR it is an inline ``image/*`` part with a name. Skips
-    multipart containers and plain text/html bodies that lack an
-    explicit attachment disposition or name.
-    """
-    if part.is_multipart():
-        return False
-    disp = (part.get("Content-Disposition") or "").lower()
-    filename = part.get_filename()
-    ctype = (part.get_content_type() or "").lower()
-    if "attachment" in disp:
-        return True
-    if filename:
-        # filename present even on inline parts (e.g. inline images)
-        # counts as an attachment, but skip the mail body itself.
-        if ctype in ("text/plain", "text/html") and "attachment" not in disp:
-            return False
-        return True
-    if ctype.startswith("image/") and (part.get_param("name") or filename):
-        return True
-    return False
+def _to_full(msg) -> str:
+    """Return the joined ``To`` header values, preserving display names."""
+    return ", ".join(a.full for a in msg.to_values)
 
 
 def _safe_filename(name: str | None, fallback: str) -> str:
@@ -474,33 +367,83 @@ def _safe_filename(name: str | None, fallback: str) -> str:
     return cleaned or fallback
 
 
-def _walk_attachments(parsed) -> list[dict]:
-    """Return a list of attachment metadata for a parsed email message.
+def _msg_summary(msg, *, include_to: bool = True) -> dict:
+    """Return the JSON summary used by ``list`` / ``search`` / poll daemon.
 
-    Each entry carries ``part_index`` (0-based index in walk order over
-    non-multipart parts), ``name``, ``content_type``, ``size_bytes``,
-    plus the raw ``payload`` bytes for download callers.
+    ``list`` includes ``to``; ``search`` historically does not.
     """
-    out: list[dict] = []
-    idx = -1
-    for part in parsed.walk():
-        if part.is_multipart():
-            continue
-        idx += 1
-        if not _is_attachment_part(part):
-            continue
-        payload = part.get_payload(decode=True) or b""
-        raw_name = _decode(part.get_filename()) or part.get_param("name") or ""
-        out.append(
-            {
-                "part_index": idx,
-                "name": _safe_filename(raw_name, f"part-{idx}.bin"),
-                "content_type": part.get_content_type(),
-                "size_bytes": len(payload),
-                "payload": payload,
-            }
-        )
+    out: dict = {"uid": msg.uid, "from": _from_full(msg)}
+    if include_to:
+        out["to"] = _to_full(msg)
+    out["subject"] = msg.subject
+    out["date"] = msg.date_str
     return out
+
+
+# -- read commands --------------------------------------------------
+
+
+def cmd_folders(args):
+    """Print one folder per line in raw IMAP LIST shape: ``(flags) "/" Name``."""
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        for fi in mb.folder.list():
+            flags = " ".join(fi.flags) if fi.flags else ""
+            print(f'({flags}) "{fi.delim}" {fi.name}')
+
+
+def _fetch_summaries(args, *, include_to: bool, criteria) -> None:
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        # imap_tools ``limit`` keeps the FIRST N; the original CLI keeps the
+        # LAST N (most recent). Use ``reverse=True`` + ``limit`` to get the
+        # last N, then re-reverse so output order matches the historical
+        # oldest-first layout.
+        msgs = list(
+            mb.fetch(
+                criteria,
+                limit=args.limit or None,
+                reverse=True,
+                mark_seen=False,
+                headers_only=True,
+            )
+        )
+        msgs.reverse()
+        if not msgs:
+            print("[]")
+            return
+        out = [_msg_summary(m, include_to=include_to) for m in msgs]
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+def cmd_list(args):
+    _fetch_summaries(args, include_to=True, criteria="ALL")
+
+
+def cmd_search(args):
+    _fetch_summaries(args, include_to=False, criteria=args.query)
+
+
+def cmd_get(args):
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        msgs = list(mb.fetch(AND(uid=args.uid), mark_seen=False, limit=1))
+        if not msgs:
+            sys.exit("not found")
+        m = msgs[0]
+        body = m.text or m.html or ""
+        print(
+            json.dumps(
+                {
+                    "from": _from_full(m),
+                    "to": _to_full(m),
+                    "subject": m.subject,
+                    "date": m.date_str,
+                    "body": body[: args.body_chars],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
 
 
 def cmd_attachments(args):
@@ -511,27 +454,27 @@ def cmd_attachments(args):
     ``--out-dir``). With ``--part`` save just one specific attachment
     (matched by ``part_index`` from the listing).
     """
-    M = connect(getattr(args, "account", None))
-    try:
-        M.select(f'"{args.folder}"', readonly=True)
-        typ, data = M.uid("FETCH", args.uid, "(RFC822)")
-        if not data or not data[0]:
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        msgs = list(mb.fetch(AND(uid=args.uid), mark_seen=False, limit=1))
+        if not msgs:
             sys.exit(f"uid {args.uid!r} not found in folder {args.folder!r}")
-        raw = data[0][1]
-    finally:
-        try:
-            M.logout()
-        except Exception:
-            pass
+        atts = list(msgs[0].attachments)
 
-    parsed = message_from_bytes(raw)
-    items = _walk_attachments(parsed)
+    items: list[dict] = []
+    for idx, att in enumerate(atts):
+        items.append(
+            {
+                "part_index": idx,
+                "name": _safe_filename(att.filename, f"part-{idx}.bin"),
+                "content_type": att.content_type,
+                "size_bytes": att.size if att.size is not None else len(att.payload),
+                "payload": att.payload,
+            }
+        )
 
     if not args.download:
-        # Listing only: drop raw payload bytes.
-        listing = [
-            {k: v for k, v in it.items() if k != "payload"} for it in items
-        ]
+        listing = [{k: v for k, v in it.items() if k != "payload"} for it in items]
         print(json.dumps(listing, indent=2, ensure_ascii=False))
         return
 
@@ -581,140 +524,65 @@ def cmd_attachments(args):
     print(json.dumps({"uid": args.uid, "saved": saved}, indent=2, ensure_ascii=False))
 
 
-def cmd_search(args):
-    M = connect(getattr(args, "account", None))
-    M.select(f'"{args.folder}"', readonly=True)
-    typ, data = M.search(None, args.query)
-    ids = data[0].split()
-    if args.limit:
-        ids = ids[-args.limit :]
-    if not ids:
-        print("[]")
-        M.logout()
-        return
-    seq = b",".join(ids)
-    typ, msgs = M.fetch(seq, "(UID RFC822.HEADER)")
-    out = []
-    for item in msgs:
-        if not isinstance(item, tuple):
-            continue
-        meta = item[0].decode(errors="replace")
-        m_uid = re.search(r"UID (\d+)", meta)
-        uid = m_uid.group(1) if m_uid else None
-        h = message_from_bytes(item[1])
-        out.append(
-            {
-                "uid": uid,
-                "from": _decode(h.get("From")),
-                "subject": _decode(h.get("Subject")),
-                "date": h.get("Date"),
-            }
-        )
-    print(json.dumps(out, indent=2, ensure_ascii=False))
-    M.logout()
-
-
 # -- mark / move / archive / delete --------------------------------
 
 
-def _normalize_uids(spec: str) -> str:
-    """Return a comma-separated UID set; accepts ``12``, ``12,15,18`` or ``12, 15``."""
+def _normalize_uids(spec: str) -> list[str]:
+    """Return a list of UID strings; accepts ``12``, ``12,15,18`` or ``12, 15``."""
     parts = [p.strip() for p in (spec or "").split(",") if p.strip()]
     if not parts:
         sys.exit("--uid is required and must contain at least one UID")
     for p in parts:
         if not p.isdigit():
             sys.exit(f"invalid UID {p!r}; expected integers separated by commas")
-    return ",".join(parts)
-
-
-def _server_capabilities(M: imaplib.IMAP4_SSL) -> set[str]:
-    """Return the IMAP server capability set (uppercased) for the live connection."""
-    typ, data = M.capability()
-    if typ != "OK" or not data:
-        return set()
-    raw = b" ".join(d for d in data if isinstance(d, (bytes, bytearray))).decode(
-        errors="replace"
-    )
-    return {tok.upper() for tok in raw.split()}
+    return parts
 
 
 def cmd_mark(args):
-    M = connect(getattr(args, "account", None))
-    try:
-        typ, _ = M.select(f'"{args.folder}"')
-        if typ != "OK":
-            sys.exit(f"select {args.folder!r} failed")
-        uids = _normalize_uids(args.uid)
-        actions: list[tuple[str, str]] = []
-        if args.read:
-            actions.append(("+FLAGS", r"(\Seen)"))
-        if args.unread:
-            actions.append(("-FLAGS", r"(\Seen)"))
-        if args.flagged:
-            actions.append(("+FLAGS", r"(\Flagged)"))
-        if args.unflagged:
-            actions.append(("-FLAGS", r"(\Flagged)"))
-        if not actions:
-            sys.exit(
-                "pick at least one of --read / --unread / --flagged / --unflagged"
-            )
-        for op, flag in actions:
-            typ, resp = M.uid("STORE", uids, op, flag)
-            if typ != "OK":
-                sys.exit(f"STORE {op} {flag} failed: {resp!r}")
-        print(json.dumps({"ok": True, "uids": uids.split(","), "actions": actions}))
-    finally:
-        try:
-            M.logout()
-        except Exception:
-            pass
-
-
-def _move_uids(
-    M: imaplib.IMAP4_SSL, uids: str, src: str, dst: str
-) -> None:
-    """Move the given UIDs from src to dst, using MOVE if available else COPY+EXPUNGE."""
-    caps = _server_capabilities(M)
-    if "MOVE" in caps:
-        typ, resp = M.uid("MOVE", uids, f'"{dst}"')
-        if typ != "OK":
-            sys.exit(f"MOVE failed: {resp!r}")
-        return
-    typ, resp = M.uid("COPY", uids, f'"{dst}"')
-    if typ != "OK":
-        sys.exit(f"COPY failed: {resp!r}")
-    typ, resp = M.uid("STORE", uids, "+FLAGS", r"(\Deleted)")
-    if typ != "OK":
-        sys.exit(f"STORE +Deleted failed: {resp!r}")
-    typ, resp = M.expunge()
-    if typ != "OK":
-        sys.exit(f"EXPUNGE failed: {resp!r}")
+    actions: list[tuple[str, bool]] = []
+    if args.read:
+        actions.append((MailMessageFlags.SEEN, True))
+    if args.unread:
+        actions.append((MailMessageFlags.SEEN, False))
+    if args.flagged:
+        actions.append((MailMessageFlags.FLAGGED, True))
+    if args.unflagged:
+        actions.append((MailMessageFlags.FLAGGED, False))
+    if not actions:
+        sys.exit("pick at least one of --read / --unread / --flagged / --unflagged")
+    uids = _normalize_uids(args.uid)
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        for flag, value in actions:
+            mb.flag(uids, flag, value)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "uids": uids,
+                "actions": [
+                    ("+FLAGS" if v else "-FLAGS", f"({f})") for f, v in actions
+                ],
+            }
+        )
+    )
 
 
 def cmd_move(args):
-    M = connect(getattr(args, "account", None))
-    try:
-        typ, _ = M.select(f'"{args.folder}"')
-        if typ != "OK":
-            sys.exit(f"select {args.folder!r} failed")
-        uids = _normalize_uids(args.uid)
-        _move_uids(M, uids, args.folder, args.to_folder)
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "uids": uids.split(","),
-                    "from": args.folder,
-                    "to": args.to_folder,
-                }
-            )
+    uids = _normalize_uids(args.uid)
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        mb.move(uids, args.to_folder)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "uids": uids,
+                "from": args.folder,
+                "to": args.to_folder,
+            }
         )
-    finally:
-        try:
-            M.logout()
-        except Exception:
-            pass
+    )
 
 
 def cmd_archive(args):
@@ -723,37 +591,25 @@ def cmd_archive(args):
 
 
 def cmd_delete(args):
-    M = connect(getattr(args, "account", None))
-    try:
-        typ, _ = M.select(f'"{args.folder}"')
-        if typ != "OK":
-            sys.exit(f"select {args.folder!r} failed")
-        uids = _normalize_uids(args.uid)
+    uids = _normalize_uids(args.uid)
+    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+        mb.folder.set(args.folder)
         if args.hard:
-            typ, resp = M.uid("STORE", uids, "+FLAGS", r"(\Deleted)")
-            if typ != "OK":
-                sys.exit(f"STORE +Deleted failed: {resp!r}")
-            typ, resp = M.expunge()
-            if typ != "OK":
-                sys.exit(f"EXPUNGE failed: {resp!r}")
-            print(json.dumps({"ok": True, "uids": uids.split(","), "hard": True}))
-        else:
-            _move_uids(M, uids, args.folder, "Deleted")
-            print(
-                json.dumps(
-                    {
-                        "ok": True,
-                        "uids": uids.split(","),
-                        "from": args.folder,
-                        "to": "Deleted",
-                    }
-                )
+            mb.delete(uids)
+            print(json.dumps({"ok": True, "uids": uids, "hard": True}))
+            return
+        mb.move(uids, "Deleted")
+    if not args.hard:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "uids": uids,
+                    "from": args.folder,
+                    "to": "Deleted",
+                }
             )
-    finally:
-        try:
-            M.logout()
-        except Exception:
-            pass
+        )
 
 
 # -- auth subcommands (multi-account management) -------------------

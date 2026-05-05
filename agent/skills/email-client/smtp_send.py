@@ -50,11 +50,13 @@ import mimetypes
 import os
 import pathlib
 import re as _re
+import datetime as _dt
 import smtplib
 import sys
 import time
-from email import message_from_bytes
 from email.message import EmailMessage
+
+from imap_tools import AND
 
 # Most providers (Gmail, Microsoft, Yahoo) reject messages larger than
 # 25 MB. Cap the combined attachment size at this limit so we fail
@@ -63,8 +65,9 @@ MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from imap_client import (  # noqa: E402
-    _decode,
     _env,
+    _from_full,
+    _to_full,
     account_profile,
     account_user,
     connect,
@@ -72,32 +75,6 @@ from imap_client import (  # noqa: E402
     get_app_password,
     resolve_account,
 )
-
-
-def _extract_plain_body(msg) -> str:
-    """Return the best-effort plain-text body of a parsed email.Message."""
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload is None:
-                    continue
-                return payload.decode(
-                    part.get_content_charset() or "utf-8", errors="replace"
-                )
-        for part in msg.walk():
-            if part.get_content_type() == "text/html":
-                payload = part.get_payload(decode=True)
-                if payload is None:
-                    continue
-                return payload.decode(
-                    part.get_content_charset() or "utf-8", errors="replace"
-                )
-        return ""
-    payload = msg.get_payload(decode=True)
-    if payload is None:
-        return ""
-    return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
 
 
 def _from_address(from_header: str) -> str:
@@ -180,28 +157,22 @@ def fetch_original(
     ``cc``, ``subject``, ``date``, ``body``. Raises SystemExit on
     missing UID.
     """
-    M = connect(account)
-    try:
-        M.select(f'"{folder}"', readonly=True)
-        typ, data = M.uid("FETCH", uid, "(RFC822)")
-        if not data or not data[0]:
+    with connect(account, initial_folder=None) as mb:
+        mb.folder.set(folder)
+        msgs = list(mb.fetch(AND(uid=uid), mark_seen=False, limit=1))
+        if not msgs:
             sys.exit(f"uid {uid!r} not found in folder {folder!r}")
-        raw = data[0][1]
-    finally:
-        try:
-            M.logout()
-        except Exception:
-            pass
-    parsed = message_from_bytes(raw)
+        m = msgs[0]
+    cc = ", ".join(a.full for a in m.cc_values) if m.cc_values else ""
     return {
-        "message_id": (parsed.get("Message-ID") or "").strip(),
-        "references": (parsed.get("References") or "").strip(),
-        "from": _decode(parsed.get("From")),
-        "to": _decode(parsed.get("To")),
-        "cc": _decode(parsed.get("Cc")),
-        "subject": _decode(parsed.get("Subject")),
-        "date": parsed.get("Date") or "",
-        "body": _extract_plain_body(parsed),
+        "message_id": (m.headers.get("message-id", ("",))[0] or "").strip(),
+        "references": (m.headers.get("references", ("",))[0] or "").strip(),
+        "from": _from_full(m),
+        "to": _to_full(m),
+        "cc": cc,
+        "subject": m.subject,
+        "date": m.date_str,
+        "body": m.text or m.html or "",
     }
 
 
@@ -214,34 +185,25 @@ def _append_to_sent(
     the time we get here, so a failure to copy is logged and swallowed.
     """
     try:
-        M = connect(account)
+        mb = connect(account, initial_folder=None)
     except Exception as e:
         return False, f"connect failed: {e}"
     try:
         try:
-            typ, _ = M.append(
-                f'"{sent_folder}"',
-                r"(\Seen)",
-                imaplib_time(time.time()),
+            mb.append(
                 raw_bytes,
+                folder=sent_folder,
+                dt=_dt.datetime.fromtimestamp(time.time(), tz=_dt.timezone.utc),
+                flag_set=["\\Seen"],
             )
-            if typ != "OK":
-                return False, f"APPEND returned {typ}"
             return True, sent_folder
         except Exception as e:
             return False, f"APPEND failed: {e}"
     finally:
         try:
-            M.logout()
+            mb.logout()
         except Exception:
             pass
-
-
-def imaplib_time(t: float) -> str:
-    """Return an IMAP INTERNALDATE-formatted timestamp for ``time.time()``."""
-    import imaplib
-
-    return imaplib.Time2Internaldate(t)
 
 
 def _load_attachments(paths: list[str] | None) -> list[dict]:
