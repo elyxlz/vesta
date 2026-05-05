@@ -32,6 +32,12 @@ HTML body: pass ``--body-html <html>`` instead of (or alongside)
 both parts. With only HTML, a stripped plain-text fallback is
 synthesized so non-HTML clients still see something.
 
+Attachments: pass ``--attach <path>`` (repeatable) to attach files.
+MIME type is guessed from the file extension via ``mimetypes``, with
+``application/octet-stream`` as fallback. Total attachment size is
+capped at 25 MB (most providers reject larger); the send aborts with
+a clear error if exceeded.
+
 Sent folder sync: by default the message is IMAP-APPENDed to the
 provider's Sent folder after a successful SMTP send so it shows up in
 the user's mail UI. Skip with ``--no-sent-sync``.
@@ -40,13 +46,20 @@ from __future__ import annotations
 
 import argparse
 import base64
+import mimetypes
 import os
+import pathlib
 import re as _re
 import smtplib
 import sys
 import time
 from email import message_from_bytes
 from email.message import EmailMessage
+
+# Most providers (Gmail, Microsoft, Yahoo) reject messages larger than
+# 25 MB. Cap the combined attachment size at this limit so we fail
+# clearly before SMTP rejects us mid-conversation.
+MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from imap_client import (  # noqa: E402
@@ -231,6 +244,53 @@ def imaplib_time(t: float) -> str:
     return imaplib.Time2Internaldate(t)
 
 
+def _load_attachments(paths: list[str] | None) -> list[dict]:
+    """Read each attachment path, guess MIME type, enforce size cap.
+
+    Returns a list of ``{name, maintype, subtype, data}`` dicts. Exits
+    with a clear error if any path is missing or if the combined size
+    exceeds ``MAX_ATTACH_TOTAL_BYTES``.
+    """
+    if not paths:
+        return []
+    out: list[dict] = []
+    total = 0
+    for raw in paths:
+        p = pathlib.Path(raw).expanduser()
+        if not p.exists():
+            sys.exit(f"attachment not found: {raw}")
+        if not p.is_file():
+            sys.exit(f"attachment is not a regular file: {raw}")
+        try:
+            data = p.read_bytes()
+        except OSError as e:
+            sys.exit(f"failed to read attachment {raw}: {e}")
+        total += len(data)
+        if total > MAX_ATTACH_TOTAL_BYTES:
+            mb = total / (1024 * 1024)
+            cap_mb = MAX_ATTACH_TOTAL_BYTES / (1024 * 1024)
+            sys.exit(
+                f"attachments too large: {mb:.1f} MB exceeds {cap_mb:.0f} MB cap "
+                "(most providers reject larger messages); aborting send"
+            )
+        guess, _enc = mimetypes.guess_type(p.name)
+        if not guess:
+            maintype, subtype = "application", "octet-stream"
+        else:
+            maintype, _, subtype = guess.partition("/")
+            if not subtype:
+                maintype, subtype = "application", "octet-stream"
+        out.append(
+            {
+                "name": p.name,
+                "maintype": maintype,
+                "subtype": subtype,
+                "data": data,
+            }
+        )
+    return out
+
+
 def _build_message(
     *,
     user: str,
@@ -243,6 +303,7 @@ def _build_message(
     bcc: list[str] | None = None,
     in_reply_to: str = "",
     references: str = "",
+    attachments: list[dict] | None = None,
 ) -> EmailMessage:
     """Assemble the outbound EmailMessage from parts."""
     msg = EmailMessage()
@@ -265,6 +326,13 @@ def _build_message(
         msg.add_alternative(body_html, subtype="html")
     else:
         msg.set_content(body or "")
+    for att in attachments or []:
+        msg.add_attachment(
+            att["data"],
+            maintype=att["maintype"],
+            subtype=att["subtype"],
+            filename=att["name"],
+        )
     return msg
 
 
@@ -282,6 +350,7 @@ def send(
     reply_folder: str = "INBOX",
     forward_uid: str | None = None,
     forward_folder: str = "INBOX",
+    attach: list[str] | None = None,
     quote: bool = True,
     sent_sync: bool = True,
     dry_run: bool = False,
@@ -346,6 +415,8 @@ def send(
     if not body and not body_html:
         sys.exit("at least one of --body / --body-html must produce content")
 
+    attachments = _load_attachments(attach)
+
     msg = _build_message(
         user=user,
         display=display,
@@ -357,6 +428,7 @@ def send(
         bcc=bcc_list,
         in_reply_to=in_reply_to,
         references=references,
+        attachments=attachments,
     )
 
     if dry_run:
@@ -412,6 +484,7 @@ def send(
             bcc=None,
             in_reply_to=in_reply_to,
             references=references,
+            attachments=attachments,
         )
         ok, info = _append_to_sent(acc, sent_folder, copy.as_bytes())
         if ok:
@@ -485,6 +558,14 @@ def main():
         help="folder to fetch the forwarded original from (default INBOX)",
     )
     ap.add_argument(
+        "--attach",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="attach a file; pass multiple times for multiple attachments. "
+        "Total size capped at 25 MB",
+    )
+    ap.add_argument(
         "--no-quote",
         action="store_true",
         help="suppress the quoted original body when replying or forwarding",
@@ -513,6 +594,7 @@ def main():
         reply_folder=args.reply_folder,
         forward_uid=args.forward_uid,
         forward_folder=args.forward_folder,
+        attach=args.attach,
         quote=not args.no_quote,
         sent_sync=not args.no_sent_sync,
         dry_run=args.dry_run,

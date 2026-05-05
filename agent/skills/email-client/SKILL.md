@@ -75,11 +75,15 @@ email-client-send --account personal --to "user@example.com" --subject "Hi" --bo
 email-client-send --account personal --to alice@example.com --cc bob@example.com --cc carol@example.com --subject "Hi" --body "team note"
 email-client-send --account personal --to alice@example.com --bcc audit@example.com --subject "Quiet ping" --body "fyi"
 email-client-send --account personal --to alice@example.com --subject "Hi" --body "plain fallback" --body-html "<p>rich <b>HTML</b></p>"
+email-client-send --account personal --to alice@example.com --subject "Slides" --body "see attached" --attach ~/decks/q2.pdf
+email-client-send --account personal --to alice@example.com --subject "Pics" --body "two of them" --attach a.png --attach b.jpg
 ```
 
 Sends as the configured user for the chosen account. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
 
 `--cc` and `--bcc` accept multiple addresses (repeat the flag). `--body-html` sends an HTML body; combine with `--body` for a multipart/alternative message that includes both; pass `--body-html` alone and a stripped plain-text fallback is synthesized for non-HTML clients.
+
+`--attach <path>` attaches a file (repeat for multiple). MIME type is guessed from the extension via `mimetypes` and falls back to `application/octet-stream`. Total size across all attachments is capped at 25 MB; the send aborts with a clear error if exceeded (most providers reject larger). Attachments are also included in the IMAP-APPENDed Sent copy so the user sees them in their mail UI.
 
 After a successful SMTP send the message is IMAP-APPENDed to the provider's Sent folder so it shows up in the user's mail UI. Skip with `--no-sent-sync`. The folder name comes from the provider profile (`sent_folder`): Microsoft `Sent`, Gmail `[Gmail]/Sent Mail`, Yahoo `Sent`, iCloud `Sent Messages`, Fastmail `Sent`, generic `Sent`.
 
