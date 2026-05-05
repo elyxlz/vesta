@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""IMAP client over OAuth2 (XOAUTH2).
+"""IMAP client over OAuth2 (XOAUTH2) or app-password basic auth.
 
-Defaults target personal Microsoft accounts (Hotmail, Outlook.com, Live)
-via Mozilla Thunderbird's public OAuth client ID, which is the standard
-workaround for "tenantless app registrations are deprecated".
+Supports multiple providers (Microsoft personal, Gmail, Yahoo, iCloud,
+Fastmail, generic IMAP) via the profile registry in ``providers.py``.
 
-Environment overrides (set in ~/.bashrc):
+Provider is auto-detected from the user's email domain, or pinned via
+``IMAP_MAIL_PROVIDER`` (or the ``--provider`` flag on ``auth.py``).
+
+Environment overrides (set in ``~/.bashrc``):
     IMAP_MAIL_USER             email address (required)
+    IMAP_MAIL_PROVIDER         force provider key (e.g. ``gmail``)
     IMAP_MAIL_DIR              token + state dir (default ~/.imap-mail)
-    IMAP_MAIL_HOST             default outlook.office365.com
-    IMAP_MAIL_OAUTH_CLIENT_ID  default Thunderbird's public ID
-    IMAP_MAIL_OAUTH_AUTHORITY  default https://login.microsoftonline.com/consumers
+    IMAP_MAIL_HOST             override IMAP host
+    IMAP_MAIL_SMTP_HOST        override SMTP host
+    IMAP_MAIL_SMTP_PORT        override SMTP port
+    IMAP_MAIL_OAUTH_CLIENT_ID  override OAuth client ID
+    IMAP_MAIL_OAUTH_AUTHORITY  override OAuth authority (Microsoft only)
+    IMAP_MAIL_OAUTH_SCOPES     override scope list (whitespace-separated)
+    IMAP_MAIL_FROM_NAME        display name on outbound mail
+    IMAP_MAIL_POLL_INTERVAL    daemon poll seconds
+
+Backwards compatibility: a token file written by the v0.1 Microsoft-only
+release (no ``provider`` key) is treated as ``microsoft-personal``.
 """
 from __future__ import annotations
 
@@ -22,12 +33,21 @@ import pathlib
 import re
 import sys
 import time
+import urllib.parse
+import urllib.request
 from email import message_from_bytes
 from email.header import decode_header
 
-import msal
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from providers import (  # noqa: E402
+    THUNDERBIRD_MS_CLIENT_ID,
+    get_profile,
+    resolve_provider,
+)
 
-THUNDERBIRD_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+# Re-exported for backwards compatibility with tools that imported these
+# names from the v0.1 release.
+THUNDERBIRD_CLIENT_ID = THUNDERBIRD_MS_CLIENT_ID
 DEFAULT_AUTHORITY = "https://login.microsoftonline.com/consumers"
 DEFAULT_HOST = "outlook.office365.com"
 DEFAULT_SCOPES = [
@@ -53,40 +73,151 @@ def _token_path() -> pathlib.Path:
     return _state_dir() / "token.json"
 
 
-def get_access_token(scopes: list[str] | None = None) -> str:
-    scopes = scopes or DEFAULT_SCOPES
-    tok_path = _token_path()
-    if not tok_path.exists():
-        sys.exit(
-            f"no token at {tok_path}; run device-flow auth first "
-            f"(uv run python3 ~/agent/skills/imap-mail/auth.py)"
-        )
-    tok = json.loads(tok_path.read_text())
-    expires_at = tok.get("_expires_at", 0)
-    if time.time() < expires_at - 60 and tok.get("access_token"):
-        return tok["access_token"]
+def load_token() -> dict | None:
+    p = _token_path()
+    if not p.exists():
+        return None
+    return json.loads(p.read_text())
+
+
+def save_token(tok: dict) -> None:
+    p = _token_path()
+    p.write_text(json.dumps(tok, indent=2))
+    p.chmod(0o600)
+
+
+def current_profile() -> tuple[str, dict]:
+    """Resolve the active provider name and profile.
+
+    If a token exists and pins a provider, that wins over auto-detect
+    (so the daemon doesn't get reconfigured by an env-var change after
+    the user already authenticated against a specific provider).
+    """
+    tok = load_token()
+    if tok and tok.get("provider"):
+        name = tok["provider"]
+        try:
+            profile = get_profile(name)
+        except KeyError:
+            # Unknown provider in token (corrupt or future format):
+            # fall back to env-driven resolution.
+            return resolve_provider(dict(os.environ))
+        # Still let env overrides apply on top of the pinned profile.
+        from providers import apply_env_overrides
+        return name, apply_env_overrides(profile, dict(os.environ))
+    return resolve_provider(dict(os.environ))
+
+
+def _refresh_microsoft(tok: dict, profile: dict) -> dict:
+    import msal
+
     rt = tok.get("refresh_token")
     if not rt:
-        sys.exit("no refresh_token in cached token; re-run device flow")
-    client_id = _env("IMAP_MAIL_OAUTH_CLIENT_ID", THUNDERBIRD_CLIENT_ID)
-    authority = _env("IMAP_MAIL_OAUTH_AUTHORITY", DEFAULT_AUTHORITY)
-    app = msal.PublicClientApplication(client_id, authority=authority)
-    res = app.acquire_token_by_refresh_token(rt, scopes=scopes)
+        sys.exit("no refresh_token in cached token; re-run auth")
+    app = msal.PublicClientApplication(
+        profile["oauth_client_id"], authority=profile["oauth_authority"]
+    )
+    res = app.acquire_token_by_refresh_token(rt, scopes=profile["oauth_scopes"])
     if "access_token" not in res:
         sys.exit(f"refresh failed: {res}")
     res["_expires_at"] = time.time() + res.get("expires_in", 3600)
-    tok_path.write_text(json.dumps(res, indent=2))
-    tok_path.chmod(0o600)
-    return res["access_token"]
+    res["provider"] = tok.get("provider", "microsoft-personal")
+    res["user"] = tok.get("user") or _env("IMAP_MAIL_USER")
+    return res
+
+
+def _refresh_google(tok: dict, profile: dict) -> dict:
+    rt = tok.get("refresh_token")
+    if not rt:
+        sys.exit("no refresh_token in cached token; re-run auth")
+    data = urllib.parse.urlencode(
+        {
+            "client_id": profile["oauth_client_id"],
+            "refresh_token": rt,
+            "grant_type": "refresh_token",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        profile["oauth_token_url"],
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        res = json.loads(r.read().decode())
+    if "access_token" not in res:
+        sys.exit(f"refresh failed: {res}")
+    res["refresh_token"] = res.get("refresh_token", rt)
+    res["_expires_at"] = time.time() + res.get("expires_in", 3600)
+    res["provider"] = tok.get("provider", "gmail")
+    res["user"] = tok.get("user") or _env("IMAP_MAIL_USER")
+    return res
+
+
+def get_access_token(scopes: list[str] | None = None) -> str:
+    """Return a fresh OAuth2 access token for the active provider.
+
+    Only meaningful for OAuth providers (microsoft-personal, gmail).
+    For app-password providers, callers should use :func:`get_app_password`.
+    The ``scopes`` argument is accepted for backwards compatibility and
+    ignored when the provider profile already specifies its scopes.
+    """
+    name, profile = current_profile()
+    strategy = profile["auth_strategy"]
+    tok = load_token()
+    if tok is None:
+        sys.exit(
+            f"no token at {_token_path()}; run auth first "
+            f"(uv run python3 ~/agent/skills/imap-mail/auth.py)"
+        )
+    if strategy == "app-password":
+        sys.exit(
+            f"provider {name} uses app-password auth; "
+            "get_access_token() is not applicable"
+        )
+    expires_at = tok.get("_expires_at", 0)
+    if time.time() < expires_at - 60 and tok.get("access_token"):
+        return tok["access_token"]
+    if strategy == "device-flow":
+        new = _refresh_microsoft(tok, profile)
+    elif strategy == "loopback-oauth":
+        new = _refresh_google(tok, profile)
+    else:
+        sys.exit(f"unsupported auth strategy {strategy!r}")
+    save_token(new)
+    return new["access_token"]
+
+
+def get_app_password() -> str:
+    tok = load_token()
+    if tok is None:
+        sys.exit(
+            f"no credential at {_token_path()}; run auth first "
+            f"(uv run python3 ~/agent/skills/imap-mail/auth.py)"
+        )
+    pw = tok.get("app_password")
+    if not pw:
+        sys.exit("no app_password in token; re-run auth for this provider")
+    return pw
 
 
 def connect() -> imaplib.IMAP4_SSL:
     user = _env("IMAP_MAIL_USER", required=True)
-    host = _env("IMAP_MAIL_HOST", DEFAULT_HOST)
-    access = get_access_token()
-    auth = f"user={user}\x01auth=Bearer {access}\x01\x01".encode()
-    M = imaplib.IMAP4_SSL(host, 993)
-    M.authenticate("XOAUTH2", lambda _: auth)
+    name, profile = current_profile()
+    host = profile["imap_host"]
+    port = int(profile.get("imap_port", 993))
+    if not host:
+        sys.exit(
+            f"provider {name} has no IMAP host configured; "
+            "set IMAP_MAIL_HOST in ~/.bashrc"
+        )
+    M = imaplib.IMAP4_SSL(host, port)
+    if profile["auth_strategy"] == "app-password":
+        pw = get_app_password()
+        M.login(user, pw)
+    else:
+        access = get_access_token()
+        auth = f"user={user}\x01auth=Bearer {access}\x01\x01".encode()
+        M.authenticate("XOAUTH2", lambda _: auth)
     return M
 
 
@@ -219,6 +350,13 @@ def cmd_search(args):
         )
     print(json.dumps(out, indent=2, ensure_ascii=False))
     M.logout()
+
+
+# Compatibility shim. Older callers may import _detect_provider from
+# this module; keep the symbol live and forward to providers.py.
+def _detect_provider(email: str) -> str | None:
+    from providers import detect_provider
+    return detect_provider(email)
 
 
 def main():
