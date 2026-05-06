@@ -533,7 +533,7 @@ jobs:
       # Retry: bundle_dmg.sh occasionally fails on macos-latest runners when the
       # window server is unresponsive to the AppleScript-driven Finder layout step.
       - name: Build Tauri app
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -625,7 +625,7 @@ jobs:
         run: npm install
 
       - name: Build Tauri app
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -699,7 +699,7 @@ jobs:
         run: npm install
 
       - name: Build Tauri app
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -811,7 +811,7 @@ jobs:
       # Retry: Gradle bootstraps from GitHub on first run; GitHub release CDN
       # occasionally 502s and there's no built-in retry on the Gradle wrapper.
       - name: Build Android APK
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         with:
@@ -924,7 +924,7 @@ jobs:
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 45
           max_attempts: 3

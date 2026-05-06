@@ -3,22 +3,35 @@ import collections
 import dataclasses as dc
 import datetime as dt
 import time
+import typing as tp
 
 import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
 
 from .config import VestaConfig
 from .events import EventBus
+from .state_store import PersistedState
 
-__all__ = ["State", "Notification", "VestaConfig"]
+if tp.TYPE_CHECKING:
+    from aiohttp.web import AppRunner
+
+__all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
+
+CORE_SOURCE = "core"
+
+# Notification `type` values for `source=core` notifications. The filename stems
+# match these prefixes so we can identify core notifications cheaply on disk.
+TYPE_FIRST_START_SETUP = "first_start_setup"
+TYPE_RESTART_GREETING = "restart_greeting"
+TYPE_PROACTIVE_CHECK = "proactive_check"
+TYPE_NIGHTLY_DREAM = "nightly_dream"
+TYPE_MIGRATION = "migration"
+CORE_NOTIFICATION_TYPES = (TYPE_FIRST_START_SETUP, TYPE_RESTART_GREETING, TYPE_PROACTIVE_CHECK, TYPE_NIGHTLY_DREAM, TYPE_MIGRATION)
 
 CLEAN_RESTART = "restart — clean restart"
 NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
 CRASH_RESTART = "crash — restarted after unexpected exit"
 FIRST_START_REASON = "first start"
-PROCESSOR_CANCELLED_RESTART = "crash — processor cancelled unexpectedly"
-PROCESSOR_SILENT_EXIT_RESTART = "crash — processor exited silently"
-PROCESSING_CANCELLED_ERROR = "error — processing cancelled"
 
 
 @dc.dataclass
@@ -34,12 +47,10 @@ class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
-    first_setup_complete: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
-    session_id: str | None = None
-    restart_reason: str | None = None
-    last_dreamer_run: dt.datetime | None = None
-    dreamer_active: bool = False
+    persisted: PersistedState = dc.field(default_factory=PersistedState)
+    # Set by `mark_first_start_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
+    ws_runner: "AppRunner | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
@@ -50,37 +61,30 @@ class State:
     last_sdk_activity_label: str = "init"
     active_tools: dict[str, ActiveTool] = dc.field(default_factory=dict)
 
-    def touch_activity(self, label: str) -> None:
-        self.last_sdk_activity = time.monotonic()
-        self.last_sdk_activity_label = label
-
-    def sdk_idle_seconds(self) -> float:
-        return time.monotonic() - self.last_sdk_activity
-
-    def longest_running_tool(self) -> ActiveTool | None:
-        if not self.active_tools:
-            return None
-        return min(self.active_tools.values(), key=lambda t: t.started_at)
-
-
 class Notification(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="allow")
 
     timestamp: dt.datetime
     source: str
     type: str
-    interrupt: bool = pyd.Field(default=True, exclude=True)
+    interrupt: bool = True
+    body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
         """Render the notification as an XML element for unambiguous parsing.
+
+        When `body` is set it becomes the inner text (used by multi-line system prompts).
+        Otherwise the remaining fields render as `key=value` attributes.
 
         Drops empty strings, False bools, empty lists, and None since they cost tokens without
         carrying information. Booleans should be named so True is the interesting case
         (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
         datetime field.
         """
-        data = self.model_dump(exclude={"file_path", "type", "source", "interrupt"})
+        if self.body is not None:
+            return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
+        data = self.model_dump(exclude={"file_path", "type", "source", "interrupt", "body"})
         parts = []
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:

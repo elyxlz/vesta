@@ -41,7 +41,7 @@ bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-bollard = "0.20"
+bollard = "0.21"
 tar = "0.4"
 flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }

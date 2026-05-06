@@ -8,7 +8,7 @@ import pytest
 from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
-from core.client import format_crash_detail
+from core.diagnostics import format_crash_detail
 
 
 # --- format_crash_detail ---
@@ -57,13 +57,15 @@ def test_format_crash_detail_custom_fallback():
 @pytest.mark.anyio
 async def test_resume_fallback_clears_session_and_retries(tmp_path):
     """When ClaudeSDKClient.__aenter__ fails with a session_id set, it should clear the session and retry."""
+    from core import state_store
     from core.loops import message_processor
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    config.session_file.write_text("stale-session-id-1234567890")
 
-    state = vm.State(session_id="stale-session-id-1234567890")
+    state = vm.State()
+    state.persisted.session_id = "stale-session-id-1234567890"
+    state_store.save_state(state.persisted, config)
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
@@ -95,8 +97,8 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
         )
 
     assert enter_count == 2
-    assert state.session_id is None
-    assert not config.session_file.exists()
+    assert state.persisted.session_id is None
+    assert state_store.load_state(config).session_id is None
 
 
 @pytest.mark.anyio
@@ -106,7 +108,7 @@ async def test_resume_fallback_raises_without_session(tmp_path):
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State(session_id=None)
+    state = vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
@@ -134,9 +136,9 @@ async def test_resume_fallback_raises_on_second_failure(tmp_path):
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    config.session_file.write_text("stale-session")
 
-    state = vm.State(session_id="stale-session-1234567890")
+    state = vm.State()
+    state.persisted.session_id = "stale-session-1234567890"
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
@@ -179,7 +181,8 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         patch("core.main.message_processor", side_effect=crashing_processor),
         patch("core.main.monitor_loop", new_callable=AsyncMock),
         patch("core.main.input_handler", new_callable=AsyncMock),
-        patch("core.main.queue_greeting", new_callable=AsyncMock),
+        patch("core.main.drop_greeting_notification", return_value=False),
+        patch("core.main.drop_pending_migrations", return_value=0),
     ):
         mock_runner = MagicMock()
         mock_runner.cleanup = AsyncMock()
@@ -187,8 +190,9 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
 
         await run_vesta(config, state=state)
 
-    assert "crash" in (state.restart_reason or "")
-    assert "RuntimeError" in (state.restart_reason or "")
+    reason = state.persisted.last_restart_reason or ""
+    assert "crash" in reason
+    assert "RuntimeError" in reason
 
 
 # --- stderr buffer ---

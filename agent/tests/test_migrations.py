@@ -1,23 +1,27 @@
 """Tests for the prompt-based migration runner."""
 
-import asyncio
+import json
 
-import pytest
 import core.models as vm
-from core.migrations import APPLIED_FILE_NAME, applied_file, list_pending, queue_migrations
+from core.migrations import drop_pending_migrations, list_pending
 
 
 def _make_config(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     (config.agent_dir / "core" / "migrations").mkdir(parents=True)
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     return config
+
+
+def _make_state() -> vm.State:
+    return vm.State()
 
 
 def test_no_migrations_dir_returns_empty(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    assert list_pending(config) == []
+    assert list_pending(state=_make_state(), config=config) == []
 
 
 def test_lists_pending_in_filename_order(tmp_path):
@@ -26,7 +30,7 @@ def test_lists_pending_in_filename_order(tmp_path):
     (migrations_dir / "002-second.md").write_text("second body")
     (migrations_dir / "001-first.md").write_text("first body")
 
-    pending = list_pending(config)
+    pending = list_pending(state=_make_state(), config=config)
 
     assert [name for name, _ in pending] == ["001-first", "002-second"]
     assert pending[0][1] == "first body"
@@ -37,103 +41,124 @@ def test_skips_already_applied(tmp_path):
     migrations_dir = config.agent_dir / "core" / "migrations"
     (migrations_dir / "001-first.md").write_text("first")
     (migrations_dir / "002-second.md").write_text("second")
-    applied_file(config).write_text("001-first\n")
+    state = _make_state()
+    state.persisted.applied_migrations = ["001-first"]
 
-    pending = list_pending(config)
+    pending = list_pending(state=state, config=config)
 
     assert [name for name, _ in pending] == ["002-second"]
 
 
-def test_applied_file_tolerates_blank_lines(tmp_path):
-    config = _make_config(tmp_path)
-    migrations_dir = config.agent_dir / "core" / "migrations"
-    (migrations_dir / "001-first.md").write_text("first")
-    applied_file(config).write_text("\n\n  001-first  \n\n")
-
-    assert list_pending(config) == []
-
-
-@pytest.mark.anyio
-async def test_queue_migrations_enqueues_each(tmp_path):
+def test_drop_writes_one_notification_per_migration(tmp_path):
     config = _make_config(tmp_path)
     migrations_dir = config.agent_dir / "core" / "migrations"
     (migrations_dir / "001-first.md").write_text("first body")
     (migrations_dir / "002-second.md").write_text("second body")
-    queue: asyncio.Queue = asyncio.Queue()
+    state = _make_state()
 
-    count = await queue_migrations(queue, config=config)
+    count = drop_pending_migrations(state=state, config=config)
 
     assert count == 2
-    msg1, is_user1 = await queue.get()
-    msg2, is_user2 = await queue.get()
-    assert is_user1 is False and is_user2 is False
-    assert "[Migration: 001-first]" in msg1 and "first body" in msg1
-    assert "[Migration: 002-second]" in msg2 and "second body" in msg2
+    files = sorted(config.notifications_dir.glob("*.json"))
+    assert [f.name for f in files] == ["migration-001-first.json", "migration-002-second.json"]
+    payload = json.loads(files[0].read_text())
+    assert payload["source"] == "core"
+    assert payload["type"] == "migration"
+    assert payload["interrupt"] is False
+    assert "first body" in payload["body"]
+    assert "[Migration: 001-first]" in payload["body"]
 
 
-@pytest.mark.anyio
-async def test_queue_migrations_no_pending_returns_zero(tmp_path):
+def test_drop_no_pending_returns_zero(tmp_path):
     config = _make_config(tmp_path)
-    queue: asyncio.Queue = asyncio.Queue()
+    state = _make_state()
 
-    count = await queue_migrations(queue, config=config)
+    count = drop_pending_migrations(state=state, config=config)
 
     assert count == 0
-    assert queue.empty()
+    assert list(config.notifications_dir.glob("*.json")) == []
 
 
-def test_applied_file_path_uses_data_dir(tmp_path):
-    config = _make_config(tmp_path)
-    assert applied_file(config) == config.data_dir / APPLIED_FILE_NAME
-
-
-@pytest.mark.anyio
-async def test_first_start_pre_marks_and_queues_nothing(tmp_path):
+def test_first_start_pre_marks_and_drops_nothing(tmp_path):
     config = _make_config(tmp_path)
     migrations_dir = config.agent_dir / "core" / "migrations"
     (migrations_dir / "001-first.md").write_text("first")
     (migrations_dir / "002-second.md").write_text("second")
-    queue: asyncio.Queue = asyncio.Queue()
+    state = _make_state()
 
-    count = await queue_migrations(queue, config=config, first_start=True)
+    count = drop_pending_migrations(state=state, config=config, first_start=True)
 
     assert count == 0
-    assert queue.empty()
-    assert applied_file(config).read_text().splitlines() == ["001-first", "002-second"]
+    assert list(config.notifications_dir.glob("*.json")) == []
+    assert state.persisted.applied_migrations == ["001-first", "002-second"]
 
 
-@pytest.mark.anyio
-async def test_legacy_agent_runs_migrations_on_subsequent_boot(tmp_path):
+def test_legacy_agent_runs_migrations_on_subsequent_boot(tmp_path):
     config = _make_config(tmp_path)
     migrations_dir = config.agent_dir / "core" / "migrations"
     (migrations_dir / "001-first.md").write_text("first body")
-    queue: asyncio.Queue = asyncio.Queue()
+    state = _make_state()
 
-    # Legacy agent has no migrations.applied file and isn't a first start.
-    count = await queue_migrations(queue, config=config, first_start=False)
+    count = drop_pending_migrations(state=state, config=config, first_start=False)
 
     assert count == 1
-    msg, _ = await queue.get()
-    assert "[Migration: 001-first]" in msg
+    # Drop does NOT pre-mark applied — the agent itself records completion via mark_migration_applied.
+    assert state.persisted.applied_migrations == []
 
 
-@pytest.mark.anyio
-async def test_post_first_start_migration_added_later_runs(tmp_path):
-    """A migration shipped after the agent's first boot should still queue."""
+def test_redrop_when_agent_did_not_mark_applied(tmp_path):
+    """If the agent never called mark_migration_applied (rate limit, crash), the migration runs again on the next boot."""
     config = _make_config(tmp_path)
     migrations_dir = config.agent_dir / "core" / "migrations"
     (migrations_dir / "001-first.md").write_text("first")
+    state = _make_state()
 
-    # Simulate first start.
-    await queue_migrations(asyncio.Queue(), config=config, first_start=True)
-    assert applied_file(config).read_text().splitlines() == ["001-first"]
+    drop_pending_migrations(state=state, config=config, first_start=False)
+    assert state.persisted.applied_migrations == []
+
+    # Simulate a boot: clear stale core notifications, then re-derive.
+    for f in config.notifications_dir.glob("*.json"):
+        f.unlink()
+
+    count = drop_pending_migrations(state=state, config=config, first_start=False)
+    assert count == 1, "should re-drop because applied_migrations is still empty"
+
+
+def test_no_redrop_after_agent_marks_applied(tmp_path):
+    """Once the agent has called mark_migration_applied (recorded in state.persisted.applied_migrations), the migration is not re-dropped."""
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("first")
+    state = _make_state()
+
+    drop_pending_migrations(state=state, config=config, first_start=False)
+    # Simulate the agent's mark_migration_applied tool call.
+    state.persisted.applied_migrations.append("001-first")
+    for f in config.notifications_dir.glob("*.json"):
+        f.unlink()
+
+    count = drop_pending_migrations(state=state, config=config, first_start=False)
+    assert count == 0
+    assert list(config.notifications_dir.glob("*.json")) == []
+
+
+def test_post_first_start_migration_added_later_runs(tmp_path):
+    """A migration shipped after the agent's first boot should still drop."""
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("first")
+    state = _make_state()
+
+    drop_pending_migrations(state=state, config=config, first_start=True)
+    assert state.persisted.applied_migrations == ["001-first"]
 
     # Later image adds a new migration.
     (migrations_dir / "002-second.md").write_text("second")
-    queue: asyncio.Queue = asyncio.Queue()
 
-    count = await queue_migrations(queue, config=config, first_start=False)
+    count = drop_pending_migrations(state=state, config=config, first_start=False)
 
     assert count == 1
-    msg, _ = await queue.get()
-    assert "[Migration: 002-second]" in msg
+    # Drop alone doesn't mark — only the first-start pre-mark is in applied_migrations.
+    assert state.persisted.applied_migrations == ["001-first"]
+    files = list(config.notifications_dir.glob("migration-002-second.json"))
+    assert len(files) == 1

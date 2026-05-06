@@ -5,6 +5,7 @@ import collections
 import datetime as dt
 import json
 import pathlib as pl
+import time
 
 import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
@@ -12,8 +13,12 @@ from watchfiles import awatch, Change
 
 from . import models as vm
 from . import logger
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
+from . import state_store
+from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
+
+from .models import CORE_SOURCE, CORE_NOTIFICATION_TYPES, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
 
 def _now() -> dt.datetime:
@@ -26,7 +31,35 @@ def _now() -> dt.datetime:
 def _load_notification_files(directory: pl.Path) -> list[tuple[pl.Path, str]]:
     if not directory.exists():
         return []
-    return [(f, f.read_text(encoding="utf-8")) for f in directory.glob("*.json")]
+    return [(f, f.read_text(encoding="utf-8")) for f in sorted(directory.glob("*.json"))]
+
+
+def drop_core_notification(*, type_: str, body: str, interrupt: bool, config: vm.VestaConfig, name: str | None = None) -> pl.Path:
+    """Write a `source=core` notification file. `name` is the filename stem; defaults to type+millisecond timestamp for natural ordering."""
+    notif = vm.Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, interrupt=interrupt, body=body)
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    stem = name if name is not None else f"{type_}-{int(time.time() * 1000)}"
+    path = config.notifications_dir / f"{stem}.json"
+    path.write_text(notif.model_dump_json())
+    return path
+
+
+def _is_core_notification_filename(name: str) -> bool:
+    return any(name.startswith(f"{type_}-") for type_ in CORE_NOTIFICATION_TYPES)
+
+
+def clear_stale_core_notifications(config: vm.VestaConfig) -> int:
+    """Remove any leftover `source=core` notifications from a previous (likely crashed) boot. External notifications are preserved. Identified by filename stem (`<type>-…`) — no JSON parse."""
+    if not config.notifications_dir.exists():
+        return 0
+    removed = 0
+    for path in config.notifications_dir.glob("*.json"):
+        if _is_core_notification_filename(path.name):
+            path.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        logger.startup(f"Cleared {removed} stale core notification(s)")
+    return removed
 
 
 async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
@@ -98,104 +131,109 @@ async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> 
 async def process_batch(
     notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
+    """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first."""
     if not notifications:
         return
-
-    suffix = load_prompt("notification_suffix", config) or ""
-    prompt = format_notification_batch(notifications, suffix=suffix)
 
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
-    await queue.put((prompt, False))
+    system = [n for n in notifications if n.source == CORE_SOURCE]
+    external = [n for n in notifications if n.source != CORE_SOURCE]
+
+    if system:
+        await queue.put((format_notification_batch(system, suffix=""), False))
+    if external:
+        suffix = load_prompt("notification_suffix", config) or ""
+        await queue.put((format_notification_batch(external, suffix=suffix), False))
+
     await delete_notification_files(notifications)
 
 
 CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 
 
-async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
-    """Returns True if a startup prompt was queued."""
+def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
+    """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
     if not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
 
     if reason == "first_start":
-        # Always mark first-start as handled, even if the prompt is missing,
-        # otherwise the agent re-enters first-start on every reboot.
-        (config.data_dir / "first_start_done").write_text("1")
         setup_prompt = load_prompt("first_start_setup", config)
-        if setup_prompt:
-            combined = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
-            await queue.put((combined, False))
-            logger.startup("Queued first_start setup")
-            return True
-        return False
+        if not setup_prompt:
+            # No prompt to run — flip the flag so we don't loop into first-start every reboot.
+            state.persisted.first_start_done = True
+            state_store.save_state(state.persisted, config)
+            return False
+        body = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
+        drop_core_notification(type_=TYPE_FIRST_START_SETUP, body=body, interrupt=True, config=config)
+        logger.startup("Dropped first_start_setup notification")
+        return True
 
     extras = []
-    flag = config.data_dir / "show_dreamer_summary"
-    if flag.exists():
-        flag.unlink()
+    if state.persisted.show_dreamer_summary:
+        state.persisted.show_dreamer_summary = False
+        state_store.save_state(state.persisted, config)
         for path in sorted(config.dreamer_dir.glob("*.md"), reverse=True)[:3]:
             extras.append(f"[Dreamer Summary — {path.stem}]\n{path.read_text().strip()}")
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return False
 
-    await queue.put((prompt.strip(), False))
-    logger.startup(f"Queued {reason} greeting")
+    drop_core_notification(type_=TYPE_RESTART_GREETING, body=prompt.strip(), interrupt=False, config=config)
+    logger.startup(f"Dropped {reason} greeting notification")
     return True
 
 
 # --- Message processing ---
 
 
-async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
-    try:
-        if is_user:
-            logger.user(msg)
-            state.event_bus.emit({"type": "user", "text": msg})
-        else:
-            preview = msg[:200] + "..." if len(msg) > 200 else msg
-            logger.system(preview.replace("\n", " "))
-        state.event_bus.set_state("thinking")
-        await process_message(msg, state=state, config=config, is_user=is_user)
-    except asyncio.CancelledError:
-        if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
-            raise
-        logger.error("Message processing cancelled unexpectedly — triggering restart")
-        state.event_bus.emit({"type": "error", "text": "processing cancelled"})
-        state.restart_reason = vm.PROCESSING_CANCELLED_ERROR
-        state.graceful_shutdown.set()
-        raise
-    except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
-        if isinstance(e, TimeoutError):
-            error_msg = "Response timed out"
-        else:
-            error_msg = str(e) or type(e).__name__
-        if not state.session_id and state.client:
-            try:
-                sid = state.client.session_id  # ty: ignore[unresolved-attribute]
-                if sid:
-                    persist_session_id(sid, state=state, config=config)
-            except (AttributeError, TypeError):
-                pass
-        exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
-        detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
-        if stderr_tail:
-            detail += f"\nRecent stderr:\n{stderr_tail}"
-        logger.error(f"{detail} — triggering restart")
-        state.event_bus.emit({"type": "error", "text": error_msg})
-        state.restart_reason = f"error — {error_msg}"
-        state.graceful_shutdown.set()
-    finally:
-        state.event_bus.set_state("idle")
-
-
-async def _process_interruptible(
+async def _run_messages_with_interrupts(
     msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
-    """Process a message while monitoring the queue for new messages that should interrupt."""
+    """Run a message and any follow-ups; new queue items interrupt the current turn (deferred during compaction)."""
+
+    async def run_one(text: str, *, user: bool) -> None:
+        try:
+            if user:
+                logger.user(text)
+                state.event_bus.emit({"type": "user", "text": text})
+            else:
+                preview = text[:200] + "..." if len(text) > 200 else text
+                logger.system(preview.replace("\n", " "))
+            state.event_bus.set_state("thinking")
+            await process_message(text, state=state, config=config, is_user=user)
+        except asyncio.CancelledError:
+            if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
+                raise
+            logger.error("Message processing cancelled unexpectedly — triggering restart")
+            state.event_bus.emit({"type": "error", "text": "processing cancelled"})
+            state.persisted.last_restart_reason = "error — processing cancelled"
+            state_store.save_state(state.persisted, config)
+            state.graceful_shutdown.set()
+            raise
+        except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
+            error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
+            if not state.persisted.session_id and state.client:
+                try:
+                    sid = state.client.session_id  # ty: ignore[unresolved-attribute]
+                    if sid:
+                        persist_session_id(sid, state=state, config=config)
+                except (AttributeError, TypeError):
+                    pass
+            exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
+            detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
+            if stderr_tail:
+                detail += f"\nRecent stderr:\n{stderr_tail}"
+            logger.error(f"{detail} — triggering restart")
+            state.event_bus.emit({"type": "error", "text": error_msg})
+            state.persisted.last_restart_reason = f"error — {error_msg}"
+            state_store.save_state(state.persisted, config)
+            state.graceful_shutdown.set()
+        finally:
+            state.event_bus.set_state("idle")
+
     pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
     process_task: asyncio.Task[None] | None = None
 
@@ -208,7 +246,7 @@ async def _process_interruptible(
 
             current_msg, current_is_user = pending.popleft()
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+            process_task = asyncio.create_task(run_one(current_msg, user=current_is_user))
 
             while not process_task.done():
                 queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
@@ -253,25 +291,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         except TimeoutError:
                             continue
 
-                        await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
-
-                        if not state.first_setup_complete.is_set():
-                            state.first_setup_complete.set()
-                            logger.startup("Agent ready")
-
-                        if state.dreamer_active:
-                            state.dreamer_active = False
-                            logger.dreamer("Dreamer complete, clearing session for fresh context...")
-                            config.session_file.unlink(missing_ok=True)
-                            state.session_id = None
-                            (config.data_dir / "show_dreamer_summary").write_text("1")
-                            if state.last_dreamer_run is not None:
-                                try:
-                                    (config.data_dir / "last_dreamer_run").write_text(state.last_dreamer_run.isoformat())
-                                except OSError:
-                                    logger.warning("Could not persist last_dreamer_run")
-                            state.restart_reason = vm.NIGHTLY_RESTART
-                            state.graceful_shutdown.set()
+                        await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
                 finally:
                     state.client = None
                     state.interrupt_event = None
@@ -279,18 +299,18 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     logger.client("Client session closed")
             break
         except (ClaudeSDKError, OSError, RuntimeError) as exc:
-            if retried or not state.session_id:
+            if retried or not state.persisted.session_id:
                 raise
             await asyncio.sleep(0.05)  # give stderr handler time to drain buffered subprocess output
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.warning(
-                f"Session resume failed ({state.session_id[:16]}...): {type(exc).__name__}: {exc}"
+                f"Session resume failed ({state.persisted.session_id[:16]}...): {type(exc).__name__}: {exc}"
                 f" | exit_code={exit_code}"
                 f" — starting fresh\nRecent stderr:\n{stderr_tail}"
             )
-            state.session_id = None
+            state.persisted.session_id = None
+            state_store.save_state(state.persisted, config)
             state.stderr_buffer.clear()
-            config.session_file.unlink(missing_ok=True)
             options = build_client_options(config, state)
             retried = True
 
@@ -298,29 +318,36 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 # --- Proactive & dreamer ---
 
 
-async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig) -> None:
+def check_proactive_task(*, config: vm.VestaConfig) -> None:
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
-    pending = queue.qsize()
-    suffix = f" (queue={pending} pending — processor may be stuck)" if pending > 0 else ""
-    logger.proactive(f"Running {config.proactive_check_interval}-minute check...{suffix}")
-    await queue.put((prompt, False))
+    logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
+    drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, interrupt=False, config=config)
 
 
-async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
-    if config.ephemeral:
+def _has_pending_dream_notification(config: vm.VestaConfig) -> bool:
+    if not config.notifications_dir.exists():
+        return False
+    return any(p.name.startswith(f"{TYPE_NIGHTLY_DREAM}-") for p in config.notifications_dir.glob("*.json"))
+
+
+def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
+    """Drop a dream notification if today's dream hasn't completed yet. Re-fires on every monitor tick after the configured hour until the agent calls `mark_dreamer_complete`. Skips if a dream notification is already pending on disk so we don't pile up duplicates while the previous one is still being processed."""
+    if config.ephemeral or config.nightly_memory_hour is None:
         return
-
     now = _now()
-    if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
-        if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
-            logger.dreamer("Nightly dreamer starting...")
-            prompt = load_prompt("nightly_dream", config) or ""
-            state.dreamer_active = True
-            await queue.put((prompt, False))
-            state.last_dreamer_run = now
-            logger.dreamer("Dreamer prompt queued")
+    if now.hour < config.nightly_memory_hour:
+        return
+    last = state.persisted.last_dreamer_run
+    if last is not None and last.date() >= now.date():
+        return
+    if _has_pending_dream_notification(config):
+        return
+    logger.dreamer("Nightly dreamer starting...")
+    prompt = load_prompt("nightly_dream", config) or ""
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, interrupt=False, config=config)
+    logger.dreamer("Dreamer notification dropped")
 
 
 # --- Monitor loop ---
@@ -359,10 +386,10 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 now = _now()
 
                 if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                    await check_proactive_task(queue, config=config)
+                    check_proactive_task(config=config)
                     last_proactive = now
 
-                await process_nightly_memory(queue, state=state, config=config)
+                process_nightly_memory(state=state, config=config)
 
                 notifications = await load_new_notifications(state=state, config=config)
                 interrupt_notifs = [n for n in notifications if n.interrupt]

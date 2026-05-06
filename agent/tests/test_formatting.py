@@ -3,15 +3,15 @@
 import datetime as dt
 
 import pytest
-from core.client import (
-    _contains_dashes,
+from core.client import _contains_dashes
+from core.sdk_parsing import (
     _format_tool_call,
-    _format_search_results,
     _parse_agent_input,
-    _parse_sdk_message,
     _tool_summary,
     filter_tool_lines,
+    parse_sdk_message,
 )
+from core.tools import _format_search_results
 
 
 # --- Agent input parsing ---
@@ -69,9 +69,9 @@ def test_format_tool_call_task_and_agent(tool_name, agent_type):
     ids=["slash-command", "slash-command-with-args", "normal-message"],
 )
 def test_build_query(text, expect_timestamp):
-    from core.client import _build_query
+    from core.sdk_parsing import build_query
 
-    result = _build_query(text, timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
+    result = build_query(text, timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
     if expect_timestamp:
         assert "[Current time:" in result
         assert text in result
@@ -134,7 +134,7 @@ def test_parse_sdk_message_extracts_thinking_blocks():
     msg = MagicMock(spec=AssistantMessage)
     msg.content = [ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")]
 
-    texts, thinking_blocks, context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=None)
+    texts, thinking_blocks, context, session_id, has_tool_use = parse_sdk_message(msg, sub_agent_context=None)
 
     assert texts == ["done"]
     assert len(thinking_blocks) == 1

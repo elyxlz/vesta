@@ -7,11 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
-from core.client import (
+from core.client import converse
+from core.diagnostics import (
     _check_sdk_subprocess_alive,
-    _format_hang_diagnostics,
-    _sdk_watchdog,
-    converse,
+    format_hang_diagnostics,
+    longest_running_tool,
+    sdk_idle_seconds,
+    sdk_watchdog,
+    touch_activity,
 )
 
 
@@ -22,7 +25,7 @@ def test_touch_activity_updates_timestamp_and_label():
     state = vm.State()
     before = state.last_sdk_activity
     time.sleep(0.01)
-    state.touch_activity("tool_start:Read")
+    touch_activity(state, "tool_start:Read")
     assert state.last_sdk_activity > before
     assert state.last_sdk_activity_label == "tool_start:Read"
 
@@ -30,7 +33,7 @@ def test_touch_activity_updates_timestamp_and_label():
 def test_sdk_idle_seconds_increases_over_time():
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 42.0
-    idle = state.sdk_idle_seconds()
+    idle = sdk_idle_seconds(state)
     assert 41.5 < idle < 43.0
 
 
@@ -40,23 +43,23 @@ def test_longest_running_tool_returns_oldest():
     state.active_tools["a"] = vm.ActiveTool(name="Bash", summary="ls", started_at=now - 10)
     state.active_tools["b"] = vm.ActiveTool(name="Read", summary="/tmp/x", started_at=now - 30)
     state.active_tools["c"] = vm.ActiveTool(name="Grep", summary="foo", started_at=now - 5)
-    longest = state.longest_running_tool()
+    longest = longest_running_tool(state)
     assert longest is not None
     assert longest.name == "Read"
 
 
 def test_longest_running_tool_returns_none_when_empty():
     state = vm.State()
-    assert state.longest_running_tool() is None
+    assert longest_running_tool(state) is None
 
 
-# --- _format_hang_diagnostics ---
+# --- format_hang_diagnostics ---
 
 
 def test_format_hang_diagnostics_minimal():
     state = vm.State()
-    state.touch_activity("query_sent")
-    diag = _format_hang_diagnostics(state)
+    touch_activity(state, "query_sent")
+    diag = format_hang_diagnostics(state)
     assert "idle=" in diag
     assert "last_activity=query_sent" in diag
     assert "longest_tool" not in diag
@@ -65,11 +68,11 @@ def test_format_hang_diagnostics_minimal():
 
 def test_format_hang_diagnostics_with_active_tools():
     state = vm.State()
-    state.touch_activity("tool_start:Agent")
+    touch_activity(state, "tool_start:Agent")
     now = time.monotonic()
     state.active_tools["t1"] = vm.ActiveTool(name="Agent", summary="research", started_at=now - 120, is_subagent=True)
     state.active_tools["t2"] = vm.ActiveTool(name="Read", summary="/tmp/x", started_at=now - 5)
-    diag = _format_hang_diagnostics(state)
+    diag = format_hang_diagnostics(state)
     assert "longest_tool=Agent" in diag
     assert "sub=True" in diag
     assert "active_tools=2" in diag
@@ -79,7 +82,7 @@ def test_format_hang_diagnostics_includes_stderr_tail():
     state = vm.State()
     for i in range(10):
         state.stderr_buffer.append(f"line {i}")
-    diag = _format_hang_diagnostics(state)
+    diag = format_hang_diagnostics(state)
     assert "stderr_tail=" in diag
     assert "line 4" not in diag  # Only last 5
     assert "line 9" in diag
@@ -125,7 +128,7 @@ def test_subprocess_alive_returns_none_on_missing_attrs():
     assert _check_sdk_subprocess_alive(state) is None
 
 
-# --- _sdk_watchdog ---
+# --- sdk_watchdog ---
 
 
 @pytest.mark.anyio
@@ -133,19 +136,19 @@ async def test_watchdog_warns_at_thresholds():
     """Patch the sleep to 0 so the watchdog ticks immediately."""
     from unittest.mock import patch as _patch
 
-    import core.client as client_mod
+    import core.diagnostics as diagnostics_mod
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle for 65s
     stop = asyncio.Event()
     warnings: list[str] = []
 
-    original_warning = client_mod.logger.warning
+    original_warning = diagnostics_mod.logger.warning
 
     def capture_warning(msg):
         warnings.append(str(msg))
 
-    client_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
+    diagnostics_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
 
     original_wait_for = asyncio.wait_for
 
@@ -158,10 +161,10 @@ async def test_watchdog_warns_at_thresholds():
             await asyncio.sleep(0.05)
             stop.set()
 
-        with _patch("core.client.asyncio.wait_for", fast_wait_for):
-            await asyncio.gather(_sdk_watchdog(state, stop=stop), stop_after_tick())
+        with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+            await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_tick())
     finally:
-        client_mod.logger.warning = original_warning
+        diagnostics_mod.logger.warning = original_warning
 
     assert any("SDK silent for 60s" in w for w in warnings), f"Expected 60s warning, got: {warnings}"
 
@@ -170,19 +173,19 @@ async def test_watchdog_warns_at_thresholds():
 async def test_watchdog_resets_after_activity_resumes():
     from unittest.mock import patch as _patch
 
-    import core.client as client_mod
+    import core.diagnostics as diagnostics_mod
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle
     stop = asyncio.Event()
     warnings: list[str] = []
 
-    original_warning = client_mod.logger.warning
+    original_warning = diagnostics_mod.logger.warning
 
     def capture_warning(msg):
         warnings.append(str(msg))
 
-    client_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
+    diagnostics_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
 
     original_wait_for = asyncio.wait_for
 
@@ -193,16 +196,16 @@ async def test_watchdog_resets_after_activity_resumes():
 
         async def resume_then_idle_again():
             await asyncio.sleep(0.05)
-            state.touch_activity("sdk_message")
+            touch_activity(state, "sdk_message")
             await asyncio.sleep(0.05)
             state.last_sdk_activity = time.monotonic() - 65
             await asyncio.sleep(0.05)
             stop.set()
 
-        with _patch("core.client.asyncio.wait_for", fast_wait_for):
-            await asyncio.gather(_sdk_watchdog(state, stop=stop), resume_then_idle_again())
+        with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+            await asyncio.gather(sdk_watchdog(state, stop=stop), resume_then_idle_again())
     finally:
-        client_mod.logger.warning = original_warning
+        diagnostics_mod.logger.warning = original_warning
 
     sixty_warnings = [w for w in warnings if "SDK silent for 60s" in w]
     assert len(sixty_warnings) >= 2, f"Expected 60s warning to fire again after reset, got {len(sixty_warnings)}: {warnings}"
@@ -213,7 +216,7 @@ async def test_watchdog_stops_cleanly():
     state = vm.State()
     stop = asyncio.Event()
     stop.set()  # Stop immediately
-    await _sdk_watchdog(state, stop=stop)  # Should not hang
+    await sdk_watchdog(state, stop=stop)  # Should not hang
 
 
 # --- Tool duration tracking via hooks ---
@@ -225,10 +228,10 @@ async def test_tool_hooks_track_active_tools():
     from claude_agent_sdk import HookContext
     from claude_agent_sdk.types import PostToolUseHookInput, PreToolUseHookInput
 
-    import core.client as client_mod
+    from core import sdk_parsing
 
     state = vm.State()
-    hooks = client_mod._make_hooks(state)
+    hooks = sdk_parsing.make_hooks(state)
 
     pre_hook = hooks["PreToolUse"][0].hooks[0]
     post_hook = hooks["PostToolUse"][0].hooks[0]
@@ -252,10 +255,10 @@ async def test_tool_failure_hook_cleans_up():
     from claude_agent_sdk import HookContext
     from claude_agent_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
 
-    import core.client as client_mod
+    from core import sdk_parsing
 
     state = vm.State()
-    hooks = client_mod._make_hooks(state)
+    hooks = sdk_parsing.make_hooks(state)
 
     pre_hook = hooks["PreToolUse"][0].hooks[0]
     fail_hook = hooks["PostToolUseFailure"][0].hooks[0]

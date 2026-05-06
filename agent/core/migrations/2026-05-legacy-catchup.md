@@ -3,6 +3,8 @@ Catch-up migration for legacy agents. Two structural changes plus a general conv
 - The restart prompt has moved into a `restart` skill at `~/agent/skills/restart/SKILL.md`.
 - The personality skill no longer writes the active preset name into that file. Personality registers the voice-loading line via its own SETUP.md.
 
+This prompt may run more than once if a previous attempt was interrupted (rate limit, crash). Every step should be safe to re-run: check the desired end state first, no-op if already there.
+
 ### 1. Install the restart skill
 
 Install it from upstream via the skills registry. This adds it to the sparse-checkout cone and pulls the canonical file from `$VESTA_UPSTREAM_REF` as a tracked file:
@@ -64,4 +66,4 @@ This isn't about chasing every default, it's about closing the gap between what 
 
 ### 8. Mark this migration applied
 
-Append the line `2026-05-restart-skill` to `~/agent/data/migrations.applied` (create the file if it doesn't exist). Use append mode, do not overwrite.
+Call `mark_migration_applied` with `name="2026-05-legacy-catchup"`. Without this call, the migration runs again on the next boot.

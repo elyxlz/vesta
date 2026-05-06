@@ -53,13 +53,20 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
    ```
    If up to date, stop.
 
-4. **Merge.**
+4. **Review what's incoming.** Read the upstream commits and changed files so you know what you're pulling in.
+   ```bash
+   git -C ~ log --oneline HEAD..FETCH_HEAD
+   git -C ~ diff --stat HEAD..FETCH_HEAD
+   ```
+   Drill into anything you want a closer look at: `git -C ~ diff HEAD..FETCH_HEAD -- <path>`.
+
+5. **Merge.**
    ```bash
    git -C ~ merge FETCH_HEAD --no-edit
    ```
-   If clean, skip to step 6.
+   If clean, skip to step 7.
 
-5. **Resolve conflicts.**
+6. **Resolve conflicts.**
    - Treat conflicts as integration work, not `ours` vs `theirs`. Default goal: preserve both behaviors.
    - Small: rewrite the merged file so both changes coexist.
    - Structural: extract helpers, split responsibilities, rename to avoid collisions.
@@ -69,7 +76,7 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
    Then: `git -C ~ commit --no-edit`
 
-6. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
+7. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
 
    - `agent/skills/index.json` is generated from disk. A textual merge of two arrays sometimes produces invalid or stale JSON, and any new skill directory pulled in from upstream needs an entry. Regenerate from the merged tree:
      ```bash
@@ -87,7 +94,7 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
    git -C ~ add agent/skills/index.json && git -C ~ commit -m "chore: refresh skills/index.json post-sync"
    ```
 
-7. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
+8. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
 
 ## Branch model
 

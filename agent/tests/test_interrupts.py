@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import core.models as vm
 from claude_agent_sdk.types import SubagentStartHookInput
-from core.client import _subagent_hook
+from core.sdk_parsing import _subagent_hook
 from core.events import EventBus, SubagentStartEvent, SubagentStopEvent
 
 
@@ -155,9 +155,9 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_process_interruptible_cancels_process_task(tmp_path):
-    """Cancelling _process_interruptible must cancel its in-flight process_task (no orphaned tasks)."""
-    from core.loops import _process_interruptible
+async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
+    """Cancelling _run_messages_with_interrupts must cancel its in-flight process_task (no orphaned tasks)."""
+    from core.loops import _run_messages_with_interrupts
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
@@ -177,8 +177,8 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
             raise
         return (["OK"], state)
 
-    with patch("core.loops._process_message_safely", hanging_process):
-        interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config))
+    with patch("core.loops.process_message", hanging_process):
+        interruptible_task = asyncio.create_task(_run_messages_with_interrupts("test msg", is_user=True, queue=queue, state=state, config=config))
         await task_started.wait()
         interruptible_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -188,9 +188,9 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_process_interruptible_defers_interrupt_during_compaction(tmp_path):
+async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(tmp_path):
     """While state.compacting is True, new messages must be queued, not interrupt the in-flight task."""
-    from core.loops import _process_interruptible
+    from core.loops import _run_messages_with_interrupts
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
@@ -209,8 +209,8 @@ async def test_process_interruptible_defers_interrupt_during_compaction(tmp_path
             await release_first.wait()
         return (["OK"], state)
 
-    with patch("core.loops._process_message_safely", fake_process):
-        task = asyncio.create_task(_process_interruptible("first", is_user=True, queue=queue, state=state, config=config))
+    with patch("core.loops.process_message", fake_process):
+        task = asyncio.create_task(_run_messages_with_interrupts("first", is_user=True, queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(("second", True))
         await asyncio.sleep(0.1)
@@ -252,7 +252,8 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
         patch("core.main.input_handler", hanging_on_cancel),
         patch("core.main.message_processor", hanging_on_cancel),
         patch("core.main.monitor_loop", hanging_on_cancel),
-        patch("core.main.queue_greeting", new_callable=AsyncMock),
+        patch("core.main.drop_greeting_notification", return_value=False),
+        patch("core.main.drop_pending_migrations", return_value=0),
         patch("os._exit", fake_exit),
     ):
         mock_ws.return_value = MagicMock()

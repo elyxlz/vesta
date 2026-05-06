@@ -83,7 +83,7 @@ async def test_restarts_on_error(tmp_path):
         tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
     )
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "error — Simulated SDK buffer overflow"
+    assert state.persisted.last_restart_reason == "error — Simulated SDK buffer overflow"
 
 
 @pytest.mark.anyio
@@ -95,19 +95,27 @@ async def test_restarts_on_timeout(tmp_path):
         tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True)]
     )
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "error — Response timed out"
+    assert state.persisted.last_restart_reason == "error — Response timed out"
 
 
 def test_restart_reason_round_trip(tmp_path):
-    from core.main import _write_restart_reason, _read_restart_reason
+    """Persisted restart_reason survives across load_state and is consumed by _consume_restart_reason."""
+    from core import state_store
+    from core.main import _consume_restart_reason
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_restart_reason(config, "nightly — conversation history reset, dreamer ran")
-    assert _read_restart_reason(config) == "nightly — conversation history reset, dreamer ran"
-    # File is consumed after reading
-    assert _read_restart_reason(config) == "crash — restarted after unexpected exit"
+    state = vm.State()
+    state.persisted.last_restart_reason = "nightly — conversation history reset, dreamer ran"
+    state_store.save_state(state.persisted, config)
+
+    reloaded = vm.State(persisted=state_store.load_state(config))
+    assert _consume_restart_reason(reloaded, config, first_start=False) == "nightly — conversation history reset, dreamer ran"
+
+    # Consumed: a fresh load now reports CRASH_RESTART.
+    again = vm.State(persisted=state_store.load_state(config))
+    assert _consume_restart_reason(again, config, first_start=False) == vm.CRASH_RESTART
 
 
 @pytest.mark.anyio
@@ -200,55 +208,72 @@ async def test_process_message_no_correction_on_empty_response(tmp_path):
 async def test_cancellation_triggers_restart(tmp_path):
     """If process_message raises CancelledError, restart_reason + graceful_shutdown must be set.
 
-    Regression test for a silent-death bug: CancelledError used to propagate uncaught through
-    _process_message_safely, bypassing the restart trigger and leaving the agent wedged until
-    backup SIGTERM hours later.
+    Regression test for a silent-death bug: CancelledError used to propagate uncaught,
+    bypassing the restart trigger and leaving the agent wedged until backup SIGTERM hours later.
     """
-    from core.loops import _process_message_safely
+    from core.loops import _run_messages_with_interrupts
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
+    queue: asyncio.Queue = asyncio.Queue()
 
     async def cancel_side_effect(msg, *, state, config, is_user):
         raise asyncio.CancelledError
 
     with patch("core.loops.process_message", side_effect=cancel_side_effect):
         with pytest.raises(asyncio.CancelledError):
-            await _process_message_safely("msg", is_user=True, state=state, config=config)
+            await _run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == vm.PROCESSING_CANCELLED_ERROR
+    assert state.persisted.last_restart_reason == "error — processing cancelled"
 
 
 @pytest.mark.anyio
 async def test_cancellation_during_shutdown_is_silent(tmp_path):
-    """Regression: when shutdown is already in progress (e.g. restart_vesta tool fired SIGTERM),
-    the cancel that propagates to _process_message_safely must NOT log 'cancelled unexpectedly'
-    or override restart_reason. It's an expected cancellation, not a crash."""
-    from core.loops import _process_message_safely
+    """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must NOT log 'cancelled unexpectedly' or override restart_reason.
+
+    Regression for a silent-death bug where shutdown-driven cancels were treated as crashes."""
+    from core.loops import _run_messages_with_interrupts
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
-    state.shutdown_event.set()
-    state.graceful_shutdown.set()
+    queue: asyncio.Queue = asyncio.Queue()
 
-    async def cancel_side_effect(msg, *, state, config, is_user):
-        raise asyncio.CancelledError
+    processing_started = asyncio.Event()
 
-    with patch("core.loops.process_message", side_effect=cancel_side_effect):
+    async def hang(msg, *, state, config, is_user):
+        processing_started.set()
+        await asyncio.sleep(60)
+
+    async def shutdown_and_cancel(task: asyncio.Task[None]) -> None:
+        await processing_started.wait()
+        state.shutdown_event.set()
+        state.graceful_shutdown.set()
+        task.cancel()
+
+    with patch("core.loops.process_message", hang):
+        task = asyncio.create_task(
+            _run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config)
+        )
+        canceller = asyncio.create_task(shutdown_and_cancel(task))
         with pytest.raises(asyncio.CancelledError):
-            await _process_message_safely("msg", is_user=True, state=state, config=config)
+            await task
+        await canceller
 
-    assert state.restart_reason is None, "shutdown-driven cancel must not override restart_reason"
+    assert state.persisted.last_restart_reason is None, "shutdown-driven cancel must not override restart_reason"
 
 
 @pytest.mark.anyio
-async def test_handle_processor_done_silent_cancel_triggers_restart():
+async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     """Regression: a cancelled processor task used to return silently, leaving the agent wedged.
     Now it must log + set restart_reason + set graceful_shutdown."""
     from core.main import handle_processor_done
 
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
     async def cancellable():
@@ -259,17 +284,19 @@ async def test_handle_processor_done_silent_cancel_triggers_restart():
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    handle_processor_done(task, state=state)
+    handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == vm.PROCESSOR_CANCELLED_RESTART
+    assert state.persisted.last_restart_reason == "crash — processor cancelled unexpectedly"
 
 
 @pytest.mark.anyio
-async def test_handle_processor_done_exception_triggers_restart():
+async def test_handle_processor_done_exception_triggers_restart(tmp_path):
     """A crashed processor task should log the exception and set restart_reason."""
     from core.main import handle_processor_done
 
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
     async def crasher():
@@ -279,18 +306,20 @@ async def test_handle_processor_done_exception_triggers_restart():
     with contextlib.suppress(RuntimeError):
         await task
 
-    handle_processor_done(task, state=state)
+    handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason is not None
-    assert "RuntimeError" in state.restart_reason
+    assert state.persisted.last_restart_reason is not None
+    assert "RuntimeError" in state.persisted.last_restart_reason
 
 
 @pytest.mark.anyio
-async def test_handle_processor_done_silent_exit_triggers_restart():
+async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     """A processor task that returns without error or cancellation should still trigger restart."""
     from core.main import handle_processor_done
 
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
     async def silent():
@@ -299,20 +328,22 @@ async def test_handle_processor_done_silent_exit_triggers_restart():
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state)
+    handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == vm.PROCESSOR_SILENT_EXIT_RESTART
+    assert state.persisted.last_restart_reason == "crash — processor exited silently"
 
 
 @pytest.mark.anyio
-async def test_handle_processor_done_noop_during_shutdown():
+async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     """If shutdown was already initiated, the callback must not override the restart_reason."""
     from core.main import handle_processor_done
 
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.graceful_shutdown.set()
-    state.restart_reason = "nightly — dreamer ran, session cleared for fresh context"
+    state.persisted.last_restart_reason = "nightly — dreamer ran, session cleared for fresh context"
 
     async def silent():
         return None
@@ -320,15 +351,15 @@ async def test_handle_processor_done_noop_during_shutdown():
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state)
+    handle_processor_done(task, state=state, config=config)
 
-    assert state.restart_reason == "nightly — dreamer ran, session cleared for fresh context"
+    assert state.persisted.last_restart_reason == "nightly — dreamer ran, session cleared for fresh context"
 
 
 @pytest.mark.anyio
 async def test_log_context_usage_timeout(tmp_path):
-    """If get_context_usage hangs, _log_context_usage must time out and not raise."""
-    from core.client import _log_context_usage
+    """If get_context_usage hangs, log_context_usage must time out and not raise."""
+    from core.diagnostics import log_context_usage
 
     state = vm.State()
     mock_client = MagicMock()
@@ -340,5 +371,5 @@ async def test_log_context_usage_timeout(tmp_path):
     mock_client.get_context_usage = hang_forever
     state.client = mock_client
 
-    with patch("core.client._CONTEXT_USAGE_TIMEOUT_S", 0.05):
-        await asyncio.wait_for(_log_context_usage(state), timeout=0.2)
+    with patch("core.diagnostics._CONTEXT_USAGE_TIMEOUT_S", 0.05):
+        await asyncio.wait_for(log_context_usage(state), timeout=0.2)
