@@ -104,6 +104,10 @@
     "description": "Telegram: send/receive messages; reply to source=telegram notifications. Requires daemon."
   },
   {
+    "name": "timezone",
+    "description": "Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when `$TZ` is not set yet."
+  },
+  {
     "name": "tv",
     "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
   },

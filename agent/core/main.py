@@ -107,7 +107,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     greeting_reason = "first_start" if first_start else restart_reason
     drop_greeting_notification(config=config, state=state, reason=greeting_reason)
 
-    # First-start defers WS until the agent calls `mark_first_start_done` (the readiness signal vestad polls).
+    # First-start defers WS until the agent calls `mark_setup_done` (the readiness signal vestad polls).
     # Every other boot binds WS immediately so restart greetings that poll the WS port don't deadlock.
     if not first_start:
         state.ws_runner = await start_ws_server(state.event_bus, config)

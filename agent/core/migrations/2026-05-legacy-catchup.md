@@ -5,12 +5,13 @@ Catch-up migration for legacy agents. Two structural changes plus a general conv
 
 This prompt may run more than once if a previous attempt was interrupted (rate limit, crash). Every step should be safe to re-run: check the desired end state first, no-op if already there.
 
-### 1. Install the restart skill
+### 1. Install the restart and timezone skills
 
-Install it from upstream via the skills registry. This adds it to the sparse-checkout cone and pulls the canonical file from `$VESTA_UPSTREAM_REF` as a tracked file:
+Install them from upstream via the skills registry. This adds them to the sparse-checkout cone and pulls the canonical files from `$VESTA_UPSTREAM_REF` as tracked files. The `timezone` skill replaces the old `set_timezone` MCP tool, the agent now manages `$TZ` via the skill instead.
 
 ```bash
 ~/agent/skills/skills-registry/scripts/skills-install restart
+~/agent/skills/skills-registry/scripts/skills-install timezone
 ```
 
 ### 2. Drop the legacy `## Personality` block, register the voice via personality SETUP

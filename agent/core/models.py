@@ -48,7 +48,7 @@ class State:
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     persisted: PersistedState = dc.field(default_factory=PersistedState)
-    # Set by `mark_first_start_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
+    # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
     ws_runner: "AppRunner | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False

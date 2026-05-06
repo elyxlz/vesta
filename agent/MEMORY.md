@@ -71,8 +71,6 @@ The user's important people are [agent_name]'s important people too. Keeps track
 
 ### Environment
 - `~/.bashrc` is sourced at container start and in interactive shells. Use for persistent env vars, PATH, aliases
-- `TZ` (IANA timezone) is set here during onboarding
-- Change it according to where the user is (aka if they go on vacation or relocate)
 - Changes take effect on the next container restart. Call the `restart_vesta` MCP tool when you need them applied immediately
 
 ### Technical
