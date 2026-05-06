@@ -126,7 +126,11 @@ export function ChatMessageArea({
                           </span>
                         </div>
                       )}
-                      <ChatBubble event={msg} className={gap} />
+                      <ChatBubble
+                        event={msg}
+                        className={gap}
+                        fullscreen={fullscreen}
+                      />
                     </div>
                   );
                 });

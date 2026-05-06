@@ -12,6 +12,7 @@ import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
@@ -26,6 +27,7 @@ interface ChatProps {
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name } = useSelectedAgent();
+  const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
     sttAvailable,
@@ -164,18 +166,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     <div
       className={cn(
         "flex flex-col h-full min-h-0",
-        fullscreen && "drop-shadow-md",
+        fullscreen && !isMobile && "drop-shadow-md",
       )}
     >
       <Card
         className={cn(
           "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
           fullscreen && "shadow-none ring-0",
+          isMobile && "bg-transparent overflow-visible",
         )}
         style={
           fullscreen
             ? {
-                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 3.5}px)`,
+                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * (isMobile ? 1.75 : 3.5)}px)`,
               }
             : undefined
         }

@@ -24,10 +24,13 @@ const motionPlusDomEntry = resolveInNodeModules(
 );
 
 const host = process.env.TAURI_DEV_HOST;
-const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
 
 const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 const useHttps = !isTauri && process.env.HTTPS !== "false";
+
+// vestad mounts the bundled SPA at /app/. Anything else (vite dev, tauri,
+// self-hosted) serves from the root.
+const vestadHosted = process.env.VITE_VESTAD_HOSTED === "true";
 
 const cargoToml = readFileSync(
   path.resolve(__dirname, "..", "..", "vestad", "Cargo.toml"),
@@ -64,7 +67,7 @@ function installScriptsPlugin(): Plugin {
 }
 
 export default defineConfig({
-  base: isTauri ? "/" : "/app/",
+  base: vestadHosted ? "/app/" : "/",
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __TAURI__: JSON.stringify(isTauri),
@@ -94,18 +97,5 @@ export default defineConfig({
     hmr: host
       ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 }
       : undefined,
-    proxy: host
-      ? undefined
-      : {
-          "/agents": {
-            target: vestad,
-            secure: false,
-            ws: true,
-            changeOrigin: true,
-          },
-          "/health": { target: vestad, secure: false, changeOrigin: true },
-          "/version": { target: vestad, secure: false, changeOrigin: true },
-          "/tunnel": { target: vestad, secure: false, changeOrigin: true },
-        },
   },
 });

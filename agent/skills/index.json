@@ -96,6 +96,10 @@
     "description": "Expose this machine over SSH via bore (public TCP tunnel)."
   },
   {
+    "name": "stripe-pay",
+    "description": "Use when the user wants the agent to make a payment on their behalf via Stripe Link Wallet for Agents. Always asks for explicit per-charge approval. Requires `stripe-pay authorize` setup first."
+  },
+  {
     "name": "tasks",
     "description": "Tasks, to-dos, reminders, time-based alerts; create and manage. Requires daemon."
   },

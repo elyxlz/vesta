@@ -34,7 +34,8 @@ tasks delete <id>                          # CASCADE: linked reminders are delet
 
 ## Reminder Commands
 
-**IMPORTANT**: there is NO `create` subcommand. To set a reminder, put the message as the first argument directly:
+Reminders take the message as the first positional argument to `tasks remind`. There is no `create` subcommand, so don't reach for one:
+
 ```bash
 # Set a reminder (the message IS the first argument, no subcommand needed)
 tasks remind "Call mom" --in-minutes 30

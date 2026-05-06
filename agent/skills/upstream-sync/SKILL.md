@@ -17,20 +17,13 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
 `agent/core/`, `agent/pyproject.toml`, `agent/uv.lock` are bind-mounted read-only by vestad; merge conflicts there still need integration work if both sides carry meaningful behavior.
 
+## Worktree safety
+
+Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `checkout -- <path>`, `reset --hard`, `clean -df`, `merge`, `rebase`, `read-tree`) must be preceded by a snapshot commit on your branch. If `git status` is dirty, run `git -C ~ add agent/ --ignore-errors && git -C ~ commit -m "pre-op: <what you're about to do>"`. If clean, run `git -C ~ commit --allow-empty -m "pre-op: <what>"`. Reflog is per-clone and dies with the container, so a real commit on your branch is the only durable safety net before destructive ops. Wrapper scripts under `scripts/` already enforce this internally; prefer them over raw git for the migrations below.
+
 ## Sync steps
 
-1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first. Then narrow the sparse pattern to installed-only if it isn't already:
-   ```bash
-   if ! grep -qx '!/agent/skills/\*/' ~/.git/info/sparse-checkout 2>/dev/null; then
-     INSTALLED=$(find ~/agent/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -u)
-     {
-       printf '%s\n' '/agent/' '!/agent/core/' '!/agent/pyproject.toml' '!/agent/uv.lock' '!/agent/skills/*/' '/.gitignore'
-       for s in $INSTALLED; do printf '/agent/skills/%s/\n' "$s"; done
-     } > ~/.git/info/sparse-checkout
-     git -C ~ sparse-checkout reapply
-   fi
-   ```
-   This is a one-shot migration: it rewrites the sparse pattern to scope `agent/skills/*/` to only currently-installed skills, so future merges don't pull in newly-added upstream skills. Idempotent: the `grep` guard skips re-runs.
+1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first.
 
 2. **Checkpoint local work.** The merge fails with uncommitted changes; the checkpoint also gives you a clean base.
    ```bash
@@ -46,27 +39,33 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
    ```
    Skip the commit if nothing's staged.
 
-3. **Fetch and check.**
+3. **Narrow sparse pattern (one-shot migration).** Scope `agent/skills/*/` to only currently-installed skills so future merges don't pull in newly-added upstream skills. Run after step 2 so a recoverable HEAD exists before the worktree is rewritten:
+   ```bash
+   ~/agent/skills/upstream-sync/scripts/narrow-sparse-checkout.sh
+   ```
+   Idempotent: exits 0 with no changes if already narrow. The script snapshots an `--allow-empty` commit on your branch before calling `sparse-checkout reapply`, so a crash mid-reapply leaves the pre-narrow tree reachable from HEAD.
+
+4. **Fetch and check.**
    ```bash
    git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
    [ "$(git -C ~ rev-parse HEAD)" = "$(git -C ~ rev-parse FETCH_HEAD)" ] && echo "up to date" || echo "updates available"
    ```
    If up to date, stop.
 
-4. **Review what's incoming.** Read the upstream commits and changed files so you know what you're pulling in.
+5. **Review what's incoming.** Read the upstream commits and changed files so you know what you're pulling in.
    ```bash
    git -C ~ log --oneline HEAD..FETCH_HEAD
    git -C ~ diff --stat HEAD..FETCH_HEAD
    ```
    Drill into anything you want a closer look at: `git -C ~ diff HEAD..FETCH_HEAD -- <path>`.
 
-5. **Merge.**
+6. **Merge.**
    ```bash
    git -C ~ merge FETCH_HEAD --no-edit
    ```
-   If clean, skip to step 7.
+   If clean, skip to step 8.
 
-6. **Resolve conflicts.**
+7. **Resolve conflicts.**
    - Treat conflicts as integration work, not `ours` vs `theirs`. Default goal: preserve both behaviors.
    - Small: rewrite the merged file so both changes coexist.
    - Structural: extract helpers, split responsibilities, rename to avoid collisions.
@@ -76,7 +75,7 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
    Then: `git -C ~ commit --no-edit`
 
-7. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
+8. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
 
    - `agent/skills/index.json` is generated from disk. A textual merge of two arrays sometimes produces invalid or stale JSON, and any new skill directory pulled in from upstream needs an entry. Regenerate from the merged tree:
      ```bash
@@ -94,7 +93,7 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
    git -C ~ add agent/skills/index.json && git -C ~ commit -m "chore: refresh skills/index.json post-sync"
    ```
 
-8. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
+9. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
 
 ## Branch model
 

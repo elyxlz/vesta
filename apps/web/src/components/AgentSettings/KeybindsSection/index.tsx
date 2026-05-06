@@ -1,11 +1,11 @@
-import { Mic, Sun, PanelLeft } from "lucide-react";
+import { Hand, Mic, Sun, PanelLeft } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Kbd } from "@/components/ui/kbd";
 import { MenuSection } from "@/components/ui/menu-section";
 import {
-  useSpacebarMode,
-  type SpacebarMode,
-} from "@/providers/KeybindProvider";
+  useVoiceActivation,
+  type VoiceActivationMode,
+} from "@/stores/use-voice-activation";
 
 const isMac =
   typeof navigator !== "undefined" &&
@@ -20,7 +20,7 @@ interface Keybind {
 const keybinds: Keybind[] = [
   {
     icon: <Mic className="size-3.5" />,
-    label: "toggle voice",
+    label: "voice activation",
     keys: <Kbd>Space</Kbd>,
   },
   {
@@ -40,14 +40,14 @@ const keybinds: Keybind[] = [
   },
 ];
 
-const modeOptions: { value: SpacebarMode; label: string }[] = [
+const modeOptions: { value: VoiceActivationMode; label: string }[] = [
   { value: "toggle", label: "toggle" },
   { value: "hold", label: "hold" },
 ];
 
 export function KeybindsCard() {
-  const spacebarMode = useSpacebarMode((s) => s.mode);
-  const setSpacebarMode = useSpacebarMode((s) => s.setMode);
+  const activation = useVoiceActivation((s) => s.mode);
+  const setActivation = useVoiceActivation((s) => s.setMode);
 
   return (
     <Card size="sm">
@@ -61,21 +61,20 @@ export function KeybindsCard() {
                   <span className="flex-1">{bind.label}</span>
                   {bind.keys}
                 </div>
-                {bind.label === "toggle voice" && (
-                  <div className="flex items-center justify-end gap-2 px-2 py-1.5">
-                    <span className="text-xs text-muted-foreground">
-                      activation
-                    </span>
+                {bind.label === "voice activation" && (
+                  <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
+                    <Hand className="size-3.5" />
+                    <span className="flex-1">activation mode</span>
                     <div className="inline-flex rounded-md bg-muted p-0.5">
                       {modeOptions.map((opt) => (
                         <button
                           key={opt.value}
                           className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
-                            spacebarMode === opt.value
+                            activation === opt.value
                               ? "bg-background text-foreground shadow-sm"
                               : "text-muted-foreground hover:text-foreground"
                           }`}
-                          onClick={() => setSpacebarMode(opt.value)}
+                          onClick={() => setActivation(opt.value)}
                         >
                           {opt.label}
                         </button>
