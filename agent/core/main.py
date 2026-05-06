@@ -16,7 +16,6 @@ from . import state_store
 from .api import start_ws_server
 from .diagnostics import format_crash_detail
 from .loops import (
-    clear_stale_core_notifications,
     drop_greeting_notification,
     message_processor,
     monitor_loop,
@@ -101,8 +100,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
 
     logger.init(f"{config.agent_name.upper()} started")
-
-    clear_stale_core_notifications(config)
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 

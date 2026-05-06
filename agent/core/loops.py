@@ -18,7 +18,7 @@ from .client import process_message, build_client_options, attempt_interrupt, pe
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 
-from .models import CORE_SOURCE, CORE_NOTIFICATION_TYPES, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
+from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
 
 def _now() -> dt.datetime:
@@ -42,24 +42,6 @@ def drop_core_notification(*, type_: str, body: str, interrupt: bool, config: vm
     path = config.notifications_dir / f"{stem}.json"
     path.write_text(notif.model_dump_json())
     return path
-
-
-def _is_core_notification_filename(name: str) -> bool:
-    return any(name.startswith(f"{type_}-") for type_ in CORE_NOTIFICATION_TYPES)
-
-
-def clear_stale_core_notifications(config: vm.VestaConfig) -> int:
-    """Remove any leftover `source=core` notifications from a previous (likely crashed) boot. External notifications are preserved. Identified by filename stem (`<type>-…`) — no JSON parse."""
-    if not config.notifications_dir.exists():
-        return 0
-    removed = 0
-    for path in config.notifications_dir.glob("*.json"):
-        if _is_core_notification_filename(path.name):
-            path.unlink(missing_ok=True)
-            removed += 1
-    if removed:
-        logger.startup(f"Cleared {removed} stale core notification(s)")
-    return removed
 
 
 async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:

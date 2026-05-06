@@ -26,7 +26,6 @@ TYPE_RESTART_GREETING = "restart_greeting"
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
-CORE_NOTIFICATION_TYPES = (TYPE_FIRST_START_SETUP, TYPE_RESTART_GREETING, TYPE_PROACTIVE_CHECK, TYPE_NIGHTLY_DREAM, TYPE_MIGRATION)
 
 CLEAN_RESTART = "restart — clean restart"
 NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
