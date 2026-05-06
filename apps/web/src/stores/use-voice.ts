@@ -9,6 +9,7 @@ import {
   type TtsStatus,
 } from "@/lib/voice";
 import type { InputMethod, ServiceInfo } from "@/lib/types";
+import { useVoiceActivation } from "@/stores/use-voice-activation";
 
 interface VoiceState {
   // Agent context (set by VoiceStoreEffects)
@@ -63,10 +64,18 @@ let transcriber: Transcriber | null = null;
 let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
 let draftCallback: ((text: string) => void) | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let ttsAbort: AbortController | null = null;
 let ttsQueue: string[] = [];
 let ttsProcessing = false;
 const ttsPrefetchCache = new Map<string, Promise<Response>>();
+
+function clearIdleTimer() {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+}
 
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt?.enabled) ?? false;
@@ -131,9 +140,13 @@ export const useVoice = create<VoiceState>((set, get) => {
 
     toggleVoice: () => {
       if (transcriber?.isActive()) {
+        const isHold = useVoiceActivation.getState().mode === "hold";
+        const captured = isHold ? get().liveTranscript.trim() : "";
         transcriber.stop();
         transcriber = null;
+        clearIdleTimer();
         set({ isRecording: false, liveTranscript: "" });
+        if (captured) sendCallback?.(captured, "voice");
         return;
       }
 
@@ -150,16 +163,32 @@ export const useVoice = create<VoiceState>((set, get) => {
       // Stop TTS when recording starts
       get().stopSpeech();
 
+      const isHold = useVoiceActivation.getState().mode === "hold";
+      const idleTimeoutMs = useVoiceActivation.getState().toggleIdleTimeoutMs;
+
+      const armIdleTimer = () => {
+        if (isHold || !idleTimeoutMs) return;
+        clearIdleTimer();
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          if (transcriber?.isActive()) get().toggleVoice();
+        }, idleTimeoutMs);
+      };
+
       const stream = new Transcriber({
         agentName,
+        accumulate: isHold,
         onTranscript: (text) => {
           set({ liveTranscript: text });
-          if (!get().voiceAutoSend) draftCallback?.(text);
+          if (!isHold && !get().voiceAutoSend) draftCallback?.(text);
+          if (text) armIdleTimer();
         },
         onTurnEnd: (text) => {
+          if (isHold) return;
           if (get().voiceAutoSend) sendCallback?.(text, "voice");
           else draftCallback?.(text);
           set({ liveTranscript: "" });
+          armIdleTimer();
         },
         onTurnStart: () => {
           const interruptTts =
@@ -179,6 +208,7 @@ export const useVoice = create<VoiceState>((set, get) => {
         .start()
         .then(() => {
           set({ isRecording: true });
+          armIdleTimer();
         })
         .catch((err) => {
           const msg =

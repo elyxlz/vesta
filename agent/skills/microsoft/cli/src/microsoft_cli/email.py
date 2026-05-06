@@ -118,6 +118,7 @@ def _search_mailbox_messages(
     )
     for email in emails:
         _scrub_email_snapshot(email)
+        graph.localize_datetime_fields(email)
     return emails
 
 
@@ -156,6 +157,7 @@ def list_emails(
 
     for email in emails:
         _scrub_email_snapshot(email)
+        graph.localize_datetime_fields(email)
 
     return emails
 
@@ -190,6 +192,8 @@ def get_email(
     )
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
+
+    graph.localize_datetime_fields(result)
 
     body_obj = result["body"] if "body" in result else None
     full_body_content = (body_obj["content"] if body_obj and "content" in body_obj else "") or ""

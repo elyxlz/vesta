@@ -5,22 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
-import { isTauri } from "@/lib/env";
 import { useAuth } from "@/providers/AuthProvider";
 
-function vestadUrl(): string {
-  // vestad serves /app with a port meta tag. If it's present and real (not the
-  // unreplaced Vite placeholder), the page was served by vestad and its origin
-  // is the correct URL, whether vestad is on localhost or a remote host.
-  const meta = document.querySelector<HTMLMetaElement>(
-    'meta[name="vestad-port"]',
-  );
-  const port = meta?.content;
-  if (!port || !/^\d+$/.test(port)) {
-    throw new Error("vestad port not available — reload the page");
-  }
-  return window.location.origin;
-}
+// VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
+// window.location.origin already points at the right vestad instance.
+// Anything else (tauri, vite dev, or self-hosted on a non-vestad server) needs
+// the user to enter the vestad host explicitly.
+const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
 function normalizeHost(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, "");
@@ -41,13 +32,13 @@ export function Connect() {
 
   const handleConnect = async () => {
     if (!apiKey.trim() || busy) return;
-    if (isTauri && !host.trim()) return;
+    if (needHostInput && !host.trim()) return;
     setBusy(true);
     setError("");
     setDetails("");
 
     try {
-      const url = isTauri ? normalizeHost(host) : vestadUrl();
+      const url = needHostInput ? normalizeHost(host) : window.location.origin;
       await connect(url, apiKey.trim());
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
@@ -74,7 +65,7 @@ export function Connect() {
           </div>
 
           <FieldGroup className="gap-3">
-            {isTauri && (
+            {needHostInput && (
               <Field>
                 <FieldLabel htmlFor="host" className="sr-only">
                   Host
@@ -109,7 +100,7 @@ export function Connect() {
 
           <Button
             type="submit"
-            disabled={!apiKey.trim() || (isTauri && !host.trim()) || busy}
+            disabled={!apiKey.trim() || (needHostInput && !host.trim()) || busy}
             className="w-full"
           >
             {busy ? "connecting..." : "connect"}

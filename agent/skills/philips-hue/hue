@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+# hue -- Philips Hue smart lights control
+# Usage: hue <command> [args]
+#
+# Required environment variables:
+#   HUE_BRIDGE_IP  -- IP address of the Hue Bridge
+#   HUE_API_KEY    -- API key for the Hue Bridge
+#
+# Commands:
+#   status                    Overview of all rooms and their state
+#   rooms                     List all rooms with lights and state
+#   lights                    List all lights with state
+#   on [room|light]           Turn on room or light (default: all)
+#   off [room|light]          Turn off room or light (default: all)
+#   dim <1-100> [room|light]  Set brightness percentage
+#   color <name|hex> [room|light]  Set colour
+#   scene <name> [room]       Activate a scene (fuzzy match)
+#   scenes [room]             List available scenes
+
+set -euo pipefail
+
+BRIDGE="${HUE_BRIDGE_IP:?Set HUE_BRIDGE_IP in environment}"
+KEY="${HUE_API_KEY:?Set HUE_API_KEY in environment}"
+API="https://$BRIDGE/api/$KEY"
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+api_get() {
+    curl -sk "$API/$1" 2>/dev/null
+}
+
+api_put() {
+    curl -sk -X PUT -d "$2" "$API/$1" 2>/dev/null
+}
+
+die() {
+    echo "error: $*" >&2
+    exit 1
+}
+
+# Fuzzy match a room name, returns group ID
+resolve_room() {
+    local query="${1,,}"  # lowercase
+    local result
+    result=$(api_get "groups" | python3 -c "
+import json, sys
+query = sys.argv[1].lower()
+data = json.load(sys.stdin)
+matches = []
+for gid, g in data.items():
+    name = g.get('name', '').lower()
+    if query == name or query in name:
+        matches.append((gid, g['name']))
+if len(matches) == 1:
+    print(matches[0][0])
+elif len(matches) > 1:
+    exact = [m for m in matches if m[1].lower() == query]
+    if exact:
+        print(exact[0][0])
+    else:
+        print(matches[0][0])
+else:
+    sys.exit(1)
+" "$query" 2>/dev/null) || die "no room matching '$1'"
+    echo "$result"
+}
+
+# Check if argument looks like a light ID (numeric)
+is_light_id() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# Resolve target: returns "group:<id>" or "light:<id>" or "all"
+resolve_target() {
+    local target="${1:-}"
+    if [[ -z "$target" ]]; then
+        echo "all"
+    elif is_light_id "$target"; then
+        echo "light:$target"
+    else
+        local gid
+        gid=$(resolve_room "$target")
+        echo "group:$gid"
+    fi
+}
+
+# Apply a state body to a target
+apply_state() {
+    local target="$1"
+    local body="$2"
+    case "$target" in
+        all)
+            # apply to all groups
+            api_get "groups" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for gid in data:
+    print(gid)
+" | while read -r gid; do
+                api_put "groups/$gid/action" "$body" >/dev/null
+            done
+            ;;
+        group:*)
+            local gid="${target#group:}"
+            api_put "groups/$gid/action" "$body" >/dev/null
+            ;;
+        light:*)
+            local lid="${target#light:}"
+            api_put "lights/$lid/state" "$body" >/dev/null
+            ;;
+    esac
+}
+
+# Convert colour name or hex to Hue xy values
+color_to_xy() {
+    python3 -c "
+import sys
+
+COLOR_MAP = {
+    'red':       (0.675, 0.322),
+    'green':     (0.409, 0.518),
+    'blue':      (0.167, 0.04),
+    'yellow':    (0.484, 0.476),
+    'orange':    (0.600, 0.380),
+    'purple':    (0.270, 0.120),
+    'pink':      (0.470, 0.250),
+    'cyan':      (0.170, 0.340),
+    'warm':      (0.526, 0.413),
+    'warmwhite': (0.526, 0.413),
+    'cool':      (0.316, 0.329),
+    'coolwhite': (0.316, 0.329),
+    'white':     (0.323, 0.329),
+}
+
+name = sys.argv[1].lower().lstrip('#')
+
+if name in COLOR_MAP:
+    x, y = COLOR_MAP[name]
+    print(f'{x},{y}')
+    sys.exit(0)
+
+# Try parsing as hex
+hexval = name.lstrip('#')
+if len(hexval) == 6:
+    try:
+        r = int(hexval[0:2], 16) / 255.0
+        g = int(hexval[2:4], 16) / 255.0
+        b = int(hexval[4:6], 16) / 255.0
+        # sRGB to CIE XYZ (simplified)
+        r = ((r + 0.055) / 1.055) ** 2.4 if r > 0.04045 else r / 12.92
+        g = ((g + 0.055) / 1.055) ** 2.4 if g > 0.04045 else g / 12.92
+        b = ((b + 0.055) / 1.055) ** 2.4 if b > 0.04045 else b / 12.92
+        X = r * 0.4124 + g * 0.3576 + b * 0.1805
+        Y = r * 0.2126 + g * 0.7152 + b * 0.0722
+        Z = r * 0.0193 + g * 0.1192 + b * 0.9505
+        total = X + Y + Z
+        if total == 0:
+            print('0.0,0.0')
+        else:
+            print(f'{X/total:.4f},{Y/total:.4f}')
+        sys.exit(0)
+    except ValueError:
+        pass
+
+print('error', file=sys.stderr)
+sys.exit(1)
+" "$1"
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────
+
+cmd_status() {
+    local groups lights
+    groups=$(api_get "groups")
+    lights=$(api_get "lights")
+
+    python3 - <<'PYEOF' "$groups" "$lights"
+import json, sys
+
+groups = json.loads(sys.argv[1])
+lights = json.loads(sys.argv[2])
+
+print('Hue Status')
+print('=' * 50)
+for gid in sorted(groups.keys(), key=int):
+    g = groups[gid]
+    name = g.get('name', 'Unknown')
+    all_on = g.get('state', {}).get('all_on', False)
+    any_on = g.get('state', {}).get('any_on', False)
+    if all_on:
+        state = 'ALL ON'
+    elif any_on:
+        state = 'PARTIAL'
+    else:
+        state = 'OFF'
+
+    light_ids = g.get('lights', [])
+    on_count = sum(1 for lid in light_ids if lights.get(lid, {}).get('state', {}).get('on', False))
+
+    print(f'  {name:<16} [{state:<8}]  {on_count}/{len(light_ids)} lights on')
+
+    for lid in light_ids:
+        l = lights.get(lid, {})
+        ls = l.get('state', {})
+        lname = l.get('name', 'Light ' + lid)
+        on = ls.get('on', False)
+        bri = ls.get('bri', 0)
+        bri_pct = round(bri / 254 * 100)
+        if on:
+            print(f'    {lid:>3}: {lname:<24} ON   {bri_pct:>3}%')
+        else:
+            print(f'    {lid:>3}: {lname:<24} OFF')
+    print()
+PYEOF
+}
+
+cmd_rooms() {
+    api_get "groups" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(f'{\"ID\":<6}{\"Room\":<20}{\"Lights\":<20}{\"State\"}')
+print('-' * 60)
+for gid in sorted(data.keys(), key=int):
+    g = data[gid]
+    name = g.get('name', 'Unknown')
+    lights = ', '.join(g.get('lights', []))
+    all_on = g.get('state', {}).get('all_on', False)
+    any_on = g.get('state', {}).get('any_on', False)
+    state = 'ALL ON' if all_on else ('PARTIAL' if any_on else 'OFF')
+    print(f'{gid:<6}{name:<20}{lights:<20}{state}')
+"
+}
+
+cmd_lights() {
+    api_get "lights" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(f'{\"ID\":<6}{\"Name\":<28}{\"On\":<6}{\"Bri%\":<8}{\"Reachable\"}')
+print('-' * 60)
+for lid in sorted(data.keys(), key=int):
+    l = data[lid]
+    name = l.get('name', 'Unknown')
+    s = l.get('state', {})
+    on = 'ON' if s.get('on', False) else 'OFF'
+    bri = round(s.get('bri', 0) / 254 * 100)
+    reach = 'yes' if s.get('reachable', False) else 'NO'
+    print(f'{lid:<6}{name:<28}{on:<6}{bri:<8}{reach}')
+"
+}
+
+cmd_on() {
+    local target
+    target=$(resolve_target "${1:-}")
+    apply_state "$target" '{"on":true}'
+    echo "Turned on: ${1:-all}"
+}
+
+cmd_off() {
+    local target
+    target=$(resolve_target "${1:-}")
+    apply_state "$target" '{"on":false}'
+    echo "Turned off: ${1:-all}"
+}
+
+cmd_dim() {
+    local pct="${1:-}"
+    [[ -z "$pct" ]] && die "usage: hue dim <1-100> [room|light]"
+    (( pct >= 1 && pct <= 100 )) 2>/dev/null || die "brightness must be 1-100"
+    local bri=$(( pct * 254 / 100 ))
+    local target
+    target=$(resolve_target "${2:-}")
+    apply_state "$target" "{\"on\":true,\"bri\":$bri}"
+    echo "Set brightness to ${pct}%: ${2:-all}"
+}
+
+cmd_color() {
+    local color="${1:-}"
+    [[ -z "$color" ]] && die "usage: hue color <name|hex> [room|light]"
+    local xy
+    xy=$(color_to_xy "$color") || die "unknown colour '$color'. Use: red, blue, green, yellow, orange, purple, pink, cyan, warm, cool, white, or a hex code."
+    local x="${xy%,*}"
+    local y="${xy#*,}"
+    local target
+    target=$(resolve_target "${2:-}")
+    apply_state "$target" "{\"on\":true,\"xy\":[$x,$y]}"
+    echo "Set colour to $color: ${2:-all}"
+}
+
+cmd_scene() {
+    local scene_query="${1:-}"
+    [[ -z "$scene_query" ]] && die "usage: hue scene <name> [room]"
+    local room_filter="${2:-}"
+    local room_id=""
+    if [[ -n "$room_filter" ]]; then
+        room_id=$(resolve_room "$room_filter")
+    fi
+
+    local scenes
+    scenes=$(api_get "scenes")
+
+    local scene_id
+    scene_id=$(HUE_SCENES="$scenes" python3 -c "
+import json, sys, os
+query = sys.argv[1].lower()
+room_id = sys.argv[2]
+data = json.loads(os.environ['HUE_SCENES'])
+matches = []
+for sid, s in data.items():
+    name = s.get('name', '').lower()
+    group = s.get('group', '')
+    if room_id and group != room_id:
+        continue
+    if query == name or query in name:
+        matches.append((sid, s['name'], group))
+if not matches:
+    sys.exit(1)
+exact = [m for m in matches if m[1].lower() == query]
+if exact:
+    matches = exact
+if not room_id:
+    for sid, sname, grp in matches:
+        print(sid)
+else:
+    print(matches[0][0])
+" "$scene_query" "$room_id" 2>/dev/null) || die "no scene matching '$scene_query'${room_filter:+ in $room_filter}"
+
+    echo "$scene_id" | while read -r sid; do
+        api_put "groups/0/action" "{\"scene\":\"$sid\"}" >/dev/null
+    done
+
+    echo "Activated scene: $scene_query${room_filter:+ (${room_filter})}"
+}
+
+cmd_scenes() {
+    local room_filter="${1:-}"
+    local room_id=""
+    if [[ -n "$room_filter" ]]; then
+        room_id=$(resolve_room "$room_filter")
+    fi
+
+    local groups
+    groups=$(api_get "groups")
+
+    local scenes
+    scenes=$(api_get "scenes")
+
+    HUE_GROUPS="$groups" HUE_SCENES="$scenes" python3 -c "
+import json, sys, os
+data = json.loads(os.environ['HUE_SCENES'])
+groups = json.loads(os.environ['HUE_GROUPS'])
+room_id = sys.argv[1]
+
+scenes = []
+for sid, s in data.items():
+    grp = s.get('group', '')
+    if room_id and grp != room_id:
+        continue
+    room_name = groups.get(grp, {}).get('name', 'Unknown')
+    scenes.append((room_name, s.get('name', 'Unknown'), sid))
+
+scenes.sort()
+print(f'{\"Scene\":<24}{\"Room\":<20}{\"ID\"}')
+print('-' * 60)
+for room_name, sname, sid in scenes:
+    print(f'{sname:<24}{room_name:<20}{sid}')
+" "$room_id"
+}
+
+cmd_help() {
+    cat <<'USAGE'
+Usage: hue <command> [args]
+
+Commands:
+  status                    Overview of all rooms and their state
+  rooms                     List all rooms with lights and state
+  lights                    List all lights with state
+  on [room|light]           Turn on room or light (default: all)
+  off [room|light]          Turn off room or light (default: all)
+  dim <1-100> [room|light]  Set brightness percentage
+  color <name|hex> [room|light]  Set colour by name or hex
+  scene <name> [room]       Activate a scene (fuzzy match)
+  scenes [room]             List available scenes
+  help                      Show this help message
+
+Rooms: Living room, Bedroom, Office, Hallway
+  Fuzzy match: "living" -> Living room, "bed" -> Bedroom
+
+Colours: red, blue, green, yellow, orange, purple, pink, cyan,
+         warm, cool, white, warmwhite, coolwhite, or hex (e.g. FF5500)
+
+Examples:
+  hue off bedroom
+  hue scene cinema living
+  hue dim 30 office
+  hue color warm
+  hue status
+USAGE
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+    status)       cmd_status ;;
+    rooms)        cmd_rooms ;;
+    lights)       cmd_lights ;;
+    on)           cmd_on "${2:-}" ;;
+    off)          cmd_off "${2:-}" ;;
+    dim)          cmd_dim "${2:-}" "${3:-}" ;;
+    color|colour) cmd_color "${2:-}" "${3:-}" ;;
+    scene)        cmd_scene "${2:-}" "${3:-}" ;;
+    scenes)       cmd_scenes "${2:-}" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+        echo "Unknown command: $1" >&2
+        cmd_help >&2
+        exit 1
+        ;;
+esac

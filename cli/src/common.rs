@@ -78,7 +78,7 @@ impl std::str::FromStr for BackupType {
             "weekly" => Ok(Self::Weekly),
             "monthly" => Ok(Self::Monthly),
             "pre-restore" => Ok(Self::PreRestore),
-            other => Err(format!("unknown backup type: {}", other)),
+            other => Err(format!("unknown backup type: {other}")),
         }
     }
 }
@@ -122,10 +122,10 @@ pub fn load_config() -> VestaConfig {
 
 pub fn save_config(config: &VestaConfig) -> Result<(), String> {
     let dir = config_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create config dir: {e}"))?;
     let path = config_path();
     let json = serde_json::to_string_pretty(config).unwrap();
-    std::fs::write(&path, json).map_err(|e| format!("failed to write config.json: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("failed to write config.json: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -150,7 +150,7 @@ pub fn normalize_url(host: &str) -> String {
     if host.starts_with("https://") || host.starts_with("http://") {
         host.to_string()
     } else {
-        format!("https://{}", host)
+        format!("https://{host}")
     }
 }
 
@@ -165,33 +165,6 @@ pub fn version_less_than(a: &str, b: &str) -> bool {
 
 const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases/latest";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_url_cases() {
-        for (input, expected) in [
-            ("example.com", "https://example.com"),
-            ("https://example.com", "https://example.com"),
-            ("http://example.com", "http://example.com"),
-            ("192.168.1.1:8080", "https://192.168.1.1:8080"),
-        ] {
-            assert_eq!(normalize_url(input), expected, "normalize_url({input:?})");
-        }
-    }
-
-    #[test]
-    fn version_comparison() {
-        assert!(version_less_than("0.1.0", "0.2.0"));
-        assert!(version_less_than("0.1.9", "0.1.10"));
-        assert!(version_less_than("0.9.9", "1.0.0"));
-        assert!(!version_less_than("1.0.0", "0.9.9"));
-        assert!(!version_less_than("1.0.0", "1.0.0"));
-        assert!(!version_less_than("0.2.0", "0.1.0"));
-    }
-}
 
 pub fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
     let mut args: Vec<String> = vec![
@@ -226,5 +199,32 @@ pub fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
         None
     } else {
         Some(tag.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_url_cases() {
+        for (input, expected) in [
+            ("example.com", "https://example.com"),
+            ("https://example.com", "https://example.com"),
+            ("http://example.com", "http://example.com"),
+            ("192.168.1.1:8080", "https://192.168.1.1:8080"),
+        ] {
+            assert_eq!(normalize_url(input), expected, "normalize_url({input:?})");
+        }
+    }
+
+    #[test]
+    fn version_comparison() {
+        assert!(version_less_than("0.1.0", "0.2.0"));
+        assert!(version_less_than("0.1.9", "0.1.10"));
+        assert!(version_less_than("0.9.9", "1.0.0"));
+        assert!(!version_less_than("1.0.0", "0.9.9"));
+        assert!(!version_less_than("1.0.0", "1.0.0"));
+        assert!(!version_less_than("0.2.0", "0.1.0"));
     }
 }

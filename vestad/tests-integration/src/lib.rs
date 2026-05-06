@@ -16,8 +16,23 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
+/// Name of a shared, never-mutated agent created once per test process. Use for
+/// read-only assertions about a fresh agent (env files, container layout) so we
+/// don't pay create+destroy on every test. The agent is left unauthenticated;
+/// cleanup happens at the next run via `cleanup_orphan_test_containers`.
+pub static SHARED_RO_AGENT: LazyLock<String> = LazyLock::new(|| {
+    let client = SERVER.client();
+    let raw = unique_agent("ro-shared");
+    client
+        .create_agent(&raw)
+        .unwrap_or_else(|e| panic!("failed to create shared read-only agent: {e}"))
+});
+
 static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
 static TEST_AGENT_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// curl flags that absorb transient GitHub API/CDN flakes during integration tests.
+const CURL_RETRY_ARGS: &[&str] = &["--retry", "5", "--retry-all-errors", "--retry-delay", "2"];
 
 /// Generate a unique user name for test isolation. Includes PID for cross-run
 /// uniqueness and an atomic counter for intra-run uniqueness. This prevents
@@ -260,28 +275,21 @@ impl<'a> TestAgent<'a> {
     pub fn create(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent(name, false)?;
-        Ok(Self { name, client })
-    }
-
-    pub fn create_built(client: &'a Client, name: &str) -> Result<Self, String> {
-        let _ = client.stop_agent(name);
-        let _ = client.destroy_agent(name);
-        let name = client.create_agent(name, true)?;
+        let name = client.create_agent(name)?;
         Ok(Self { name, client })
     }
 
     pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, false, Some(true))?;
+        let name = client.create_agent_ex(name, Some(true))?;
         Ok(Self { name, client })
     }
 
     pub fn create_without_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, false, Some(false))?;
+        let name = client.create_agent_ex(name, Some(false))?;
         Ok(Self { name, client })
     }
 }
@@ -353,8 +361,9 @@ pub struct ReleasedVestad {
 
 pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let output = Command::new("curl")
+        .arg("-fsSL")
+        .args(CURL_RETRY_ARGS)
         .args([
-            "-fsSL",
             "-H",
             "Accept: application/vnd.github+json",
             "-H",
@@ -389,7 +398,9 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
     let archive_path = tmpdir.path().join("vestad.tar.gz");
     let output = Command::new("curl")
-        .args(["-fsSL", "-o"])
+        .arg("-fsSL")
+        .args(CURL_RETRY_ARGS)
+        .arg("-o")
         .arg(&archive_path)
         .arg(&url)
         .output()

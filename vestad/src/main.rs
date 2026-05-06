@@ -10,8 +10,8 @@ mod agent_status;
 mod app_static;
 mod auth;
 mod backup;
+mod cloudflared_embed;
 mod control_ws;
-mod migrations;
 mod docker;
 mod jwt;
 mod paths;
@@ -75,8 +75,6 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// Print host URL and API key for client connections
-    Info,
     /// Update vestad to the latest version
     Update,
     /// Uninstall vestad: stop service, remove config, and delete binary
@@ -110,8 +108,6 @@ enum TunnelAction {
         /// Subdomain name (e.g., "alice" for alice.yourdomain.com)
         subdomain: String,
     },
-    /// Show current tunnel status
-    Status,
     /// Tear down tunnel and DNS record
     Destroy,
 }
@@ -253,19 +249,19 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
-            let tunnel_url = if !no_tunnel {
-                match tunnel::ensure_tunnel(&config) {
+            let tunnel_url = if no_tunnel {
+                None
+            } else {
+                match tunnel::ensure_cloudflared(&config).and_then(|_| tunnel::ensure_tunnel(&config)) {
                     Ok(tc) => Some(format!("https://{}", tc.hostname)),
                     Err(e) => {
                         tracing::warn!("tunnel setup failed: {e}, running without tunnel");
                         None
                     }
                 }
-            } else {
-                None
             };
 
-            serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
+            docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             let local_url = format!("http://localhost:{}", port + 1);
             let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
             eprintln!();
@@ -374,7 +370,23 @@ fn main() {
 
         Command::Status => {
             let config = config_dir();
-            eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
+            let binary_path = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "<unknown>".into());
+            let agent_count = std::fs::read_dir(config.join("agents"))
+                .map(|rd| rd.filter_map(Result::ok)
+                    .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
+                    .count())
+                .unwrap_or(0);
+
+            eprintln!();
+            eprintln!(
+                "  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m({}, {} agent{})\x1b[0m",
+                env!("CARGO_PKG_VERSION"),
+                binary_path,
+                agent_count,
+                if agent_count == 1 { "" } else { "s" },
+            );
 
             let (tunnel_url, local_url, api_key) = read_server_info(&config);
             if let Some(api_key) = &api_key {
@@ -501,7 +513,6 @@ fn main() {
                             agents_dir: config.join("agents"),
                             vestad_port,
                             vestad_tunnel,
-                            upstream_ref: None,
                         };
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
@@ -525,17 +536,6 @@ fn main() {
                     tunnel::setup_tunnel(&config, &subdomain)
                         .unwrap_or_else(|e| die(e));
                 }
-                TunnelAction::Status => {
-                    match tunnel::get_tunnel_config(&config) {
-                        Some(tc) => {
-                            eprintln!("tunnel: https://{}", tc.hostname);
-                            eprintln!("tunnel id: {}", tc.tunnel_id);
-                        }
-                        None => {
-                            eprintln!("no tunnel configured");
-                        }
-                    }
-                }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config)
                         .unwrap_or_else(|e| die(e));
@@ -543,18 +543,11 @@ fn main() {
             }
         }
 
-        Command::Info => {
-            let config = config_dir();
-            let (tunnel_url, local_url, api_key) = read_server_info(&config);
-
-            let api_key = api_key.unwrap_or_else(|| die("no API key found — has vestad been started?"));
-            let local_url = local_url.unwrap_or_else(|| die("no port file found — is vestad running?"));
-
-            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
-        }
-
         Command::Update => {
-            self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+            let outcome = self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+            if !outcome.updated {
+                println!("vestad already at latest version (v{})", outcome.current);
+            }
         }
 
         Command::Version => {

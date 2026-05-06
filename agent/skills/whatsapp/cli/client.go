@@ -314,6 +314,23 @@ func (wac *WhatsAppClient) IsAuthenticated() bool {
 
 func (wac *WhatsAppClient) PairPhone(phone string) (string, error) {
 	phone = strings.TrimPrefix(phone, "+")
+
+	// The WS to WhatsApp must be up before requesting a pairing code.
+	// On first-time pairing Store.ID is nil, so Connect() spawns the QR
+	// goroutine asynchronously; calling pair-phone before that goroutine's
+	// own client.Connect() lands surfaces "websocket not connected" from
+	// whatsmeow. Wait briefly for the WS to come up, then return a
+	// friendly error if it never does.
+	for i := 0; i < ConnectRetryAttempts; i++ {
+		if wac.client.IsConnected() {
+			break
+		}
+		time.Sleep(ConnectRetryDelay)
+	}
+	if !wac.client.IsConnected() {
+		return "", fmt.Errorf("WhatsApp websocket not connected; restart the daemon and retry")
+	}
+
 	code, err := wac.client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		return "", err
@@ -354,12 +371,14 @@ func (wac *WhatsAppClient) startStaleMessageDetector() {
 					continue
 				}
 				if len(staleIDs) > 0 {
-					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v, marking as filtered and writing notification", len(staleIDs), StaleMessageThreshold, staleIDs)
-					if err := wac.store.MarkMessagesFiltered(staleIDs); err != nil {
-						wac.logger.Warnf("Failed to mark stale messages as filtered: %v", err)
-					}
-					if err := WriteDeliveryFailureNotification(wac.notificationsDir, wac.instance, staleIDs); err != nil {
-						wac.logger.Warnf("Failed to write delivery failure notification: %v", err)
+					// No delivery receipt arrived within StaleMessageThreshold.
+					// This is usually slow recipient connectivity or read-receipts-off,
+					// not actual filtering by WhatsApp. UpdateDeliveryStatus will
+					// self-heal the status field if a receipt arrives later, so we
+					// only mark + log here, no notification firing.
+					wac.logger.Warnf("Marking %d outgoing messages as unconfirmed (no delivery receipt within %v): %v", len(staleIDs), StaleMessageThreshold, staleIDs)
+					if err := wac.store.MarkMessagesUnconfirmed(staleIDs); err != nil {
+						wac.logger.Warnf("Failed to mark messages as unconfirmed: %v", err)
 					}
 				}
 			}

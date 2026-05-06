@@ -14,6 +14,7 @@ description: WhatsApp messages, contacts, groups (not generic text/message). Req
 - Most common subcommands accept leading positional args that the CLI rewrites into flags (e.g. `whatsapp send 'Alice' 'Hi'` is identical to `whatsapp send --to 'Alice' --message 'Hi'`). You can always use the flag form.
 - Flags for a specific subcommand: `whatsapp <subcommand> --help`. The top-level `whatsapp` with no args prints the command list.
 - Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID - the CLI resolves them.
+- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, or multiple lines: this avoids shell-escaping issues that break `--message 'text'`.
 
 ## Reply / Quote
 ```bash

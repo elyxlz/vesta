@@ -31,6 +31,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { useChatPacing } from "@/stores/use-chat-pacing";
+import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -49,6 +50,8 @@ export function SettingsDialog({
   const { isTauri } = useTauri();
   const naturalPacing = useChatPacing((s) => s.natural);
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
+  const appMode = useAppMode((s) => s.mode);
+  const setAppMode = useAppMode((s) => s.setMode);
 
   const hostname = (() => {
     const conn = getConnection();
@@ -116,6 +119,33 @@ export function SettingsDialog({
                 checked={naturalPacing}
                 onCheckedChange={setNaturalPacing}
               />
+            </Field>
+          </MenuSection>
+
+          <MenuSection title="Mode">
+            <Field
+              orientation="horizontal"
+              className="items-center justify-between"
+            >
+              <FieldContent>
+                <FieldLabel className="text-sm">level</FieldLabel>
+                <FieldDescription>
+                  simple hides advanced controls and shows curated views;
+                  advanced exposes the full file tree, debug info, and more
+                </FieldDescription>
+              </FieldContent>
+              <ToggleGroup
+                type="single"
+                value={appMode}
+                onValueChange={(value) => {
+                  if (value) setAppMode(value as AppMode);
+                }}
+                variant="outline"
+                spacing={2}
+              >
+                <ToggleGroupItem value="simple">simple</ToggleGroupItem>
+                <ToggleGroupItem value="advanced">advanced</ToggleGroupItem>
+              </ToggleGroup>
             </Field>
           </MenuSection>
 

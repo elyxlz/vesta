@@ -315,6 +315,11 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
     }
 
     let local_bin = config_dir.join("cloudflared");
+
+    if let Some((bytes, fingerprint)) = crate::cloudflared_embed::vendored_cloudflared() {
+        return extract_embedded_cloudflared(config_dir, bytes, fingerprint);
+    }
+
     if local_bin.exists() {
         return Ok(local_bin);
     }
@@ -340,15 +345,43 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
         return Err("failed to download cloudflared".to_string());
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&local_bin, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("chmod failed: {}", e))?;
-    }
+    set_executable(&local_bin)?;
 
     tracing::info!(path = %local_bin.display(), "cloudflared downloaded");
     Ok(local_bin)
+}
+
+const CLOUDFLARED_FINGERPRINT_MARKER: &str = ".cloudflared-fingerprint";
+
+fn extract_embedded_cloudflared(
+    config_dir: &Path,
+    bytes: &[u8],
+    fingerprint: &str,
+) -> Result<PathBuf, String> {
+    let local_bin = config_dir.join("cloudflared");
+    let marker = config_dir.join(CLOUDFLARED_FINGERPRINT_MARKER);
+    if local_bin.exists()
+        && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
+    {
+        return Ok(local_bin);
+    }
+
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("failed to create config dir: {}", e))?;
+    std::fs::write(&local_bin, bytes)
+        .map_err(|e| format!("failed to write embedded cloudflared: {}", e))?;
+    set_executable(&local_bin)?;
+    std::fs::write(&marker, fingerprint)
+        .map_err(|e| format!("failed to write cloudflared fingerprint: {}", e))?;
+
+    tracing::info!(path = %local_bin.display(), "cloudflared extracted from embed");
+    Ok(local_bin)
+}
+
+fn set_executable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("chmod failed: {}", e))
 }
 
 pub async fn start_tunnel(

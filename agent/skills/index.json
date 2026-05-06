@@ -1,7 +1,23 @@
 [
   {
+    "name": "app-chat",
+    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
+  },
+  {
+    "name": "personality",
+    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
+  },
+  {
+    "name": "agentmail",
+    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently."
+  },
+  {
     "name": "browser",
     "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
+  },
+  {
+    "name": "claude-code",
+    "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
   },
   {
     "name": "dashboard",
@@ -10,6 +26,10 @@
   {
     "name": "dream",
     "description": "Self-improvement and memory curation; used nightly by the dreamer or anytime."
+  },
+  {
+    "name": "essay-iter",
+    "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
   },
   {
     "name": "exa",
@@ -32,12 +52,16 @@
     "description": "Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations."
   },
   {
+    "name": "icloud",
+    "description": "iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone."
+  },
+  {
     "name": "keeper",
     "description": "Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage."
   },
   {
     "name": "media-server",
-    "description": "Plex, movies, TV shows, torrents, qBittorrent; download and browse library."
+    "description": "This skill should be used when the user asks about their home media server: searching trackers, adding torrents, monitoring downloads, or browsing the media library."
   },
   {
     "name": "microsoft",
@@ -46,6 +70,10 @@
   {
     "name": "onedrive",
     "description": "OneDrive cloud files: access, mount, or manage via rclone."
+  },
+  {
+    "name": "philips-hue",
+    "description": "This skill should be used when the user asks about Philips Hue lights: turning lights on/off, dimming, changing colours, activating scenes, or controlling rooms."
   },
   {
     "name": "proactive-check",
@@ -94,6 +122,10 @@
   {
     "name": "voice",
     "description": "Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json."
+  },
+  {
+    "name": "vpn",
+    "description": "This skill should be used when the user asks about their VPN, proxy, or SOCKS5 connection: checking status, fetching the proxy URL for another skill, or switching the active provider."
   },
   {
     "name": "what-day",

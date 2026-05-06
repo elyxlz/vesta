@@ -265,15 +265,31 @@ def launch(
             break
         time.sleep(READY_POLL_S)
 
-    stderr_bytes = b""
-    if proc.stderr:
-        try:
-            proc.stderr.close()
-        except OSError:
-            pass
+    # Stop the process first, then drain stderr so the failure message has
+    # something useful in it. Reading from a PIPE before kill can hang if the
+    # child is still blocked, and the original code closed stderr without
+    # reading it, leaving every "Chromium did not become CDP-reachable" error
+    # with stderr_tail=b''.
     try:
         proc.kill()
     except ProcessLookupError:
+        pass
+
+    stderr_bytes = b""
+    if proc.stderr:
+        try:
+            stderr_bytes = proc.stderr.read() or b""
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                proc.stderr.close()
+            except OSError:
+                pass
+
+    try:
+        proc.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
         pass
 
     raise RuntimeError(

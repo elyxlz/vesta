@@ -8,14 +8,15 @@ serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME
 
 A React app embedded in the main Vesta app that serves as the user's **life HQ**, a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
 
-## Before building (REQUIRED)
+## Before building
 
-**1. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
+Ask the user three things before writing code, then build only after they've answered:
+
 1. **Goal**: if the request is vague, clarify what they actually want to see or do
 2. **Interaction**: display-only, or do they want to tap/click/toggle/input things?
 3. **Data**: should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
 
-Only start building once the user has answered. Don't assume. Ask.
+**Exception, dreamer auto-builds.** During a dream pass, the agent may add widgets without asking. See the `dream` skill for when and how.
 
 ## Project structure
 
@@ -48,27 +49,27 @@ The dashboard uses a **sidebar + page** layout controlled by `config.tsx`. Each 
 
 When adding a widget without a specified page, **choose a fitting page name yourself**. Group related widgets under a meaningful category (e.g., "Health" with `<HeartIcon />`, "Finance" with `<DollarSignIcon />`). If a suitable page already exists, add the widget there.
 
-## Density & Sizing Rules (IMPORTANT)
+## Density & Sizing Rules
 
-The dashboard is a high-density UI, not a standard app interface. By default, shadcn components are too large. **You MUST override them**. Everything should feel compact. Large elements are the exception, not the norm.
+The dashboard is a high-density UI, not a standard app interface. Default shadcn components are too large for it: override them so everything feels compact. Large elements are the exception.
 
-**1. Typography (MANDATORY)**
+**1. Typography**
 *   Default text: `text-sm`
 *   Secondary text / labels: `text-xs text-muted-foreground`
 *   Large numbers only: `text-lg` or `text-xl font-semibold`
-*   Do not use `text-lg` or larger for normal text unless absolutely necessary or the user explicitly requests it.
+*   Reserve `text-lg`+ for genuinely large numbers or when the user asks for it.
 
-**2. Padding, Spacing & Layout (MANDATORY)**
+**2. Padding, Spacing & Layout**
 *   Default widget wrapper: `<div className="rounded-2xl bg-secondary p-3 text-sm">`
-*   Dense widgets: `p-2`. Avoid `p-4` unless absolutely necessary.
-*   Grid gap: Use `gap-2` (preferred) or `gap-3`. Avoid `gap-4`.
+*   Dense widgets: `p-2`. Reserve `p-4` for the rare case it actually needs the room.
+*   Grid gap: Use `gap-2` (preferred) or `gap-3`. Reserve `gap-4`.
 *   Inside widgets: Use `space-y-2` instead of `space-y-4`.
-*   Avoid tall widgets. Prefer horizontal density. Combine related info into single rows.
+*   Prefer horizontal density over tall widgets. Combine related info into single rows.
 
-**3. Buttons & Controls (MANDATORY)**
-*   All buttons must be compact: `<Button size="sm" className="h-8 px-2 text-xs">`
-*   Inputs: `h-8 text-xs`. Avoid full-width inputs unless necessary.
-*   Do not use the default `<Button>` size unless absolutely necessary or the user explicitly requests it.
+**3. Buttons & Controls**
+*   Compact buttons by default: `<Button size="sm" className="h-8 px-2 text-xs">`
+*   Inputs: `h-8 text-xs`. Reserve full-width inputs for cases that genuinely need them.
+*   Reserve the default `<Button>` size for when the user asks for it.
 
 **4. Grid Span Rules**
 *   **col-span-1** (default): metric cards, counters, status indicators, trackers. *This is 90% of widgets.*
@@ -101,19 +102,19 @@ import { StarIcon } from "lucide-react"
 { id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
 ```
 
-## Data Patterns & Strict Rules
+## Data Patterns
 
-**1. No client-side external API fetches:** The dashboard runs in a browser; cross-origin requests to third-party APIs (weather, finance) will fail due to CORS. You MUST create a skill that fetches data server-side, expose it as an endpoint, and call it using `apiFetch` from `@/lib/parent-bridge`.
+**1. No client-side external API fetches.** The dashboard runs in a browser; cross-origin requests to third-party APIs (weather, finance) fail due to CORS. Create a skill that fetches data server-side, expose it as an endpoint, and call it from the dashboard using `apiFetch` from `@/lib/parent-bridge`.
 
-**2. All user data must persist server-side:** Do not hardcode user data or rely on `localStorage` as the source of truth. The user accesses the dashboard across devices. Create a skill with API endpoints to store/retrieve data.
+**2. Persist user data server-side.** The user reads the dashboard across devices, so the source of truth lives in a skill with API endpoints. Hardcoded data and `localStorage` shouldn't act as the canonical store.
 
-**3. `localStorage` is ONLY for local visual state:** Use it strictly for device-specific UI states (sidebar order, collapsed sections, selected tabs). Prefix keys with `vesta-dashboard-`.
+**3. `localStorage` is for local visual state only.** Use it for device-specific UI states (sidebar order, collapsed sections, selected tabs). Prefix keys with `vesta-dashboard-`.
 
-**4. Handle loading and missing data:**
-*   Widgets fetching data **must** show a skeleton or spinner while loading.
-*   Prevent crashes: Arrays/objects may be undefined on first render. Always default to `[]` or `{}`. Protect `.reduce()`, `.map()`, and charts from undefined data.
+**4. Loading and missing data:**
+*   Show a skeleton or spinner while data is loading.
+*   Arrays/objects may be undefined on first render. Default to `[]` or `{}` so `.reduce()`, `.map()`, and charts don't crash.
 
-**5. Data freshness:** Default to fetching on mount (`useEffect`). For data that updates throughout the day, add a compact refresh button. Only use polling (`setInterval`) for live data like timers or stock tickers (ask the user how often it should auto refresh).
+**5. Data freshness:** Default to fetching on mount (`useEffect`). For data that updates through the day, add a compact refresh button. Reserve polling (`setInterval`) for live data like timers or stock tickers, and ask the user how often it should auto-refresh.
 
 ## UI & Styling
 
@@ -121,9 +122,9 @@ import { StarIcon } from "lucide-react"
 *   **Make it fun:** Use lucide icons for visual flair (like `<Flame />` for streaks, `<CheckCircle />` for completed).
 *   **Use semantic colors:** Use Tailwind classes (like `text-green-500`, `bg-amber-100`, `border-pink-400`) for badges, progress bars, and status indicators.
 
-## After every change (IMPORTANT)
+## After every change
 
-**Rebuild, Register with VESTAD, Restart the server and Notify the Vesta App**
+Rebuild, re-register with vestad, restart the preview server, and notify the Vesta app:
 
 ```bash
 cd ~/agent/skills/dashboard/app && npx vite build
@@ -141,6 +142,11 @@ fi
 # Notify the app to reload the dashboard iframe
 curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
+
+## Cache gotchas (read once)
+
+- **Do NOT pass `--base`** to vite preview. Vestad strips the `/agents/{name}/{service}/` prefix when proxying, so the local server must serve at `/`. With `--base` set, `/assets/...` requests come in stripped and 404. The HTML uses relative `./assets/...` already (vite config `base: "./"`), which resolves correctly under the proxy path in the browser.
+- **Cloudflare caches 404 responses for ~4 hours via the public tunnel.** If you accidentally serve a broken build that 404s on assets, even after fixing the build, the tunnel will keep serving the cached 404 until either (a) the URL changes, (b) the cache expires, or (c) you bust with a `?v=...` query. Vite's content hashes change automatically when source changes, so normally this isn't an issue. If you ever get a stuck 404 with no source change, temporarily add `Date.now()` to `entryFileNames` in `vite.config.ts`, rebuild, then revert.
 
 ## Troubleshooting
 *   **Dashboard not showing?** `screen -ls | grep dashboard`

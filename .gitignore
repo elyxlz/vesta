@@ -18,6 +18,9 @@ tmp/
 # Rust workspace build output
 target/
 
+# Vendored binaries fetched at build time (e.g. cloudflared)
+vestad/vendored/
+
 # Claude Code
 .claude/
 !.claude/skills/

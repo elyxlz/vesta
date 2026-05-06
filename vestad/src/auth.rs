@@ -61,18 +61,46 @@ pub async fn auth_middleware_agent_token(
         return unauthorized();
     };
 
-    let provided = headers.get("x-agent-token").and_then(|v| v.to_str().ok());
-    let Some(provided) = provided else {
-        tracing::warn!(
-            path = %path,
-            agent = %agent_name,
-            reason = "header-missing",
-            "agent token auth failed",
-        );
-        return unauthorized();
+    if check_agent_token(&headers, &agent_name, &state, &path) {
+        return next.run(request).await;
+    }
+    unauthorized()
+}
+
+/// Accepts either the API key (Authorization: Bearer / ?token=) or the agent's
+/// own X-Agent-Token. Used for read-only routes the web/CLI clients and the
+/// agent itself both want to call.
+pub async fn auth_middleware_api_or_agent_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
+        return next.run(request).await;
+    }
+
+    let path = request.uri().path().to_string();
+    if let Some(agent_name) = extract_agent_name(&path) {
+        if check_agent_token(&headers, &agent_name, &state, &path) {
+            return next.run(request).await;
+        }
+    }
+    tracing::warn!(path = %path, "client auth failed (neither api-key nor agent-token accepted)");
+    unauthorized()
+}
+
+fn check_agent_token(headers: &HeaderMap, agent_name: &str, state: &SharedState, path: &str) -> bool {
+    let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) else {
+        tracing::warn!(path = %path, agent = %agent_name, reason = "header-missing", "agent token auth failed");
+        return false;
     };
 
-    let (_, expected) = crate::docker::read_agent_port_and_token(&agent_name, &state.env_config.agents_dir);
+    let (_, expected) = crate::docker::read_agent_port_and_token(agent_name, &state.env_config.agents_dir);
     let Some(expected) = expected else {
         tracing::warn!(
             path = %path,
@@ -81,11 +109,11 @@ pub async fn auth_middleware_agent_token(
             agents_dir = %state.env_config.agents_dir.display(),
             "agent token auth failed",
         );
-        return unauthorized();
+        return false;
     };
 
     if provided == expected {
-        return next.run(request).await;
+        return true;
     }
 
     tracing::warn!(
@@ -98,7 +126,7 @@ pub async fn auth_middleware_agent_token(
         expected_len = expected.len(),
         "agent token auth failed",
     );
-    unauthorized()
+    false
 }
 
 fn unauthorized() -> Response {

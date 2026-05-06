@@ -3,7 +3,10 @@ import { Navigate, Outlet, useParams } from "react-router-dom";
 import { AgentIslandModals } from "@/components/AgentIslandModals";
 import { AgentNavbar } from "@/components/Navbar/AgentNavbar";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useOrbState } from "@/hooks/use-orb-state";
 import { useSwipeNavigation } from "@/hooks/use-swipe-navigation";
+import { clearFaviconOrbState, setFaviconForOrbState } from "@/lib/favicon";
+import { resetTabBaseTitle, setTabBaseTitle } from "@/lib/tab-title";
 import { useGateway } from "@/providers/GatewayProvider";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ModalsProvider } from "@/providers/ModalsProvider";
@@ -16,6 +19,19 @@ export function AgentLayout() {
   const { name: routeName } = useParams<{ name: string }>();
   const { agents } = useGateway();
   const agent = agents.find((a) => a.name === routeName);
+  const orbState = useOrbState(agent ?? null, agent?.activityState ?? "idle");
+
+  useEffect(() => {
+    if (!routeName) return;
+    setTabBaseTitle(routeName);
+    return () => resetTabBaseTitle();
+  }, [routeName]);
+
+  useEffect(() => {
+    setFaviconForOrbState(orbState);
+  }, [orbState]);
+
+  useEffect(() => () => clearFaviconOrbState(), []);
 
   if (!agent) {
     return <Navigate to="/" replace />;

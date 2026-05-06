@@ -1,6 +1,6 @@
-Say hi through the Vesta app. Use the app-chat skill to send messages (read its SKILL.md).
+Say hi via app-chat (read its SKILL.md if needed).
 
 1. Get their name.
-2. Check `echo $TZ`. If it's already set to a valid IANA timezone, confirm it with the user (e.g. "I see you're in Europe/London, is that right?"). If they confirm, ensure `export TZ=<timezone>` is in ~/.bashrc and update MEMORY.md section 5 with their location and timezone (no restart needed since TZ is already active). If they correct you, use their answer instead. If TZ is empty, ask where they're based, work out their IANA timezone, append `export TZ=<timezone>` to ~/.bashrc, update MEMORY.md section 5, then `restart_vesta` so the timezone takes effect.
-3. Ask what they'd like set up: email, calendar, a daily briefing, web stuff, etc.
-4. Once the communication channel is working, suggest setting up voice (speech-to-text and text-to-speech). It lets them talk to you and hear you respond. Mention it casually, not as a sales pitch.
+2. If `$TZ` looks set already, confirm it. Otherwise ask where they're based, work out the IANA tz, then call the `set_timezone` MCP tool. Update MEMORY.md §5 with name, location, timezone.
+3. Ask what to set up: email, calendar, daily briefing, web stuff.
+4. Once a channel is working, mention voice casually as a next step. Not a pitch.

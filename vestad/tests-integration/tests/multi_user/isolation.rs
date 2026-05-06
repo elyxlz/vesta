@@ -1,5 +1,5 @@
 use super::common::start_pair;
-use vesta_tests::TestAgent;
+use vesta_tests::{TestAgent, unique_agent};
 
 #[test]
 fn two_servers_start_different_ports() {
@@ -16,20 +16,21 @@ fn agents_isolated_between_users() {
     let (alice, bob, _, _) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
+    let name = unique_agent("isolated-shared");
 
-    let _alice_agent = TestAgent::create(&alice_client, "shared-name").unwrap();
-    let _bob_agent = TestAgent::create(&bob_client, "shared-name").unwrap();
+    let _alice_agent = TestAgent::create(&alice_client, &name).unwrap();
+    let _bob_agent = TestAgent::create(&bob_client, &name).unwrap();
 
     let alice_list = alice_client.list_agents().unwrap();
     let bob_list = bob_client.list_agents().unwrap();
 
-    assert_eq!(alice_list.len(), 1, "alice should see exactly one agent");
-    assert_eq!(bob_list.len(), 1, "bob should see exactly one agent");
-    assert_eq!(alice_list[0].name, "shared-name");
-    assert_eq!(bob_list[0].name, "shared-name");
+    let alice_match: Vec<_> = alice_list.iter().filter(|a| a.name == name).collect();
+    let bob_match: Vec<_> = bob_list.iter().filter(|a| a.name == name).collect();
+    assert_eq!(alice_match.len(), 1, "alice should see exactly one agent named {name}");
+    assert_eq!(bob_match.len(), 1, "bob should see exactly one agent named {name}");
 
-    let alice_status = alice_client.agent_status("shared-name").unwrap();
-    let bob_status = bob_client.agent_status("shared-name").unwrap();
+    let alice_status = alice_client.agent_status(&name).unwrap();
+    let bob_status = bob_client.agent_status(&name).unwrap();
     assert_ne!(alice_status.status, "not_found");
     assert_ne!(bob_status.status, "not_found");
 }

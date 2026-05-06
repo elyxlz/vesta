@@ -1,5 +1,6 @@
 banking
 browser
+claude-code
 dashboard
 dream
 flights

@@ -22,7 +22,7 @@ pub fn check_once() -> Result<UpdateInfo, String> {
     })
 }
 
-fn version_less_than(a: &str, b: &str) -> bool {
+pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
     let parse = |v: &str| -> Vec<u64> {
         v.split('.').filter_map(|s| s.parse().ok()).collect()
     };

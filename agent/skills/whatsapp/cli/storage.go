@@ -892,7 +892,7 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 
 const sqliteMaxVars = 500
 
-func (ms *MessageStore) MarkMessagesFiltered(ids []string) error {
+func (ms *MessageStore) MarkMessagesUnconfirmed(ids []string) error {
 	for len(ids) > 0 {
 		batch := ids
 		if len(batch) > sqliteMaxVars {
@@ -901,7 +901,7 @@ func (ms *MessageStore) MarkMessagesFiltered(ids []string) error {
 		ids = ids[len(batch):]
 
 		args := make([]any, 0, len(batch)+2)
-		args = append(args, DeliveryStatusFiltered)
+		args = append(args, DeliveryStatusUnconfirmed)
 		for _, id := range batch {
 			args = append(args, id)
 		}

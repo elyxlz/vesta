@@ -11,6 +11,8 @@ use common::{fetch_latest_release_tag, version_less_than};
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
+// Pads for first-start setup (git fetch, npm install, vite build, etc.).
+const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -20,7 +22,7 @@ fn format_size(bytes: u64) -> String {
     } else if bytes >= 1_000 {
         format!("{:.0}kB", bytes as f64 / 1_000.0)
     } else {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     }
 }
 
@@ -62,9 +64,6 @@ struct Cli {
 enum Command {
     /// Create agent, start it, and authenticate Claude
     Setup {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Skip confirmation prompts
         #[arg(long, short)]
         yes: bool,
@@ -77,9 +76,6 @@ enum Command {
     },
     /// Create an agent container (without starting or authenticating)
     Create {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
@@ -141,16 +137,10 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// View or update agent settings
+    /// View agent settings (manage_agent_code is fixed at create time and read-only here)
     Settings {
         /// Agent name
         name: String,
-        /// Enable vestad-managed core code (mount from host)
-        #[arg(long)]
-        manage_core_code: bool,
-        /// Disable vestad-managed core code (use image's baked-in code)
-        #[arg(long, conflicts_with = "manage_core_code")]
-        no_manage_core_code: bool,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -298,7 +288,7 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
 }
 
 fn prompt(label: &str) -> String {
-    eprint!("{}: ", label);
+    eprint!("{label}: ");
     io::stderr().flush().ok();
     let mut input = String::new();
     io::stdin()
@@ -336,7 +326,7 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
 
 fn check_latest_version() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
-    eprintln!("current version: v{}", current);
+    eprintln!("current version: v{current}");
 
     let latest = fetch_latest_release_tag(None)
         .unwrap_or_else(|| platform::die("failed to check for updates"));
@@ -345,7 +335,7 @@ fn check_latest_version() -> Option<String> {
         eprintln!("already up to date");
         return None;
     }
-    eprintln!("updating to v{}...", latest);
+    eprintln!("updating to v{latest}...");
     Some(latest)
 }
 
@@ -353,14 +343,13 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
     let latest = check_latest_version()?;
 
     let ext = if is_zip { "zip" } else { "tar.gz" };
-    let archive_name = format!("vesta-{}.{}", rust_target, ext);
+    let archive_name = format!("vesta-{rust_target}.{ext}");
     let url = format!(
-        "https://github.com/elyxlz/vesta/releases/download/v{}/{}",
-        latest, archive_name
+        "https://github.com/elyxlz/vesta/releases/download/v{latest}/{archive_name}"
     );
 
     let current_exe =
-        std::env::current_exe().unwrap_or_else(|e| platform::die(&format!("cannot determine binary path: {}", e)));
+        std::env::current_exe().unwrap_or_else(|e| platform::die(&format!("cannot determine binary path: {e}")));
     let exe_dir = current_exe
         .parent()
         .unwrap_or_else(|| platform::die("cannot determine binary directory"));
@@ -374,7 +363,7 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
             let fallback = std::env::temp_dir().join("vesta-update");
             let _ = std::fs::remove_dir_all(&fallback);
             std::fs::create_dir_all(&fallback)
-                .unwrap_or_else(|e| platform::die(&format!("failed to create temp dir: {}", e)));
+                .unwrap_or_else(|e| platform::die(&format!("failed to create temp dir: {e}")));
             fallback
         }
     };
@@ -407,10 +396,10 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
     let new_binary = tmp_dir.join(binary_subpath);
     self_replace::self_replace(&new_binary).unwrap_or_else(|e| {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die(&format!("failed to replace binary: {}", e));
+        platform::die(&format!("failed to replace binary: {e}"));
     });
 
-    eprintln!("updated to v{}", latest);
+    eprintln!("updated to v{latest}");
     Some(tmp_dir)
 }
 
@@ -500,7 +489,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { build, yes, name, no_manage_core_code } => {
+        Command::Setup { yes, name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -508,45 +497,41 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
 
             let timezone = detect_timezone();
-            match c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()) {
-                Ok(name) => eprintln!("created agent '{}'", name),
+            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
+                Ok(name) => eprintln!("created agent '{name}'"),
                 Err(e) if e.contains("already exists") && yes => {
-                    eprintln!("agent '{}' already exists, continuing...", name);
+                    eprintln!("agent '{name}' already exists, continuing...");
                 }
                 Err(e) if e.contains("already exists") => {
-                    platform::die(&format!("agent '{}' already exists. use --yes to continue", name));
+                    platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
                 }
                 Err(e) => platform::die(&e),
             }
 
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
-            eprintln!("agent '{}' is ready.", name);
+            eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
+            c.wait_until_alive(&name, START_READY_TIMEOUT)
+                .unwrap_or_else(|e| platform::die(&e));
+            eprintln!("agent '{name}' is ready.");
 
         }
 
-        Command::Create { build, name, no_manage_core_code } => {
+        Command::Create { name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("created (run 'vesta auth {}' to authenticate)", name);
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
+            eprintln!("created (run 'vesta auth {name}' to authenticate)");
         }
 
-        Command::Settings { name, manage_core_code, no_manage_core_code } => {
+        Command::Settings { name } => {
             let c = get_client(host_ref, token_ref);
-            if manage_core_code || no_manage_core_code {
-                let body = serde_json::json!({"manage_agent_code": !no_manage_core_code});
-                let result = c.patch_agent_settings(&name, &body).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("{}: manage_agent_code = {}", name, val);
-            } else {
-                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("manage_agent_code = {}", val);
-            }
+            let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+            let val = result["manage_agent_code"].as_bool().unwrap_or(true);
+            eprintln!("manage_agent_code = {val}");
         }
 
         Command::Start { name } => {
@@ -554,7 +539,9 @@ fn run(cli: Cli) {
             match name {
                 Some(name) => {
                     c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("{}: started", name);
+                    c.wait_until_alive(&name, START_READY_TIMEOUT)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{name}: ready");
                 }
                 None => {
                     let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
@@ -562,14 +549,17 @@ fn run(cli: Cli) {
                         eprintln!("no agents found. create one with: vesta setup");
                     } else {
                         for r in &results {
-                            if r.ok {
-                                eprintln!("{}: started", r.name);
-                            } else {
+                            if !r.ok {
                                 eprintln!(
                                     "{}: {}",
                                     r.name,
                                     r.error.as_deref().unwrap_or("failed")
                                 );
+                                continue;
+                            }
+                            match c.wait_until_alive(&r.name, START_READY_TIMEOUT) {
+                                Ok(()) => eprintln!("{}: ready", r.name),
+                                Err(e) => eprintln!("{}: {}", r.name, e),
                             }
                         }
                     }
@@ -580,13 +570,13 @@ fn run(cli: Cli) {
         Command::Stop { name } => {
             let c = get_client(host_ref, token_ref);
             c.stop_agent(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: stopped", name);
+            eprintln!("{name}: stopped");
         }
 
         Command::Restart { name } => {
             let c = get_client(host_ref, token_ref);
             c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: restarted", name);
+            eprintln!("{name}: restarted");
         }
 
         Command::Gateway { action } => match action {
@@ -606,7 +596,7 @@ fn run(cli: Cli) {
             if let Some(token_str) = token {
                 c.inject_token(&name, &token_str)
                     .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("{}: authenticated", name);
+                eprintln!("{name}: authenticated");
             } else {
                 authenticate_agent(&c, &name);
             }
@@ -644,7 +634,7 @@ fn run(cli: Cli) {
                 println!("name:   {}", status.name);
                 println!("status: {}", status.status);
                 if let Some(id) = &status.id {
-                    println!("id:     {}", id);
+                    println!("id:     {id}");
                 }
                 println!("port:   {}", status.ws_port);
             }
@@ -671,14 +661,14 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             match action {
                 BackupAction::Create { name } => {
-                    eprintln!("creating backup for '{}'...", name);
+                    eprintln!("creating backup for '{name}'...");
                     let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
                     eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
                 }
                 BackupAction::List { name } => {
                     let backups = c.list_backups(&name).unwrap_or_else(|e| platform::die(&e));
                     if backups.is_empty() {
-                        eprintln!("no backups for '{}'", name);
+                        eprintln!("no backups for '{name}'");
                     } else {
                         eprintln!("  {:<22} {:<13} {:>8}   ID", "DATE", "TYPE", "SIZE");
                         for b in &backups {
@@ -704,15 +694,15 @@ fn run(cli: Cli) {
                     }
                 }
                 BackupAction::Restore { name, backup_id } => {
-                    eprintln!("restoring '{}' from backup...", name);
+                    eprintln!("restoring '{name}' from backup...");
                     c.restore_backup(&name, &backup_id)
                         .unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("{}: restored from {}", name, backup_id);
+                    eprintln!("{name}: restored from {backup_id}");
                 }
                 BackupAction::Delete { name, backup_id } => {
                     c.delete_backup(&name, &backup_id)
                         .unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("backup deleted: {}", backup_id);
+                    eprintln!("backup deleted: {backup_id}");
                 }
                 BackupAction::AutoBackup { toggle } => match toggle {
                     Some(Toggle::On) => {
@@ -749,7 +739,7 @@ fn run(cli: Cli) {
                     if reset {
                         let result = c.delete_agent_backup_settings(&name)
                             .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("{}: backup settings reset to global defaults", name);
+                        eprintln!("{name}: backup settings reset to global defaults");
                         print_agent_backup_settings(&result);
                     } else if enabled.is_none() && daily.is_none() && weekly.is_none() && monthly.is_none() {
                         let result = c.get_agent_backup_settings(&name)
@@ -769,7 +759,7 @@ fn run(cli: Cli) {
                         }
                         let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
                             .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("{}: backup settings updated", name);
+                        eprintln!("{name}: backup settings updated");
                         print_agent_backup_settings(&result);
                     }
                 },
@@ -779,19 +769,20 @@ fn run(cli: Cli) {
         Command::Destroy { name } => {
             let c = get_client(host_ref, token_ref);
             c.destroy_agent(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: destroyed", name);
+            eprintln!("{name}: destroyed");
         }
 
         Command::Rebuild { name } => {
             let c = get_client(host_ref, token_ref);
             c.rebuild_agent(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: rebuilt and running", name);
+            eprintln!("{name}: rebuilt and running");
         }
 
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
-            c.wait_ready(&name, timeout).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: ready", name);
+            c.wait_until_alive(&name, std::time::Duration::from_secs(timeout))
+                .unwrap_or_else(|e| platform::die(&e));
+            eprintln!("{name}: ready");
         }
 
         Command::Connect { host } => {
@@ -840,7 +831,7 @@ fn run(cli: Cli) {
             match std::fs::remove_dir_all(common::config_dir()) {
                 Ok(()) => eprintln!("  removed {}", common::config_dir().display()),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => eprintln!("warning: failed to remove config: {}", err),
+                Err(err) => eprintln!("warning: failed to remove config: {err}"),
             }
 
             if let Ok(exe) = std::env::current_exe() {
@@ -876,7 +867,7 @@ fn run(cli: Cli) {
                 let target = match std::env::consts::ARCH {
                     "x86_64" => "x86_64-apple-darwin",
                     "aarch64" => "aarch64-apple-darwin",
-                    other => platform::die(&format!("unsupported architecture: {}", other)),
+                    other => platform::die(&format!("unsupported architecture: {other}")),
                 };
                 if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
                     let _ = std::fs::remove_dir_all(&tmp_dir);

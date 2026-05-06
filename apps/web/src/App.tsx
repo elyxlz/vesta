@@ -54,7 +54,7 @@ export default function App() {
     >
       <div
         className={cn(
-          "flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]",
+          "flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]",
           !isFullscreen &&
             "bg-muted border border-border rounded-squircle-md [corner-shape:squircle]",
         )}

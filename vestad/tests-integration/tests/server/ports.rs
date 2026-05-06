@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, unique_agent};
+use vesta_tests::{TestAgent, SERVER, SHARED_RO_AGENT, unique_agent};
 
 #[test]
 fn multi_agent_unique_ports() {
@@ -47,11 +47,10 @@ fn stopped_agent_port_not_stolen() {
 
 #[test]
 fn agent_env_file_includes_vestad_port() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("env-port")).unwrap();
+    let name: &str = &SHARED_RO_AGENT;
 
     let env_path = SERVER._tmpdir_path()
-        .join(format!(".config/vesta/vestad/agents/{}.env", agent.name));
+        .join(format!(".config/vesta/vestad/agents/{}.env", name));
     let content = std::fs::read_to_string(&env_path)
         .expect("per-agent env file should exist");
     let expected = format!("export VESTAD_PORT={}", SERVER.port);
@@ -60,11 +59,10 @@ fn agent_env_file_includes_vestad_port() {
 
 #[test]
 fn agent_has_env_file_with_token() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("token-env")).unwrap();
+    let name: &str = &SHARED_RO_AGENT;
 
     let agents_dir = SERVER._tmpdir_path().join(".config/vesta/vestad/agents");
-    let env_path = agents_dir.join(format!("{}.env", agent.name));
+    let env_path = agents_dir.join(format!("{}.env", name));
     assert!(env_path.exists(), "per-agent env file should exist at {:?}", env_path);
 
     let content = std::fs::read_to_string(&env_path).expect("should be able to read env file");
@@ -78,7 +76,7 @@ fn agent_has_env_file_with_token() {
         .args([
             "inspect", "--format",
             "{{index .Config.Labels \"vesta.agent_token\"}}",
-            &format!("vesta-{}-{}", std::env::var("USER").unwrap_or_default(), agent.name),
+            &format!("vesta-{}-{}", std::env::var("USER").unwrap_or_default(), name),
         ])
         .output()
         .expect("docker inspect should work");

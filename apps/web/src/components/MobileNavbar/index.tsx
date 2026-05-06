@@ -26,6 +26,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
     startLeft: 4,
     startWidth: 0,
     startTop: 4,
+    startBottom: 4,
     endLeft: 0,
   });
 
@@ -43,6 +44,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
     const nodeRect = node.getBoundingClientRect();
     const overlayLeft = nodeRect.left + node.clientLeft;
     const overlayTop = nodeRect.top + node.clientTop;
+    const overlayBottom = overlayTop + node.clientHeight;
     const dashRect = dashboardNode.getBoundingClientRect();
     const chatRect = chatNode.getBoundingClientRect();
 
@@ -51,6 +53,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
       startLeft: dashRect.left - overlayLeft,
       startWidth: dashRect.width,
       startTop: dashRect.top - overlayTop,
+      startBottom: overlayBottom - dashRect.bottom,
       endLeft: chatRect.left - overlayLeft,
     });
   }, []);
@@ -72,7 +75,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
       tabMetrics.overlayWidth - tabMetrics.endLeft - tabMetrics.startWidth,
     ],
   );
-  const pillClipPath = useMotionTemplate`inset(${tabMetrics.startTop}px ${pillRight}px ${tabMetrics.startTop}px ${pillLeft}px round 16px)`;
+  const pillClipPath = useMotionTemplate`inset(${tabMetrics.startTop}px ${pillRight}px ${tabMetrics.startBottom}px ${pillLeft}px round 16px)`;
 
   useEffect(() => {
     if (!pillNode) return;
@@ -107,7 +110,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isDashboard ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -121,7 +124,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isChat ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -134,18 +137,17 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
   return (
     <div
       ref={wrapperRef}
-      className="absolute bottom-0 left-0 right-0 z-40 flex justify-center px-3 pt-1"
-      style={{ paddingBottom: "var(--safe-area-pb, 0.75rem)" }}
+      className="pointer-events-none absolute bottom-0 left-0 right-0 z-40 pt-1.5 sm:pt-3"
     >
       <div
         ref={pillMeasureRef}
-        className="relative flex w-fit gap-0.5 overflow-hidden rounded-4xl bg-card p-1 text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
+        className="pointer-events-auto relative flex w-full gap-0.5 overflow-hidden rounded-t-squircle-md [corner-shape:squircle] bg-card text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
       >
         <div className="relative flex w-full gap-0.5">
           {renderButtons({ active: false, interactive: true })}
         </div>
         <motion.div
-          className="pointer-events-none absolute inset-0 z-10 rounded-3xl bg-primary p-1"
+          className="pointer-events-none absolute inset-0 z-10 bg-primary p-3"
           style={{ clipPath: pillClipPath }}
         >
           <div className="flex w-full gap-0.5">

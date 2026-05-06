@@ -153,12 +153,12 @@ impl Client {
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn create_agent(&self, name: &str, build: bool) -> Result<String, String> {
-        self.create_agent_ex(name, build, None)
+    pub fn create_agent(&self, name: &str) -> Result<String, String> {
+        self.create_agent_ex(name, None)
     }
 
-    pub fn create_agent_ex(&self, name: &str, build: bool, manage_agent_code: Option<bool>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "build": build});
+    pub fn create_agent_ex(&self, name: &str, manage_agent_code: Option<bool>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name});
         if let Some(m) = manage_agent_code {
             body["manage_agent_code"] = serde_json::json!(m);
         }
@@ -200,9 +200,23 @@ impl Client {
         Ok(())
     }
 
-    pub fn wait_ready(&self, name: &str, timeout: u64) -> Result<(), String> {
-        self.get(&format!("/agents/{}/wait-ready?timeout={}", name, timeout))?;
-        Ok(())
+    pub fn wait_until_alive(&self, name: &str, timeout_secs: u64) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut backoff = std::time::Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?;
+            match status.status.as_str() {
+                "alive" => return Ok(()),
+                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                    return Err(format!("{}: {}", name, status.status)),
+                _ => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+        }
     }
 
     pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {

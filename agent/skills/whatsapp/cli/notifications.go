@@ -90,27 +90,6 @@ func WriteNotification(
 	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
 
-type deliveryFailureNotif struct {
-	Source     string   `json:"source"`
-	Type       string   `json:"type"`
-	Instance   string   `json:"instance,omitempty"`
-	MessageIDs []string `json:"message_ids"`
-	Message    string   `json:"message"`
-	Timestamp  string   `json:"timestamp"`
-}
-
-func WriteDeliveryFailureNotification(notifDir, instance string, messageIDs []string) error {
-	n := deliveryFailureNotif{
-		Source:     "whatsapp",
-		Type:       "delivery_failure",
-		Instance:   instance,
-		MessageIDs: messageIDs,
-		Message:    fmt.Sprintf("%d message(s) were never delivered; likely silently dropped by WhatsApp. Check content for user@IP patterns or other spam-triggering strings.", len(messageIDs)),
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-	}
-	return writeNotificationFile(notifDir, n, "delivery_failure")
-}
-
 func WriteReactionNotification(
 	ctx NotifContext,
 	targetMessageID, emoji string, isRemoved bool,

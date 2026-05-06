@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_DIR="$HOME/.vpn"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+
+# Ensure config directory exists
+mkdir -p "$CONFIG_DIR"
+
+# Initialize default config if missing
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    cat > "$CONFIG_FILE" <<'INIT'
+{
+  "active_provider": "default",
+  "providers": {
+    "default": {
+      "type": "socks5",
+      "host": "your-proxy-host",
+      "port": 1080,
+      "username_env": "SOCKS5_USER",
+      "password_env": "SOCKS5_PASS"
+    }
+  }
+}
+INIT
+fi
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+json_get() {
+    # Usage: json_get '.path.to.key' [file]
+    python3 -c "
+import json, sys
+with open(sys.argv[2]) as f:
+    data = json.load(f)
+keys = sys.argv[1].lstrip('.').split('.')
+for k in keys:
+    if isinstance(data, dict):
+        data = data.get(k)
+    else:
+        data = None
+        break
+if data is None:
+    sys.exit(1)
+print(data)
+" "$1" "${2:-$CONFIG_FILE}"
+}
+
+json_set() {
+    # Usage: json_set '.key' 'value' [file]
+    python3 -c "
+import json, sys
+path = sys.argv[1].lstrip('.').split('.')
+value = sys.argv[2]
+fname = sys.argv[3]
+with open(fname) as f:
+    data = json.load(f)
+obj = data
+for k in path[:-1]:
+    obj = obj[k]
+obj[path[-1]] = value
+with open(fname, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" "$1" "$2" "${3:-$CONFIG_FILE}"
+}
+
+get_active_provider() {
+    json_get ".active_provider"
+}
+
+get_provider_field() {
+    # Usage: get_provider_field <provider> <field>
+    python3 -c "
+import json, sys
+with open(sys.argv[3]) as f:
+    data = json.load(f)
+val = data.get('providers', {}).get(sys.argv[1], {}).get(sys.argv[2])
+if val is None:
+    sys.exit(1)
+print(val)
+" "$1" "$2" "$CONFIG_FILE"
+}
+
+resolve_env() {
+    # Resolve an env var name to its value
+    local var_name="$1"
+    echo "${!var_name:-}"
+}
+
+build_proxy_url() {
+    local provider="${1:-$(get_active_provider)}"
+    local ptype host port user_env pass_env username password
+
+    ptype=$(get_provider_field "$provider" "type") || { echo "error: unknown provider '$provider'" >&2; return 1; }
+    host=$(get_provider_field "$provider" "host") || { echo "error: missing host for '$provider'" >&2; return 1; }
+    port=$(get_provider_field "$provider" "port") || { echo "error: missing port for '$provider'" >&2; return 1; }
+
+    user_env=$(get_provider_field "$provider" "username_env" 2>/dev/null) || true
+    pass_env=$(get_provider_field "$provider" "password_env" 2>/dev/null) || true
+
+    username=""
+    password=""
+    if [[ -n "${user_env:-}" ]]; then
+        username=$(resolve_env "$user_env")
+    fi
+    if [[ -n "${pass_env:-}" ]]; then
+        password=$(resolve_env "$pass_env")
+    fi
+
+    if [[ -n "$username" && -n "$password" ]]; then
+        echo "${ptype}://${username}:${password}@${host}:${port}"
+    elif [[ -n "$username" ]]; then
+        echo "${ptype}://${username}@${host}:${port}"
+    else
+        echo "${ptype}://${host}:${port}"
+    fi
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────
+
+cmd_proxy_url() {
+    build_proxy_url
+}
+
+cmd_test() {
+    local proxy_url
+    proxy_url=$(build_proxy_url) || { echo "$proxy_url"; return 1; }
+    local provider
+    provider=$(get_active_provider)
+
+    echo "Testing proxy connectivity via $provider ..."
+    echo "Proxy: $(echo "$proxy_url" | sed 's|://[^@]*@|://***:***@|')"
+    echo ""
+
+    # Test 1: basic connectivity via curl
+    local response
+    if response=$(curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" 2>&1); then
+        local ip
+        ip=$(echo "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['ip'])" 2>/dev/null || echo "$response")
+        echo "OK - External IP via proxy: $ip"
+    else
+        echo "FAIL - Could not connect through proxy"
+        echo "  Error: $response"
+        return 1
+    fi
+
+    # Test 2: compare with direct IP
+    echo ""
+    local direct_ip
+    if direct_ip=$(curl -s --connect-timeout 5 --max-time 10 "https://api.ipify.org?format=json" 2>/dev/null); then
+        direct_ip=$(echo "$direct_ip" | python3 -c "import json,sys; print(json.load(sys.stdin)['ip'])" 2>/dev/null || echo "$direct_ip")
+        echo "Direct IP (no proxy): $direct_ip"
+        if [[ "$ip" != "$direct_ip" ]]; then
+            echo "IPs differ - proxy is working correctly"
+        else
+            echo "WARNING: IPs are the same - proxy may not be routing traffic"
+        fi
+    else
+        echo "(Could not determine direct IP for comparison)"
+    fi
+}
+
+cmd_status() {
+    local provider
+    provider=$(get_active_provider)
+    local ptype host port
+
+    ptype=$(get_provider_field "$provider" "type" 2>/dev/null || echo "unknown")
+    host=$(get_provider_field "$provider" "host" 2>/dev/null || echo "unknown")
+    port=$(get_provider_field "$provider" "port" 2>/dev/null || echo "unknown")
+
+    echo "VPN/Proxy Status"
+    echo "================"
+    echo "Active provider: $provider"
+    echo "Type:            $ptype"
+    echo "Server:          $host:$port"
+    echo ""
+
+    # Quick connectivity test
+    local proxy_url
+    proxy_url=$(build_proxy_url 2>/dev/null) || { echo "Status: MISCONFIGURED (cannot build proxy URL)"; return 1; }
+
+    echo -n "Connectivity:    "
+    if curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" >/dev/null 2>&1; then
+        echo "CONNECTED"
+        local ip
+        ip=$(curl -sk --proxy "$proxy_url" --connect-timeout 10 --max-time 15 "https://api.ipify.org?format=json" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['ip'])" 2>/dev/null || echo "unknown")
+        echo "External IP:     $ip"
+    else
+        echo "UNREACHABLE"
+    fi
+}
+
+cmd_providers() {
+    echo "Available providers:"
+    python3 -c "
+import json
+with open('$CONFIG_FILE') as f:
+    data = json.load(f)
+active = data.get('active_provider', '')
+for name, info in data.get('providers', {}).items():
+    marker = ' (active)' if name == active else ''
+    ptype = info.get('type', 'unknown')
+    host = info.get('host', 'unknown')
+    port = info.get('port', 'unknown')
+    print(f'  {name}{marker} - {ptype}://{host}:{port}')
+"
+}
+
+cmd_set_provider() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo "Usage: vpn set-provider <name>" >&2
+        return 1
+    fi
+
+    # Verify provider exists
+    if ! get_provider_field "$name" "type" >/dev/null 2>&1; then
+        echo "error: provider '$name' not found in config" >&2
+        echo "Available providers:" >&2
+        cmd_providers >&2
+        return 1
+    fi
+
+    json_set ".active_provider" "$name"
+    echo "Active provider set to: $name"
+}
+
+cmd_config() {
+    echo "Config file: $CONFIG_FILE"
+    echo ""
+    python3 -c "
+import json
+with open('$CONFIG_FILE') as f:
+    data = json.load(f)
+# Mask credential env var values (show var names but not values)
+for pname, pinfo in data.get('providers', {}).items():
+    for key in list(pinfo.keys()):
+        if 'password' in key.lower() or 'pass' in key.lower():
+            if key.endswith('_env'):
+                pinfo[key] = pinfo[key] + ' (env var - value hidden)'
+            else:
+                pinfo[key] = '********'
+print(json.dumps(data, indent=2))
+"
+}
+
+cmd_help() {
+    cat <<'USAGE'
+Usage: vpn <command> [args]
+
+Commands:
+  status          Show active provider and connectivity status
+  test            Test proxy connectivity in detail
+  proxy-url       Output the full proxy URL for use by other tools
+  providers       List available providers
+  set-provider    Set the active provider (e.g. vpn set-provider nordvpn)
+  config          Show current configuration (credentials masked)
+  help            Show this help message
+
+Examples:
+  vpn status
+  vpn proxy-url
+  PROXY_URL=$(vpn proxy-url) && curl --proxy "$PROXY_URL" https://example.com
+USAGE
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+    status)       cmd_status ;;
+    test)         cmd_test ;;
+    proxy-url)    cmd_proxy_url ;;
+    providers)    cmd_providers ;;
+    set-provider) cmd_set_provider "${2:-}" ;;
+    config)       cmd_config ;;
+    help|--help|-h) cmd_help ;;
+    *)
+        echo "Unknown command: $1" >&2
+        cmd_help >&2
+        exit 1
+        ;;
+esac

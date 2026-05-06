@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import pathlib as pl
+import weakref
 
 import aiohttp as _aiohttp
 from aiohttp import web
@@ -35,6 +36,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
+    request.app["websockets"].add(ws)
 
     sub = event_bus.subscribe()
     recv_task: asyncio.Task[None] | None = None
@@ -52,6 +54,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         send_task and send_task.cancel()
         await asyncio.gather(recv_task, send_task, return_exceptions=True)
         event_bus.unsubscribe(sub)
+        request.app["websockets"].discard(ws)
 
     return ws
 
@@ -234,6 +237,8 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token
     app["config"] = config
+    app["websockets"] = weakref.WeakSet()
+    app.on_shutdown.append(_close_all_websockets)
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
@@ -241,8 +246,18 @@ async def start_ws_server(
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(app, shutdown_timeout=5.0)
     await runner.setup()
     site = web.TCPSite(runner, host, config.ws_port)
     await site.start()
     return runner
+
+
+async def _close_all_websockets(app: web.Application) -> None:
+    sockets = list(app["websockets"])
+    if not sockets:
+        return
+    await asyncio.gather(
+        *(ws.close(code=_aiohttp.WSCloseCode.GOING_AWAY, message=b"server shutdown") for ws in sockets),
+        return_exceptions=True,
+    )

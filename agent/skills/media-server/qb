@@ -7,7 +7,7 @@
 #   MEDIA_SERVER_SSH_PORT  — SSH port (default: 22)
 #   MEDIA_SERVER_USER      — SSH username
 #   QB_PORT                — qBittorrent WebUI port (default: 8888)
-#   PLEX_MEDIA_PATH        — base path for Plex media (default: /media/Plex)
+#   MEDIA_LIBRARY_PATH     - base path for the media library (default: /media/library)
 #
 # Commands:
 #   status                          Show active/downloading torrents
@@ -18,16 +18,16 @@
 #   resume <hash>                   Resume a torrent
 #   delete <hash> [--files]         Delete torrent (--files also removes data)
 #   info <hash>                     Show torrent details
-#   disk                            Show disk space on PLEX_MEDIA_PATH
-#   ls-plex [USER] [movies|tv]      Browse Plex library
-#   find <keyword>                  Find files in PLEX_MEDIA_PATH by name
+#   disk                            Show disk space on MEDIA_LIBRARY_PATH
+#   ls-library [SUBPATH]            List MEDIA_LIBRARY_PATH (or a subpath of it)
+#   find <keyword>                  Find files in MEDIA_LIBRARY_PATH by name
 
 SSH_PORT="${MEDIA_SERVER_SSH_PORT:-22}"
 SSH_HOST="${MEDIA_SERVER_USER:-media}@${MEDIA_SERVER_HOST:?MEDIA_SERVER_HOST is required}"
 SSH="ssh -p $SSH_PORT $SSH_HOST"
 QB_API_PORT="${QB_PORT:-8888}"
 QB="http://localhost:$QB_API_PORT/api/v2"
-MEDIA_PATH="${PLEX_MEDIA_PATH:-/media/Plex}"
+MEDIA_PATH="${MEDIA_LIBRARY_PATH:-/media/library}"
 
 run() {
     $SSH "$@"
@@ -91,8 +91,6 @@ for t in sorted(data, key=lambda x: x['added_on'], reverse=True):
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --path|-p) savepath="$2"; shift 2 ;;
-                --movies) savepath="$MEDIA_PATH/Movies"; shift ;;
-                --tv) savepath="$MEDIA_PATH/TVShows"; shift ;;
                 *) shift ;;
             esac
         done
@@ -193,18 +191,9 @@ if added: print('Added:', datetime.datetime.fromtimestamp(added).strftime('%Y-%m
         run "df -h '$MEDIA_PATH/' && echo '' && du -sh '$MEDIA_PATH/'*/ 2>/dev/null"
         ;;
 
-    ls-plex)
-        user="${1:-}"
-        what="${2:-}"
-        if [[ -n "$user" && "$what" == "tv" ]]; then
-            run "ls '$MEDIA_PATH/$user/TVShows/'"
-        elif [[ -n "$user" && "$what" == "movies" ]]; then
-            run "ls '$MEDIA_PATH/$user/Movies/'"
-        elif [[ -n "$user" ]]; then
-            run "ls '$MEDIA_PATH/$user/'"
-        else
-            run "ls '$MEDIA_PATH/'"
-        fi
+    ls-library)
+        sub="${1:-}"
+        run "ls '$MEDIA_PATH/$sub'"
         ;;
 
     find)
@@ -223,23 +212,21 @@ Required env vars:
   MEDIA_SERVER_SSH_PORT  SSH port (default: 22)
   MEDIA_SERVER_USER      SSH username
   QB_PORT                qBittorrent WebUI port (default: 8888)
-  PLEX_MEDIA_PATH        Plex media base path (default: /media/Plex)
+  MEDIA_LIBRARY_PATH     media library base path (default: /media/library)
 
 Commands:
   status                      Show active/in-progress torrents
   ls [filter]                 List all torrents (filter by name or path keyword)
-  add <url> [--path PATH]     Add torrent by magnet/URL
-    --movies                  Save to PLEX_MEDIA_PATH/Movies
-    --tv                      Save to PLEX_MEDIA_PATH/TVShows
+  add <url> [--path PATH]     Add torrent by magnet/URL (default save: MEDIA_LIBRARY_PATH)
   search <query> [movies|tv|all]  Search via qBittorrent plugin
     --plugin <name>           Specify plugin name (default: all)
   pause <hash>                Pause a torrent
   resume <hash>               Resume a torrent
   delete <hash> [--files]     Delete torrent (--files also deletes data)
   info <hash>                 Show torrent properties
-  disk                        Show disk usage on PLEX_MEDIA_PATH
-  ls-plex [USER] [movies|tv]  Browse Plex library by user
-  find <keyword>              Find files in PLEX_MEDIA_PATH by name
+  disk                        Show disk usage on MEDIA_LIBRARY_PATH
+  ls-library [SUBPATH]        List MEDIA_LIBRARY_PATH (or a subpath of it)
+  find <keyword>              Find files in MEDIA_LIBRARY_PATH by name
 
 API: http://localhost:\$QB_PORT/api/v2 (configure no-auth for localhost in qBittorrent settings)
 EOF

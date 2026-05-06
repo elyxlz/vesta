@@ -11,7 +11,6 @@ export {
   restoreBackup,
   deleteBackup,
   type BackupInfo,
-  waitForReady,
 } from "./agents";
 export { fetchMemory, saveMemory } from "./memory";
 export { fetchPersonalities, type Personality } from "./personalities";

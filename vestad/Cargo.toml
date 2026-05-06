@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "vestad"
-version = "0.1.148"
+version = "0.1.149"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
@@ -41,7 +41,7 @@ bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-bollard = "0.20"
+bollard = "0.21"
 tar = "0.4"
 flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
