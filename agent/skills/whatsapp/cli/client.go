@@ -314,6 +314,23 @@ func (wac *WhatsAppClient) IsAuthenticated() bool {
 
 func (wac *WhatsAppClient) PairPhone(phone string) (string, error) {
 	phone = strings.TrimPrefix(phone, "+")
+
+	// The WS to WhatsApp must be up before requesting a pairing code.
+	// On first-time pairing Store.ID is nil, so Connect() spawns the QR
+	// goroutine asynchronously; calling pair-phone before that goroutine's
+	// own client.Connect() lands surfaces "websocket not connected" from
+	// whatsmeow. Wait briefly for the WS to come up, then return a
+	// friendly error if it never does.
+	for i := 0; i < ConnectRetryAttempts; i++ {
+		if wac.client.IsConnected() {
+			break
+		}
+		time.Sleep(ConnectRetryDelay)
+	}
+	if !wac.client.IsConnected() {
+		return "", fmt.Errorf("WhatsApp websocket not connected; restart the daemon and retry")
+	}
+
 	code, err := wac.client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		return "", err
