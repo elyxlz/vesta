@@ -308,14 +308,8 @@ def check_proactive_task(*, config: vm.VestaConfig) -> None:
     drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, interrupt=False, config=config)
 
 
-def _has_pending_dream_notification(config: vm.VestaConfig) -> bool:
-    if not config.notifications_dir.exists():
-        return False
-    return any(p.name.startswith(f"{TYPE_NIGHTLY_DREAM}-") for p in config.notifications_dir.glob("*.json"))
-
-
 def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
-    """Drop a dream notification if today's dream hasn't completed yet. Re-fires on every monitor tick after the configured hour until the agent calls `mark_dreamer_complete`. Skips if a dream notification is already pending on disk so we don't pile up duplicates while the previous one is still being processed."""
+    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour, so a silent failure to call `mark_dreamer_complete` retries on the next hourly tick rather than spamming."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     now = _now()
@@ -323,8 +317,6 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
         return
     last = state.persisted.last_dreamer_run
     if last is not None and last.date() >= now.date():
-        return
-    if _has_pending_dream_notification(config):
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
@@ -347,6 +339,8 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
 
 async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
+    # Init one hour back so the first dreamer check runs on the first tick after boot.
+    last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_passive: list[vm.Notification] = []
     notify = asyncio.Event()
 
@@ -371,7 +365,9 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                     check_proactive_task(config=config)
                     last_proactive = now
 
-                process_nightly_memory(state=state, config=config)
+                if (now - last_dreamer_check).total_seconds() >= 3600:
+                    process_nightly_memory(state=state, config=config)
+                    last_dreamer_check = now
 
                 notifications = await load_new_notifications(state=state, config=config)
                 interrupt_notifs = [n for n in notifications if n.interrupt]

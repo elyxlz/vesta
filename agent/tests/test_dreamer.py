@@ -71,25 +71,6 @@ def test_skips_before_dreamer_hour(tmp_path):
     assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
 
 
-def test_skips_when_pending_notification_already_on_disk(tmp_path):
-    """Don't pile up duplicate notifications while the agent is still working through the previous one."""
-    from core.loops import process_nightly_memory
-
-    config = _setup(tmp_path)
-    state = vm.State()
-    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
-    (config.notifications_dir / "nightly_dream-1.json").write_text("{}")
-
-    with (
-        patch("core.loops._now", return_value=fake_now),
-        patch("core.loops.load_prompt", return_value="dreamer prompt"),
-    ):
-        process_nightly_memory(state=state, config=config)
-
-    files = list(config.notifications_dir.glob("nightly_dream-*.json"))
-    assert len(files) == 1, "should not drop a second notification"
-
-
 def test_retries_after_dream_hour_when_not_done_today(tmp_path):
     """If the dream didn't complete (rate limit, crash) and the prior notification is gone, fire again — even past the configured hour."""
     from core.loops import process_nightly_memory
