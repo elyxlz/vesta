@@ -665,14 +665,34 @@ async fn logs_handler(
 {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_running(&state.docker, &cname).await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let status = docker::container_status(&state.docker, &cname).await;
+    if status == docker::ContainerStatus::NotFound {
+        return Err(err_response(StatusCode::BAD_REQUEST, &format!("agent '{}' not found", name)));
+    }
 
-    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES).to_string();
+    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
     let docker = state.docker.clone();
     let stream = async_stream::stream! {
+        if status != docker::ContainerStatus::Running {
+            match docker::download_from_container(&docker, &cname, docker::VESTA_LOG_PATH).await {
+                Some(content) => {
+                    let lines: Vec<&str> = content.lines().collect();
+                    let start = lines.len().saturating_sub(tail_lines);
+                    for line in &lines[start..] {
+                        yield Ok(Event::default().data(*line));
+                    }
+                }
+                None => {
+                    yield Ok(Event::default().data("(no logs available)"));
+                }
+            }
+            yield Ok(Event::default().event("agent_stopped").data(""));
+            return;
+        }
+
+        let tail_arg = tail_lines.to_string();
         let exec = match docker.create_exec(&cname, bollard::exec::CreateExecOptions {
-            cmd: Some(vec!["tail".to_string(), "-n".to_string(), tail_lines.clone(), "-f".to_string(), docker::VESTA_LOG_PATH.to_string()]),
+            cmd: Some(vec!["tail".to_string(), "-n".to_string(), tail_arg, "-f".to_string(), docker::VESTA_LOG_PATH.to_string()]),
             attach_stdout: Some(true),
             attach_stderr: Some(false),
             ..Default::default()
