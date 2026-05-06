@@ -15,7 +15,7 @@ from . import models as vm
 from . import logger
 from .api import start_ws_server
 from .client import format_crash_detail
-from .helpers import load_prompt
+from .helpers import load_prompt, restore_memory_from_head_if_wiped
 from .loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -226,6 +226,8 @@ async def async_main() -> None:
     initial_state = init_state(config=config)
     first_start_marker = config.data_dir / "first_start_done"
     first_start = not first_start_marker.exists()
+    if not first_start:
+        restore_memory_from_head_if_wiped(config)
     # On a never-run agent the restart_reason file is missing for innocent
     # reasons; defaulting to CRASH_RESTART would log a misleading "crashed".
     restart_reason = vm.FIRST_START_REASON if first_start else _read_restart_reason(config)

@@ -20,6 +20,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
 5. **Sensitive data cleanup**: purge secrets from history and files
 6. **Summary**: write tonight's dreamer summary
+7. **Checkpoint**: pin tonight's curation to git before the restart
 
 ## Before you start
 
@@ -146,3 +147,13 @@ Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `20
 - Anything left unresolved
 
 Keep it terse. Future you will grep these. The point is a trail, not a journal.
+
+## Checkpoint
+
+Final step before the restart. Pin tonight's curation into HEAD so docker backups taken between now and the next boot capture the new state, and a crash mid-restart can't lose the rewrite. Without this commit, MEMORY.md edits live only in the worktree until the next upstream-sync run, and a wipe in that window has nothing to recover from.
+
+```bash
+cd ~ && git add agent/MEMORY.md agent/dreamer/ && git diff --cached --quiet || git commit -m "chore: dream $(date -I)"
+```
+
+Skip if nothing's staged (genuine no-op night). The agent's startup self-heal restores `agent/MEMORY.md` from HEAD when it boots to a missing or wiped file, so this commit is what makes that recovery possible.

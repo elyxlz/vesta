@@ -2,6 +2,7 @@
 
 import asyncio
 import collections
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
 from core.client import format_crash_detail
+from core.helpers import MEMORY_RECOVERY_MIN_BYTES, restore_memory_from_head_if_wiped
 
 
 # --- format_crash_detail ---
@@ -203,3 +205,71 @@ def test_stderr_buffer_on_state():
         state.stderr_buffer.append(f"line {i}")
     assert len(state.stderr_buffer) == 50
     assert state.stderr_buffer[0] == "line 10"
+
+
+# --- MEMORY.md restore from HEAD on boot (dreamer wipe recovery) ---
+
+
+def _init_repo_with_memory(repo_root, memory_relative_path: str, content: str) -> None:
+    """Init a git repo at repo_root and commit `content` at the given relative path."""
+    subprocess.run(["git", "-C", str(repo_root), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo_root), "config", "user.email", "test@vesta"], check=True)
+    subprocess.run(["git", "-C", str(repo_root), "config", "user.name", "test"], check=True)
+    target = repo_root / memory_relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    subprocess.run(["git", "-C", str(repo_root), "add", memory_relative_path], check=True)
+    subprocess.run(["git", "-C", str(repo_root), "commit", "-q", "-m", "init"], check=True)
+
+
+def test_restore_memory_when_wiped(config):
+    """Empty MEMORY.md is replaced with the HEAD-committed copy."""
+    config.agent_dir.mkdir(parents=True, exist_ok=True)
+    real_content = "# Charter\n" + ("rule line\n" * 50)
+    _init_repo_with_memory(config.agent_dir.parent, "agent/MEMORY.md", real_content)
+
+    memory_path = config.agent_dir / "MEMORY.md"
+    memory_path.write_text("")
+
+    restore_memory_from_head_if_wiped(config)
+
+    assert memory_path.read_text() == real_content
+
+
+def test_restore_memory_when_missing(config):
+    """A missing MEMORY.md is recreated from HEAD."""
+    config.agent_dir.mkdir(parents=True, exist_ok=True)
+    real_content = "# Charter\n" + ("rule line\n" * 50)
+    _init_repo_with_memory(config.agent_dir.parent, "agent/MEMORY.md", real_content)
+
+    memory_path = config.agent_dir / "MEMORY.md"
+    memory_path.unlink()
+
+    restore_memory_from_head_if_wiped(config)
+
+    assert memory_path.read_text() == real_content
+
+
+def test_restore_memory_noop_when_intact(config):
+    """A healthy MEMORY.md is not touched, and the function does not invoke git."""
+    config.agent_dir.mkdir(parents=True, exist_ok=True)
+    intact = "x" * (MEMORY_RECOVERY_MIN_BYTES + 100)
+    memory_path = config.agent_dir / "MEMORY.md"
+    memory_path.write_text(intact)
+
+    # No git repo at all; if the function tried to invoke git, it would log an error,
+    # so absence of changes plus a readable file proves the early return path.
+    restore_memory_from_head_if_wiped(config)
+
+    assert memory_path.read_text() == intact
+
+
+def test_restore_memory_no_head_leaves_wiped_file_alone(config):
+    """When MEMORY.md is wiped and there is no HEAD to restore from, the function logs and does not crash."""
+    config.agent_dir.mkdir(parents=True, exist_ok=True)
+    memory_path = config.agent_dir / "MEMORY.md"
+    memory_path.write_text("")
+
+    restore_memory_from_head_if_wiped(config)
+
+    assert memory_path.read_text() == ""
