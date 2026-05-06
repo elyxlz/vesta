@@ -1,0 +1,20 @@
+[project]
+name = "stripe-pay"
+version = "0.1.0"
+description = "Stripe Link Wallet for Agents + Issuing for Agents wrapper for vesta — per-charge approval via the user's primary channel"
+requires-python = ">=3.11"
+dependencies = [
+    "stripe>=11.0.0",
+    "stripe-agent-toolkit>=0.7.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+stripe-pay = "stripe_pay.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stripe_pay"]

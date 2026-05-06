@@ -1,13 +1,5 @@
 [
   {
-    "name": "app-chat",
-    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
-  },
-  {
-    "name": "personality",
-    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
-  },
-  {
     "name": "browser",
     "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
   },
@@ -70,6 +62,10 @@
   {
     "name": "ssh",
     "description": "Expose this machine over SSH via bore (public TCP tunnel)."
+  },
+  {
+    "name": "stripe-pay",
+    "description": "Use when the user wants the agent to make a payment on their behalf via Stripe Link Wallet for Agents. Always asks for explicit per-charge approval. Requires `stripe-pay authorize` setup first."
   },
   {
     "name": "tasks",
