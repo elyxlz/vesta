@@ -202,15 +202,11 @@ def _shell(cmd: list[str]) -> str:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError as e:
-        raise ChannelError(
-            f"channel binary not found: {cmd[0]} — install / authenticate that skill first"
-        ) from e
+        raise ChannelError(f"channel binary not found: {cmd[0]} — install / authenticate that skill first") from e
     except subprocess.TimeoutExpired as e:
         raise ChannelError(f"{cmd[0]} timed out") from e
     if result.returncode != 0:
-        raise ChannelError(
-            f"{' '.join(cmd[:2])} exit={result.returncode}: {result.stderr.strip() or result.stdout.strip()}"
-        )
+        raise ChannelError(f"{' '.join(cmd[:2])} exit={result.returncode}: {result.stderr.strip() or result.stdout.strip()}")
     return result.stdout
 
 

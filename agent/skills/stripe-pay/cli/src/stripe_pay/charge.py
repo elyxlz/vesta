@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import stripe  # type: ignore[import-untyped]
@@ -50,10 +50,7 @@ def charge(
 
     api_key = config.load_api_key()
     if not api_key:
-        raise AuthError(
-            "no Stripe API key on disk — write your restricted key to "
-            f"{config.api_key_file} (see SETUP.md step 2)."
-        )
+        raise AuthError(f"no Stripe API key on disk — write your restricted key to {config.api_key_file} (see SETUP.md step 2).")
 
     # This raises with a clear message if `authorize` hasn't run.
     access_token = load_active_token(config)
@@ -89,15 +86,22 @@ def charge(
 
     if reply.decision == "timeout":
         result = {"status": "timeout", "reason": "no_reply_in_timeout"}
-        _log(config, amount=amount, currency=currency, merchant=merchant,
-             reason=reason, status="timeout", charge_id=None, channel=primary)
+        _log(config, amount=amount, currency=currency, merchant=merchant, reason=reason, status="timeout", charge_id=None, channel=primary)
         return result
 
     if reply.decision == "reject":
         result = {"status": "rejected", "reason": "user_declined"}
-        _log(config, amount=amount, currency=currency, merchant=merchant,
-             reason=reason, status="rejected", charge_id=None, channel=primary,
-             extra={"reply": reply.raw_text})
+        _log(
+            config,
+            amount=amount,
+            currency=currency,
+            merchant=merchant,
+            reason=reason,
+            status="rejected",
+            charge_id=None,
+            channel=primary,
+            extra={"reply": reply.raw_text},
+        )
         return result
 
     # Approved.
@@ -116,15 +120,22 @@ def charge(
             "reason": "stripe_api_error",
             "message": str(e),
         }
-        _log(config, amount=amount, currency=currency, merchant=merchant,
-             reason=reason, status="error", charge_id=None, channel=primary,
-             extra={"error": str(e)})
+        _log(
+            config,
+            amount=amount,
+            currency=currency,
+            merchant=merchant,
+            reason=reason,
+            status="error",
+            charge_id=None,
+            channel=primary,
+            extra={"error": str(e)},
+        )
         # Tell the user the charge didn't go through.
         try:
             ch.send_prompt(
                 primary,
-                f"Heads up — the {currency} {amount:.2f} charge to {merchant} "
-                f"failed at Stripe's end: {e}",
+                f"Heads up — the {currency} {amount:.2f} charge to {merchant} failed at Stripe's end: {e}",
             )
         except ch.ChannelError:
             pass
@@ -139,9 +150,16 @@ def charge(
         "merchant": merchant,
         "requires_link_approval": requires_link_approval,
     }
-    _log(config, amount=amount, currency=currency, merchant=merchant,
-         reason=reason, status="approved", charge_id=card["charge_id"],
-         channel=primary)
+    _log(
+        config,
+        amount=amount,
+        currency=currency,
+        merchant=merchant,
+        reason=reason,
+        status="approved",
+        charge_id=card["charge_id"],
+        channel=primary,
+    )
     return result
 
 
@@ -250,7 +268,7 @@ def _build_prompt(
     """Compose the message sent to the user's primary channel."""
     minutes = max(1, timeout_s // 60)
     lines = [
-        f"Charge approval needed:",
+        "Charge approval needed:",
         f"  - Amount: {currency.upper()} {amount:.2f}",
         f"  - Merchant: {merchant}",
         f"  - Reason: {reason}",
@@ -259,10 +277,7 @@ def _build_prompt(
     ]
     if requires_link_approval:
         lines.append("")
-        lines.append(
-            "Note: this exceeds your Link spend cap, so Stripe will also ask "
-            "you to approve inside the Link app."
-        )
+        lines.append("Note: this exceeds your Link spend cap, so Stripe will also ask you to approve inside the Link app.")
     return "\n".join(lines)
 
 
@@ -281,7 +296,7 @@ def _log(
     """Append one line to ``~/.stripe-pay/history.jsonl``."""
     config.ensure_dirs()
     entry = {
-        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "amount": amount,
         "currency": currency.upper(),
         "merchant": merchant,

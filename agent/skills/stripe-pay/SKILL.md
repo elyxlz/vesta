@@ -27,8 +27,8 @@ Invoke this skill when:
 Do NOT use this skill for:
 - Sending money to people (this is for paying merchants, not P2P transfers)
 - Recurring subscriptions the user already has elsewhere
-- Anything where the user has not run `stripe-pay authorize` yet — tell them to set up first
-- Generic "log this expense" requests — use the `finance` skill for read-only bank data
+- Anything where the user has not run `stripe-pay authorize` yet: tell them to set up first
+- Generic "log this expense" requests: use the `finance` skill for read-only bank data
 
 ## Setup
 
@@ -102,17 +102,17 @@ Buy-with-Link merchant integration if the merchant supports it.
   only. Don't write a task for a charge.
 - **If Stripe's Link-side cap is exceeded**, Stripe forces a Link-app approval on
   top of ours. The CLI surfaces that requirement in the channel prompt.
-- **Card details are ephemeral.** The skill never persists raw card numbers —
+- **Card details are ephemeral.** The skill never persists raw card numbers,
   they live in stdout for one process lifetime. The agent should pass them
   straight to the merchant flow, not save them.
 - **Currency** uses ISO 4217 codes (`USD`, `EUR`, `GBP`, ...). Amounts are in
   major units (e.g. `24.99` not `2499`).
-- **One charge at a time.** Don't fan out parallel `stripe-pay charge` calls —
+- **One charge at a time.** Don't fan out parallel `stripe-pay charge` calls,
   the user will get multiple WhatsApp prompts and approvals will get tangled.
 
 ## Logs
 
-`~/.stripe-pay/history.jsonl` — one JSON object per line:
+`~/.stripe-pay/history.jsonl`: one JSON object per line:
 
 ```json
 {"ts":"2026-05-06T10:11:12Z","amount":24.99,"currency":"USD","merchant":"Acme Domains","reason":"renewing example.com","status":"approved","charge_id":"ch_1XYZ"}
@@ -122,5 +122,5 @@ Statuses: `approved`, `rejected`, `timeout`, `error`.
 
 ## Files
 
-- `~/.stripe-pay/credentials.json` — OAuth tokens (chmod 600)
-- `~/.stripe-pay/history.jsonl` — append-only charge log
+- `~/.stripe-pay/credentials.json`: OAuth tokens (chmod 600)
+- `~/.stripe-pay/history.jsonl`: append-only charge log

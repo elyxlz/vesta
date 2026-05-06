@@ -51,7 +51,7 @@ and approve the agent. You'll be redirected to a localhost callback that the
 CLI captures, and the resulting refresh token is saved to
 `~/.stripe-pay/credentials.json` (mode 600).
 
-This is idempotent — re-running it re-opens the browser to refresh the token.
+This is idempotent: re-running it re-opens the browser to refresh the token.
 
 ## Step 4: Configure spend caps in the Link app
 
@@ -97,10 +97,10 @@ Link **test environment**. Charges will succeed without moving real funds.
 
 ## Troubleshooting
 
-- `error: no_credentials` — run `stripe-pay authorize`.
-- `error: token_expired` — re-run `stripe-pay authorize` to refresh.
-- Approval prompt never arrives — confirm your primary channel daemon is
+- `error: no_credentials`: run `stripe-pay authorize`.
+- `error: token_expired`: re-run `stripe-pay authorize` to refresh.
+- Approval prompt never arrives: confirm your primary channel daemon is
   running (`screen -ls` should show `whatsapp` / `telegram` / `app-chat`).
-- Charge succeeds in Stripe but stdout shows an error — check
+- Charge succeeds in Stripe but stdout shows an error: check
   `~/.stripe-pay/history.jsonl` for the recorded `charge_id` and reconcile in
   the Stripe dashboard.

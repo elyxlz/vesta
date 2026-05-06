@@ -15,7 +15,6 @@ The skill never stores raw card data — only OAuth tokens.
 
 from __future__ import annotations
 
-import json
 import secrets
 import sys
 import threading
@@ -51,10 +50,7 @@ def authorize(config: Config, *, open_browser: bool = True) -> dict:
     """
     api_key = config.load_api_key()
     if not api_key:
-        raise AuthError(
-            "no API key found. Write your restricted Stripe key to "
-            f"{config.api_key_file} (chmod 600) — see SETUP.md step 2."
-        )
+        raise AuthError(f"no API key found. Write your restricted Stripe key to {config.api_key_file} (chmod 600) — see SETUP.md step 2.")
 
     state = secrets.token_urlsafe(24)
     server, port = _start_callback_server(state)
@@ -220,9 +216,7 @@ def _exchange_code_for_token(code: str, redirect_uri: str, api_key: str) -> dict
         timeout=30,
     )
     if resp.status_code != 200:
-        raise AuthError(
-            f"token exchange failed: HTTP {resp.status_code}: {resp.text[:300]}"
-        )
+        raise AuthError(f"token exchange failed: HTTP {resp.status_code}: {resp.text[:300]}")
     payload = resp.json()
     if "access_token" not in payload:
         raise AuthError(f"token exchange returned no access_token: {payload}")
@@ -241,9 +235,7 @@ def load_active_token(config: Config) -> str:
     """
     creds = config.load_credentials()
     if not creds:
-        raise AuthError(
-            "no credentials. Run `stripe-pay authorize` first (see SETUP.md)."
-        )
+        raise AuthError("no credentials. Run `stripe-pay authorize` first (see SETUP.md).")
     expires_at = int(creds.get("obtained_at", 0)) + int(creds.get("expires_in", 0))
     # Refresh 60s before expiry to avoid edge cases.
     if expires_at and time.time() >= expires_at - 60:
@@ -258,9 +250,7 @@ def _refresh(config: Config, creds: dict) -> dict:
     """Refresh the access token using the saved refresh token."""
     refresh_token = creds.get("refresh_token")
     if not refresh_token:
-        raise AuthError(
-            "saved credentials have no refresh_token — re-run `stripe-pay authorize`"
-        )
+        raise AuthError("saved credentials have no refresh_token — re-run `stripe-pay authorize`")
     api_key = config.load_api_key()
     if not api_key:
         raise AuthError("no API key on disk; re-run setup")
@@ -271,9 +261,7 @@ def _refresh(config: Config, creds: dict) -> dict:
         timeout=30,
     )
     if resp.status_code != 200:
-        raise AuthError(
-            f"token refresh failed: HTTP {resp.status_code}: {resp.text[:300]}"
-        )
+        raise AuthError(f"token refresh failed: HTTP {resp.status_code}: {resp.text[:300]}")
     payload = resp.json()
     new_creds = {
         **creds,
