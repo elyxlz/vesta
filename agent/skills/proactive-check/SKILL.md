@@ -31,3 +31,11 @@ If there's nothing worth saying, stay quiet. Background action beats a message t
 - Check the `tasks` skill for anything overdue or upcoming
 - Prefer quiet background work over interrupting them
 - When unsure whether to reach out, default to not
+
+## Output discipline
+
+Every assistant text turn (not just `app-chat send` calls) is captured to `localhost:$WS_PORT/history` and visible to the user in the chat app. A "Same. Quiet." or "Nothing to do." reply ships those words to them. So:
+
+- If the proactive check has nothing to say to the user, end the turn with tool calls only and produce no narrative final text. A single period is acceptable if the harness needs a token; full prose is not
+- "Background action beats a message that wastes their attention" applies to your own visible text too, not just to outbound `app-chat send`
+- Save the prose for actual reach-outs that warrant interrupting them
