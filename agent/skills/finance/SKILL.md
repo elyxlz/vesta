@@ -7,6 +7,17 @@ description: Personal finance, spending, transactions, bank balances, budgets vi
 
 Tracks personal bank spending via Enable Banking open banking API (restricted mode, own accounts only, no commercial contract required).
 
+## Coverage and limitations
+
+Enable Banking is a Finland-licensed AISP operating under EU/EEA PSD2. It does **not** cover UK residents linking UK bank accounts: the UK consent flow returns "Due to local financial regulation you are not currently able to grant consent." Confirmed against a UK PSU attempting to link Revolut Bank UAB (LT) in May 2026.
+
+For UK users, this skill is not a viable path. Workable alternatives outside the EB API:
+- Per-bank developer APIs where they exist (e.g. Monzo's developer API is free for own-account use, OAuth client at `developers.monzo.com/api/clients`).
+- Manual CSV imports from each bank's app.
+- A UK-licensed AISP with personal-tier API access. Note: GoCardless Bank Account Data closed to new signups in July 2025; TrueLayer free tier is sandbox only; Plaid UK requires a custom paid plan. As of May 2026 there is no straightforward free auto-aggregator for UK individuals.
+
+Verify regional coverage with the user before walking them through Enable Banking setup.
+
 ## Daemon Requirement
 
 The transaction watcher polls Enable Banking every 5 minutes and writes new transaction notifications to `~/agent/notifications/`. It must be running at all times.
