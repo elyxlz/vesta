@@ -103,3 +103,25 @@ def test_daily_label_utc_tz_unchanged(tmp_config: Config):
     assert result["schedule"] == "daily at 10:30 UTC"
     data = _trigger_data(tmp_config, result["id"])
     assert (data["hour"], data["minute"]) == (10, 30)
+
+
+def test_daily_next_run_is_at_expected_utc_moment(tmp_config: Config):
+    """Regression: remind_set computes next_run from the same CronTrigger the daemon will
+    fire from. trigger_data stores UTC hour/minute, so the trigger must be interpreted in
+    UTC regardless of the daemon's local timezone. Without an explicit timezone=UTC on the
+    CronTrigger, APScheduler falls back to tzlocal() and next_run drifts by the local-UTC
+    offset, so the reminder fires at the wrong moment."""
+    from datetime import datetime, UTC
+
+    # 08:00 Europe/London on a BST date (UTC+1) -> 07:00 UTC expected.
+    result = commands.remind_set(
+        tmp_config,
+        message="standup",
+        scheduled_datetime="2026-06-15T08:00:00",
+        tz="Europe/London",
+        recurring="daily",
+    )
+    next_run = datetime.fromisoformat(result["next_run"]).astimezone(UTC)
+    assert (next_run.hour, next_run.minute) == (7, 0), (
+        f"expected next_run at 07:00 UTC (08:00 BST), got {next_run.isoformat()}"
+    )

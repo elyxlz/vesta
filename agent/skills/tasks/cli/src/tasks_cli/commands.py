@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, UTC
 from contextlib import closing
 from pathlib import Path
 from typing import Any, TypedDict
+from zoneinfo import ZoneInfo
 import json
 import logging
 import uuid
@@ -10,6 +11,10 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
+
+# trigger_data stores UTC hour/minute, so CronTrigger must be interpreted in UTC.
+# Without timezone=, APScheduler uses the scheduler's local TZ, which mis-fires by the local-UTC offset.
+_UTC_ZI = ZoneInfo("UTC")
 
 from .config import Config
 from . import db
@@ -389,6 +394,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                         day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
                         hour=trigger_data["hour"] if "hour" in trigger_data else None,
                         minute=trigger_data["minute"] if "minute" in trigger_data else None,
+                        timezone=_UTC_ZI,
                     )
                     next_fire = trigger.get_next_fire_time(None, _now_utc())
                     if next_fire is not None:
@@ -445,6 +451,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
                 day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
                 hour=trigger_data["hour"] if "hour" in trigger_data else None,
                 minute=trigger_data["minute"] if "minute" in trigger_data else None,
+                timezone=_UTC_ZI,
             )
 
         elif trigger_type == "interval":
@@ -537,21 +544,21 @@ def remind_set(
         local_h, local_m = local_dt.hour, local_dt.minute
 
         if recurring == "daily":
-            trigger = CronTrigger(hour=h, minute=m)
+            trigger = CronTrigger(hour=h, minute=m, timezone=_UTC_ZI)
             schedule_info = f"daily at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "hour": h, "minute": m}
         elif recurring == "weekly":
             day_name = utc_dt.strftime("%a").lower()
             local_day_name = local_dt.strftime("%a").lower()
-            trigger = CronTrigger(day_of_week=day_name, hour=h, minute=m)
+            trigger = CronTrigger(day_of_week=day_name, hour=h, minute=m, timezone=_UTC_ZI)
             schedule_info = f"weekly on {local_day_name} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "day_of_week": day_name, "hour": h, "minute": m}
         elif recurring == "monthly":
-            trigger = CronTrigger(day=utc_dt.day, hour=h, minute=m)
+            trigger = CronTrigger(day=utc_dt.day, hour=h, minute=m, timezone=_UTC_ZI)
             schedule_info = f"monthly on day {local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "day": utc_dt.day, "hour": h, "minute": m}
         else:  # yearly
-            trigger = CronTrigger(month=utc_dt.month, day=utc_dt.day, hour=h, minute=m)
+            trigger = CronTrigger(month=utc_dt.month, day=utc_dt.day, hour=h, minute=m, timezone=_UTC_ZI)
             schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "month": utc_dt.month, "day": utc_dt.day, "hour": h, "minute": m}
         next_run = trigger.get_next_fire_time(None, _now_utc())
