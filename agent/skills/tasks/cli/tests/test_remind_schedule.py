@@ -22,12 +22,18 @@ def tmp_config(tmp_path: Path) -> Config:
 
 def _trigger_data(config: Config, reminder_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        row = conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        row = conn.execute(
+            "SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,)
+        ).fetchone()
     return json.loads(row["trigger_data"])
 
 
 def _expected_utc(local_iso: str, tz_name: str) -> datetime:
-    return datetime.fromisoformat(local_iso).replace(tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
+    return (
+        datetime.fromisoformat(local_iso)
+        .replace(tzinfo=ZoneInfo(tz_name))
+        .astimezone(UTC)
+    )
 
 
 def test_daily_label_uses_local_tz(tmp_config: Config):
@@ -70,7 +76,11 @@ def test_monthly_label_uses_local_tz(tmp_config: Config):
     assert result["schedule"] == "monthly on day 15 at 23:30 America/New_York"
     expected_utc = _expected_utc("2026-04-15T23:30:00", "America/New_York")
     data = _trigger_data(tmp_config, result["id"])
-    assert (data["day"], data["hour"], data["minute"]) == (expected_utc.day, expected_utc.hour, expected_utc.minute)
+    assert (data["day"], data["hour"], data["minute"]) == (
+        expected_utc.day,
+        expected_utc.hour,
+        expected_utc.minute,
+    )
 
 
 def test_yearly_label_uses_local_tz(tmp_config: Config):
