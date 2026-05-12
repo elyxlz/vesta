@@ -4,6 +4,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useTauri } from "@/providers/TauriProvider";
 import { getConnection } from "@/lib/connection";
+import { openExternalUrl } from "@/lib/open-external-url";
 import {
   Empty,
   EmptyHeader,
@@ -109,6 +110,15 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       ) {
         handshakeRef.current = true;
         sendContext();
+      }
+      // Dashboard widgets can't open external URLs themselves: <a target="_blank">
+      // inside an iframe is swallowed by Tauri's mobile WKWebView. Widgets post
+      // { type: "vesta-open-url", url } and we route through the platform opener.
+      if (e.data?.type === "vesta-open-url" && typeof e.data.url === "string") {
+        const url: string = e.data.url;
+        if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url) || /^tel:/i.test(url)) {
+          void openExternalUrl(url);
+        }
       }
     };
     window.addEventListener("message", handler);
