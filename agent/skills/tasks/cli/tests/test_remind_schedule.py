@@ -22,18 +22,12 @@ def tmp_config(tmp_path: Path) -> Config:
 
 def _trigger_data(config: Config, reminder_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        row = conn.execute(
-            "SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,)
-        ).fetchone()
+        row = conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
     return json.loads(row["trigger_data"])
 
 
 def _expected_utc(local_iso: str, tz_name: str) -> datetime:
-    return (
-        datetime.fromisoformat(local_iso)
-        .replace(tzinfo=ZoneInfo(tz_name))
-        .astimezone(UTC)
-    )
+    return datetime.fromisoformat(local_iso).replace(tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
 
 
 def test_daily_label_uses_local_tz(tmp_config: Config):
@@ -132,6 +126,4 @@ def test_daily_next_run_is_at_expected_utc_moment(tmp_config: Config):
         recurring="daily",
     )
     next_run = datetime.fromisoformat(result["next_run"]).astimezone(UTC)
-    assert (next_run.hour, next_run.minute) == (7, 0), (
-        f"expected next_run at 07:00 UTC (08:00 BST), got {next_run.isoformat()}"
-    )
+    assert (next_run.hour, next_run.minute) == (7, 0), f"expected next_run at 07:00 UTC (08:00 BST), got {next_run.isoformat()}"
