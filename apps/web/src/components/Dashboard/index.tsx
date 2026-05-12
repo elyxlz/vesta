@@ -116,7 +116,11 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       // { type: "vesta-open-url", url } and we route through the platform opener.
       if (e.data?.type === "vesta-open-url" && typeof e.data.url === "string") {
         const url: string = e.data.url;
-        if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url) || /^tel:/i.test(url)) {
+        if (
+          /^https?:\/\//i.test(url) ||
+          /^mailto:/i.test(url) ||
+          /^tel:/i.test(url)
+        ) {
           void openExternalUrl(url);
         }
       }
