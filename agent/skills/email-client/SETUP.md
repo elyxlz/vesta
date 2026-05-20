@@ -1,8 +1,20 @@
 # Email Client Setup
 
-One-time setup per account. Takes about 2 minutes. Picks the right auth flow for the user's mail provider automatically.
+One-time setup per account, ~2 minutes. The right auth flow is picked automatically from the email domain.
 
-## 1. Install the CLI
+## Auth strategy per provider
+
+Run this once and the daemon and both binaries share the same per-account token cache and refresh tokens transparently.
+
+- **Microsoft personal** (`outlook.com`, `hotmail.com`, `live.com`) — OAuth2 **device flow**.
+- **Gmail** — OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
+- **Yahoo / iCloud / Fastmail / generic IMAP** — **app password**.
+
+Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com`). These are public, not secrets, and are the canonical open-source-mail-client choice. The reason: Microsoft killed basic-auth IMAP for personal accounts in late 2024 and deprecated tenantless Azure app registrations mid-2025, so reusing a published client ID is the only OAuth path that doesn't require the user to register an Azure tenant. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, which the skill captures via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600).
+
+This is why both OAuth consent screens say "Mozilla Thunderbird" — expected, not a misconfiguration.
+
+## 1. Install
 
 ```bash
 mkdir -p ~/.email-client/runtime
@@ -19,74 +31,47 @@ sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-c
 chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
 ```
 
-`imap_tools` wraps the IMAP layer for read/manage. `msal` is only needed for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
+`imap_tools` wraps the IMAP read/manage layer. `msal` is only for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
 
 ## 2. Add the first account
 
 ```bash
-email-client auth add --account personal --user someone@gmail.com
+email-client auth add --account personal --user you@gmail.com
 ```
 
-What happens next depends on the auto-detected provider. The first account you add becomes the default; later commands without `--account` will use it.
-
-You can also force a provider:
+The first account added becomes the default; later commands without `--account` use it. What happens next depends on the auto-detected provider (below). Force a provider or re-auth:
 
 ```bash
-email-client auth add --account work --user me@example.org --provider generic
-email-client auth add --account personal --user someone@gmail.com --provider gmail
-```
-
-To replace an existing token without removing the account:
-
-```bash
-email-client auth add --account personal --reauth
-```
-
-To add a second account:
-
-```bash
-email-client auth add --account work --user someone@outlook.com
-```
-
-To inspect or remove accounts:
-
-```bash
-email-client auth list
+email-client auth add --account work --user you@example.org --provider generic
+email-client auth add --account personal --reauth     # replace token, keep account
+email-client auth list                                # inspect
 email-client auth remove --account old
 ```
 
-### Microsoft personal (device flow)
+### Microsoft personal — device flow
 
-The CLI prints something like:
+The CLI prints a URL and a code:
 
 ```
 Visit:  https://www.microsoft.com/link
 Code:   ABCD1234
 ```
 
-The user opens the URL on any device, types the code, and signs in with the right email. The script polls for completion and writes the token to `~/.email-client/accounts/<name>/token.json` (mode 600). Refresh token lifetime is ~90 days; the CLI auto-refreshes the access token transparently.
+The user opens the URL on any device, enters the code, and signs in with the right email. The script polls for completion and writes the token to `~/.email-client/accounts/<name>/token.json` (mode 600). Refresh token lifetime ~90 days; the access token auto-refreshes.
 
-The consent screen will say "Mozilla Thunderbird" because that's the public client ID being reused. That's expected.
+### Gmail — loopback OAuth
 
-### Gmail (loopback OAuth)
+The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-port>/`. The user opens the URL in any browser that can reach this host (same machine, same LAN, or via SSH tunnel: `ssh -L <port>:127.0.0.1:<port> <host>`), signs in, and approves. The CLI captures the code, exchanges it, and writes tokens to `token.json`. On a headless box where the browser can't reach the loopback port, forward the port first or run auth on a workstation and copy the token file over.
 
-The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-port>/`. The user opens the URL in any browser that can reach this host (same machine, same LAN, or via SSH tunnel: `ssh -L <port>:127.0.0.1:<port> <host>`), signs in, and approves. The CLI captures the authorization code, exchanges it for tokens, and writes them to `~/.email-client/accounts/<name>/token.json`.
+### Yahoo / iCloud / Fastmail / generic — app password
 
-The consent screen will say "Mozilla Thunderbird" for the same reason as above.
+The CLI prompts for an app password. Generate one in the provider's security settings:
 
-If the user is on a headless box and can't reach the loopback port from their browser, set up an SSH port forward first, or run the auth on a workstation and copy the token file over.
+- Yahoo: Account Info → Account security → Generate app password
+- iCloud: appleid.apple.com → Sign-In and Security → App-Specific Passwords
+- Fastmail: Settings → Privacy & Security → App passwords (scope: IMAP/SMTP)
 
-### Yahoo / iCloud / Fastmail / generic (app password)
-
-The CLI prompts for an app password. The user generates one in their provider's account settings:
-
-- Yahoo: Account Info -> Account security -> Generate app password
-- iCloud: appleid.apple.com -> Sign-In and Security -> App-Specific Passwords
-- Fastmail: Settings -> Privacy & Security -> App passwords (scope: IMAP/SMTP)
-
-Paste it into the prompt. The password is written to `~/.email-client/accounts/<name>/token.json` (mode 600). The CLI uses it as basic-auth for both IMAP and SMTP.
-
-To skip the interactive prompt (e.g. in scripts), pre-export `EMAIL_CLIENT_APP_PASSWORD` before running `auth add`.
+Paste it at the prompt; it's written to `token.json` (mode 600) and used as basic-auth for IMAP and SMTP. To skip the prompt in scripts, pre-export `EMAIL_CLIENT_APP_PASSWORD`.
 
 ## 3. Smoke test
 
@@ -97,25 +82,43 @@ email-client-send --account personal --to "<user-email>" --subject "with attachm
 email-client attachments --account personal --uid <uid-of-the-attached-send>
 ```
 
-To verify reply threading without actually firing a message, use `--dry-run` against a real UID from the smoke-test send above:
+Verify reply/forward threading with `--dry-run` (prints headers without contacting SMTP), against a real UID from the self-send above:
 
 ```bash
-email-client-send --account personal --reply-to-uid <uid-of-self-send> --body "test reply" --dry-run
-email-client-send --account personal --reply-to-uid <uid> --cc someone@example.com --body "with cc" --dry-run
-email-client-send --account personal --forward-uid <uid> --to someone@example.com --body "fwd" --dry-run
+email-client-send --account personal --reply-to-uid <uid> --body "test reply" --dry-run
+email-client-send --account personal --reply-to-uid <uid> --cc cc1@example.com --body "with cc" --dry-run
+email-client-send --account personal --forward-uid <uid> --to recipient@example.com --body "fwd" --dry-run
 ```
 
-To smoke test mailbox edits:
+Save a draft (APPENDs to the Drafts folder, no SMTP), then read it back:
 
 ```bash
+email-client-send --account personal --to "<user-email>" --subject "draft test" --body "review me" --draft
+email-client-send --account personal --reply-to-uid <uid> --body "draft reply for review" --draft
+email-client list --account personal --folder Drafts --limit 3
+```
+
+Verify mailbox edits, folder counts, and folder management:
+
+```bash
+email-client status --folder INBOX                  # counts, no fetch
 email-client mark --uid <uid> --read
 email-client mark --uid <uid> --flagged
+email-client mark --uid <uid> --keyword Receipts     # custom keyword / Outlook category
+email-client mark --uid <uid> --unkeyword Receipts
+email-client folder create --name email-client-test
+email-client move --uid <uid> --to-folder email-client-test
+email-client folder rename --name email-client-test --to-name email-client-test2
+email-client notify add --folder email-client-test2     # daemon now also watches it
+email-client notify list
+email-client notify remove --folder email-client-test2
+email-client folder delete --name email-client-test2
 email-client archive --uid <uid>
 email-client delete --uid <uid>          # soft, recoverable from Deleted
 email-client delete --uid <uid> --hard   # permanent
 ```
 
-If both work, you're good. Repeat for every additional account.
+If these work, repeat steps 2–3 for each additional account.
 
 ## 4. Start the poll daemon
 
@@ -123,16 +126,46 @@ If both work, you're good. Repeat for every additional account.
 screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
 ```
 
-The daemon reads `~/.email-client/accounts.json` each tick, so adding new accounts via `email-client auth add` does not require a daemon restart. Add the `screen` line to `~/agent/prompts/restart.md` so it comes back after every container restart.
+The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It watches only `INBOX` per account by default; widen or narrow that with `email-client notify add/remove --folder <name>` (see SKILL.md "Choosing which folders notify"). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
+
+## 5. Add to restart.md
+
+```
+screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
+```
+
+## 6. Wire the rules into MEMORY.md
+
+The skill's "Notes & rules" section (in SKILL.md) is only loaded when you open the skill — it is **not** in your context on every notification. So that you reliably apply those rules when email arrives, add a pointer to `~/agent/MEMORY.md` (your system prompt, always in your context). Append it once:
+
+```bash
+cat >> ~/agent/MEMORY.md <<'EOF'
+
+## Email
+You manage the user's email through the email-client skill. Whenever you receive an
+`email-client` notification (`source=email-client`), first open the email-client skill
+and read its "Notes & rules" section, then apply every rule that matches the
+notification — including deciding whether to surface the email to the user at all.
+Do this before taking any other action on the email.
+EOF
+```
+
+A notification arrives to you looking like this, so your rules can match on `from` / `subject` / `folder`:
+
+```
+<notification source="email-client" type="email">account=personal, folder=INBOX, from=Jane Doe <jane@example.com>, subject=Q2 budget review, date=..., uid=12345</notification>
+```
+
+Without this line you still handle email on request, but standing rules (especially "stay silent" / auto-handle rules) may not fire on their own.
 
 ## Troubleshooting
 
-- `LOGIN failed.` on first IMAP command, no OAuth: you're not using XOAUTH2 against a Microsoft account that requires it. Personal Microsoft accounts have basic-auth disabled; the device flow above is mandatory for them.
-- `acquire_token_by_refresh_token` returns an error after some weeks: the Microsoft refresh token expired. Re-run `email-client auth add --account <name> --reauth`.
-- Gmail `invalid_grant` on refresh: the user revoked access in their Google account, or the refresh token aged out (rare for installed apps but possible). Re-run `email-client auth add --account <name> --provider gmail --reauth`.
-- Yahoo / iCloud `LOGIN failed`: app password rotated or wrong. Generate a new one and `email-client auth add --account <name> --reauth`.
-- Loopback OAuth `bind: Address already in use`: another process held the port between probe and bind. Re-run; the CLI picks a fresh random port each time.
-- Notifications don't appear: confirm `~/agent/notifications/` is the right path for your agent (it's the standard one) and the daemon is in `screen -ls`.
-- Mailbox has a million emails and `email-client list --limit 200` is slow: that's expected, IMAP `SEARCH ALL` then `FETCH` is O(n). Use `search --query 'SINCE <date>'` to scope.
-- `unknown account 'foo'`: run `email-client auth list` to see what's registered. Add the missing one with `email-client auth add --account foo`.
-- Microsoft 365 with a custom domain (e.g. `you@yourcompany.com`): see SKILL.md "Microsoft 365 with a custom domain". The short version: use `--provider generic` with `EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/common` and the same `outlook.office365.com` / `smtp.office365.com` hosts. If device flow returns `AADSTS50020` or "needs admin consent", the org disabled third-party OAuth clients; admin must register an internal Azure app and you set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to that one. If OAuth succeeds but `LOGIN failed` follows, the org disabled IMAP/SMTP on the mailbox; either get them re-enabled (`Set-CASMailbox -ImapEnabled $true`) or use the `microsoft` skill (Graph API) instead.
+- **`LOGIN failed.` on first IMAP command, no OAuth** — not using XOAUTH2 against a Microsoft account that requires it. Personal Microsoft accounts have basic-auth disabled; the device flow is mandatory.
+- **`acquire_token_by_refresh_token` errors after weeks** — Microsoft refresh token expired. Run `email-client auth add --account <name> --reauth`.
+- **Gmail `invalid_grant` on refresh** — access revoked or the refresh token aged out. Run `email-client auth add --account <name> --provider gmail --reauth`.
+- **Yahoo / iCloud `LOGIN failed`** — app password rotated or wrong. Generate a new one and `--reauth`.
+- **Loopback OAuth `bind: Address already in use`** — another process grabbed the port between probe and bind. Re-run; the CLI picks a fresh random port each time.
+- **Notifications don't appear** — confirm `~/agent/notifications/` is the agent's path (it's the standard one) and the daemon shows in `screen -ls`.
+- **`list --limit 200` is slow on a huge mailbox** — expected; IMAP `SEARCH ALL` + `FETCH` is O(n). Scope with `search --query 'SINCE <date>'`.
+- **`unknown account 'foo'`** — run `email-client auth list`; add the missing one with `email-client auth add --account foo`.
+- **Microsoft 365 custom domain** (`you@yourcompany.com`) — see SKILL.md "Microsoft 365 with a custom domain" for the `generic`-provider env settings and the three org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, Conditional Access).

@@ -40,7 +40,14 @@ a clear error if exceeded.
 
 Sent folder sync: by default the message is IMAP-APPENDed to the
 provider's Sent folder after a successful SMTP send so it shows up in
-the user's mail UI. Skip with ``--no-sent-sync``.
+the user's mail UI. Skip with ``--no-sent-sync``. The Sent (and Drafts)
+folder is resolved from the server's RFC 6154 SPECIAL-USE attribute,
+falling back to the provider profile then a default name.
+
+Drafts: pass ``--draft`` to APPEND the composed message to the Drafts
+folder with the ``\\Draft`` flag instead of sending it. Works with
+``--reply-to-uid`` / ``--forward-uid`` so a threaded reply or forward
+can be drafted for the user to review and send from any mail client.
 """
 from __future__ import annotations
 
@@ -56,7 +63,7 @@ import sys
 import time
 from email.message import EmailMessage
 
-from imap_tools import AND
+from imap_tools import AND, MailMessageFlags
 
 # Most providers (Gmail, Microsoft, Yahoo) reject messages larger than
 # 25 MB. Cap the combined attachment size at this limit so we fail
@@ -74,6 +81,7 @@ from imap_client import (  # noqa: E402
     get_access_token,
     get_app_password,
     resolve_account,
+    resolve_special_folder,
 )
 
 
@@ -176,29 +184,36 @@ def fetch_original(
     }
 
 
-def _append_to_sent(
-    account: str | None, sent_folder: str, raw_bytes: bytes
+def _append_message(
+    account: str | None,
+    raw_bytes: bytes,
+    *,
+    role: str,
+    profile_fallback: str | None,
+    flags: list[str],
 ) -> tuple[bool, str]:
-    """IMAP-APPEND a sent message to the configured Sent folder.
+    """IMAP-APPEND a message into the ``role`` special-use folder.
 
-    Returns (ok, info). Never raises; SMTP send already succeeded by
-    the time we get here, so a failure to copy is logged and swallowed.
+    The folder is resolved via the server's SPECIAL-USE attribute, then
+    ``profile_fallback``, then a role default. Returns (ok, info) and never
+    raises: the SMTP send (or draft intent) is independent of the copy.
     """
     try:
         mb = connect(account, initial_folder=None)
     except Exception as e:
         return False, f"connect failed: {e}"
     try:
+        folder = resolve_special_folder(mb, role, profile_fallback)
         try:
             mb.append(
                 raw_bytes,
-                folder=sent_folder,
-                dt=_dt.datetime.fromtimestamp(time.time(), tz=_dt.timezone.utc),
-                flag_set=["\\Seen"],
+                folder=folder,
+                dt=_dt.datetime.fromtimestamp(time.time(), tz=_dt.UTC),
+                flag_set=flags,
             )
-            return True, sent_folder
+            return True, folder
         except Exception as e:
-            return False, f"APPEND failed: {e}"
+            return False, f"APPEND to {folder!r} failed: {e}"
     finally:
         try:
             mb.logout()
@@ -316,6 +331,7 @@ def send(
     quote: bool = True,
     sent_sync: bool = True,
     dry_run: bool = False,
+    draft: bool = False,
 ) -> None:
     if reply_to_uid and forward_uid:
         sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
@@ -394,13 +410,30 @@ def send(
     )
 
     if dry_run:
-        print("--- DRY RUN: message that would be sent ---")
+        verb = "saved as a draft" if draft else "sent"
+        print(f"--- DRY RUN: message that would be {verb} ---")
         print(msg.as_string())
         print("--- end dry run ---")
-        if sent_sync:
-            sent_folder = profile.get("sent_folder") or "Sent"
-            print(f"--- DRY RUN: would IMAP APPEND to {sent_folder!r} ---")
+        if draft:
+            print("--- DRY RUN: would IMAP APPEND to the Drafts folder ---")
+        elif sent_sync:
+            print("--- DRY RUN: would IMAP APPEND to the Sent folder ---")
         return
+
+    if draft:
+        # Save to Drafts instead of sending. Reply/forward threading headers
+        # are kept so the user can review and send it from any mail client.
+        ok, info = _append_message(
+            acc,
+            msg.as_bytes(),
+            role="drafts",
+            profile_fallback=None,
+            flags=[MailMessageFlags.DRAFT, MailMessageFlags.SEEN],
+        )
+        if ok:
+            print(f"draft saved to {info}")
+            return
+        sys.exit(f"draft save failed: {info}")
 
     s = smtplib.SMTP(smtp_host, smtp_port)
     s.ehlo()
@@ -431,8 +464,21 @@ def send(
     s.quit()
     print("OK")
 
+    if reply_to_uid:
+        # Flag the original \Answered so every client shows the replied-to
+        # indicator. Non-fatal: the reply already went out.
+        try:
+            with connect(acc, initial_folder=None) as mb:
+                mb.folder.set(reply_folder)
+                mb.flag(reply_to_uid, MailMessageFlags.ANSWERED, True)
+            print(f"marked uid {reply_to_uid} \\Answered")
+        except Exception as e:
+            print(
+                f"warning: could not mark original \\Answered ({e})",
+                file=sys.stderr,
+            )
+
     if sent_sync:
-        sent_folder = profile.get("sent_folder") or "Sent"
         # Strip Bcc before APPEND (those addresses must not appear in
         # the stored copy that the user can later read in their mail UI).
         copy = _build_message(
@@ -448,7 +494,14 @@ def send(
             references=references,
             attachments=attachments,
         )
-        ok, info = _append_to_sent(acc, sent_folder, copy.as_bytes())
+        sent_fallback = profile["sent_folder"] if "sent_folder" in profile else None
+        ok, info = _append_message(
+            acc,
+            copy.as_bytes(),
+            role="sent",
+            profile_fallback=sent_fallback,
+            flags=[MailMessageFlags.SEEN],
+        )
         if ok:
             print(f"appended to {info}")
         else:
@@ -542,6 +595,12 @@ def main():
         action="store_true",
         help="print the would-send message and exit without contacting SMTP",
     )
+    ap.add_argument(
+        "--draft",
+        action="store_true",
+        help="save the composed message to the Drafts folder instead of sending; "
+        "works with --reply-to-uid / --forward-uid to draft for review",
+    )
     args = ap.parse_args()
     send(
         args.to,
@@ -560,6 +619,7 @@ def main():
         quote=not args.no_quote,
         sent_sync=not args.no_sent_sync,
         dry_run=args.dry_run,
+        draft=args.draft,
     )
 
 

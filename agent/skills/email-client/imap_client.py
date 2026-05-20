@@ -6,8 +6,8 @@ Fastmail, generic IMAP) via the profile registry in ``providers.py``,
 and multiple accounts simultaneously via the per-account state layout
 in ``$EMAIL_CLIENT_DIR/accounts/<name>/``.
 
-Subcommands: list-folders, list, get, search, attachments, mark, move,
-archive, delete, auth.
+Subcommands: list-folders, list, get, search, attachments, status,
+mark, move, archive, delete, folder, notify, auth.
 
 Provider is auto-detected from the account's email domain, or pinned
 via the per-account ``config.json`` (or ``--provider`` on ``auth.py``).
@@ -146,6 +146,18 @@ def load_config(account: str) -> dict:
 def save_config(account: str, cfg: dict) -> None:
     p = account_dir(account) / "config.json"
     p.write_text(json.dumps(cfg, indent=2))
+
+
+def notify_folders(account: str) -> list[str]:
+    """Folders the poll daemon watches for this account (default INBOX only).
+
+    Stored as ``notify_folders`` in the account's config.json. An empty
+    list mutes the account.
+    """
+    cfg = load_config(account)
+    if "notify_folders" in cfg and cfg["notify_folders"] is not None:
+        return cfg["notify_folders"]
+    return ["INBOX"]
 
 
 def _token_path(account: str) -> pathlib.Path:
@@ -343,6 +355,54 @@ def connect(account: str | None = None, *, initial_folder: str | None = "INBOX")
     else:
         mb.xoauth2(user, get_access_token(acc), initial_folder=initial_folder)
     return mb
+
+
+# -- special-use folders (RFC 6154) --------------------------------
+
+# IMAP attribute -> role. Servers that support SPECIAL-USE return these as
+# folder attributes in the LIST response, so the right folder is discovered
+# rather than guessed from a hardcoded name.
+SPECIAL_USE_ATTRS = {
+    "\\Sent": "sent",
+    "\\Drafts": "drafts",
+    "\\Trash": "trash",
+    "\\Archive": "archive",
+    "\\Junk": "junk",
+}
+# Fallback names when the server advertises no SPECIAL-USE attribute and the
+# provider profile names no folder. These match the historical hardcoded
+# behavior, so resolution is strictly an improvement, never a regression.
+_ROLE_DEFAULTS = {
+    "sent": "Sent",
+    "drafts": "Drafts",
+    "trash": "Deleted",
+    "archive": "Archive",
+    "junk": "Junk",
+}
+
+
+def discover_special_folders(mb) -> dict:
+    """Map special-use role -> folder name from the server's LIST attributes.
+
+    Returns only the roles the server actually advertises; empty on servers
+    without SPECIAL-USE support.
+    """
+    found: dict = {}
+    for fi in mb.folder.list():
+        for flag in fi.flags:
+            if flag in SPECIAL_USE_ATTRS:
+                found[SPECIAL_USE_ATTRS[flag]] = fi.name
+    return found
+
+
+def resolve_special_folder(mb, role: str, profile_value: str | None = None) -> str:
+    """Resolve a folder for ``role``: SPECIAL-USE attribute, else profile, else default."""
+    found = discover_special_folders(mb)
+    if role in found:
+        return found[role]
+    if profile_value:
+        return profile_value
+    return _ROLE_DEFAULTS[role]
 
 
 # -- helpers --------------------------------------------------------
@@ -548,10 +608,26 @@ def cmd_mark(args):
         actions.append((MailMessageFlags.FLAGGED, True))
     if args.unflagged:
         actions.append((MailMessageFlags.FLAGGED, False))
+    if args.answered:
+        actions.append((MailMessageFlags.ANSWERED, True))
+    if args.unanswered:
+        actions.append((MailMessageFlags.ANSWERED, False))
+    if args.draft:
+        actions.append((MailMessageFlags.DRAFT, True))
+    if args.undraft:
+        actions.append((MailMessageFlags.DRAFT, False))
+    for kw in args.keyword or []:
+        actions.append((kw, True))
+    for kw in args.unkeyword or []:
+        actions.append((kw, False))
     if not actions:
-        sys.exit("pick at least one of --read / --unread / --flagged / --unflagged")
+        sys.exit(
+            "pick at least one flag action (--read/--unread/--flagged/"
+            "--unflagged/--answered/--unanswered/--draft/--undraft/"
+            "--keyword/--unkeyword)"
+        )
     uids = _normalize_uids(args.uid)
-    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+    with connect(args.account, initial_folder=None) as mb:
         mb.folder.set(args.folder)
         for flag, value in actions:
             mb.flag(uids, flag, value)
@@ -586,30 +662,108 @@ def cmd_move(args):
 
 
 def cmd_archive(args):
-    args.to_folder = "Archive"
-    cmd_move(args)
+    uids = _normalize_uids(args.uid)
+    with connect(args.account, initial_folder=None) as mb:
+        mb.folder.set(args.folder)
+        dest = resolve_special_folder(mb, "archive")
+        mb.move(uids, dest)
+    print(json.dumps({"ok": True, "uids": uids, "from": args.folder, "to": dest}))
 
 
 def cmd_delete(args):
     uids = _normalize_uids(args.uid)
-    with connect(getattr(args, "account", None), initial_folder=None) as mb:
+    with connect(args.account, initial_folder=None) as mb:
         mb.folder.set(args.folder)
         if args.hard:
             mb.delete(uids)
             print(json.dumps({"ok": True, "uids": uids, "hard": True}))
             return
-        mb.move(uids, "Deleted")
-    if not args.hard:
+        dest = resolve_special_folder(mb, "trash")
+        mb.move(uids, dest)
         print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "uids": uids,
-                    "from": args.folder,
-                    "to": "Deleted",
-                }
-            )
+            json.dumps({"ok": True, "uids": uids, "from": args.folder, "to": dest})
         )
+
+
+# -- status --------------------------------------------------------
+
+
+def cmd_status(args):
+    """Print message counts for a folder via IMAP STATUS (no FETCH)."""
+    with connect(args.account, initial_folder=None) as mb:
+        st = mb.folder.status(args.folder)
+    print(
+        json.dumps(
+            {
+                "folder": args.folder,
+                "messages": st["MESSAGES"],
+                "unseen": st["UNSEEN"],
+                "recent": st["RECENT"],
+                "uidnext": st["UIDNEXT"],
+                "uidvalidity": st["UIDVALIDITY"],
+            },
+            indent=2,
+        )
+    )
+
+
+# -- folder management (create / rename / delete / subscribe) ------
+
+
+def cmd_folder_create(args):
+    with connect(args.account, initial_folder=None) as mb:
+        mb.folder.create(args.name)
+    print(json.dumps({"ok": True, "created": args.name}))
+
+
+def cmd_folder_rename(args):
+    with connect(args.account, initial_folder=None) as mb:
+        mb.folder.rename(args.name, args.to_name)
+    print(json.dumps({"ok": True, "renamed": args.name, "to": args.to_name}))
+
+
+def cmd_folder_delete(args):
+    with connect(args.account, initial_folder=None) as mb:
+        mb.folder.delete(args.name)
+    print(json.dumps({"ok": True, "deleted": args.name}))
+
+
+def cmd_folder_subscribe(args):
+    value = not args.unsubscribe
+    with connect(args.account, initial_folder=None) as mb:
+        mb.folder.subscribe(args.name, value)
+    print(json.dumps({"ok": True, "folder": args.name, "subscribed": value}))
+
+
+# -- notify (which folders the poll daemon watches) ----------------
+
+
+def _save_notify_folders(acc: str, folders: list[str]) -> None:
+    cfg = load_config(acc)
+    cfg["notify_folders"] = folders
+    save_config(acc, cfg)
+    print(json.dumps({"account": acc, "folders": folders}))
+
+
+def cmd_notify_list(args):
+    acc = resolve_account(args.account)
+    print(json.dumps({"account": acc, "folders": notify_folders(acc)}, indent=2))
+
+
+def cmd_notify_add(args):
+    acc = resolve_account(args.account)
+    with connect(acc, initial_folder=None) as mb:
+        if not mb.folder.exists(args.folder):
+            sys.exit(f"folder {args.folder!r} does not exist on {acc!r}")
+    folders = notify_folders(acc)
+    if args.folder not in folders:
+        folders.append(args.folder)
+    _save_notify_folders(acc, folders)
+
+
+def cmd_notify_remove(args):
+    acc = resolve_account(args.account)
+    _save_notify_folders(acc, [f for f in notify_folders(acc) if f != args.folder])
 
 
 # -- auth subcommands (multi-account management) -------------------
@@ -710,7 +864,8 @@ def main():
 
     p = sub.add_parser(
         "mark",
-        help="set/clear \\Seen or \\Flagged on one or more UIDs",
+        help="set/clear flags (\\Seen \\Flagged \\Answered \\Draft) or custom "
+        "keywords on one or more UIDs",
     )
     p.add_argument("--folder", default="INBOX")
     p.add_argument(
@@ -722,6 +877,29 @@ def main():
     p.add_argument("--unread", action="store_true", help="clear \\Seen")
     p.add_argument("--flagged", action="store_true", help="set \\Flagged")
     p.add_argument("--unflagged", action="store_true", help="clear \\Flagged")
+    p.add_argument("--answered", action="store_true", help="set \\Answered")
+    p.add_argument("--unanswered", action="store_true", help="clear \\Answered")
+    p.add_argument("--draft", action="store_true", help="set \\Draft")
+    p.add_argument("--undraft", action="store_true", help="clear \\Draft")
+    p.add_argument(
+        "--keyword",
+        action="append",
+        default=None,
+        help="set a custom IMAP keyword (e.g. an Outlook category); repeatable",
+    )
+    p.add_argument(
+        "--unkeyword",
+        action="append",
+        default=None,
+        help="clear a custom IMAP keyword; repeatable",
+    )
+    _add_account_arg(p)
+
+    p = sub.add_parser(
+        "status",
+        help="message counts for a folder via IMAP STATUS (no fetch)",
+    )
+    p.add_argument("--folder", default="INBOX")
     _add_account_arg(p)
 
     p = sub.add_parser(
@@ -758,6 +936,49 @@ def main():
     )
     _add_account_arg(p)
 
+    pf = sub.add_parser(
+        "folder", help="create / rename / delete / subscribe mailboxes"
+    )
+    fsub = pf.add_subparsers(dest="folder_cmd", required=True)
+    pf_c = fsub.add_parser("create", help="create a new mailbox")
+    pf_c.add_argument(
+        "--name",
+        required=True,
+        help="folder name; use the server delimiter to nest (e.g. Projects/Acme)",
+    )
+    _add_account_arg(pf_c)
+    pf_r = fsub.add_parser("rename", help="rename a mailbox")
+    pf_r.add_argument("--name", required=True, help="existing folder name")
+    pf_r.add_argument("--to-name", required=True, help="new folder name")
+    _add_account_arg(pf_r)
+    pf_d = fsub.add_parser("delete", help="delete a mailbox")
+    pf_d.add_argument("--name", required=True)
+    _add_account_arg(pf_d)
+    pf_s = fsub.add_parser(
+        "subscribe", help="subscribe (or --unsubscribe) to a mailbox"
+    )
+    pf_s.add_argument("--name", required=True)
+    pf_s.add_argument(
+        "--unsubscribe",
+        action="store_true",
+        help="unsubscribe instead of subscribe",
+    )
+    _add_account_arg(pf_s)
+
+    pn = sub.add_parser(
+        "notify",
+        help="choose which folders the poll daemon watches (default INBOX)",
+    )
+    nsub = pn.add_subparsers(dest="notify_cmd", required=True)
+    nsub_l = nsub.add_parser("list", help="show watched folders")
+    _add_account_arg(nsub_l)
+    nsub_a = nsub.add_parser("add", help="also notify on a folder")
+    nsub_a.add_argument("--folder", required=True)
+    _add_account_arg(nsub_a)
+    nsub_r = nsub.add_parser("remove", help="stop notifying on a folder")
+    nsub_r.add_argument("--folder", required=True)
+    _add_account_arg(nsub_r)
+
     pa = sub.add_parser("auth", help="account management")
     asub = pa.add_subparsers(dest="auth_cmd", required=True)
     pa_add = asub.add_parser("add", help="register a new account")
@@ -789,12 +1010,30 @@ def main():
             cmd_auth_remove(args)
             return
 
+    if args.cmd == "folder":
+        {
+            "create": cmd_folder_create,
+            "rename": cmd_folder_rename,
+            "delete": cmd_folder_delete,
+            "subscribe": cmd_folder_subscribe,
+        }[args.folder_cmd](args)
+        return
+
+    if args.cmd == "notify":
+        {
+            "list": cmd_notify_list,
+            "add": cmd_notify_add,
+            "remove": cmd_notify_remove,
+        }[args.notify_cmd](args)
+        return
+
     {
         "list-folders": cmd_folders,
         "list": cmd_list,
         "get": cmd_get,
         "search": cmd_search,
         "attachments": cmd_attachments,
+        "status": cmd_status,
         "mark": cmd_mark,
         "move": cmd_move,
         "archive": cmd_archive,

@@ -1,44 +1,61 @@
 ---
 name: email-client
-description: Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Read inbox, send mail, get notified on new mail. OAuth2 where supported, app-password fallback otherwise. Requires daemon.
+description: Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Use to read an inbox, send/reply/forward mail, save drafts, manage messages (read/flag/answered/draft/categories, move/archive/delete), create/rename/delete folders, check folder counts, handle attachments, or get paged on new mail in real time (IMAP IDLE) from chosen folders. OAuth2 where supported, app-password fallback otherwise. Requires the poll daemon for notifications.
 ---
 
 # Email Client
 
-Provider-agnostic IMAP and SMTP for the user's personal email accounts. Supports any number of accounts side by side. Each account gets its own credential, watermark, and notification stream.
+Provider-agnostic IMAP/SMTP for the user's  email accounts, any number side by side. Each account has its own credential, watermark, and notification stream. The provider is auto-detected from the email domain.
 
-Supported providers:
+## When to use this skill
 
-- **Microsoft personal** (`outlook.com`, `hotmail.com`, `live.com`) via OAuth2 device flow + Mozilla Thunderbird's public client ID
-- **Gmail** via OAuth2 loopback flow + Thunderbird's public Google client ID
-- **Yahoo Mail** via app password
-- **iCloud Mail** via app password
-- **Fastmail** via app password
-- **Generic IMAP/SMTP** (any host, any auth) via per-account config
+Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-The provider is auto-detected from each account's email domain. Override per account via `--provider` on `email-client auth add`, or with `EMAIL_CLIENT_PROVIDER` in the environment.
+Do NOT use it when:
 
-The skill ships three commands:
+- The user wants the full Gmail API surface (labels, threads, drafts as Google models them) → use the `google` skill.
+- The user has an M365 *work* account with IMAP/SMTP disabled, or wants calendar/contacts/Graph → use the `microsoft` skill. (M365 work accounts *with* IMAP enabled work here; see "Microsoft 365 with a custom domain".)
+- The user wants an agent-owned inbox rather than their personal mail → use `agentmail`.
 
-- `email-client list-folders / list / get / search` for read access
-- `email-client-send` for outbound mail
-- A poll daemon that watches every registered account's `INBOX` and writes a notification JSON to `~/agent/notifications/` on every new message, so the agent gets paged in real time
+## Notes & rules
 
-The daemon shares the same per-account token cache and refreshes OAuth access tokens transparently. Once the user has run `email-client auth add` once per account, no re-auth is needed for the lifetime of the refresh token (Microsoft ~90 days, Google effectively until revoked) or until the app password is rotated.
+Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task — and especially when processing a new-mail notification — and apply every rule that matches.** These rules override default behavior. (Setup adds a pointer in `~/agent/MEMORY.md` reminding you to load and apply this section on every `email-client` notification — see SETUP.md step 6.)
 
-**Setup**: see [SETUP.md](SETUP.md). It covers all auth strategies and walks each one end to end. Setup is one-time per account, takes about 2 minutes.
+When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands above. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task — only durable rules.
 
-## Why XOAUTH2 + Thunderbird's client IDs
+How rules map to commands:
 
-Microsoft killed basic-auth IMAP for personal accounts in late 2024, and tenantless Azure app registrations were deprecated mid-2025. So the only OAuth2 path for a personal Microsoft account that doesn't require the user to register an Azure tenant is to reuse a published public OAuth client ID. Thunderbird's Microsoft client ID is `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, baked into Thunderbird's source, and is the canonical "open-source mail client" choice many tools (mutt-with-xoauth2, getmail, mbsync wrappers, etc) use for the same reason.
+- *Categorize / prioritize by sender or content* → `mark --keyword <label>` (e.g. a `priority` keyword / Outlook category) or `mark --flagged`.
+- *Route by content or sender* → `move --to-folder <folder>` (`archive` / `delete` for those destinations).
+- *Auto-draft replies* → `email-client-send --reply-to-uid <uid> --draft` so the user reviews before it sends.
+- *Suppress noise* → use `notify remove --folder <f>`, or note "don't surface" so you stay silent on matching mail.
 
-Google's situation is similar but with one twist: Google deprecated OAuth device flow for non-TV/non-input-constrained desktop apps, so the supported equivalent is the loopback redirect flow (`http://127.0.0.1:<port>/`). This skill spins up a tiny `http.server` on a random port, opens (or prints) the consent URL, and captures the authorization code from the redirect. Thunderbird's Google client ID is `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com`.
+Format: `- [account|all] when <trigger> → <action>`. Examples:
 
-Both client IDs are public, not secrets.
+```text
+- [work] when from boss@example.com → mark --keyword priority and notify me
+- [personal] when subject/body mentions an invoice or receipt → move --to-folder Finance
+- [all] when a new email lands in the Support folder → draft a reply (--draft) for review
+- [work] when from noreply@* → auto-archive, do not notify
+```
 
-For Yahoo, iCloud, Fastmail, and generic IMAP, the providers expose either no OAuth or no public client at all, so we fall back to **app passwords**: the user generates a one-off password in their account security settings and we store it (chmod 600). Yahoo/iCloud both warn the user this is normal for "less secure apps".
+<!-- Agent: add the user's real rules below this line, one per line. The block above is illustrative; this list starts empty. -->
 
-## Read commands
+_(no rules recorded yet)_
+
+## Setup
+
+One-time per account, ~2 minutes. See [SETUP.md](SETUP.md) for install, every auth flow, and provider-specific notes. After `email-client auth add` runs once per account, no re-auth is needed until the refresh token expires (Microsoft ~90 days, Google until revoked) or the app password rotates.
+
+Two binaries plus a daemon:
+
+- `email-client` — read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
+- `email-client-send` — outbound mail (send, reply, forward, save draft)
+- `poll_daemon.py` — watches every account's `INBOX` and writes a notification per new message
+
+Omit `--account` on any command to use the default account from `accounts.json`. All commands accept `--account` and (where relevant) `--folder` (default `INBOX`).
+
+## Read
 
 ```bash
 email-client list-folders --account personal
@@ -46,14 +63,14 @@ email-client list --account personal --folder INBOX --limit 20
 email-client list --account work --folder Sent --limit 50
 email-client get --account personal --folder INBOX --uid 12345
 email-client get --account personal --folder INBOX --uid 12345 --body-chars 8000
-email-client search --account work --folder INBOX --query 'FROM "stripe"'
-email-client search --account personal --folder INBOX --query 'SUBJECT "wedding"'
+email-client search --account work --folder INBOX --query 'FROM "billing@example.com"'
+email-client search --account personal --folder INBOX --query 'SUBJECT "invoice"'
 email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-Omit `--account` to use the default account from `accounts.json`. `list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body.
+`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `get` returns the full message including a decoded plain-text body. `search --query` takes a raw IMAP SEARCH expression.
 
-### Attachments
+## Attachments
 
 ```bash
 email-client attachments --uid 12345                              # list only
@@ -63,80 +80,110 @@ email-client attachments --uid 12345 --download --out-dir /tmp/x  # custom dir
 email-client attachments --uid 12345 --download --part 2          # one specific
 ```
 
-Listing returns a JSON array of `{part_index, name, content_type, size_bytes}` for every part the skill considers an attachment. A part counts when it has `Content-Disposition: attachment`, OR a filename, OR is an inline `image/*` with a name. Plain text and HTML body parts are excluded unless they are explicitly tagged as attachments.
+Listing returns `{part_index, name, content_type, size_bytes}` per attachment. A part counts as an attachment when it has `Content-Disposition: attachment`, OR a filename, OR is an inline `image/*` with a name; plain-text and HTML body parts are excluded unless explicitly tagged as attachments.
 
-`--download` writes payloads to disk. Default location is `$EMAIL_CLIENT_DIR/attachments/<uid>/`; override with `--out-dir <path>`. `--part <index>` (using the `part_index` from the listing) saves a single attachment instead of all of them. Filenames are sanitized (path separators stripped) and de-duplicated when two attachments share a name. The download response prints saved paths as JSON.
+`--download` writes to `$EMAIL_CLIENT_DIR/attachments/<uid>/` (override with `--out-dir`). `--part <index>` saves a single attachment using its `part_index` from the listing. Filenames are sanitized and de-duplicated; saved paths print as JSON.
 
-## Mailbox edits
+## Folder counts
+
+```bash
+email-client status --folder INBOX            # counts without fetching
+email-client status --folder Archive --account work
+```
+
+Returns `{folder, messages, unseen, recent, uidnext, uidvalidity}` via IMAP `STATUS` — far cheaper than `list` when you only need "how many unread". Loop over folders from `list-folders` for a full overview.
+
+## Manage messages
 
 ```bash
 email-client mark --uid 12345 --read
 email-client mark --uid 12345 --unread
 email-client mark --uid 12,15,18 --flagged
 email-client mark --uid 12 --unflagged --account work
+email-client mark --uid 12345 --answered            # \Answered (replied-to indicator)
+email-client mark --uid 12345 --draft               # \Draft
+email-client mark --uid 12345 --keyword Receipts     # custom keyword (= Outlook category)
+email-client mark --uid 12345 --keyword Tax --keyword Receipts
+email-client mark --uid 12345 --unkeyword Receipts
 email-client move --uid 12345 --to-folder Archive
 email-client archive --uid 12345
-email-client delete --uid 12345                # soft delete to Deleted
+email-client delete --uid 12345                # soft delete to Deleted (recoverable)
 email-client delete --uid 12345 --hard         # permanently expunge
 ```
 
-`mark` toggles `\Seen` and `\Flagged` IMAP flags. `move` uses the IMAP `MOVE` extension when the server advertises it, falling back to `COPY` + `STORE +Deleted` + `EXPUNGE`. `archive` is a thin wrapper for `move --to-folder Archive`; `delete` defaults to soft-delete (move to `Deleted`, recoverable from trash) with `--hard` for an in-place expunge. All accept comma-separated UIDs and honor `--account` and `--folder` (default `INBOX`).
+All accept comma-separated UIDs and combine flags in one call. `mark` sets/clears the IMAP system flags `\Seen` (`--read`/`--unread`), `\Flagged` (`--flagged`/`--unflagged`), `\Answered` (`--answered`/`--unanswered`), `\Draft` (`--draft`/`--undraft`), and arbitrary keywords (`--keyword`/`--unkeyword`, both repeatable). A custom keyword is how Outlook stores **Categories**, so `--keyword Receipts` tags a message in a way Outlook surfaces as a category. `\Flagged` shows as a star in Gmail and a flag in Apple Mail/Outlook. `move` uses IMAP `MOVE` when advertised, else `COPY` + `STORE +Deleted` + `EXPUNGE`. `archive` and `delete` (soft) auto-detect their destination from the server's RFC 6154 SPECIAL-USE attributes (`\Archive`, `\Trash`), falling back to `Archive` / `Deleted`; `delete --hard` expunges in place. Soft-delete lets the user recover from trash. All of these are server-side and sync to every client on the account.
+
+## Manage folders
+
+```bash
+email-client folder create --name Parent/Child         # nest with the server delimiter
+email-client folder rename --name OldName --to-name NewName
+email-client folder delete --name Parent/Child
+email-client folder subscribe --name Newsletters
+email-client folder subscribe --name Newsletters --unsubscribe
+```
+
+`create` makes a new mailbox (nest using the server's hierarchy delimiter, usually `/` or `.` — check `list-folders`). `move --to-folder X` fails if `X` doesn't exist, so create it first. `subscribe` toggles whether a folder appears in clients that only show subscribed mailboxes. All honor `--account`.
 
 ## Send
 
 ```bash
-email-client-send --account personal --to "user@example.com" --subject "Hi" --body "first line\\nsecond line"
-email-client-send --account personal --to alice@example.com --cc bob@example.com --cc carol@example.com --subject "Hi" --body "team note"
-email-client-send --account personal --to alice@example.com --bcc audit@example.com --subject "Quiet ping" --body "fyi"
-email-client-send --account personal --to alice@example.com --subject "Hi" --body "plain fallback" --body-html "<p>rich <b>HTML</b></p>"
-email-client-send --account personal --to alice@example.com --subject "Slides" --body "see attached" --attach ~/decks/q2.pdf
-email-client-send --account personal --to alice@example.com --subject "Pics" --body "two of them" --attach a.png --attach b.jpg
+email-client-send --account personal --to "recipient@example.com" --subject "Hi" --body "first line\\nsecond line"
+email-client-send --account personal --to recipient@example.com --cc cc1@example.com --cc cc2@example.com --subject "Hi" --body "team note"
+email-client-send --account personal --to recipient@example.com --bcc bcc@example.com --subject "Quiet ping" --body "fyi"
+email-client-send --account personal --to recipient@example.com --subject "Hi" --body "plain fallback" --body-html "<p>rich <b>HTML</b></p>"
+email-client-send --account personal --to recipient@example.com --subject "Slides" --body "see attached" --attach ~/file.pdf
+email-client-send --account personal --to recipient@example.com --subject "Pics" --body "two of them" --attach first.png --attach second.jpg
 ```
 
-Sends as the configured user for the chosen account. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS. The `From` header uses the configured display name + the user's email address.
+Sends as the configured user for the account. The `From` header uses the configured display name + the user's address. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS.
 
-`--cc` and `--bcc` accept multiple addresses (repeat the flag). `--body-html` sends an HTML body; combine with `--body` for a multipart/alternative message that includes both; pass `--body-html` alone and a stripped plain-text fallback is synthesized for non-HTML clients.
+- `--cc` / `--bcc`: repeat the flag for multiple addresses.
+- `--body-html`: send HTML. Combine with `--body` for multipart/alternative; pass `--body-html` alone and a plain-text fallback is synthesized.
+- `--attach <path>`: repeat for multiple. MIME type guessed by extension (fallback `application/octet-stream`). Total capped at 25 MB — the send aborts with a clear error past that, since most providers reject larger.
 
-`--attach <path>` attaches a file (repeat for multiple). MIME type is guessed from the extension via `mimetypes` and falls back to `application/octet-stream`. Total size across all attachments is capped at 25 MB; the send aborts with a clear error if exceeded (most providers reject larger). Attachments are also included in the IMAP-APPENDed Sent copy so the user sees them in their mail UI.
+After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` — so it works even when a server names the folder unusually.
 
-After a successful SMTP send the message is IMAP-APPENDed to the provider's Sent folder so it shows up in the user's mail UI. Skip with `--no-sent-sync`. The folder name comes from the provider profile (`sent_folder`): Microsoft `Sent`, Gmail `[Gmail]/Sent Mail`, Yahoo `Sent`, iCloud `Sent Messages`, Fastmail `Sent`, generic `Sent`.
-
-### Reply threading
-
-To send a proper threaded reply to an existing message, pass `--reply-to-uid <uid>` (and `--reply-folder <folder>` if the original is not in `INBOX`):
+### Reply
 
 ```bash
 email-client-send --account personal --reply-to-uid 12345 --body "thanks, will do"
-```
-
-When `--reply-to-uid` is set, the skill fetches the original message via IMAP from the same account and:
-
-- threads the reply via `In-Reply-To` and `References` headers (preserving the existing chain)
-- defaults the subject to `Re: <original subject>` (no double prefix if it already starts with `Re:` / `RE:` / `Re :`)
-- defaults `--to` to the original sender's address if you omit it
-- appends a quoted version of the original body below an `On <date>, <from> wrote:` separator
-
-Override any of these by passing the corresponding flag explicitly. Suppress the quoted body with `--no-quote`. Use `--dry-run` to print the would-send message without actually contacting SMTP, handy for verifying the headers before firing.
-
-```bash
 email-client-send --account personal --reply-to-uid 12345 --body "ack" --no-quote
 email-client-send --account work --reply-folder Archive --reply-to-uid 999 --body "looking now" --dry-run
-email-client-send --account personal --reply-to-uid 12345 --to "alice@example.com" --body "looping in alice"
-email-client-send --account personal --reply-to-uid 12345 --cc dave@example.com --body "adding dave"
+email-client-send --account personal --reply-to-uid 12345 --to "other@example.com" --body "looping in another recipient"
+email-client-send --account personal --reply-to-uid 12345 --cc cc1@example.com --body "adding a cc recipient"
 ```
 
-When replying, the original `Cc` list is preserved unless you pass `--cc` explicitly (in which case your list wins).
+Pass `--reply-to-uid <uid>` (and `--reply-folder <folder>` if the original isn't in `INBOX`). The skill fetches the original from the same account and:
+
+- threads via `In-Reply-To` and `References` (preserving the chain)
+- defaults the subject to `Re: <original>` (no double prefix)
+- defaults `--to` to the original sender
+- preserves the original `Cc` unless you pass `--cc` (then your list wins)
+- appends a quoted original below an `On <date>, <from> wrote:` separator
+
+Override any default by passing the flag explicitly. `--no-quote` drops the quoted body; `--dry-run` prints the would-send message without contacting SMTP. After a real (non-dry-run) reply sends, the original message is flagged `\Answered` so every client shows the replied-to indicator (non-fatal if it can't be set).
 
 ### Forward
 
-To forward an existing message, pass `--forward-uid <uid>` (and `--forward-folder <folder>` if not in `INBOX`). Forwards always need a fresh recipient, so `--to` is required.
-
 ```bash
-email-client-send --account personal --forward-uid 12345 --to alice@example.com --body "fyi, see below"
-email-client-send --account work --forward-uid 999 --forward-folder Archive --to bob@example.com --body "" --no-quote
+email-client-send --account personal --forward-uid 12345 --to recipient@example.com --body "fyi, see below"
+email-client-send --account work --forward-uid 999 --forward-folder Archive --to recipient@example.com --body "" --no-quote
 ```
 
-Forwards default the subject to `Fwd: <original-subject>` (no double prefix), inline the original headers and body below the user's `--body`, and start a new thread (no `In-Reply-To` / `References`). `--no-quote` suppresses the inlined original.
+Pass `--forward-uid <uid>` (and `--forward-folder` if not in `INBOX`). `--to` is required. Defaults the subject to `Fwd: <original>` (no double prefix), inlines the original headers and body below your `--body`, and starts a new thread (no `In-Reply-To`/`References`). `--no-quote` suppresses the inlined original.
+
+### Drafts
+
+Pass `--draft` to save the composed message to the Drafts folder (flagged `\Draft`) instead of sending it. It accepts the full compose surface — `--cc`/`--bcc`, `--body-html`, `--attach` — and crucially `--reply-to-uid` / `--forward-uid`, so you can draft a threaded reply or forward for the user to review and send from any mail client.
+
+```bash
+email-client-send --account personal --to recipient@example.com --subject "Proposal" --body "rough notes..." --draft
+email-client-send --account personal --reply-to-uid 12345 --body "draft answer for you to review" --draft
+email-client-send --account personal --forward-uid 999 --to recipient@example.com --body "fyi" --draft
+```
+
+A draft does not contact SMTP and does not flag the original `\Answered` (nothing was sent). `--dry-run` previews the draft without writing it. The Drafts folder is auto-detected (see below).
 
 ## Account management
 
@@ -147,15 +194,26 @@ email-client auth list                                # JSON array of registered
 email-client auth remove --account old
 ```
 
-The first added account becomes the default. To change the default, edit `$EMAIL_CLIENT_DIR/accounts.json` directly.
+The first added account becomes the default. To change it, edit `default` in `$EMAIL_CLIENT_DIR/accounts.json`.
 
 ## Notifications
 
-The poll daemon (`screen -dmS email-client ... poll_daemon.py`) checks every registered account's `INBOX` every 15s, keeps a per-account high-UID watermark, and writes one JSON file per new email into `~/agent/notifications/`. The notification has source `email-client`, type `email`, an `account` field naming the source mailbox, and includes `from`, `subject`, `date`, `uid`. The agent CLI picks it up the way it does any other notification source.
+Start the poll daemon (see SETUP.md). It runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source.
 
-Filenames look like `email-client-personal-1746480000000-abc123.json` so concurrent notifications across accounts never collide.
+### Choosing which folders notify
 
-The daemon keeps each account's high-UID watermark at `$EMAIL_CLIENT_DIR/accounts/<name>/high_uid.txt`. First run for an account seeds with the latest UID (no backlog flood); subsequent runs only emit new arrivals.
+By default the daemon watches only `INBOX` per account. To watch more folders (or fewer), set the per-account watch list — the daemon picks up changes within ~10s, no restart needed:
+
+```bash
+email-client notify list                              # show watched folders
+email-client notify add --folder Archive              # also notify on Archive
+email-client notify add --folder "[Gmail]/Important" --account work
+email-client notify remove --folder INBOX             # stop notifying on INBOX
+```
+
+`notify add` validates the folder exists on the server before saving. Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
+
+The supervisor recomputes the watch set periodically and starts/stops workers as accounts or folders change. Each watched `(account, folder)` keeps its own watermark (`high_uid.txt` for INBOX, `high_uid_<folder>.txt` otherwise); the first run for a folder seeds it with the latest UID to avoid a backlog flood, and later runs emit only new arrivals. Filenames look like `email-client-personal-INBOX-1746480000000-abc123.json` so concurrent notifications never collide. Workers reconnect on error and on a periodic refresh so the OAuth access token stays current.
 
 ## State layout
 
@@ -164,78 +222,48 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
   accounts.json                   # {"accounts": ["personal","work"], "default": "personal"}
   accounts/
     personal/
-      config.json                 # {"user": "...", "provider": "...", optional host overrides}
+      config.json                 # {"user", "provider", optional host overrides, "notify_folders"}
       token.json                  # OAuth token or {"app_password": "..."} (mode 600)
-      high_uid.txt                # daemon poll watermark
-    work/
-      config.json
-      token.json
-      high_uid.txt
+      high_uid.txt                # INBOX watermark
+      high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
+    work/ ...
 ```
+
+`token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.
 
 ## Configuration
 
-Most settings live per account in `accounts/<name>/config.json`. Environment variables provide defaults that apply to whichever account is being used:
+Settings live per account in `accounts/<name>/config.json`. Env vars provide defaults applied to whichever account is in use:
 
-- `EMAIL_CLIENT_DIR`: where token + state live (default `~/.email-client`)
-- `EMAIL_CLIENT_USER`: default email address (used at `auth add` time when `--user` is omitted)
-- `EMAIL_CLIENT_PROVIDER`: default provider key
-- `EMAIL_CLIENT_HOST`: IMAP host override
-- `EMAIL_CLIENT_SMTP_HOST`: SMTP host override
-- `EMAIL_CLIENT_SMTP_PORT`: SMTP port override (default 587 STARTTLS)
-- `EMAIL_CLIENT_OAUTH_CLIENT_ID`: OAuth client ID override
-- `EMAIL_CLIENT_OAUTH_AUTHORITY`: Microsoft OAuth authority override (e.g. `/common` for mixed work+personal)
-- `EMAIL_CLIENT_OAUTH_SCOPES`: whitespace-separated scope list override
-- `EMAIL_CLIENT_FROM_NAME`: display name on outbound mail (default the username portion of the email)
-- `EMAIL_CLIENT_POLL_INTERVAL`: seconds between polls (default 15)
-- `EMAIL_CLIENT_APP_PASSWORD`: pre-supply the app password to the auth flow instead of being prompted (handy in scripts)
-
-The token file at `accounts/<name>/token.json` always carries a `provider` key alongside the credential payload (access/refresh token for OAuth providers, `app_password` for app-password providers), so the daemon knows which strategy to use even if env vars change later.
-
-## Sample setups
-
-```bash
-# Single account (Gmail)
-export EMAIL_CLIENT_USER="someone@gmail.com"
-email-client auth add --account personal
-
-# Two accounts: personal Gmail + work Outlook
-email-client auth add --account personal --user someone@gmail.com
-email-client auth add --account work --user someone@outlook.com
-
-# Custom IMAP server (corporate, self-hosted) as a third account
-email-client auth add --account selfhosted \
-  --user me@example.org --provider generic
-# then edit ~/.email-client/accounts/selfhosted/config.json to add
-# {"imap_host": "mail.example.org", "smtp_host": "mail.example.org"}
-```
+- `EMAIL_CLIENT_DIR` — token + state location (default `~/.email-client`)
+- `EMAIL_CLIENT_USER` — default email address (used at `auth add` when `--user` is omitted)
+- `EMAIL_CLIENT_PROVIDER` — default provider key
+- `EMAIL_CLIENT_HOST` — IMAP host override
+- `EMAIL_CLIENT_SMTP_HOST` / `EMAIL_CLIENT_SMTP_PORT` — SMTP host / port (default 587 STARTTLS)
+- `EMAIL_CLIENT_OAUTH_CLIENT_ID` — OAuth client ID override
+- `EMAIL_CLIENT_OAUTH_AUTHORITY` — Microsoft authority override (e.g. `/common` for mixed work+personal)
+- `EMAIL_CLIENT_OAUTH_SCOPES` — whitespace-separated scope override
+- `EMAIL_CLIENT_FROM_NAME` — display name on outbound mail (default: username portion of the email)
+- `EMAIL_CLIENT_POLL_INTERVAL` — seconds between polls (default 15)
+- `EMAIL_CLIENT_APP_PASSWORD` — pre-supply the app password to `auth add` instead of prompting (for scripts)
 
 ## Microsoft 365 with a custom domain
 
-If the user's address is on a custom domain hosted by Microsoft 365 (e.g. `nour@hercompany.com`, with the mailbox actually on Exchange Online), the skill works through the `generic` provider with these env settings:
+For an address on a custom domain hosted by M365 (e.g. `you@yourcompany.com`, mailbox on Exchange Online), use the `generic` provider:
 
 ```bash
 export EMAIL_CLIENT_PROVIDER=generic
-export EMAIL_CLIENT_OAUTH_CLIENT_ID=9e5f94bc-e8a4-4e73-b8be-63364c29d753
+export EMAIL_CLIENT_OAUTH_CLIENT_ID=9e5f94bc-e8a4-4e73-b8be-63364c29d753   # Thunderbird, multi-tenant
 export EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/common
 export EMAIL_CLIENT_HOST=outlook.office365.com
 export EMAIL_CLIENT_SMTP_HOST=smtp.office365.com
+email-client auth add --account work --provider generic --user you@yourcompany.com
 ```
 
-Thunderbird's Microsoft client ID is multi-tenant, so pointing the authority at `/common` (or the specific tenant ID) lets it consent against the user's work tenant. Then run `email-client auth add --account work --provider generic --user nour@hercompany.com` and approve the device-flow code at https://www.microsoft.com/link.
+Approve the device-flow code at https://www.microsoft.com/link. Three org-side blockers can stop this (none fixable from the skill):
 
-Three things can block this, all on the org's IT side, none of them fixable from inside the skill:
+1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it.
+2. **IMAP/SMTP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
+3. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
 
-1. **Third-party OAuth client IDs disabled.** Some tenants block apps not registered in their own Azure AD. Symptom: device flow returns `AADSTS50020` or "App needs admin consent". Fix: have admin register an internal app in the company tenant with `Mail.ReadWrite` + `SMTP.Send` delegated permissions, then set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to that app's client ID.
-2. **IMAP/SMTP disabled on the mailbox.** Many enterprise tenants disable both protocols and force Graph API only. Symptom: `LOGIN failed` or `AUTHENTICATE` error after a successful OAuth. Fix: either get IMAP enabled (admin: `Set-CASMailbox -ImapEnabled $true`), or switch to the `microsoft` skill which uses Graph instead.
-3. **Conditional Access policies.** Some tenants require interactive browser MFA on every connection or block non-managed devices entirely. Symptom: device flow lands on a "your sign-in was blocked" page. Fix: org admin needs to whitelist the app or relax the policy. No client-side workaround.
-
-If steps 1-3 all check out and it still doesn't authenticate, capture the full error from `email-client auth add --reauth` and surface it; the relevant detail is usually in the `error_description` field of the OAuth response.
-
-## When NOT to use this skill
-
-- The user wants Gmail with the full Google API surface (labels, threads, attachments, drafts as Google models them). Use the `google` skill, which talks Gmail API directly. Use this skill when you want a uniform IMAP interface across providers, or when the user's Gmail is fine with raw SMTP send and IMAP read.
-- The user has a Microsoft 365 *work* account where the org has disabled IMAP/SMTP, OR wants calendar/contacts/Graph features. Use the `microsoft` skill (Graph is more capable, calendars/contacts are included). For M365 work accounts where IMAP is enabled, this skill works fine via the custom-domain instructions above.
-- The user wants an agent-owned inbox (no personal email). Use `agentmail`.
-
-This skill is the right choice when you want one provider-agnostic IMAP/SMTP path that works for one or many personal email accounts in parallel.
+If 1–3 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.

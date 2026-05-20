@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""IMAP poll daemon (multi-account).
+"""IMAP push/poll daemon (multi-account).
 
-Polls every registered account's INBOX every N seconds and writes a
-notification JSON into ~/agent/notifications/ for each new message.
-Auto-refreshes the OAuth token via the imap_client helper. No promo
-blocklist by default; the agent decides what to surface to the user.
+Watches each registered account's notify folders (INBOX by default; set
+per account with ``email-client notify``) and writes a notification JSON
+into ~/agent/notifications/ for each new message. Uses IMAP IDLE for
+real-time push where the server advertises the capability, falling back
+to interval polling otherwise. Auto-refreshes the OAuth token via the
+imap_client helper on every reconnect.
 
-The daemon iterates over every account named in
-``$EMAIL_CLIENT_DIR/accounts.json``. Each account has its own
-high-UID watermark stored at
-``$EMAIL_CLIENT_DIR/accounts/<name>/high_uid.txt``. If an account's
-poll fails the loop logs the error and moves on to the next account.
+One worker thread per (account, folder), each holding its own persistent
+IMAP connection. The supervisor reads each account's watch list and
+starts/stops workers as accounts or folders are added or removed, so no
+restart is needed. Each (account, folder) keeps its own high-UID
+watermark under ``$EMAIL_CLIENT_DIR/accounts/<name>/`` (``high_uid.txt``
+for INBOX, ``high_uid_<folder>.txt`` otherwise); the first run seeds it
+with the latest UID so there is no backlog flood.
 
-Notifications are written with the source ``email-client`` and an
-``account`` field naming the source mailbox. The filename includes the
-account name so simultaneous notifications from multiple accounts
-never collide.
+Notifications carry source ``email-client`` and ``account`` + ``folder``
+fields naming the source mailbox. The filename includes both so
+simultaneous notifications never collide.
 """
 from __future__ import annotations
 
@@ -23,7 +26,9 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
+import threading
 import time
 import uuid
 
@@ -38,17 +43,47 @@ from imap_client import (  # noqa: E402
     account_dir,
     connect,
     list_accounts,
+    notify_folders,
 )
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
 
+# Re-issue IDLE well under the 29-minute RFC 2177 ceiling; this also bounds
+# how quickly a worker notices a shutdown request.
+IDLE_TIMEOUT_SECS = 270
+# Tear down and reconnect periodically so the OAuth access token is
+# refreshed and the IDLE session is reset against idle-timeout proxies.
+RECONNECT_SECS = 1500
+# Backoff after a connection error before a worker retries.
+RETRY_DELAY_SECS = 30
+# How often the supervisor checks accounts.json for added/removed accounts.
+INDEX_CHECK_SECS = 10
 
-def write_notification(account: str, meta: dict) -> None:
+
+def _sanitize_folder(folder: str) -> str:
+    """Filesystem-safe token for a folder name (for the watermark filename)."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", folder)
+
+
+def watermark_path(account: str, folder: str) -> pathlib.Path:
+    """Per-(account, folder) high-UID watermark path.
+
+    INBOX keeps the legacy ``high_uid.txt`` name so existing installs do
+    not lose their watermark on upgrade.
+    """
+    base = account_dir(account)
+    if folder == "INBOX":
+        return base / "high_uid.txt"
+    return base / f"high_uid_{_sanitize_folder(folder)}.txt"
+
+
+def write_notification(account: str, folder: str, meta: dict) -> None:
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "email-client",
         "type": "email",
         "account": account,
+        "folder": folder,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
         "from": meta["from"],
         "to": meta.get("to", ""),
@@ -57,7 +92,8 @@ def write_notification(account: str, meta: dict) -> None:
         "uid": meta["uid"],
     }
     fname = (
-        f"email-client-{account}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+        f"email-client-{account}-{_sanitize_folder(folder)}-"
+        f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
     )
     (NOTIF_DIR / fname).write_text(json.dumps(notif, ensure_ascii=False, indent=2))
 
@@ -72,8 +108,9 @@ def set_high_uid(path: pathlib.Path, n: int) -> None:
     path.write_text(str(n))
 
 
-def poll_once(account: str, mb, log, high_uid_path: pathlib.Path) -> None:
-    mb.folder.set("INBOX")
+def emit_new(account: str, folder: str, mb, log, high_uid_path: pathlib.Path) -> None:
+    """Notify on every message in ``folder`` with UID above the watermark."""
+    mb.folder.set(folder)
     high = get_high_uid(high_uid_path)
     if high == 0:
         # First run for this account: seed with the latest UID, do not
@@ -82,7 +119,7 @@ def poll_once(account: str, mb, log, high_uid_path: pathlib.Path) -> None:
         if all_uids:
             seed = max(int(u) for u in all_uids)
             set_high_uid(high_uid_path, seed)
-            log(f"[{account}] seeded high_uid={seed}")
+            log(f"[{account}:{folder}] seeded high_uid={seed}")
         return
 
     # imap_tools query syntax: ``UID first:*`` selects the open-ended range.
@@ -97,7 +134,7 @@ def poll_once(account: str, mb, log, high_uid_path: pathlib.Path) -> None:
     if not new_msgs:
         return
     new_msgs.sort(key=lambda m: int(m.uid))
-    log(f"[{account}] new uids: {[m.uid for m in new_msgs]}")
+    log(f"[{account}:{folder}] new uids: {[m.uid for m in new_msgs]}")
     for m in new_msgs:
         meta = {
             "uid": m.uid,
@@ -106,21 +143,65 @@ def poll_once(account: str, mb, log, high_uid_path: pathlib.Path) -> None:
             "subject": m.subject,
             "date": m.date_str,
         }
-        write_notification(account, meta)
+        write_notification(account, folder, meta)
         log(
-            f"[{account}] notified uid={m.uid} "
+            f"[{account}:{folder}] notified uid={m.uid} "
             f"from={meta['from'][:60]} subj={meta['subject'][:60]}"
         )
     set_high_uid(high_uid_path, max(int(m.uid) for m in new_msgs))
 
 
-class _AccountConn:
-    """Per-account IMAP connection state with lazy reconnect."""
+def folder_worker(
+    account: str, folder: str, interval: int, log, stop_event: threading.Event
+) -> None:
+    """Watch one ``(account, folder)`` until ``stop_event`` is set.
 
-    def __init__(self, name: str):
-        self.name = name
-        self.mb = None
-        self.last_reconnect = 0.0
+    Holds a persistent connection: waits on IMAP IDLE when available,
+    otherwise sleeps ``interval`` between checks. Reconnects on error
+    (with backoff) and on the periodic refresh interval.
+    """
+    high_uid_path = watermark_path(account, folder)
+    while not stop_event.is_set():
+        mb = None
+        try:
+            mb = connect(account, initial_folder=folder)
+            use_idle = "IDLE" in (mb.client.capabilities or ())
+            log(f"[{account}:{folder}] connected ({'IDLE' if use_idle else 'poll'} mode)")
+            emit_new(account, folder, mb, log, high_uid_path)
+            session_start = time.monotonic()
+            while not stop_event.is_set():
+                if time.monotonic() - session_start > RECONNECT_SECS:
+                    break
+                if use_idle:
+                    # wait() runs the full IDLE start/poll/stop cycle and
+                    # returns on a server push or when the timeout expires.
+                    mb.idle.wait(timeout=IDLE_TIMEOUT_SECS)
+                    if stop_event.is_set():
+                        break
+                    emit_new(account, folder, mb, log, high_uid_path)
+                else:
+                    if stop_event.wait(interval):
+                        break
+                    emit_new(account, folder, mb, log, high_uid_path)
+        except Exception as e:
+            log(f"[{account}:{folder}] error: {e}; retrying in {RETRY_DELAY_SECS}s")
+            stop_event.wait(RETRY_DELAY_SECS)
+        finally:
+            if mb is not None:
+                try:
+                    mb.logout()
+                except Exception:
+                    pass
+    log(f"[{account}:{folder}] worker stopped")
+
+
+def desired_workers() -> set[tuple[str, str]]:
+    """The set of ``(account, folder)`` pairs that should be watched now."""
+    wanted: set[tuple[str, str]] = set()
+    for account in list_accounts():
+        for folder in notify_folders(account):
+            wanted.add((account, folder))
+    return wanted
 
 
 def main():
@@ -129,67 +210,53 @@ def main():
         "--interval",
         type=int,
         default=int(_env("EMAIL_CLIENT_POLL_INTERVAL", "15")),
-        help="poll seconds",
+        help="poll seconds (fallback only; servers with IDLE push in real time)",
     )
     args = ap.parse_args()
 
-    def log(msg: str) -> None:
-        print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    log_lock = threading.Lock()
 
-    conns: dict[str, _AccountConn] = {}
-    last_index_mtime = 0.0
-    accounts: list[str] = []
+    def log(msg: str) -> None:
+        with log_lock:
+            print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+    workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
+    last_desired: set[tuple[str, str]] | None = None
 
     while True:
-        # Re-read accounts.json each iteration so the daemon picks up
-        # added accounts without a restart.
         try:
-            idx_mtime = _index_mtime()
-        except Exception:
-            idx_mtime = 0.0
-        if idx_mtime != last_index_mtime:
-            last_index_mtime = idx_mtime
-            accounts = list_accounts()
-            log(f"polling accounts: {accounts}")
-
-        if not accounts:
-            log("no accounts registered; sleeping")
-            time.sleep(args.interval)
+            wanted = desired_workers()
+        except Exception as e:
+            log(f"could not read accounts: {e}")
+            time.sleep(INDEX_CHECK_SECS)
             continue
-
-        for name in accounts:
-            conn = conns.setdefault(name, _AccountConn(name))
-            high_uid_path = account_dir(name) / "high_uid.txt"
-            try:
-                if conn.mb is None:
-                    conn.mb = connect(name, initial_folder=None)
-                    conn.last_reconnect = time.time()
-                    log(f"[{name}] connected")
-                poll_once(name, conn.mb, log, high_uid_path)
-            except Exception as e:
-                log(f"[{name}] error: {e}")
-                try:
-                    if conn.mb:
-                        conn.mb.logout()
-                except Exception:
-                    pass
-                conn.mb = None
-            # Reconnect every 25 min as a safety net.
-            if conn.mb and time.time() - conn.last_reconnect > 1500:
-                try:
-                    conn.mb.logout()
-                except Exception:
-                    pass
-                conn.mb = None
-        time.sleep(args.interval)
-
-
-def _index_mtime() -> float:
-    """Return mtime of accounts.json or 0 if missing."""
-    from imap_client import _accounts_index_path
-
-    p = _accounts_index_path()
-    return p.stat().st_mtime if p.exists() else 0.0
+        if wanted != last_desired:
+            last_desired = wanted
+            log(f"watching: {sorted(wanted)}")
+        for key in list(workers):
+            thread, _ = workers[key]
+            if not thread.is_alive():
+                workers.pop(key)
+                log(f"[{key[0]}:{key[1]}] worker died; restarting")
+        for key in wanted:
+            if key not in workers:
+                account, folder = key
+                stop_event = threading.Event()
+                thread = threading.Thread(
+                    target=folder_worker,
+                    args=(account, folder, args.interval, log, stop_event),
+                    name=f"{account}:{folder}",
+                    daemon=True,
+                )
+                workers[key] = (thread, stop_event)
+                thread.start()
+                log(f"[{account}:{folder}] worker started")
+        for key in list(workers):
+            if key not in wanted:
+                _, stop_event = workers.pop(key)
+                stop_event.set()
+                log(f"[{key[0]}:{key[1]}] worker stopping")
+        time.sleep(INDEX_CHECK_SECS)
 
 
 if __name__ == "__main__":
