@@ -206,12 +206,13 @@ By default the daemon watches only `INBOX` per account. To watch more folders (o
 
 ```bash
 email-client notify list                              # show watched folders
+email-client notify add --all                         # subscribe to every folder
 email-client notify add --folder Archive              # also notify on Archive
 email-client notify add --folder "[Gmail]/Important" --account work
 email-client notify remove --folder INBOX             # stop notifying on INBOX
 ```
 
-`notify add` validates the folder exists on the server before saving. Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
+`notify add --folder` validates the folder exists on the server before saving; `notify add --all` replaces the watch list with every folder on the server (handy as a default, but it includes noisy ones like Sent/Spam/Trash — prune with `notify remove`). Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
 
 The supervisor recomputes the watch set periodically and starts/stops workers as accounts or folders change. Each watched `(account, folder)` keeps its own watermark (`high_uid.txt` for INBOX, `high_uid_<folder>.txt` otherwise); the first run for a folder seeds it with the latest UID to avoid a backlog flood, and later runs emit only new arrivals. Filenames look like `email-client-personal-INBOX-1746480000000-abc123.json` so concurrent notifications never collide. Workers reconnect on error and on a periodic refresh so the OAuth access token stays current.
 

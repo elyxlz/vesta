@@ -752,6 +752,12 @@ def cmd_notify_list(args):
 
 def cmd_notify_add(args):
     acc = resolve_account(args.account)
+    if args.all:
+        with connect(acc, initial_folder=None) as mb:
+            _save_notify_folders(acc, [fi.name for fi in mb.folder.list()])
+        return
+    if not args.folder:
+        sys.exit("pass --folder <name> or --all")
     with connect(acc, initial_folder=None) as mb:
         if not mb.folder.exists(args.folder):
             sys.exit(f"folder {args.folder!r} does not exist on {acc!r}")
@@ -972,8 +978,11 @@ def main():
     nsub = pn.add_subparsers(dest="notify_cmd", required=True)
     nsub_l = nsub.add_parser("list", help="show watched folders")
     _add_account_arg(nsub_l)
-    nsub_a = nsub.add_parser("add", help="also notify on a folder")
-    nsub_a.add_argument("--folder", required=True)
+    nsub_a = nsub.add_parser("add", help="also notify on a folder (or --all)")
+    nsub_a.add_argument("--folder", default=None)
+    nsub_a.add_argument(
+        "--all", action="store_true", help="subscribe to every folder on the server"
+    )
     _add_account_arg(nsub_a)
     nsub_r = nsub.add_parser("remove", help="stop notifying on a folder")
     nsub_r.add_argument("--folder", required=True)

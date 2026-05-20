@@ -126,7 +126,18 @@ If these work, repeat steps 2–3 for each additional account.
 screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
 ```
 
-The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It watches only `INBOX` per account by default; widen or narrow that with `email-client notify add/remove --folder <name>` (see SKILL.md "Choosing which folders notify"). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
+The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
+
+**Ask the user which folders they want to be notified about, per account.** If they have no preference, default to **all** folders. Then set the watch list (see SKILL.md "Choosing which folders notify"):
+
+```bash
+email-client notify add --all --account personal     # default: every folder
+# or a specific set:
+email-client notify add --folder INBOX --account personal
+email-client notify add --folder Archive --account personal
+```
+
+Without this the daemon watches `INBOX` only. Note that `--all` includes folders like Sent/Drafts/Spam/Trash, which can be noisy — drop any the user doesn't want with `email-client notify remove --folder <name>`.
 
 ## 5. Add to restart.md
 
