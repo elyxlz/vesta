@@ -23,15 +23,14 @@ Defaults can be overridden per environment variable so any one
 profile can be reshaped without touching the dict (or use the
 "generic" profile, which has no defaults at all).
 """
+
 from __future__ import annotations
 
 # Mozilla Thunderbird's published public OAuth client IDs. These are
 # baked into Thunderbird's source and are the canonical "open-source
 # mail client" choice for personal Microsoft and Google accounts.
 THUNDERBIRD_MS_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
-THUNDERBIRD_GOOGLE_CLIENT_ID = (
-    "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com"
-)
+THUNDERBIRD_GOOGLE_CLIENT_ID = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com"
 
 
 PROVIDERS: dict[str, dict] = {

@@ -20,6 +20,7 @@ Run as:
     uv run python3 auth.py --account <name> --provider gmail
     uv run python3 auth.py --account <name> --reauth    # force a fresh login
 """
+
 from __future__ import annotations
 
 import argparse
@@ -60,9 +61,7 @@ from providers import (  # noqa: E402
 def auth_device_flow(provider: str, profile: dict, user: str) -> dict:
     import msal
 
-    app = msal.PublicClientApplication(
-        profile["oauth_client_id"], authority=profile["oauth_authority"]
-    )
+    app = msal.PublicClientApplication(profile["oauth_client_id"], authority=profile["oauth_authority"])
     flow = app.initiate_device_flow(scopes=profile["oauth_scopes"])
     if "user_code" not in flow:
         sys.exit(f"device flow init failed: {flow}")
@@ -197,9 +196,7 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
         "(Yahoo, iCloud, Fastmail all have this under 'app-specific "
         "passwords' or 'security'), then paste it below.\n"
     )
-    pw = os.environ.get("EMAIL_CLIENT_APP_PASSWORD") or getpass.getpass(
-        "App password: "
-    )
+    pw = os.environ.get("EMAIL_CLIENT_APP_PASSWORD") or getpass.getpass("App password: ")
     pw = pw.strip()
     if not pw:
         sys.exit("empty app password; aborting")
@@ -258,10 +255,7 @@ def run_add(
         except Exception:
             existing = {}
         if existing.get("provider") == name:
-            print(
-                f"Token already exists for account {account!r} (provider {name}) "
-                f"at {token_path}. Pass --reauth to replace it."
-            )
+            print(f"Token already exists for account {account!r} (provider {name}) at {token_path}. Pass --reauth to replace it.")
             return
 
     print(f"Authenticating {account!r} as {profile['label']} ({name})...")
@@ -292,10 +286,7 @@ def run_add(
     print(f"\nOK. Credential written to {token_path} (mode 600).")
     print(f"Account {account!r} registered (default={idx['default']}).")
     if strategy != "app-password":
-        print(
-            "Refresh tokens are long-lived; the CLI auto-refreshes "
-            "the access token transparently."
-        )
+        print("Refresh tokens are long-lived; the CLI auto-refreshes the access token transparently.")
 
 
 def main() -> None:
@@ -303,8 +294,7 @@ def main() -> None:
     ap.add_argument(
         "--account",
         default=None,
-        help="account name (e.g. 'personal', 'work'). Defaults to "
-        "the existing default account, or 'default' if none.",
+        help="account name (e.g. 'personal', 'work'). Defaults to the existing default account, or 'default' if none.",
     )
     ap.add_argument(
         "--user",
@@ -314,8 +304,7 @@ def main() -> None:
     ap.add_argument(
         "--provider",
         default=None,
-        help="provider key (e.g. gmail, microsoft-personal). "
-        "Defaults to auto-detect from email.",
+        help="provider key (e.g. gmail, microsoft-personal). Defaults to auto-detect from email.",
     )
     ap.add_argument(
         "--reauth",
@@ -327,9 +316,7 @@ def main() -> None:
     account = args.account
     if not account:
         idx = load_accounts_index()
-        account = idx.get("default") or (
-            list_accounts()[0] if list_accounts() else "default"
-        )
+        account = idx.get("default") or (list_accounts()[0] if list_accounts() else "default")
         print(f"(no --account given; using {account!r})", file=sys.stderr)
 
     run_add(

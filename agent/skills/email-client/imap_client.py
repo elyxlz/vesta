@@ -26,6 +26,7 @@ Environment overrides (set in ``~/.bashrc``):
     EMAIL_CLIENT_FROM_NAME        display name on outbound mail
     EMAIL_CLIENT_POLL_INTERVAL    daemon poll seconds
 """
+
 from __future__ import annotations
 
 import argparse
@@ -113,17 +114,11 @@ def resolve_account(name: str | None) -> str:
     """Return the chosen account name or exit with a helpful error."""
     if name:
         if name not in list_accounts():
-            sys.exit(
-                f"unknown account {name!r}; known: {list_accounts()}. "
-                f"Add one with: email-client auth add --account {name}"
-            )
+            sys.exit(f"unknown account {name!r}; known: {list_accounts()}. Add one with: email-client auth add --account {name}")
         return name
     chosen = default_account()
     if not chosen:
-        sys.exit(
-            "no email accounts registered; "
-            "add one with: email-client auth add --account <name>"
-        )
+        sys.exit("no email accounts registered; add one with: email-client auth add --account <name>")
     return chosen
 
 
@@ -193,10 +188,7 @@ def account_user(account: str) -> str:
     user = _env("EMAIL_CLIENT_USER")
     if user:
         return user
-    sys.exit(
-        f"no user configured for account {account!r}; "
-        f"set 'user' in {account_dir(account) / 'config.json'}"
-    )
+    sys.exit(f"no user configured for account {account!r}; set 'user' in {account_dir(account) / 'config.json'}")
 
 
 def account_profile(account: str) -> tuple[str, dict]:
@@ -214,11 +206,7 @@ def account_profile(account: str) -> tuple[str, dict]:
     tok = load_token(account)
     name = (cfg.get("provider") or (tok.get("provider") if tok else "") or "").strip()
     if not name:
-        user = (
-            cfg.get("user")
-            or (tok.get("user") if tok else "")
-            or _env("EMAIL_CLIENT_USER")
-        )
+        user = cfg.get("user") or (tok.get("user") if tok else "") or _env("EMAIL_CLIENT_USER")
         name = detect_provider(user or "") or "microsoft-personal"
     try:
         profile = get_profile(name)
@@ -246,9 +234,7 @@ def _refresh_microsoft(tok: dict, profile: dict, account: str) -> dict:
     rt = tok.get("refresh_token")
     if not rt:
         sys.exit("no refresh_token in cached token; re-run auth")
-    app = msal.PublicClientApplication(
-        profile["oauth_client_id"], authority=profile["oauth_authority"]
-    )
+    app = msal.PublicClientApplication(profile["oauth_client_id"], authority=profile["oauth_authority"])
     res = app.acquire_token_by_refresh_token(rt, scopes=profile["oauth_scopes"])
     if "access_token" not in res:
         sys.exit(f"refresh failed: {res}")
@@ -296,15 +282,9 @@ def get_access_token(account: str | None = None) -> str:
     strategy = profile["auth_strategy"]
     tok = load_token(acc)
     if tok is None:
-        sys.exit(
-            f"no token for account {acc!r}; run "
-            f"'email-client auth add --account {acc}' first"
-        )
+        sys.exit(f"no token for account {acc!r}; run 'email-client auth add --account {acc}' first")
     if strategy == "app-password":
-        sys.exit(
-            f"provider {name} uses app-password auth; "
-            "get_access_token() is not applicable"
-        )
+        sys.exit(f"provider {name} uses app-password auth; get_access_token() is not applicable")
     expires_at = tok.get("_expires_at", 0)
     if time.time() < expires_at - 60 and tok.get("access_token"):
         return tok["access_token"]
@@ -322,10 +302,7 @@ def get_app_password(account: str | None = None) -> str:
     acc = resolve_account(account)
     tok = load_token(acc)
     if tok is None:
-        sys.exit(
-            f"no credential for account {acc!r}; run "
-            f"'email-client auth add --account {acc}' first"
-        )
+        sys.exit(f"no credential for account {acc!r}; run 'email-client auth add --account {acc}' first")
     pw = tok.get("app_password")
     if not pw:
         sys.exit(f"no app_password in token for {acc!r}; re-run auth for this account")
@@ -346,8 +323,7 @@ def connect(account: str | None = None, *, initial_folder: str | None = "INBOX")
     port = int(profile.get("imap_port", 993))
     if not host:
         sys.exit(
-            f"provider {name} (account {acc!r}) has no IMAP host configured; "
-            "set imap_host in the per-account config.json or EMAIL_CLIENT_HOST"
+            f"provider {name} (account {acc!r}) has no IMAP host configured; set imap_host in the per-account config.json or EMAIL_CLIENT_HOST"
         )
     mb = MailBox(host, port=port)
     if profile["auth_strategy"] == "app-password":
@@ -541,9 +517,7 @@ def cmd_attachments(args):
     if args.part is not None:
         items = [it for it in items if it["part_index"] == args.part]
         if not items:
-            sys.exit(
-                f"no attachment with part_index={args.part} on uid={args.uid}"
-            )
+            sys.exit(f"no attachment with part_index={args.part} on uid={args.uid}")
 
     if not items:
         print(json.dumps({"saved": [], "uid": args.uid}, indent=2))
@@ -636,9 +610,7 @@ def cmd_mark(args):
             {
                 "ok": True,
                 "uids": uids,
-                "actions": [
-                    ("+FLAGS" if v else "-FLAGS", f"({f})") for f, v in actions
-                ],
+                "actions": [("+FLAGS" if v else "-FLAGS", f"({f})") for f, v in actions],
             }
         )
     )
@@ -680,9 +652,7 @@ def cmd_delete(args):
             return
         dest = resolve_special_folder(mb, "trash")
         mb.move(uids, dest)
-        print(
-            json.dumps({"ok": True, "uids": uids, "from": args.folder, "to": dest})
-        )
+        print(json.dumps({"ok": True, "uids": uids, "from": args.folder, "to": dest}))
 
 
 # -- status --------------------------------------------------------
@@ -857,8 +827,7 @@ def main():
     p.add_argument(
         "--out-dir",
         default=None,
-        help="override download directory "
-        "(default $EMAIL_CLIENT_DIR/attachments/<uid>/)",
+        help="override download directory (default $EMAIL_CLIENT_DIR/attachments/<uid>/)",
     )
     p.add_argument(
         "--part",
@@ -870,8 +839,7 @@ def main():
 
     p = sub.add_parser(
         "mark",
-        help="set/clear flags (\\Seen \\Flagged \\Answered \\Draft) or custom "
-        "keywords on one or more UIDs",
+        help="set/clear flags (\\Seen \\Flagged \\Answered \\Draft) or custom keywords on one or more UIDs",
     )
     p.add_argument("--folder", default="INBOX")
     p.add_argument(
@@ -910,8 +878,7 @@ def main():
 
     p = sub.add_parser(
         "move",
-        help="move one or more UIDs to another folder (MOVE if supported, "
-        "else COPY+STORE+EXPUNGE)",
+        help="move one or more UIDs to another folder (MOVE if supported, else COPY+STORE+EXPUNGE)",
     )
     p.add_argument("--folder", default="INBOX", help="source folder")
     p.add_argument("--uid", required=True, help="UID or comma-separated UIDs")
@@ -922,9 +889,7 @@ def main():
     )
     _add_account_arg(p)
 
-    p = sub.add_parser(
-        "archive", help="convenience for move --to-folder Archive"
-    )
+    p = sub.add_parser("archive", help="convenience for move --to-folder Archive")
     p.add_argument("--folder", default="INBOX", help="source folder")
     p.add_argument("--uid", required=True, help="UID or comma-separated UIDs")
     _add_account_arg(p)
@@ -942,9 +907,7 @@ def main():
     )
     _add_account_arg(p)
 
-    pf = sub.add_parser(
-        "folder", help="create / rename / delete / subscribe mailboxes"
-    )
+    pf = sub.add_parser("folder", help="create / rename / delete / subscribe mailboxes")
     fsub = pf.add_subparsers(dest="folder_cmd", required=True)
     pf_c = fsub.add_parser("create", help="create a new mailbox")
     pf_c.add_argument(
@@ -960,9 +923,7 @@ def main():
     pf_d = fsub.add_parser("delete", help="delete a mailbox")
     pf_d.add_argument("--name", required=True)
     _add_account_arg(pf_d)
-    pf_s = fsub.add_parser(
-        "subscribe", help="subscribe (or --unsubscribe) to a mailbox"
-    )
+    pf_s = fsub.add_parser("subscribe", help="subscribe (or --unsubscribe) to a mailbox")
     pf_s.add_argument("--name", required=True)
     pf_s.add_argument(
         "--unsubscribe",
@@ -980,9 +941,7 @@ def main():
     _add_account_arg(nsub_l)
     nsub_a = nsub.add_parser("add", help="also notify on a folder (or --all)")
     nsub_a.add_argument("--folder", default=None)
-    nsub_a.add_argument(
-        "--all", action="store_true", help="subscribe to every folder on the server"
-    )
+    nsub_a.add_argument("--all", action="store_true", help="subscribe to every folder on the server")
     _add_account_arg(nsub_a)
     nsub_r = nsub.add_parser("remove", help="stop notifying on a folder")
     nsub_r.add_argument("--folder", required=True)

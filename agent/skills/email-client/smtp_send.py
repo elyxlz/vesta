@@ -49,6 +49,7 @@ folder with the ``\\Draft`` flag instead of sending it. Works with
 ``--reply-to-uid`` / ``--forward-uid`` so a threaded reply or forward
 can be drafted for the user to review and send from any mail client.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -122,43 +123,23 @@ def _quote_body(body: str, from_header: str, date_header: str) -> str:
 
 def _forward_block(orig: dict) -> str:
     """Return the inlined original message block for a forward."""
-    headers = (
-        f"From: {orig.get('from', '')}\n"
-        f"Date: {orig.get('date', '')}\n"
-        f"Subject: {orig.get('subject', '')}\n"
-        f"To: {orig.get('to', '')}\n"
-    )
+    headers = f"From: {orig.get('from', '')}\nDate: {orig.get('date', '')}\nSubject: {orig.get('subject', '')}\nTo: {orig.get('to', '')}\n"
     cc = orig.get("cc") or ""
     if cc:
         headers += f"Cc: {cc}\n"
     body = orig.get("body", "") or ""
-    return (
-        "\n\n---------- Forwarded message ----------\n"
-        + headers
-        + "\n"
-        + body
-        + "\n"
-    )
+    return "\n\n---------- Forwarded message ----------\n" + headers + "\n" + body + "\n"
 
 
 def _strip_html(html: str) -> str:
     """Crude HTML to plain-text fallback for the alt part of an HTML-only send."""
     s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.I)
     s = _re.sub(r"<[^>]+>", "", s)
-    s = (
-        s.replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", '"')
-        .replace("&#39;", "'")
-    )
+    s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
     return _re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
-def fetch_original(
-    account: str | None, folder: str, uid: str
-) -> dict:
+def fetch_original(account: str | None, folder: str, uid: str) -> dict:
     """Fetch the original message by UID from the given folder.
 
     Returns a dict with ``message_id``, ``references``, ``from``, ``to``,
@@ -246,10 +227,7 @@ def _load_attachments(paths: list[str] | None) -> list[dict]:
         if total > MAX_ATTACH_TOTAL_BYTES:
             mb = total / (1024 * 1024)
             cap_mb = MAX_ATTACH_TOTAL_BYTES / (1024 * 1024)
-            sys.exit(
-                f"attachments too large: {mb:.1f} MB exceeds {cap_mb:.0f} MB cap "
-                "(most providers reject larger messages); aborting send"
-            )
+            sys.exit(f"attachments too large: {mb:.1f} MB exceeds {cap_mb:.0f} MB cap (most providers reject larger messages); aborting send")
         guess, _enc = mimetypes.guess_type(p.name)
         if not guess:
             maintype, subtype = "application", "octet-stream"
@@ -356,10 +334,7 @@ def send(
     if reply_to_uid:
         orig = fetch_original(acc, reply_folder, reply_to_uid)
         if not orig["message_id"]:
-            sys.exit(
-                f"original message uid={reply_to_uid} has no Message-ID header; "
-                "cannot thread a reply"
-            )
+            sys.exit(f"original message uid={reply_to_uid} has no Message-ID header; cannot thread a reply")
         in_reply_to = orig["message_id"]
         chain = (orig["references"] + " " + orig["message_id"]).strip()
         references = _re.sub(r"\s+", " ", chain)
@@ -368,9 +343,7 @@ def send(
         if to is None:
             sender_addr = _from_address(orig["from"])
             if not sender_addr:
-                sys.exit(
-                    "cannot default --to from the original message; no usable From header"
-                )
+                sys.exit("cannot default --to from the original message; no usable From header")
             to = sender_addr
         if not cc_explicit and orig.get("cc"):
             cc_list = [c.strip() for c in orig["cc"].split(",") if c.strip()]
@@ -450,9 +423,7 @@ def send(
             sys.exit(f"smtp auth failed: {e}")
     else:
         access = get_access_token(acc)
-        auth_b64 = base64.b64encode(
-            f"user={user}\x01auth=Bearer {access}\x01\x01".encode()
-        ).decode()
+        auth_b64 = base64.b64encode(f"user={user}\x01auth=Bearer {access}\x01\x01".encode()).decode()
         code, resp = s.docmd("AUTH", f"XOAUTH2 {auth_b64}")
         if code == 334:
             code, resp = s.docmd("")
@@ -513,8 +484,7 @@ def main():
     ap.add_argument(
         "--to",
         default=None,
-        help="recipient (required unless --reply-to-uid is set, in which "
-        "case the original sender is the default)",
+        help="recipient (required unless --reply-to-uid is set, in which case the original sender is the default)",
     )
     ap.add_argument(
         "--cc",
@@ -531,8 +501,7 @@ def main():
     ap.add_argument(
         "--subject",
         default=None,
-        help="subject (required unless --reply-to-uid is set, in which "
-        "case the original subject prefixed with Re: is the default)",
+        help="subject (required unless --reply-to-uid is set, in which case the original subject prefixed with Re: is the default)",
     )
     ap.add_argument(
         "--body",
@@ -553,8 +522,7 @@ def main():
     ap.add_argument(
         "--reply-to-uid",
         default=None,
-        help="UID of an existing message to thread this reply to "
-        "(fetched via IMAP from --reply-folder)",
+        help="UID of an existing message to thread this reply to (fetched via IMAP from --reply-folder)",
     )
     ap.add_argument(
         "--reply-folder",
@@ -564,8 +532,7 @@ def main():
     ap.add_argument(
         "--forward-uid",
         default=None,
-        help="UID of an existing message to forward "
-        "(fetched via IMAP from --forward-folder); requires --to",
+        help="UID of an existing message to forward (fetched via IMAP from --forward-folder); requires --to",
     )
     ap.add_argument(
         "--forward-folder",
@@ -577,8 +544,7 @@ def main():
         action="append",
         default=None,
         metavar="PATH",
-        help="attach a file; pass multiple times for multiple attachments. "
-        "Total size capped at 25 MB",
+        help="attach a file; pass multiple times for multiple attachments. Total size capped at 25 MB",
     )
     ap.add_argument(
         "--no-quote",
@@ -598,8 +564,7 @@ def main():
     ap.add_argument(
         "--draft",
         action="store_true",
-        help="save the composed message to the Drafts folder instead of sending; "
-        "works with --reply-to-uid / --forward-uid to draft for review",
+        help="save the composed message to the Drafts folder instead of sending; works with --reply-to-uid / --forward-uid to draft for review",
     )
     args = ap.parse_args()
     send(

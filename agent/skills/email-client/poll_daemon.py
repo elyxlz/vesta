@@ -20,6 +20,7 @@ Notifications carry source ``email-client`` and ``account`` + ``folder``
 fields naming the source mailbox. The filename includes both so
 simultaneous notifications never collide.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,10 +92,7 @@ def write_notification(account: str, folder: str, meta: dict) -> None:
         "date": meta["date"],
         "uid": meta["uid"],
     }
-    fname = (
-        f"email-client-{account}-{_sanitize_folder(folder)}-"
-        f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
-    )
+    fname = f"email-client-{account}-{_sanitize_folder(folder)}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
     (NOTIF_DIR / fname).write_text(json.dumps(notif, ensure_ascii=False, indent=2))
 
 
@@ -144,16 +142,11 @@ def emit_new(account: str, folder: str, mb, log, high_uid_path: pathlib.Path) ->
             "date": m.date_str,
         }
         write_notification(account, folder, meta)
-        log(
-            f"[{account}:{folder}] notified uid={m.uid} "
-            f"from={meta['from'][:60]} subj={meta['subject'][:60]}"
-        )
+        log(f"[{account}:{folder}] notified uid={m.uid} from={meta['from'][:60]} subj={meta['subject'][:60]}")
     set_high_uid(high_uid_path, max(int(m.uid) for m in new_msgs))
 
 
-def folder_worker(
-    account: str, folder: str, interval: int, log, stop_event: threading.Event
-) -> None:
+def folder_worker(account: str, folder: str, interval: int, log, stop_event: threading.Event) -> None:
     """Watch one ``(account, folder)`` until ``stop_event`` is set.
 
     Holds a persistent connection: waits on IMAP IDLE when available,
