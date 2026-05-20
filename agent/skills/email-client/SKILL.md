@@ -19,9 +19,9 @@ Do NOT use it when:
 
 ## Notes & rules
 
-Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task — and especially when processing a new-mail notification — and apply every rule that matches.** These rules override default behavior. (Setup adds a pointer in `~/agent/MEMORY.md` reminding you to load and apply this section on every `email-client` notification — see SETUP.md step 6.)
+Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task (and especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (Setup adds a pointer in `~/agent/MEMORY.md` reminding you to load and apply this section on every `email-client` notification; see SETUP.md step 6.)
 
-When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands above. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task — only durable rules.
+When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands above. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task, only durable rules.
 
 How rules map to commands:
 
@@ -49,9 +49,9 @@ One-time per account, ~2 minutes. See [SETUP.md](SETUP.md) for install, every au
 
 Two binaries plus a daemon:
 
-- `email-client` — read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
-- `email-client-send` — outbound mail (send, reply, forward, save draft)
-- `poll_daemon.py` — watches each account's chosen folders (INBOX by default) and writes a notification per new message
+- `email-client` - read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
+- `email-client-send` - outbound mail (send, reply, forward, save draft)
+- `poll_daemon.py` - watches each account's chosen folders (INBOX by default) and writes a notification per new message
 
 Omit `--account` on any command to use the default account from `accounts.json`. All commands accept `--account` and (where relevant) `--folder` (default `INBOX`).
 
@@ -91,7 +91,7 @@ email-client status --folder INBOX            # counts without fetching
 email-client status --folder Archive --account work
 ```
 
-Returns `{folder, messages, unseen, recent, uidnext, uidvalidity}` via IMAP `STATUS` — far cheaper than `list` when you only need "how many unread". Loop over folders from `list-folders` for a full overview.
+Returns `{folder, messages, unseen, recent, uidnext, uidvalidity}` via IMAP `STATUS` - far cheaper than `list` when you only need "how many unread". Loop over folders from `list-folders` for a full overview.
 
 ## Manage messages
 
@@ -123,7 +123,7 @@ email-client folder subscribe --name Newsletters
 email-client folder subscribe --name Newsletters --unsubscribe
 ```
 
-`create` makes a new mailbox (nest using the server's hierarchy delimiter, usually `/` or `.` — check `list-folders`). `move --to-folder X` fails if `X` doesn't exist, so create it first. `subscribe` toggles whether a folder appears in clients that only show subscribed mailboxes. All honor `--account`.
+`create` makes a new mailbox (nest using the server's hierarchy delimiter, usually `/` or `.` - check `list-folders`). `move --to-folder X` fails if `X` doesn't exist, so create it first. `subscribe` toggles whether a folder appears in clients that only show subscribed mailboxes. All honor `--account`.
 
 ## Send
 
@@ -140,9 +140,9 @@ Sends as the configured user for the account. The `From` header uses the configu
 
 - `--cc` / `--bcc`: repeat the flag for multiple addresses.
 - `--body-html`: send HTML. Combine with `--body` for multipart/alternative; pass `--body-html` alone and a plain-text fallback is synthesized.
-- `--attach <path>`: repeat for multiple. MIME type guessed by extension (fallback `application/octet-stream`). Total capped at 25 MB — the send aborts with a clear error past that, since most providers reject larger.
+- `--attach <path>`: repeat for multiple. MIME type guessed by extension (fallback `application/octet-stream`). Total capped at 25 MB - the send aborts with a clear error past that, since most providers reject larger.
 
-After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` — so it works even when a server names the folder unusually.
+After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
 ### Reply
 
@@ -175,7 +175,7 @@ Pass `--forward-uid <uid>` (and `--forward-folder` if not in `INBOX`). `--to` is
 
 ### Drafts
 
-Pass `--draft` to save the composed message to the Drafts folder (flagged `\Draft`) instead of sending it. It accepts the full compose surface — `--cc`/`--bcc`, `--body-html`, `--attach` — and crucially `--reply-to-uid` / `--forward-uid`, so you can draft a threaded reply or forward for the user to review and send from any mail client.
+Pass `--draft` to save the composed message to the Drafts folder (flagged `\Draft`) instead of sending it. It accepts the full compose surface: `--cc`/`--bcc`, `--body-html`, `--attach` - and crucially `--reply-to-uid` / `--forward-uid`, so you can draft a threaded reply or forward for the user to review and send from any mail client.
 
 ```bash
 email-client-send --account personal --to recipient@example.com --subject "Proposal" --body "rough notes..." --draft
@@ -202,7 +202,7 @@ Start the poll daemon (see SETUP.md). It runs one worker per **(account, folder)
 
 ### Choosing which folders notify
 
-By default the daemon watches only `INBOX` per account. To watch more folders (or fewer), set the per-account watch list — the daemon picks up changes within ~10s, no restart needed:
+By default the daemon watches only `INBOX` per account. To watch more folders (or fewer), set the per-account watch list; the daemon picks up changes within ~10s, no restart needed:
 
 ```bash
 email-client notify list                              # show watched folders
@@ -212,7 +212,7 @@ email-client notify add --folder "[Gmail]/Important" --account work
 email-client notify remove --folder INBOX             # stop notifying on INBOX
 ```
 
-`notify add --folder` validates the folder exists on the server before saving; `notify add --all` replaces the watch list with every folder on the server (handy as a default, but it includes noisy ones like Sent/Spam/Trash — prune with `notify remove`). Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
+`notify add --folder` validates the folder exists on the server before saving; `notify add --all` replaces the watch list with every folder on the server (handy as a default, but it includes noisy ones like Sent/Spam/Trash; prune with `notify remove`). Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
 
 The supervisor recomputes the watch set periodically and starts/stops workers as accounts or folders change. Each watched `(account, folder)` keeps its own watermark (`high_uid.txt` for INBOX, `high_uid_<folder>.txt` otherwise); the first run for a folder seeds it with the latest UID to avoid a backlog flood, and later runs emit only new arrivals. Filenames look like `email-client-personal-INBOX-1746480000000-abc123.json` so concurrent notifications never collide. Workers reconnect on error and on a periodic refresh so the OAuth access token stays current.
 
@@ -236,17 +236,17 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
 
 Settings live per account in `accounts/<name>/config.json`. Env vars provide defaults applied to whichever account is in use:
 
-- `EMAIL_CLIENT_DIR` — token + state location (default `~/.email-client`)
-- `EMAIL_CLIENT_USER` — default email address (used at `auth add` when `--user` is omitted)
-- `EMAIL_CLIENT_PROVIDER` — default provider key
-- `EMAIL_CLIENT_HOST` — IMAP host override
-- `EMAIL_CLIENT_SMTP_HOST` / `EMAIL_CLIENT_SMTP_PORT` — SMTP host / port (default 587 STARTTLS)
-- `EMAIL_CLIENT_OAUTH_CLIENT_ID` — OAuth client ID override
-- `EMAIL_CLIENT_OAUTH_AUTHORITY` — Microsoft authority override (e.g. `/common` for mixed work+personal)
-- `EMAIL_CLIENT_OAUTH_SCOPES` — whitespace-separated scope override
-- `EMAIL_CLIENT_FROM_NAME` — display name on outbound mail (default: username portion of the email)
-- `EMAIL_CLIENT_POLL_INTERVAL` — seconds between polls (default 15)
-- `EMAIL_CLIENT_APP_PASSWORD` — pre-supply the app password to `auth add` instead of prompting (for scripts)
+- `EMAIL_CLIENT_DIR` - token + state location (default `~/.email-client`)
+- `EMAIL_CLIENT_USER` - default email address (used at `auth add` when `--user` is omitted)
+- `EMAIL_CLIENT_PROVIDER` - default provider key
+- `EMAIL_CLIENT_HOST` - IMAP host override
+- `EMAIL_CLIENT_SMTP_HOST` / `EMAIL_CLIENT_SMTP_PORT` - SMTP host / port (default 587 STARTTLS)
+- `EMAIL_CLIENT_OAUTH_CLIENT_ID` - OAuth client ID override
+- `EMAIL_CLIENT_OAUTH_AUTHORITY` - Microsoft authority override (e.g. `/common` for mixed work+personal)
+- `EMAIL_CLIENT_OAUTH_SCOPES` - whitespace-separated scope override
+- `EMAIL_CLIENT_FROM_NAME` - display name on outbound mail (default: username portion of the email)
+- `EMAIL_CLIENT_POLL_INTERVAL` - seconds between polls (default 15)
+- `EMAIL_CLIENT_APP_PASSWORD` - pre-supply the app password to `auth add` instead of prompting (for scripts)
 
 ## Microsoft 365 with a custom domain
 
@@ -267,4 +267,4 @@ Approve the device-flow code at https://www.microsoft.com/link. Three org-side b
 2. **IMAP/SMTP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
 3. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
 
-If 1–3 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.
+If 1-3 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.
