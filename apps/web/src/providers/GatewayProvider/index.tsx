@@ -14,6 +14,9 @@ import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
 import type { AgentInfo, GatewayVersionInfo } from "@/lib/types";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
+// A manual check fetches from GitHub server-side, so allow longer than the
+// cached /version read (vestad's own fetch timeout is 10s).
+const VERSION_CHECK_TIMEOUT_MS = 15000;
 
 async function fetchVersionInfo(): Promise<GatewayVersionInfo | null> {
   try {
@@ -42,6 +45,7 @@ interface GatewayContextValue {
   agentsFetched: boolean;
   send: (event: object) => boolean;
   triggerGatewayUpdate: () => void;
+  checkForUpdate: () => Promise<void>;
 }
 
 const GatewayContext = createContext<GatewayContextValue | null>(null);
@@ -58,6 +62,7 @@ const disconnectedValue: GatewayContextValue = {
   agentsFetched: false,
   send: () => false,
   triggerGatewayUpdate: () => {},
+  checkForUpdate: async () => {},
 };
 
 function controlWsUrl(): string {
@@ -90,6 +95,19 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     });
     skipVersionGateRef.current = true;
     setConnectEpoch((e) => e + 1);
+  };
+
+  const checkForUpdate = async () => {
+    try {
+      const data = await apiJson<GatewayVersionInfo>("/version/check", {
+        method: "POST",
+        signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
+      });
+      setUpdateAvailable(!!data.update_available);
+      setLatestVersion(data.latest_version ?? null);
+    } catch (err) {
+      console.warn("[gateway] update check request failed:", err);
+    }
   };
 
   useEffect(() => {
@@ -227,6 +245,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         agentsFetched,
         send,
         triggerGatewayUpdate,
+        checkForUpdate,
       }}
     >
       {versionMismatch ? (

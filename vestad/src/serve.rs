@@ -215,6 +215,24 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    Json(version_json(&state).await)
+}
+
+// Force an immediate GitHub release check (instead of waiting for the periodic
+// background task) and return the refreshed version info.
+async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    match tokio::task::spawn_blocking(update_check::check_once).await {
+        Ok(Ok(info)) => {
+            let mut slot = state.update_info.lock().await;
+            *slot = Some(info);
+        }
+        Ok(Err(e)) => tracing::warn!("manual update check failed: {}", e),
+        Err(e) => tracing::error!("manual update check task failed: {}", e),
+    }
+    Json(version_json(&state).await)
+}
+
+async fn version_json(state: &SharedState) -> serde_json::Value {
     let update = state.update_info.lock().await;
     let (latest, update_available) = match update.as_ref() {
         Some(info) => (
@@ -223,13 +241,13 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         ),
         None => (None, None),
     };
-    Json(serde_json::json!({
+    serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
-    }))
+    })
 }
 
 #[derive(Deserialize)]
@@ -1680,6 +1698,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let vestad_protected = Router::new()
         .route("/version", get(version))
+        .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/logs", get(gateway_logs_handler))
