@@ -47,8 +47,13 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
-  const { reachable, gatewayVersion, gatewayBranch, updateAvailable, checkForUpdate } =
-    useGateway();
+  const {
+    reachable,
+    gatewayVersion,
+    gatewayBranch,
+    updateAvailable,
+    checkForUpdate,
+  } = useGateway();
   const [checking, setChecking] = useState(false);
 
   const onCheckForUpdate = async () => {
