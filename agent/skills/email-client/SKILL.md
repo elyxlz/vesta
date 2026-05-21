@@ -250,21 +250,19 @@ Settings live per account in `accounts/<name>/config.json`. Env vars provide def
 
 ## Microsoft 365 with a custom domain
 
-For an address on a custom domain hosted by M365 (e.g. `you@yourcompany.com`, mailbox on Exchange Online), use the `generic` provider:
+For an address on a custom domain hosted by M365 (e.g. `you@yourcompany.com`, mailbox on Exchange Online), use the `microsoft-work` provider:
 
 ```bash
-export EMAIL_CLIENT_PROVIDER=generic
-export EMAIL_CLIENT_OAUTH_CLIENT_ID=9e5f94bc-e8a4-4e73-b8be-63364c29d753   # Thunderbird, multi-tenant
-export EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/common
-export EMAIL_CLIENT_HOST=outlook.office365.com
-export EMAIL_CLIENT_SMTP_HOST=smtp.office365.com
-email-client auth add --account work --provider generic --user you@yourcompany.com
+email-client auth add --account work --provider microsoft-work --user you@yourcompany.com
 ```
+
+This profile ships with the right `outlook.office365.com` IMAP/SMTP hosts, the `Sent Items` folder name M365 work mailboxes use, the Thunderbird multi-tenant OAuth client ID, and `https://login.microsoftonline.com/organizations` as the authority. The authority matters: `/common` mints a usable access token the first time but fails refresh ~1 hour later with `AADSTS7000012: The grant was obtained for a different tenant`, because `/common` accepts any account type and the refresh has to resolve to the specific tenant. `/organizations` binds the grant to the AAD tenant up front, so refresh works.
 
 Approve the device-flow code at https://www.microsoft.com/link. Three org-side blockers can stop this (none fixable from the skill):
 
-1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it.
-2. **IMAP/SMTP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
-3. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
+1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it (the env override still applies on top of any provider).
+2. **IMAP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
+3. **SMTP AUTH disabled on the tenant** → outbound returns `535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`. This is the M365 default. Reading and saving drafts still work over IMAP; outbound is blocked until an admin runs `Set-TransportConfig -SmtpClientAuthenticationDisabled $false` (tenant-wide) or `Set-CASMailbox -Identity user@... -SmtpClientAuthenticationDisabled $false` (per-mailbox). If you can't change it, use `--draft` and let the user send from their normal client, or switch outbound to the `microsoft` (Graph) skill.
+4. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
 
-If 1-3 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.
+If 1-4 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.

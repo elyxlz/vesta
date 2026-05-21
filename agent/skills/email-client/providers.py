@@ -50,6 +50,27 @@ PROVIDERS: dict[str, dict] = {
             "https://outlook.office.com/SMTP.Send",
         ],
     },
+    "microsoft-work": {
+        "label": "Microsoft 365 work (Exchange Online, custom domain)",
+        "auth_strategy": "device-flow",
+        "imap_host": "outlook.office365.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.office365.com",
+        "smtp_port": 587,
+        "smtp_starttls": True,
+        "sent_folder": "Sent Items",
+        "oauth_client_id": THUNDERBIRD_MS_CLIENT_ID,
+        # /organizations restricts to AAD-backed tenants, so the refresh
+        # token is bound to the specific tenant. /common can mint a token
+        # the first time but then fails refresh with AADSTS7000012
+        # ("grant was obtained for a different tenant") because the
+        # resolved tenant doesn't match /common's "any-account" scope.
+        "oauth_authority": "https://login.microsoftonline.com/organizations",
+        "oauth_scopes": [
+            "https://outlook.office.com/IMAP.AccessAsUser.All",
+            "https://outlook.office.com/SMTP.Send",
+        ],
+    },
     "gmail": {
         "label": "Gmail (personal Google account)",
         "auth_strategy": "loopback-oauth",

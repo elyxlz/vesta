@@ -7,6 +7,7 @@ One-time setup per account, ~2 minutes. The right auth flow is picked automatica
 Run this once and the daemon and both binaries share the same per-account token cache and refresh tokens transparently.
 
 - **Microsoft personal** (`outlook.com`, `hotmail.com`, `live.com`): OAuth2 **device flow**.
+- **Microsoft 365 work** (custom domain on Exchange Online): OAuth2 **device flow** via `--provider microsoft-work`.
 - **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
 - **Yahoo / iCloud / Fastmail / generic IMAP**: **app password**.
 
@@ -179,4 +180,6 @@ Without this line you still handle email on request, but standing rules (especia
 - **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and the daemon shows in `screen -ls`.
 - **`list --limit 200` is slow on a huge mailbox**: expected; IMAP `SEARCH ALL` + `FETCH` is O(n). Scope with `search --query 'SINCE <date>'`.
 - **`unknown account 'foo'`**: run `email-client auth list`; add the missing one with `email-client auth add --account foo`.
-- **Microsoft 365 custom domain** (`you@yourcompany.com`): see SKILL.md "Microsoft 365 with a custom domain" for the `generic`-provider env settings and the three org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, Conditional Access).
+- **Microsoft 365 custom domain** (`you@yourcompany.com`): use `--provider microsoft-work`. See SKILL.md "Microsoft 365 with a custom domain" for the four org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, SMTP AUTH disabled, Conditional Access).
+- **`AADSTS7000012: The grant was obtained for a different tenant`** on refresh ~1h after a working first auth: account was authed against `/common` but resolves to a work tenant. Re-auth via `--provider microsoft-work` (or `EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/organizations`) and the refresh sticks.
+- **`535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`** on send: tenant blocks SMTP AUTH. IMAP read and `--draft` still work; outbound needs an admin to flip the tenant or per-mailbox switch (see SKILL.md M365 troubleshooting #3).
