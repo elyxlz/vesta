@@ -1,6 +1,6 @@
 [package]
 name = "vesta"
-version = "0.1.150"
+version = "0.1.151"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
