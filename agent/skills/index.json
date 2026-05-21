@@ -28,6 +28,10 @@
     "description": "Self-improvement and memory curation; used nightly by the dreamer or anytime."
   },
   {
+    "name": "email-client",
+    "description": "Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Use to read an inbox, send/reply/forward mail, save drafts, manage messages (read/flag/answered/draft/categories, move/archive/delete), create/rename/delete folders, check folder counts, handle attachments, or get paged on new mail in real time (IMAP IDLE) from chosen folders. OAuth2 where supported, app-password fallback otherwise. Requires the poll daemon for notifications."
+  },
+  {
     "name": "essay-iter",
     "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
   },
