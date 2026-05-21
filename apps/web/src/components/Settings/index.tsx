@@ -5,6 +5,7 @@ import {
   Moon,
   Monitor,
   LogOut,
+  RefreshCw,
 } from "lucide-react";
 import {
   Dialog,
@@ -46,7 +47,23 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
-  const { reachable, gatewayVersion, gatewayBranch } = useGateway();
+  const {
+    reachable,
+    gatewayVersion,
+    gatewayBranch,
+    updateAvailable,
+    checkForUpdate,
+  } = useGateway();
+  const [checking, setChecking] = useState(false);
+
+  const onCheckForUpdate = async () => {
+    setChecking(true);
+    try {
+      await checkForUpdate();
+    } finally {
+      setChecking(false);
+    }
+  };
   const { isTauri } = useTauri();
   const naturalPacing = useChatPacing((s) => s.natural);
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
@@ -166,6 +183,24 @@ export function SettingsDialog({
                       {gatewayVersion && gatewayBranch && " "}
                       {gatewayBranch && <>({gatewayBranch})</>}
                     </span>
+                  )}
+                  {reachable && (
+                    <button
+                      type="button"
+                      onClick={onCheckForUpdate}
+                      disabled={checking}
+                      className="mt-1 inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        data-icon="inline-start"
+                        className={checking ? "animate-spin" : undefined}
+                      />
+                      {updateAvailable
+                        ? "Update available"
+                        : checking
+                          ? "Checking…"
+                          : "Check for updates"}
+                    </button>
                   )}
                 </div>
               </div>

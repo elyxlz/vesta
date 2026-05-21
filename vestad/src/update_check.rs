@@ -1,4 +1,6 @@
-pub const CHECK_INTERVAL_SECS: u64 = 10 * 60;
+// Poll GitHub for new releases 4 times a day (every 6 hours). The desktop app
+// can force an immediate check via POST /version/check.
+pub const CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
 const ERROR_SNIPPET_MAX_LEN: usize = 300;
 const HTTP_STATUS_SENTINEL: &str = "\n__VESTA_HTTP_STATUS__:";
