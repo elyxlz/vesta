@@ -39,6 +39,13 @@ Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `ch
    ```
    Skip the commit if nothing's staged.
 
+   **Bind-mount drift.** If `agent/pyproject.toml` or `agent/uv.lock` show as modified after step 2 (the image rebuild bumped them and the `skip-worktree` bit got cleared), the merge will abort with "Your local changes ... would be overwritten." Commit them as a baseline first; they're outside the sparse pattern so `--sparse` is required:
+   ```bash
+   git -C ~ update-index --no-skip-worktree agent/pyproject.toml agent/uv.lock 2>/dev/null || true
+   git -C ~ add --sparse agent/pyproject.toml agent/uv.lock
+   git -C ~ commit -m "chore: sync bind-mount state baseline" 2>/dev/null || true
+   ```
+
 3. **Narrow sparse pattern (one-shot migration).** Scope `agent/skills/*/` to only currently-installed skills so future merges don't pull in newly-added upstream skills. Run after step 2 so a recoverable HEAD exists before the worktree is rewritten:
    ```bash
    ~/agent/skills/upstream-sync/scripts/narrow-sparse-checkout.sh
