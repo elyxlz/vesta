@@ -1,5 +1,7 @@
 # Finance Setup
 
+> **Coverage check first.** Enable Banking is a Finland-licensed AISP and does not serve UK residents. If the user lives in the UK, this skill will fail at the bank-link step with "Due to local financial regulation you are not currently able to grant consent." See [SKILL.md](SKILL.md#coverage-and-limitations) for alternatives. For other jurisdictions, confirm coverage on the Enable Banking site before continuing.
+
 ## 1. Enable Banking account
 
 1. Sign in at https://enablebanking.com/sign-in/ (magic link to your email)
