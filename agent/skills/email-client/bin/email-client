@@ -1,0 +1,4 @@
+#!/bin/bash
+# Email client read commands. Runs in the persistent uv env at $EMAIL_CLIENT_DIR/runtime.
+DIR="${EMAIL_CLIENT_DIR:-$HOME/.email-client}"
+cd "$DIR/runtime" && exec uv run --quiet python3 "$DIR/imap_client.py" "$@"
