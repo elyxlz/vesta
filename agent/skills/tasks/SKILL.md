@@ -87,6 +87,8 @@ When a task has a due date, 4 auto-generated reminders are created:
 - 1 hour before due
 - 15 minutes before due
 
+There is **no at-due fire**: when the due time itself is reached, no notification is emitted. If you want a fire at the exact due time (e.g. user says "remind me at 6pm to X"), set an explicit reminder with `tasks remind "X" --at "..." --tz "..."` instead of relying on `tasks add --due-datetime`.
+
 These are skipped if the trigger time is already in the past. They are cleaned up when:
 - The task is marked done (`--status done`)
 - The task is deleted (FK cascade)
@@ -101,7 +103,6 @@ When the daemon restarts, any one-time reminders that should have fired while th
 
 ### Notification Files
 Written to the notifications directory as JSON:
-- Task due: `*-tasks-due.json` with type `task_due`
 - Reminder: `*-tasks-reminder.json` with type `reminder`
 - Daemon death: `*-tasks-daemon_died.json` with type `daemon_died`
 
