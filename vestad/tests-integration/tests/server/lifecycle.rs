@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use vesta_tests::{
     TestAgent, SERVER, SHARED_RO_AGENT, agent_container_name, docker_cmd, exec_in_container,
-    inject_fake_token, is_up, unique_agent,
+    inject_fake_token, is_up, mark_first_start_done, unique_agent,
 };
 
 const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -100,6 +100,7 @@ fn creation_flow() {
     inject_fake_token(&c, &agent.name);
     assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
 
+    mark_first_start_done(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
     c.wait_until_alive(&agent.name, 60).unwrap();
 
