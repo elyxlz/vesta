@@ -60,6 +60,7 @@ class State:
     last_sdk_activity_label: str = "init"
     active_tools: dict[str, ActiveTool] = dc.field(default_factory=dict)
 
+
 class Notification(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="allow")
 

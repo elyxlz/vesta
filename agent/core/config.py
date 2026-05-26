@@ -35,7 +35,9 @@ class VestaConfig(pyd_settings.BaseSettings):
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
-    thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ThinkingConfigAdaptive(type="adaptive", display="summarized")
+    thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ThinkingConfigAdaptive(
+        type="adaptive", display="summarized"
+    )
     ws_port: int = 0
     agent_token: str | None = None
 

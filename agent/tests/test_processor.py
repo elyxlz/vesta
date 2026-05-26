@@ -255,9 +255,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
         task.cancel()
 
     with patch("core.loops.process_message", hang):
-        task = asyncio.create_task(
-            _run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config)
-        )
+        task = asyncio.create_task(_run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config))
         canceller = asyncio.create_task(shutdown_and_cancel(task))
         with pytest.raises(asyncio.CancelledError):
             await task

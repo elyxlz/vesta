@@ -71,7 +71,16 @@ def _import_legacy(config: cfg.VestaConfig) -> PersistedState:
         session_id=_read_text_or_none(d / "session_id"),
         applied_migrations=_read_lines(d / "migrations.applied"),
     )
-    if any([legacy.first_start_done, legacy.last_restart_reason, legacy.last_dreamer_run, legacy.show_dreamer_summary, legacy.session_id, legacy.applied_migrations]):
+    if any(
+        [
+            legacy.first_start_done,
+            legacy.last_restart_reason,
+            legacy.last_dreamer_run,
+            legacy.show_dreamer_summary,
+            legacy.session_id,
+            legacy.applied_migrations,
+        ]
+    ):
         logger.startup("Imported legacy marker files into state.json")
     return legacy
 
