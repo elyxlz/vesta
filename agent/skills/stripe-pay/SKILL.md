@@ -24,7 +24,7 @@ Invoke this skill when:
 
 ## Skip
 
-Do NOT use this skill for:
+Do not use this skill for:
 - Sending money to people (this is for paying merchants, not P2P transfers)
 - Recurring subscriptions the user already has elsewhere
 - Anything where the user has not run `stripe-pay authorize` yet: tell them to set up first

@@ -9,7 +9,7 @@
 
 2. You need an Azure App Registration with `Files.ReadWrite.All` permission and "Allow public client flows" enabled. If the Microsoft skill is already set up, reuse that app and just add the `Files.ReadWrite.All` permission to it.
 
-3. Write a minimal rclone config (do NOT use `rclone config` or `rclone authorize`, as neither supports device code flow properly in a headless container):
+3. Write a minimal rclone config (don't use `rclone config` or `rclone authorize`, as neither supports device code flow properly in a headless container):
    ```bash
    mkdir -p ~/.config/rclone
    cat > ~/.config/rclone/rclone.conf << EOF

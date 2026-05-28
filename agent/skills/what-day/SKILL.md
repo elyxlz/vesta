@@ -7,7 +7,7 @@ description: Determine the day of the week for any date, always do this whenever
 
 ## Purpose
 
-CRITICAL: Use this skill when working with ANY date to avoid mistakes about which day of the week it falls on. This prevents scheduling errors and date-related planning mistakes.
+Use this skill when working with any date to avoid mistakes about which day of the week it falls on. This prevents scheduling errors and date-related planning mistakes.
 
 ## How to Determine Day of Week
 

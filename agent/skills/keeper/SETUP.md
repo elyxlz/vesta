@@ -27,4 +27,4 @@ keeper_push                      # push notification to mobile
 
 Region selection (before login): `server EU` (options: EU, US, AU, GOV, CA, JP)
 
-IMPORTANT: Use `quit` (not `logout`) to exit. `logout` expires the session.
+Use `quit` (not `logout`) to exit. `logout` expires the session.

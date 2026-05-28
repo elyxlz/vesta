@@ -11,7 +11,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-Do NOT use it when:
+Do not use it when:
 
 - The user wants the full Gmail API surface (labels, threads, drafts as Google models them) → use the `google` skill.
 - The user has an M365 *work* account with IMAP/SMTP disabled, or wants calendar/contacts/Graph → use the `microsoft` skill. (M365 work accounts *with* IMAP enabled work here; see "Microsoft 365 with a custom domain".)
