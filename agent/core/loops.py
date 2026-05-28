@@ -308,12 +308,17 @@ def check_proactive_task(*, config: vm.VestaConfig) -> None:
     drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, interrupt=False, config=config)
 
 
+DREAMER_CATCHUP_HOURS = 6
+
+
 def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
-    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour, so a silent failure to call `mark_dreamer_complete` retries on the next hourly tick rather than spamming."""
+    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but cannot preempt the agent for the rest of the day."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     now = _now()
     if now.hour < config.nightly_memory_hour:
+        return
+    if now.hour >= config.nightly_memory_hour + DREAMER_CATCHUP_HOURS:
         return
     last = state.persisted.last_dreamer_run
     if last is not None and last.date() >= now.date():

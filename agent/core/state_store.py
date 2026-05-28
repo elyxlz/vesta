@@ -46,7 +46,13 @@ def state_path(config: cfg.VestaConfig) -> pl.Path:
 def load_state(config: cfg.VestaConfig) -> PersistedState:
     path = state_path(config)
     if path.exists():
-        return PersistedState.model_validate_json(path.read_text())
+        try:
+            return PersistedState.model_validate_json(path.read_text())
+        except (pyd.ValidationError, ValueError, OSError) as e:
+            # Don't crash-loop the container on a corrupt or schema-incompatible
+            # state.json — log and start fresh; first-start will re-run.
+            logger.error(f"state.json unparseable ({type(e).__name__}: {e}) — starting fresh")
+            return PersistedState()
     state = _import_legacy(config)
     save_state(state, config)
     _remove_legacy_files(config)

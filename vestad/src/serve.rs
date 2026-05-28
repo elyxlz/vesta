@@ -926,14 +926,24 @@ async fn read_file_handler(
     docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
 
-    let stat_cmd = format!("stat -c '%a %s %F' {}", shell_escape(&q.path));
+    // Refuse symlinks anywhere in the path. Without this, an agent-controlled
+    // symlink under /root/agent (e.g. /root/agent/data/leak -> /etc/shadow)
+    // would slip past validate_file_path's string checks and expose the target.
+    let stat_cmd = format!(
+        "real=$(realpath -e -- {p} 2>/dev/null) && [ \"$real\" = {p} ] && stat -c '%a %s %F' {p}",
+        p = shell_escape(&q.path)
+    );
     let stat = docker_exec_capture(
         &state.docker, &cname,
         vec!["sh".into(), "-c".into(), stat_cmd], None,
     ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     if stat.exit_code != 0 {
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("stat failed: {}", stat.stderr.trim())));
+        let detail = stat.stderr.trim();
+        if detail.is_empty() {
+            return Err(err_response(StatusCode::NOT_FOUND, "file not found or resolves through a symlink"));
+        }
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("stat failed: {detail}")));
     }
 
     let stat_line = String::from_utf8_lossy(&stat.stdout);
@@ -1006,9 +1016,14 @@ async fn write_file_handler(
     docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
 
+    // Same anti-symlink guard as read_file_handler: realpath must equal the
+    // requested path. New-file writes (path does not yet exist) are rejected
+    // here, which is fine — the FilesTab only writes through previously-read
+    // files.
     let write_cmd = format!(
-        "tmp=$(mktemp /tmp/.vesta-edit.XXXXXX) && cat > \"$tmp\" && mv -f \"$tmp\" {}",
-        shell_escape(&body.path)
+        "real=$(realpath -e -- {p} 2>/dev/null) && [ \"$real\" = {p} ] && \
+         tmp=$(mktemp /tmp/.vesta-edit.XXXXXX) && cat > \"$tmp\" && mv -f \"$tmp\" {p}",
+        p = shell_escape(&body.path)
     );
 
     let result = docker_exec_capture(
