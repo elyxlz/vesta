@@ -657,6 +657,85 @@ def search_emails(
     return _search_mailbox_messages(config, client, account_id, endpoint, query, limit)
 
 
+def _delete_message(
+    config: Config,
+    client: httpx.Client,
+    account_id: str,
+    settings: MicrosoftSettings,
+    email_id: str,
+    permanent: bool,
+) -> None:
+    if permanent:
+        graph.request(
+            client,
+            config.cache_file,
+            config.scopes,
+            settings,
+            config.base_url,
+            "DELETE",
+            f"/me/messages/{email_id}",
+            account_id,
+        )
+    else:
+        graph.request(
+            client,
+            config.cache_file,
+            config.scopes,
+            settings,
+            config.base_url,
+            "POST",
+            f"/me/messages/{email_id}/move",
+            account_id,
+            json={"destinationId": "deleteditems"},
+        )
+
+
+def delete_email(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str | None = None,
+    sender: str | None = None,
+    permanent: bool = False,
+) -> dict[str, Any]:
+    if (email_id is None) == (sender is None):
+        raise ValueError("Specify exactly one of --id or --sender")
+
+    settings = _get_settings()
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    mode = "permanent" if permanent else "soft"
+
+    if email_id is not None:
+        _delete_message(config, client, account_id, settings, email_id, permanent)
+        return {"status": "deleted", "mode": mode, "email_id": email_id}
+
+    params = {
+        "$filter": f"from/emailAddress/address eq '{sender}'",
+        "$top": 100,
+        "$select": "id",
+    }
+    messages = list(
+        graph.request_paginated(
+            client,
+            config.cache_file,
+            config.scopes,
+            settings,
+            config.base_url,
+            "/me/messages",
+            account_id,
+            params=params,
+        )
+    )
+
+    deleted_ids = []
+    for message in messages:
+        _delete_message(config, client, account_id, settings, message["id"], permanent)
+        deleted_ids.append(message["id"])
+
+    return {"status": "deleted", "mode": mode, "sender": sender, "deleted_count": len(deleted_ids), "deleted_ids": deleted_ids}
+
+
 def update_email(
     config: Config,
     client: httpx.Client,
