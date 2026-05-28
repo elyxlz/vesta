@@ -38,7 +38,7 @@ pythonpath = [".", "skills"]
 include = ["core", "tests"]
 
 [tool.ty.environment]
-extra-paths = ["skills"]
+extra-paths = ["skills", "core/skills/app-chat/cli/src"]
 
 [tool.ruff]
 line-length = 144
