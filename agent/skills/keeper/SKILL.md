@@ -30,9 +30,18 @@ keeper "get <UID> --format json"         # JSON output
 keeper "get <UID> --format password"     # show only the password
 ```
 
-### Get a Password
+### Reveal a Password
+
+To reveal a stored password, use one of these working commands:
 ```bash
-keeper "find-password <UID>"
+keeper "find-password <UID>"             # print just the password
+keeper "get <UID> --unmask"              # print the full record with passwords in plain text
+```
+
+Note: `unmask` is NOT a subcommand. `keeper "unmask <UID> password"` does not exist and will fail. Unmasking is the `--unmask` flag on `get`, or use `find-password` to get the password on its own.
+
+### Copy to Clipboard
+```bash
 keeper "clipboard-copy <UID>"            # copy password to clipboard
 keeper "clipboard-copy <UID> -l"         # copy username
 keeper "clipboard-copy <UID> -t"         # copy TOTP code
