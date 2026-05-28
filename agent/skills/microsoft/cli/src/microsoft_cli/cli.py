@@ -124,6 +124,13 @@ def main():
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
 
+    p_delete = email_sub.add_parser("delete")
+    p_delete.add_argument("--account", required=True)
+    p_delete_group = p_delete.add_mutually_exclusive_group(required=True)
+    p_delete_group.add_argument("--id", default=None, dest="email_id", help="ID of a single message to delete")
+    p_delete_group.add_argument("--sender", default=None, help="Delete all messages from this sender address")
+    p_delete.add_argument("--permanent", action="store_true", help="Hard delete instead of moving to Deleted Items")
+
     p_block = email_sub.add_parser("block")
     p_block.add_argument("--account", required=True)
     p_block_group = p_block.add_mutually_exclusive_group(required=True)
@@ -314,6 +321,10 @@ def _dispatch_email(args, config, client):
     elif args.command == "update":
         return email.update_email(
             config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
+        )
+    elif args.command == "delete":
+        return email.delete_email(
+            config, client, account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent
         )
     elif args.command == "block":
         if args.list:

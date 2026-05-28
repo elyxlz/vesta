@@ -28,6 +28,16 @@ microsoft email unblock --account user@example.com --sender spam@example.com
 microsoft email block --account user@example.com --list  # show blocked senders
 ```
 
+After blocking a phishing/spam sender, clean up messages that already arrived:
+
+```bash
+microsoft email delete --account user@example.com --id <email_id>            # delete one message
+microsoft email delete --account user@example.com --sender spam@example.com  # delete all from a sender
+microsoft email delete --account user@example.com --sender spam@example.com --permanent  # hard delete
+```
+
+Delete soft-deletes to Deleted Items by default (moves to `deleteditems`); `--permanent` hard-deletes. `--id` and `--sender` are mutually exclusive and exactly one is required.
+
 If block returns 403, re-authorize:
 ```bash
 microsoft auth add --account user@example.com
