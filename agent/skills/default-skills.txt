@@ -3,10 +3,12 @@ browser
 claude-code
 dashboard
 dream
-flights
 email-client
+flights
+restart
 skills-registry
 tasks
+timezone
 upstream-pr
 upstream-sync
 voice

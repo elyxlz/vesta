@@ -13,7 +13,7 @@
    ```
 4. Install: `uv tool install ~/agent/skills/microsoft/cli`
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
-6. Add to `~/agent/prompts/restart.md`:
+6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```

@@ -44,7 +44,9 @@ def main() -> None:
         sys.exit("could not find INTERNET uses-permission line to anchor on")
 
     indent = anchor.group(1)
-    inserted = "".join(f'{indent}<uses-permission android:name="{p}" />\n' for p in missing)
+    inserted = "".join(
+        f'{indent}<uses-permission android:name="{p}" />\n' for p in missing
+    )
     text = text[: anchor.end()] + inserted + text[anchor.end() :]
     path.write_text(text)
     print(f"{path}: added {', '.join(missing)}")

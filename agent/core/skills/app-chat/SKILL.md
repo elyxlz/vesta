@@ -6,7 +6,7 @@ description: Reply to notifications with `source=app-chat` via `app-chat send`. 
 # App Chat - CLI: app-chat
 
 **Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications`
-**Restart**: Add to `~/agent/prompts/restart.md`:
+**Restart**: Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 ```
 screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications
 ```

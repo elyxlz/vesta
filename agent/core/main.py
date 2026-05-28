@@ -1,7 +1,6 @@
 """Vesta main entry point and orchestration."""
 
 import asyncio
-import datetime as dt
 import errno
 import os
 import signal
@@ -13,10 +12,15 @@ from rich import print_json
 
 from . import models as vm
 from . import logger
+from . import state_store
 from .api import start_ws_server
-from .client import format_crash_detail
-from .helpers import load_prompt
-from .loops import message_processor, monitor_loop, queue_greeting
+from .diagnostics import format_crash_detail
+from .loops import (
+    drop_greeting_notification,
+    message_processor,
+    monitor_loop,
+)
+from .migrations import drop_pending_migrations
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
@@ -70,22 +74,23 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-def handle_processor_done(task: asyncio.Task[None], *, state: vm.State) -> None:
+def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: vm.VestaConfig) -> None:
     """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
         return
     if task.cancelled():
         logger.error("message_processor cancelled unexpectedly — restarting")
-        state.restart_reason = vm.PROCESSOR_CANCELLED_RESTART
+        state.persisted.last_restart_reason = "crash — processor cancelled unexpectedly"
     else:
         exc = task.exception()
         if exc is not None:
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
-            state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
+            state.persisted.last_restart_reason = f"crash — {type(exc).__name__}: {exc}"
         else:
             logger.error("message_processor exited without error — restarting")
-            state.restart_reason = vm.PROCESSOR_SILENT_EXIT_RESTART
+            state.persisted.last_restart_reason = "crash — processor exited silently"
+    state_store.save_state(state.persisted, config)
     state.graceful_shutdown.set()
 
 
@@ -98,43 +103,24 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
+    drop_pending_migrations(state=state, config=config, first_start=first_start)
     greeting_reason = "first_start" if first_start else restart_reason
-    setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
-    # Only defer the WS bind when the queued prompt is the first_start setup.
-    # Regular restart greetings often poll the WS port themselves, which would
-    # deadlock if WS were gated on the greeting completing.
-    if not (first_start and setup_queued):
-        state.first_setup_complete.set()
+    drop_greeting_notification(config=config, state=state, reason=greeting_reason)
+
+    # First-start defers WS until the agent calls `mark_setup_done` (the readiness signal vestad polls).
+    # Every other boot binds WS immediately so restart greetings that poll the WS port don't deadlock.
+    if not first_start:
+        state.ws_runner = await start_ws_server(state.event_bus, config)
+        logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
-    processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state))
+    processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state, config=config))
 
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),
         processor_task,
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
-
-    # WS bind is the readiness signal; first-start defers it until setup is processed.
-    ready_task = asyncio.create_task(state.first_setup_complete.wait())
-    shutdown_task = asyncio.create_task(state.graceful_shutdown.wait())
-    _, pending = await asyncio.wait([ready_task, shutdown_task], return_when=asyncio.FIRST_COMPLETED)
-    for t in pending:
-        t.cancel()
-
-    ws_runner = None
-    if not state.graceful_shutdown.is_set():
-        ws_runner = await start_ws_server(state.event_bus, config)
-        logger.init(f"WebSocket server started on port {config.ws_port}")
-
-        # Greeting prompt drives app-chat, which needs WS reachable. Queue after bind.
-        # Skip if setup never ran (e.g. no creds yet); resuming the dead session next boot
-        # would otherwise leave the greeting in front of the setup prompt.
-        if first_start and setup_queued:
-            greeting_prompt = load_prompt("first_start_greeting", config)
-            if greeting_prompt:
-                await message_queue.put((greeting_prompt.strip(), False))
-                logger.startup("Queued first_start greeting")
 
     try:
         await state.graceful_shutdown.wait()
@@ -144,12 +130,11 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
-    reason = state.restart_reason or vm.CLEAN_RESTART
+    reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
-    if state.restart_reason:
-        _write_restart_reason(config, state.restart_reason)
-    elif not (config.data_dir / "restart_reason").exists():
-        _write_restart_reason(config, vm.CLEAN_RESTART)
+    if not state.persisted.last_restart_reason:
+        state.persisted.last_restart_reason = vm.CLEAN_RESTART
+        state_store.save_state(state.persisted, config)
 
     for task in tasks:
         task.cancel()
@@ -158,58 +143,30 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if pending:
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
-    if ws_runner is not None:
-        await ws_runner.cleanup()
+    if state.ws_runner is not None:
+        await state.ws_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
 
-def _write_restart_reason(config: vm.VestaConfig, reason: str) -> None:
-    try:
-        (config.data_dir / "restart_reason").write_text(reason)
-    except OSError:
-        logger.warning("Could not write restart_reason file")
-
-
-def _read_restart_reason(config: vm.VestaConfig) -> str:
-    path = config.data_dir / "restart_reason"
-    try:
-        reason = path.read_text().strip()
-        path.unlink(missing_ok=True)
-        return reason
-    except FileNotFoundError:
-        return vm.CRASH_RESTART
-    except (OSError, UnicodeDecodeError):
-        logger.warning("Could not read restart_reason file")
-        return vm.CRASH_RESTART
-
-
-def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:
-    path = config.data_dir / "last_dreamer_run"
-    try:
-        if path.exists():
-            return dt.datetime.fromisoformat(path.read_text().strip())
-    except (OSError, ValueError, UnicodeDecodeError):
-        logger.warning("Could not read last_dreamer_run file")
-    return None
+def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
+    """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
+    if first_start:
+        return vm.FIRST_START_REASON
+    stored = state.persisted.last_restart_reason
+    state.persisted.last_restart_reason = None
+    state_store.save_state(state.persisted, config)
+    return stored or vm.CRASH_RESTART
 
 
 def init_state(*, config: vm.VestaConfig) -> vm.State:
-    session_id = None
-    try:
-        if config.session_file.exists():
-            session_id = config.session_file.read_text().strip() or None
-    except (OSError, UnicodeDecodeError):
-        logger.warning("Could not read session file, starting fresh")
-
-    last_dreamer_run = _read_last_dreamer_run(config)
-
-    if session_id:
-        logger.init(f"Resuming session {session_id[:16]}...")
+    persisted = state_store.load_state(config)
+    if persisted.session_id:
+        logger.init(f"Resuming session {persisted.session_id[:16]}...")
     from .events import EventBus
 
     event_bus = EventBus(data_dir=config.data_dir)
-    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)
+    return vm.State(persisted=persisted, event_bus=event_bus)
 
 
 async def async_main() -> None:
@@ -224,11 +181,8 @@ async def async_main() -> None:
     logger.init(f"{config.agent_name} starting")
 
     initial_state = init_state(config=config)
-    first_start_marker = config.data_dir / "first_start_done"
-    first_start = not first_start_marker.exists()
-    # On a never-run agent the restart_reason file is missing for innocent
-    # reasons; defaulting to CRASH_RESTART would log a misleading "crashed".
-    restart_reason = vm.FIRST_START_REASON if first_start else _read_restart_reason(config)
+    first_start = not initial_state.persisted.first_start_done
+    restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

@@ -59,6 +59,10 @@ RECONNECT_SECS = 1500
 RETRY_DELAY_SECS = 30
 # How often the supervisor checks accounts.json for added/removed accounts.
 INDEX_CHECK_SECS = 10
+# Cap one fetch batch so a long offline period doesn't time out a single
+# IMAP transaction trying to pull thousands of headers. Caller re-enters
+# on the next IDLE/poll cycle to pick up the remaining backlog.
+FETCH_BATCH_LIMIT = 500
 
 
 def _sanitize_folder(folder: str) -> str:
@@ -93,7 +97,11 @@ def write_notification(account: str, folder: str, meta: dict) -> None:
         "uid": meta["uid"],
     }
     fname = f"email-client-{account}-{_sanitize_folder(folder)}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
-    (NOTIF_DIR / fname).write_text(json.dumps(notif, ensure_ascii=False, indent=2))
+    # tmp + rename so the agent's watchfiles loop never reads a truncated file.
+    final = NOTIF_DIR / fname
+    tmp = NOTIF_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
+    os.replace(tmp, final)
 
 
 def get_high_uid(path: pathlib.Path) -> int:
@@ -126,6 +134,7 @@ def emit_new(account: str, folder: str, mb, log, high_uid_path: pathlib.Path) ->
             AND(uid=f"{high + 1}:*"),
             mark_seen=False,
             headers_only=True,
+            limit=FETCH_BATCH_LIMIT,
         )
     )
     new_msgs = [m for m in new_msgs if m.uid and int(m.uid) > high]

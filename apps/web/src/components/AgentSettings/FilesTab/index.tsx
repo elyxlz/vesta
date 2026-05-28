@@ -168,12 +168,20 @@ export function FilesTab() {
     setLoadedFile(null);
     setLoadError(null);
     setStatus({ kind: "idle" });
+    let cancelled = false;
     readFile(agentName, selectedPath)
       .then((file) => {
+        if (cancelled) return;
         setLoadedFile(file);
         setEditorContent(file.content);
       })
-      .catch((e: Error) => setLoadError(e.message));
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setLoadError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [agentName, selectedPath]);
 
   const root = useMemo(

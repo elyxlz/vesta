@@ -123,10 +123,10 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
     }
 }
 
-fn map_error(e: ureq::Error) -> String {
+fn map_error(host: &str, e: ureq::Error) -> String {
     match e {
         ureq::Error::ConnectionFailed | ureq::Error::Io(_) => {
-            "server not reachable. check your connection.".into()
+            format!("server not reachable at {host} — run 'vesta connect <host>' to point at a different one")
         }
         other => format!("request failed: {other}"),
     }
@@ -238,7 +238,7 @@ impl Client {
             .get(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)
     }
 
@@ -248,7 +248,7 @@ impl Client {
             .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_empty()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)
     }
 
@@ -258,7 +258,7 @@ impl Client {
             .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)
     }
 
@@ -268,7 +268,7 @@ impl Client {
             .delete(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)
     }
 
@@ -278,7 +278,7 @@ impl Client {
             .put(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)
     }
 
@@ -287,7 +287,7 @@ impl Client {
             .agent
             .get(&format!("{}/health", self.base_url))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)?;
         Ok(())
     }

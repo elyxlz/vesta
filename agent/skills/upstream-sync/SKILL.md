@@ -59,13 +59,20 @@ Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `ch
    ```
    If up to date, stop.
 
-5. **Merge.**
+5. **Review what's incoming.** Read the upstream commits and changed files so you know what you're pulling in.
+   ```bash
+   git -C ~ log --oneline HEAD..FETCH_HEAD
+   git -C ~ diff --stat HEAD..FETCH_HEAD
+   ```
+   Drill into anything you want a closer look at: `git -C ~ diff HEAD..FETCH_HEAD -- <path>`.
+
+6. **Merge.**
    ```bash
    git -C ~ merge FETCH_HEAD --no-edit
    ```
-   If clean, skip to step 7.
+   If clean, skip to step 8.
 
-6. **Resolve conflicts.**
+7. **Resolve conflicts.**
    - Treat conflicts as integration work, not `ours` vs `theirs`. Default goal: preserve both behaviors.
    - Small: rewrite the merged file so both changes coexist.
    - Structural: extract helpers, split responsibilities, rename to avoid collisions.
@@ -75,7 +82,7 @@ Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `ch
 
    Then: `git -C ~ commit --no-edit`
 
-7. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
+8. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
 
    - `agent/skills/index.json` is generated from disk. A textual merge of two arrays sometimes produces invalid or stale JSON, and any new skill directory pulled in from upstream needs an entry. Regenerate from the merged tree:
      ```bash
@@ -93,7 +100,7 @@ Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `ch
    git -C ~ add agent/skills/index.json && git -C ~ commit -m "chore: refresh skills/index.json post-sync"
    ```
 
-8. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
+9. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
 
 ## Branch model
 

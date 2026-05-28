@@ -211,7 +211,11 @@ def account_profile(account: str) -> tuple[str, dict]:
     try:
         profile = get_profile(name)
     except KeyError:
-        return resolve_provider(dict(os.environ))
+        # Unknown provider name (custom self-hosted IMAP, etc.) — start from
+        # an env-derived profile so per-account config overrides below still
+        # win. Returning early here would silently drop them.
+        _, profile = resolve_provider(dict(os.environ))
+        profile = dict(profile)
     # Layer per-account config overrides, then env overrides, on top.
     for key in (
         "imap_host",

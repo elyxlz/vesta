@@ -28,15 +28,6 @@ from agentmail_bridge.config import (
 
 app = FastAPI(title="agentmail")
 
-_cached_secret: str | None = None
-
-
-def _resolve_secret() -> str:
-    global _cached_secret
-    if _cached_secret is None:
-        _cached_secret = webhook_secret()
-    return _cached_secret
-
 
 def _field(payload: dict, key: str, default):
     if key in payload and payload[key] is not None:
@@ -52,7 +43,8 @@ def health() -> dict:
 @app.post("/webhook")
 async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     """AgentMail POSTs each inbound email here. Authenticated via ?secret= query."""
-    expected = _resolve_secret()
+    # Re-read on every request so `agentmail setup` rotation takes effect without restart.
+    expected = webhook_secret()
     if not expected:
         raise HTTPException(503, "webhook secret not configured. Run `agentmail setup`")
     if not secrets_mod.compare_digest(secret, expected):
@@ -68,16 +60,19 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     if not isinstance(headers, dict):
         headers = {}
 
+    # Match email-client's header-only notification shape: drop body_text/body_html
+    # so inbound mail doesn't dump the full body into the agent's context. The
+    # agent fetches the body on demand via `agentmail thread get <thread_id>`.
+    # interrupt=False so newsletters don't preempt whatever the agent is doing.
     notification = {
         "source": "agentmail",
         "type": "message",
+        "interrupt": False,
         "message_id": _field(message, "message_id", _field(payload, "message_id", "")),
         "thread_id": _field(payload, "thread_id", _field(message, "thread_id", "")),
         "from": _field(message, "from", ""),
         "to": _field(message, "to", ""),
         "subject": _field(message, "subject", ""),
-        "body_text": _field(message, "text", ""),
-        "body_html": _field(message, "html", ""),
         "in_reply_to": _field(headers, "In-Reply-To", _field(message, "in_reply_to", "")),
         "references": _field(headers, "References", _field(message, "references", "")),
         "labels": _field(message, "labels", []),

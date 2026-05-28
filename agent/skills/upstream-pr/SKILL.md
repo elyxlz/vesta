@@ -13,14 +13,14 @@ Three gates before opening a worktree.
 
 **1. Is it worth filing?** Push upstream only what would benefit any vesta instance:
 - Bug fixes in agent code, skills, or prompts
-- New skills (strip personal config first)
-- Prompt or SKILL.md improvements
+- New skills (strip personal config first) (can be specific skills, they are opt in for new vestas)
+- Prompt or SKILL.md or MEMORY.md improvements
 - Infrastructure or tooling improvements
 
 Never file: personal config, memory files, credentials, user-specific customizations.
 
 **2. Issue, PR, or both?**
-- You have a fix: **PR + issue**.
+- You have a fix: **PR + issue**. (Reference issue in the PR with 'fixes' or 'closes' terminology)
 - You don't have a fix yet: **issue only**.
 
 **3. Strip personal information.** Upstream is public; the user must not be identifiable. No names, contact details, private context, or specifics tied to the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.

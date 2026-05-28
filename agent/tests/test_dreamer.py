@@ -1,115 +1,110 @@
 """Tests for nightly dreamer/memory scheduling."""
 
-import asyncio
 import datetime as dt
+import json
 from unittest.mock import patch
 
-import pytest
 import core.models as vm
-from test_processor import _run_processor_test
 
 
-@pytest.mark.anyio
-async def test_queues_prompt_and_archives(tmp_path):
+def _setup(tmp_path, *, dreamer_hour=4):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    return config
+
+
+def test_drops_dream_notification(tmp_path):
     from core.loops import process_nightly_memory
 
+    config = _setup(tmp_path)
     state = vm.State()
-    state.last_dreamer_run = None
-    queue: asyncio.Queue = asyncio.Queue()
-
-    dreamer_hour = 4
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
-    fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
 
     with (
         patch("core.loops._now", return_value=fake_now),
         patch("core.loops.load_prompt", return_value="dreamer prompt"),
     ):
-        await process_nightly_memory(queue, state=state, config=config)
+        process_nightly_memory(state=state, config=config)
 
-    assert not queue.empty()
-    msg, is_user = await queue.get()
-    assert msg == "dreamer prompt"
-    assert is_user is False
-    assert state.last_dreamer_run == fake_now
-    assert state.dreamer_active is True
+    files = list(config.notifications_dir.glob("nightly_dream-*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text())
+    assert payload["source"] == "core"
+    assert payload["type"] == "nightly_dream"
+    assert payload["body"] == "dreamer prompt"
+    # Persisted last_dreamer_run is unchanged until the agent itself calls mark_dreamer_complete.
+    assert state.persisted.last_dreamer_run is None
 
 
-@pytest.mark.anyio
-async def test_skips_when_already_run_today(tmp_path):
+def test_skips_when_already_run_today(tmp_path):
     from core.loops import process_nightly_memory
 
-    dreamer_hour = 4
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
-    fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
+    config = _setup(tmp_path)
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
 
     state = vm.State()
-    state.last_dreamer_run = fake_now
-    queue: asyncio.Queue = asyncio.Queue()
+    state.persisted.last_dreamer_run = fake_now
 
     with (
         patch("core.loops._now", return_value=fake_now),
         patch("core.loops.load_prompt", return_value="dreamer prompt"),
     ):
-        await process_nightly_memory(queue, state=state, config=config)
+        process_nightly_memory(state=state, config=config)
 
-    assert queue.empty()
-    assert state.dreamer_active is False
-
-
-@pytest.mark.anyio
-async def test_clears_session_and_restarts(tmp_path):
-    async def side_effect(msg, *, state, config, is_user):
-        return (["OK"], state)
-
-    pre_state = vm.State()
-    pre_state.session_id = "pre-dreamer-session"
-    pre_state.dreamer_active = True
-    pre_state.last_dreamer_run = dt.datetime(2025, 6, 15, 4, 0, 0)
-
-    fake_now = dt.datetime(2025, 6, 15, 4, 5, 0)
-    state, session_count, messages = await _run_processor_test(
-        tmp_path,
-        message_side_effect=side_effect,
-        pre_state=pre_state,
-        initial_queue=[("dreamer prompt content", False)],
-        extra_patches={"core.loops._now": lambda: fake_now},
-    )
-    # Session should be cleared (not preserved) so the next boot starts fresh
-    assert state.session_id is None
-    assert state.dreamer_active is False
-    assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "nightly — dreamer ran, session cleared for fresh context"
-    # No /compact message — session deletion replaces it
-    assert messages == ["dreamer prompt content"]
-    # last_dreamer_run is persisted to disk only on completion
-    persisted = (tmp_path / "agent" / "data" / "last_dreamer_run").read_text().strip()
-    assert persisted == pre_state.last_dreamer_run.isoformat()
+    assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
 
 
-@pytest.mark.anyio
-async def test_queue_does_not_persist_last_dreamer_run(tmp_path):
-    """If the dreamer is queued but never completes (e.g. backup interrupts), disk must stay stale.
+def test_skips_before_dreamer_hour(tmp_path):
+    from core.loops import process_nightly_memory
 
-    Protects against a bug where last_dreamer_run was written at queue time, which locked the
+    config = _setup(tmp_path, dreamer_hour=4)
+    state = vm.State()
+    earlier = dt.datetime(2025, 6, 15, 2, 0, 0)
+
+    with (
+        patch("core.loops._now", return_value=earlier),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+    assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
+
+
+def test_retries_after_dream_hour_when_not_done_today(tmp_path):
+    """If the dream didn't complete (rate limit, crash) and the prior notification is gone, fire again — even past the configured hour."""
+    from core.loops import process_nightly_memory
+
+    config = _setup(tmp_path, dreamer_hour=4)
+    state = vm.State()
+    state.persisted.last_dreamer_run = dt.datetime(2025, 6, 14, 4, 0, 0)  # yesterday
+    later_today = dt.datetime(2025, 6, 15, 7, 30, 0)
+
+    with (
+        patch("core.loops._now", return_value=later_today),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+    assert len(list(config.notifications_dir.glob("nightly_dream-*.json"))) == 1
+
+
+def test_drop_does_not_persist_last_dreamer_run(tmp_path):
+    """Dropping the notification must not advance persisted.last_dreamer_run — only the agent's mark_dreamer_complete call does that.
+
+    Protects against a regression where last_dreamer_run was committed at drop time, which locked the
     dreamer out for the day even if it never actually ran.
     """
     from core.loops import process_nightly_memory
 
+    config = _setup(tmp_path)
     state = vm.State()
-    state.last_dreamer_run = None
-    queue: asyncio.Queue = asyncio.Queue()
-
-    dreamer_hour = 4
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-    fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
 
     with (
         patch("core.loops._now", return_value=fake_now),
         patch("core.loops.load_prompt", return_value="dreamer prompt"),
     ):
-        await process_nightly_memory(queue, state=state, config=config)
+        process_nightly_memory(state=state, config=config)
 
-    assert state.last_dreamer_run == fake_now
-    assert not (config.data_dir / "last_dreamer_run").exists()
+    assert state.persisted.last_dreamer_run is None

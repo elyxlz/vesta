@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 
@@ -51,11 +52,12 @@ def email_address() -> str:
 
 def bashrc_set(key: str, value: str) -> None:
     """Persist KEY=VALUE in ~/.bashrc and the current process env. Replaces any
-    prior export for the same key."""
+    prior export for the same key. Values are shell-quoted so special chars
+    (whitespace, $, #, backticks) survive the next shell start intact."""
     bashrc = Path.home() / ".bashrc"
     text = bashrc.read_text() if bashrc.exists() else ""
     lines = [line for line in text.splitlines() if not line.startswith(f"export {key}=")]
-    lines.append(f"export {key}={value}")
+    lines.append(f"export {key}={shlex.quote(value)}")
     bashrc.write_text("\n".join(lines) + "\n")
     os.environ[key] = value
 

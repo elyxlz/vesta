@@ -9,7 +9,6 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 - **Memory**: ~/agent/MEMORY.md
 - **Skills**: ~/agent/skills/ (each has a SKILL.md)
-- **Prompts**: ~/agent/prompts/
 - **Dreamer summaries**: ~/agent/dreamer/
 
 ## Order of operations
@@ -43,19 +42,18 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
-Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options, from lightest to heaviest:
-- Add a rule to memory
-- Rewrite skill instructions or prompts
-- Fix or improve existing skills (scripts, CLIs, configs)
+Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options in no particular order:
+- Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
+- Add a rule to memory (only if a universal instruction)
 
-You can change anything. If a fix requires code, write the code.
+You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
 
-**Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill.
+**Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
 ### 4. Validate each fix
 
-Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped.
+Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
 
 ### 5. Upstream
 
@@ -73,11 +71,11 @@ Rules for dreamer-added widgets:
 
 Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
 
-## Personality (in MEMORY.md)
+## Personality
 
-The `## 1. Personality` section can drift with the relationship. Small tweaks based on what's landed or misfired are welcome here. Surgical edits only, not rewrites. Preset swaps are the user's call, via the `personality` skill. The Charter above it is off-limits, that's the invariant spine.
+Drift `~/agent/core/skills/personality/presets/$AGENT_SEED_PERSONALITY.md` directly. That file is the source of truth, edit in place. Surgical tweaks only, not rewrites. Swaps are the user's call. The Charter in MEMORY.md is off-limits, that's the invariant spine.
 
-**Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections so the preset bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
+**Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 
 ## User State (in MEMORY.md)
 
@@ -107,6 +105,10 @@ MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every sy
 - Verbose dated entries that should be patterns by now
 - Duplicates and contradictions
 
+**Consolidate:**
+- If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
+- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md"). MEMORY.md is for things needed at all times, not the full archive.
+
 **Keep:**
 - Core identity, preferences, relationships, security rules
 - Active user context, open threads
@@ -124,8 +126,7 @@ If it won't matter in two weeks, delete it.
 
 Keep the container's filesystem organized and disk usage under control.
 
-- Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
-- Clean up old log files (`~/agent/logs/`). Keep the last few days, remove the rest
+- Delete temp files, stale downloads, leftover build artifacts
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)

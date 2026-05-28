@@ -1,0 +1,109 @@
+"""SDK observability: activity tracking, stderr buffering, crash details, hang detection, context-usage logging."""
+
+import asyncio
+import collections
+import time
+import typing as tp
+
+from . import logger
+from . import models as vm
+
+_WATCHDOG_THRESHOLDS_S = (60, 120, 300)
+_CONTEXT_USAGE_TIMEOUT_S = 10.0
+
+
+def touch_activity(state: vm.State, label: str) -> None:
+    state.last_sdk_activity = time.monotonic()
+    state.last_sdk_activity_label = label
+
+
+def sdk_idle_seconds(state: vm.State) -> float:
+    return time.monotonic() - state.last_sdk_activity
+
+
+def longest_running_tool(state: vm.State) -> vm.ActiveTool | None:
+    if not state.active_tools:
+        return None
+    return min(state.active_tools.values(), key=lambda t: t.started_at)
+
+
+def format_crash_detail(
+    exc: BaseException, stderr_buffer: collections.deque[str], *, fallback: str = "(no stderr captured)"
+) -> tuple[int | None, str]:
+    """Extract exit_code and format stderr tail from an SDK exception."""
+    try:
+        exit_code: int | None = exc.exit_code  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        exit_code = None
+    stderr_tail = "\n".join(stderr_buffer) if stderr_buffer else fallback
+    return exit_code, stderr_tail
+
+
+def format_hang_diagnostics(state: vm.State) -> str:
+    parts = [f"idle={sdk_idle_seconds(state):.0f}s", f"last_activity={state.last_sdk_activity_label}"]
+    longest = longest_running_tool(state)
+    if longest:
+        duration = time.monotonic() - longest.started_at
+        parts.append(f"longest_tool={longest.name} ({duration:.0f}s, sub={longest.is_subagent})")
+    if state.active_tools:
+        parts.append(f"active_tools={len(state.active_tools)}")
+    stderr_tail = list(state.stderr_buffer)[-5:] if state.stderr_buffer else []
+    if stderr_tail:
+        parts.append(f"stderr_tail={' | '.join(stderr_tail)}")
+    return ", ".join(parts)
+
+
+def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
+    def handler(line: str) -> None:
+        logger.sdk(line)
+        state.stderr_buffer.append(line)
+
+    return handler
+
+
+def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
+    """Returns None if we can't determine."""
+    try:
+        transport = state.client._transport  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        process = transport._process  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        if process is None:
+            return False
+        return process.returncode is None
+    except (AttributeError, TypeError):
+        return None
+
+
+async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
+    warned_at: set[int] = set()
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=15)
+            break
+        except TimeoutError:
+            pass
+        idle = sdk_idle_seconds(state)
+        for threshold in _WATCHDOG_THRESHOLDS_S:
+            if idle >= threshold and threshold not in warned_at:
+                warned_at.add(threshold)
+                alive = _check_sdk_subprocess_alive(state)
+                alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
+                diag = format_hang_diagnostics(state)
+                logger.warning(f"SDK silent for {threshold}s | {alive_str} | {diag}")
+        if idle < _WATCHDOG_THRESHOLDS_S[0]:
+            warned_at.clear()
+
+
+async def log_context_usage(state: vm.State) -> None:
+    if not state.client:
+        return
+    try:
+        usage = await asyncio.wait_for(state.client.get_context_usage(), timeout=_CONTEXT_USAGE_TIMEOUT_S)
+        pct = usage["percentage"]
+        total = usage["totalTokens"]
+        max_tok = usage["maxTokens"]
+        log_fn = logger.warning if pct > 80 else logger.usage
+        log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
+    except TimeoutError:
+        logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s — skipping")
+    except (OSError, RuntimeError, KeyError, TypeError):
+        pass

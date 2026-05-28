@@ -324,6 +324,18 @@ pub fn inject_fake_token(c: &Client, name: &str) {
     c.inject_token(name, FAKE_TOKEN).unwrap();
 }
 
+/// Pre-mark first-start setup as done so the agent binds its WS port on the next boot
+/// without waiting for Claude to call `mark_setup_done`. Tests run with a fake token so
+/// no real SDK session can drive that tool call.
+pub fn mark_first_start_done(name: &str) -> Result<(), String> {
+    let cname = agent_container_name(name);
+    exec_in_container(
+        &cname,
+        r#"mkdir -p /root/agent/data && printf '{"first_start_done": true}' > /root/agent/data/state.json"#,
+    )?;
+    Ok(())
+}
+
 pub fn docker_cmd(args: &[&str]) -> Result<String, String> {
     let output = std::process::Command::new("docker")
         .args(args)

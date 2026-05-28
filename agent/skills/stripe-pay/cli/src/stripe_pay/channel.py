@@ -221,10 +221,10 @@ def _latest_reply(channel: Channel, after_ts: float) -> str | None:
     try:
         if channel == "whatsapp":
             out = _shell(["whatsapp", "list-messages", "self", "--limit", "5"])
-            return _pick_latest_inbound(out, after_ts, key_ts="timestamp", key_body="content", key_dir="from_me")
+            return _pick_latest_inbound(out, after_ts, key_ts="timestamp", key_body="content", key_dir="is_from_me")
         if channel == "telegram":
             out = _shell(["telegram", "list-messages", "self", "--limit", "5"])
-            return _pick_latest_inbound(out, after_ts, key_ts="timestamp", key_body="text", key_dir="from_me")
+            return _pick_latest_inbound(out, after_ts, key_ts="timestamp", key_body="content", key_dir="is_from_me")
         if channel == "app-chat":
             out = _shell(["app-chat", "list-messages", "--limit", "5"])
             return _pick_latest_inbound(out, after_ts, key_ts="ts", key_body="text", key_dir="from_agent")
