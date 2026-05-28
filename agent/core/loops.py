@@ -273,7 +273,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         except TimeoutError:
                             continue
 
-                        await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                        state.processor_busy = True
+                        try:
+                            await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                        finally:
+                            state.processor_busy = False
                 finally:
                     state.client = None
                     state.interrupt_event = None
@@ -367,8 +371,11 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 now = _now()
 
                 if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                    check_proactive_task(config=config)
                     last_proactive = now
+                    if state.processor_busy or not queue.empty():
+                        logger.debug("Proactive check skipped: agent is busy — waiting full interval")
+                    else:
+                        check_proactive_task(config=config)
 
                 if (now - last_dreamer_check).total_seconds() >= 3600:
                     process_nightly_memory(state=state, config=config)

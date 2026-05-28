@@ -52,6 +52,7 @@ class State:
     ws_runner: "AppRunner | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
+    processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
 
