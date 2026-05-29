@@ -53,6 +53,9 @@ pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
+// Sourced by the entrypoint. Present only for OpenRouter agents; its existence also marks the agent
+// as authenticated (no OAuth credentials file). Lives in the container fs so it survives snapshots.
+pub const PROVIDER_ENV_PATH: &str = "/root/.claude/vesta-provider.env";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
@@ -342,16 +345,12 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub port: Option<u16>,
     pub id: Option<String>,
-    pub provider: Option<String>,
 }
 
 pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            // OpenRouter agents authenticate via an API key in the env file, not the OAuth
-            // credentials file, so the credentials check does not apply to them.
-            let is_openrouter = info.provider.as_deref() == Some("openrouter");
-            if !is_openrouter && !is_authenticated(docker, cname).await {
+            if !is_authenticated(docker, cname).await {
                 return AgentStatus::NotAuthenticated;
             }
             if info.port.is_some_and(is_agent_ready) {
@@ -402,8 +401,7 @@ pub(crate) fn container_info_from(cname: &str, info: &bollard::models::Container
         .unwrap_or_else(|| name_from_cname(cname));
     let port = agents_dir.and_then(|dir| read_env_value(dir, &name, "WS_PORT"))
         .and_then(|v| v.parse().ok());
-    let provider = agents_dir.and_then(|dir| read_env_value(dir, &name, "AGENT_PROVIDER"));
-    ContainerInfo { status, port, id, provider }
+    ContainerInfo { status, port, id }
 }
 
 pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
@@ -413,7 +411,6 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
             status: ContainerStatus::NotFound,
             port: None,
             id: None,
-            provider: None,
         },
     }
 }
@@ -427,16 +424,17 @@ pub async fn read_container_file(docker: &Docker, cname: &str, container_path: &
 }
 
 pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
-    let Some(content) = read_container_file(docker, cname, CREDENTIALS_PATH).await else {
-        return false;
-    };
-    let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-    let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
-        return false;
-    };
-    expires_at > crate::time_utils::now_epoch_millis() as u64
+    if let Some(content) = read_container_file(docker, cname, CREDENTIALS_PATH).await {
+        if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() {
+                if expires_at > crate::time_utils::now_epoch_millis() as u64 {
+                    return true;
+                }
+            }
+        }
+    }
+    // OpenRouter agents have no OAuth credentials; the injected provider file is their auth marker.
+    read_container_file(docker, cname, PROVIDER_ENV_PATH).await.is_some()
 }
 
 /// Readiness check: the agent binds its WS port only once it's ready to serve requests.
@@ -808,8 +806,9 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
-/// Per-agent OpenRouter settings, written into the (0600) env file in OpenRouter mode.
-/// The API key lives only here, never in settings.json, keeping the secret segregated.
+/// Per-agent OpenRouter settings. Injected once at create into the container filesystem at
+/// PROVIDER_ENV_PATH (like OAuth credentials), so they persist across rebuild/rename/backup via
+/// the container snapshot and stay editable by the agent itself. Never stored on the host.
 #[derive(Clone)]
 pub struct OpenRouterConfig {
     pub api_key: String,
@@ -817,16 +816,31 @@ pub struct OpenRouterConfig {
     pub zdr: bool,
 }
 
-/// Recover the OpenRouter config from an agent's env file (used by rebuild/rename, which
-/// regenerate the env file and must carry the key/model forward). Returns None for Claude agents.
-pub fn read_openrouter_config(agents_dir: &std::path::Path, agent_name: &str) -> Option<OpenRouterConfig> {
-    if read_env_value(agents_dir, agent_name, "AGENT_PROVIDER").as_deref() != Some("openrouter") {
-        return None;
-    }
-    let api_key = read_env_value(agents_dir, agent_name, "ANTHROPIC_AUTH_TOKEN")?;
-    let model = read_env_value(agents_dir, agent_name, "AGENT_MODEL")?;
-    let zdr = read_env_value(agents_dir, agent_name, "OPENROUTER_ZDR").as_deref() != Some("0");
-    Some(OpenRouterConfig { api_key, model, zdr })
+/// The shell file (sourced by the entrypoint) that puts an OpenRouter agent into provider mode.
+/// ANTHROPIC_BASE_URL is set by the agent at runtime to its local ZDR proxy; the SDK reads
+/// ANTHROPIC_AUTH_TOKEN from the env and sends it as the bearer token through that proxy.
+pub fn openrouter_provider_file(cfg: &OpenRouterConfig) -> String {
+    format!(
+        "export AGENT_PROVIDER=openrouter\n\
+         export AGENT_MODEL={}\n\
+         export ANTHROPIC_AUTH_TOKEN={}\n\
+         export ANTHROPIC_API_KEY=\n\
+         export ANTHROPIC_SMALL_FAST_MODEL={}\n\
+         export OPENROUTER_ZDR={}\n",
+        cfg.model,
+        cfg.api_key,
+        cfg.model,
+        if cfg.zdr { 1 } else { 0 },
+    )
+}
+
+/// Write the provider file into an agent's container and source it from ~/.bashrc (which the
+/// entrypoint already sources; it is empty in a fresh image). The container only needs to exist
+/// (created or running); docker cp works on stopped containers, so this runs before the first start.
+pub async fn inject_openrouter(docker: &Docker, agent_name: &str, cfg: &OpenRouterConfig) -> Result<(), DockerError> {
+    let cname = container_name(agent_name);
+    docker_cp_content(docker, &cname, &openrouter_provider_file(cfg), PROVIDER_ENV_PATH).await?;
+    docker_cp_content(docker, &cname, &format!(". {PROVIDER_ENV_PATH}\n"), "/root/.bashrc").await
 }
 
 /// Compute the upstream ref the agent should sync against.
@@ -906,7 +920,6 @@ pub fn write_agent_env_file(
     agent_token: &str,
     timezone: Option<&str>,
     seed_personality: Option<&str>,
-    openrouter: Option<&OpenRouterConfig>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -928,22 +941,6 @@ pub fn write_agent_env_file(
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
     append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
-    if let Some(openrouter) = openrouter {
-        // ANTHROPIC_BASE_URL is set by the agent at runtime to its local ZDR proxy; the SDK reads
-        // ANTHROPIC_AUTH_TOKEN from the env and sends it as the bearer token through that proxy.
-        content.push_str(&format!(
-            "export AGENT_PROVIDER=openrouter\n\
-             export AGENT_MODEL={}\n\
-             export ANTHROPIC_AUTH_TOKEN={}\n\
-             export ANTHROPIC_API_KEY=\n\
-             export ANTHROPIC_SMALL_FAST_MODEL={}\n\
-             export OPENROUTER_ZDR={}\n",
-            openrouter.model,
-            openrouter.api_key,
-            openrouter.model,
-            if openrouter.zdr { 1 } else { 0 },
-        ));
-    }
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -1279,9 +1276,9 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 // --- Container creation ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, openrouter: Option<&OpenRouterConfig>) -> Result<(), DockerError> {
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality, openrouter)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
@@ -1563,7 +1560,7 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
     entries
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, openrouter: Option<&OpenRouterConfig>) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1584,7 +1581,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     }
 
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone, seed_personality, openrouter).await?;
+    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
     Ok(name.to_string())
 }
 
@@ -1687,7 +1684,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None, None) {
+                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -1909,10 +1906,8 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
-    let openrouter = read_openrouter_config(&env_config.agents_dir, name);
-
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None, openrouter.as_ref()).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
 
     Ok(())
 }
@@ -1978,15 +1973,12 @@ pub async fn rename_agent(
     tracing::info!(old = %old_name, new = %new_name, "[2/4] snapshotting container...");
     snapshot_container(docker, &old_cname, &snapshot_tag, &[]).await?;
 
-    // Read OpenRouter config from the old env file before it is deleted, so the renamed agent keeps its key.
-    let openrouter = read_openrouter_config(&env_config.agents_dir, old_name);
-
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
     remove_container_force(docker, &old_cname).await.ok();
     delete_agent_env_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None, openrouter.as_ref()).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None).await?;
 
     Ok(())
 }
@@ -2122,46 +2114,26 @@ mod tests {
         assert_ne!(t1, t2);
     }
 
-    fn test_env_config(agents_dir: std::path::PathBuf) -> AgentEnvConfig {
-        AgentEnvConfig { config_dir: agents_dir.clone(), agents_dir, vestad_port: 8765, vestad_tunnel: None }
-    }
-
     #[test]
-    fn env_file_omits_openrouter_for_claude_agents() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let env_config = test_env_config(dir.path().to_path_buf());
-        write_agent_env_file(&env_config, "alice", 9001, "tok", None, None, None).expect("write");
-        let content = std::fs::read_to_string(dir.path().join("alice.env")).expect("read");
-        assert!(!content.contains("AGENT_PROVIDER"));
-        assert!(!content.contains("ANTHROPIC_AUTH_TOKEN"));
-        assert!(read_openrouter_config(dir.path(), "alice").is_none());
-    }
+    fn openrouter_provider_file_format() {
+        let zdr_on = openrouter_provider_file(&OpenRouterConfig {
+            api_key: "sk-or-v1-xyz".into(),
+            model: "anthropic/claude-sonnet-4-6".into(),
+            zdr: true,
+        });
+        assert!(zdr_on.contains("export AGENT_PROVIDER=openrouter\n"));
+        assert!(zdr_on.contains("export AGENT_MODEL=anthropic/claude-sonnet-4-6\n"));
+        assert!(zdr_on.contains("export ANTHROPIC_AUTH_TOKEN=sk-or-v1-xyz\n"));
+        assert!(zdr_on.contains("export ANTHROPIC_API_KEY=\n"));
+        assert!(zdr_on.contains("export ANTHROPIC_SMALL_FAST_MODEL=anthropic/claude-sonnet-4-6\n"));
+        assert!(zdr_on.contains("export OPENROUTER_ZDR=1\n"));
 
-    #[test]
-    fn env_file_openrouter_block_round_trips() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let env_config = test_env_config(dir.path().to_path_buf());
-        let openrouter = OpenRouterConfig { api_key: "sk-or-v1-xyz".into(), model: "anthropic/claude-sonnet-4-6".into(), zdr: true };
-        write_agent_env_file(&env_config, "bob", 9002, "tok", None, None, Some(&openrouter)).expect("write");
-        let content = std::fs::read_to_string(dir.path().join("bob.env")).expect("read");
-        assert!(content.contains("export AGENT_PROVIDER=openrouter\n"));
-        assert!(content.contains("export ANTHROPIC_API_KEY=\n"));
-        assert!(content.contains("export OPENROUTER_ZDR=1\n"));
-
-        let recovered = read_openrouter_config(dir.path(), "bob").expect("recover");
-        assert_eq!(recovered.api_key, "sk-or-v1-xyz");
-        assert_eq!(recovered.model, "anthropic/claude-sonnet-4-6");
-        assert!(recovered.zdr);
-    }
-
-    #[test]
-    fn openrouter_zdr_disabled_round_trips() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let env_config = test_env_config(dir.path().to_path_buf());
-        let openrouter = OpenRouterConfig { api_key: "k".into(), model: "deepseek/deepseek-v4".into(), zdr: false };
-        write_agent_env_file(&env_config, "carol", 9003, "tok", None, None, Some(&openrouter)).expect("write");
-        assert!(std::fs::read_to_string(dir.path().join("carol.env")).unwrap().contains("export OPENROUTER_ZDR=0\n"));
-        assert!(!read_openrouter_config(dir.path(), "carol").expect("recover").zdr);
+        let zdr_off = openrouter_provider_file(&OpenRouterConfig {
+            api_key: "k".into(),
+            model: "deepseek/deepseek-v4".into(),
+            zdr: false,
+        });
+        assert!(zdr_off.contains("export OPENROUTER_ZDR=0\n"));
     }
 
     // --- Dockerignore pattern matching ---

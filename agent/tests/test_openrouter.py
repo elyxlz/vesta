@@ -55,12 +55,14 @@ def test_build_client_options_keeps_anthropic_features_for_claude(tmp_path, stat
     config = _config_with_memory(tmp_path)
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
-    assert options.thinking["type"] == "adaptive"
+    thinking = options.thinking
+    assert thinking is not None and thinking["type"] == "adaptive"
 
 
 def test_build_client_options_drops_anthropic_features_for_openrouter(tmp_path, state):
     config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="anthropic/claude-sonnet-4-6")
     options = build_client_options(config, state)
     assert options.betas == []
-    assert options.thinking["type"] == "disabled"
+    thinking = options.thinking
+    assert thinking is not None and thinking["type"] == "disabled"
     assert options.model == "anthropic/claude-sonnet-4-6"

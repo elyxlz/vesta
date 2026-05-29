@@ -453,9 +453,17 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), openrouter.as_ref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
             .await
             .map_err(map_docker_err)?;
+
+    // Inject OpenRouter config into the container fs before first start (like OAuth credentials),
+    // so it persists across rebuild/rename via snapshot and stays editable by the agent.
+    if let Some(openrouter) = &openrouter {
+        docker::inject_openrouter(&state.docker, &name, openrouter)
+            .await
+            .map_err(map_docker_err)?;
+    }
 
     docker::start_agent(&state.docker, &name)
         .await
