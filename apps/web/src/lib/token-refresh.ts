@@ -2,8 +2,8 @@ import { getConnection, updateTokens, isTokenExpiringSoon } from "./connection";
 
 let refreshPromise: Promise<boolean> | null = null;
 
-export async function ensureFreshToken(): Promise<boolean> {
-  if (!isTokenExpiringSoon()) return true;
+export async function ensureFreshToken(force = false): Promise<boolean> {
+  if (!force && !isTokenExpiringSoon()) return true;
 
   // Deduplicate concurrent refresh calls
   if (refreshPromise) return refreshPromise;

@@ -1,13 +1,8 @@
 import { isTauri } from "@/lib/env";
+import { compareVersions } from "@/lib/version";
 
 export function isNewer(latest: string, current: string): boolean {
-  const a = latest.split(".").map(Number);
-  const b = current.split(".").map(Number);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if ((a[i] ?? 0) > (b[i] ?? 0)) return true;
-    if ((a[i] ?? 0) < (b[i] ?? 0)) return false;
-  }
-  return false;
+  return compareVersions(latest, current) > 0;
 }
 
 export type UpdateInfo = {

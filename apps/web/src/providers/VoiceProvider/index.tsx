@@ -7,6 +7,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   const { name: agentName, agent } = useSelectedAgent();
   const services = agent.services;
   const voiceRev = agent.services?.voice?.rev;
+  const hasVoice = "voice" in (services ?? {});
 
   const _setAgentContext = useVoice((s) => s._setAgentContext);
   const _setSttStatus = useVoice((s) => s._setSttStatus);
@@ -28,7 +29,6 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
       return;
     }
 
-    const hasVoice = "voice" in (services ?? {});
     if (!hasVoice) {
       _setSttStatus(null);
       _setTtsStatus(null);
@@ -48,7 +48,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
       .catch(() => {});
 
     return () => ctrl.abort();
-  }, [agentName, services, voiceRev, _setSttStatus, _setTtsStatus]);
+  }, [agentName, hasVoice, voiceRev, _setSttStatus, _setTtsStatus]);
 
   // Preload worklet module when STT is available
   const sttAvailable = useVoice((s) => s.sttAvailable);

@@ -45,10 +45,12 @@ function UsageBar({ label, limit }: { label: string; limit: RateLimit }) {
 export function PlanUsage() {
   const { name: agentName } = useSelectedAgent();
   const utilizationMap = useSettings((s) => s.utilization);
-  const loading = useSettings((s) => s.usageLoading);
-  const error = useSettings((s) => s.usageError);
+  const loadingMap = useSettings((s) => s.usageLoading);
+  const errorMap = useSettings((s) => s.usageError);
   const refreshUsageAction = useSettings((s) => s.refreshUsage);
   const utilization = agentName ? (utilizationMap[agentName] ?? null) : null;
+  const loading = agentName ? (loadingMap[agentName] ?? false) : false;
+  const error = agentName ? (errorMap[agentName] ?? false) : false;
 
   const refresh = () => {
     if (agentName) refreshUsageAction(agentName);

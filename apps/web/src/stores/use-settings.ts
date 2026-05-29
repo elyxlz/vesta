@@ -3,27 +3,30 @@ import { fetchUsage, type Utilization } from "@/api/agents";
 
 interface SettingsState {
   utilization: Record<string, Utilization>;
-  usageLoading: boolean;
-  usageError: boolean;
+  usageLoading: Record<string, boolean>;
+  usageError: Record<string, boolean>;
   refreshUsage: (agentName: string) => void;
 }
 
-export const useSettings = create<SettingsState>((set, get) => ({
+export const useSettings = create<SettingsState>((set) => ({
   utilization: {},
-  usageLoading: false,
-  usageError: false,
+  usageLoading: {},
+  usageError: {},
 
   refreshUsage: (agentName: string) => {
-    set({ usageLoading: true, usageError: false });
+    set((s) => ({
+      usageLoading: { ...s.usageLoading, [agentName]: true },
+      usageError: { ...s.usageError, [agentName]: false },
+    }));
     fetchUsage(agentName)
       .then((data) => {
-        set({ utilization: { ...get().utilization, [agentName]: data } });
+        set((s) => ({ utilization: { ...s.utilization, [agentName]: data } }));
       })
       .catch(() => {
-        set({ usageError: true });
+        set((s) => ({ usageError: { ...s.usageError, [agentName]: true } }));
       })
       .finally(() => {
-        set({ usageLoading: false });
+        set((s) => ({ usageLoading: { ...s.usageLoading, [agentName]: false } }));
       });
   },
 }));

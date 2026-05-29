@@ -12,9 +12,10 @@ export async function apiFetch(
     headers: { ...authHeaders(), ...init?.headers },
   });
 
-  // If 401, try one refresh then retry
+  // If 401, force a refresh then retry (the token was rejected even if the
+  // local clock thinks it is still valid, e.g. server-side rotation/revocation)
   if (resp.status === 401) {
-    const refreshed = await ensureFreshToken();
+    const refreshed = await ensureFreshToken(true);
     if (refreshed) {
       resp = await fetch(apiUrl(path), {
         ...init,
