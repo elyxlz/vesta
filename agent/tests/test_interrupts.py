@@ -155,6 +155,50 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
+    """processor_busy is True while a turn runs and False once it finishes (gates the proactive check)."""
+    processing_started = asyncio.Event()
+    busy_during_turn = False
+
+    async def slow_side_effect(msg, *, state, config, is_user):
+        nonlocal busy_during_turn
+        busy_during_turn = state.processor_busy
+        processing_started.set()
+        return (["OK"], state)
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await queue.put(("message", True))
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def shutdown_after_turn():
+        await processing_started.wait()
+        await asyncio.sleep(0.1)
+        state.shutdown_event.set()
+
+    from core.loops import message_processor
+
+    with (
+        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("core.loops.process_message", slow_side_effect),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
+    ):
+        await asyncio.gather(
+            message_processor(queue, state=state, config=config),
+            shutdown_after_turn(),
+        )
+
+    assert busy_during_turn, "processor_busy should be True while a turn is processing"
+    assert not state.processor_busy, "processor_busy should be cleared once the turn finishes"
+
+
+@pytest.mark.anyio
 async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
     """Cancelling _run_messages_with_interrupts must cancel its in-flight process_task (no orphaned tasks)."""
     from core.loops import _run_messages_with_interrupts
