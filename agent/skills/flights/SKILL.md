@@ -61,7 +61,7 @@ flights cheapest LAX --round-trip --duration 4 --top 15
 
 Browser automation via stealth Chromium. Supports ALL airlines including Wizz Air and Ryanair.
 
-**IMPORTANT**: Always use a subagent for Trip.com booking. Browser work fills context fast. Launch a background subagent with all necessary details and let it run.
+Use a subagent for Trip.com booking. Browser work fills context fast, so launch a background subagent with all necessary details and let it run.
 
 ### Credentials
 

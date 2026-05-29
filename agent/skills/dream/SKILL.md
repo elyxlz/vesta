@@ -81,7 +81,7 @@ Drift `~/agent/core/skills/personality/presets/$AGENT_SEED_PERSONALITY.md` direc
 
 Update the "User State" section, your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
 
-**CRITICAL: Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
+**Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 - What they're working on right now
 - What's going well and what isn't, reading between the lines

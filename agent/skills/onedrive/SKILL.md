@@ -21,7 +21,7 @@ rclone tree onedrive: --max-depth 2
 ```
 
 ## Notes
-- Do NOT use `rclone config` or `rclone authorize`. Neither handles device code flow in a headless container
+- Don't use `rclone config` or `rclone authorize`. Neither handles device code flow in a headless container
 - Use tenant `common` not org tenant for personal accounts
 - Keep scopes minimal (`Files.ReadWrite.All offline_access`). Extra scopes can cause the device code to fail with a misleading "expired" error
 - Install `unzip` before rclone or the install script fails silently
