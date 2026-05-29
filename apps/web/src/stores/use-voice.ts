@@ -68,6 +68,9 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let ttsAbort: AbortController | null = null;
 let ttsQueue: string[] = [];
 let ttsProcessing = false;
+// Bumped by stopSpeech to invalidate an in-flight processQueue loop, so a
+// stop-then-speak sequence never leaves two loops draining ttsQueue at once.
+let ttsEpoch = 0;
 const ttsPrefetchCache = new Map<string, Promise<Response>>();
 
 function clearIdleTimer() {
@@ -91,9 +94,10 @@ export const useVoice = create<VoiceState>((set, get) => {
     const { agentName } = get();
     if (ttsProcessing || !agentName) return;
     ttsProcessing = true;
+    const myEpoch = ttsEpoch;
     set({ isSpeaking: true });
 
-    while (ttsQueue.length > 0) {
+    while (ttsQueue.length > 0 && ttsEpoch === myEpoch) {
       const text = ttsQueue.shift()!;
       const controller = new AbortController();
       ttsAbort = controller;
@@ -109,8 +113,12 @@ export const useVoice = create<VoiceState>((set, get) => {
           console.warn("[tts] playback failed:", err);
         }
       }
-      ttsAbort = null;
+      if (ttsAbort === controller) ttsAbort = null;
     }
+
+    // A newer epoch (stopSpeech) superseded this loop; the new loop owns the
+    // shared flags, so exit without resetting them.
+    if (ttsEpoch !== myEpoch) return;
 
     ttsProcessing = false;
 
@@ -237,6 +245,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     stopSpeech: () => {
       ttsQueue = [];
       ttsPrefetchCache.clear();
+      ttsEpoch++;
       ttsAbort?.abort();
       ttsProcessing = false;
       set({ isSpeaking: false });
@@ -309,6 +318,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     _cleanup: () => {
       transcriber?.stop();
       transcriber = null;
+      get().stopSpeech();
       set({ isRecording: false, liveTranscript: "" });
     },
   };

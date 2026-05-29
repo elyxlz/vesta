@@ -180,14 +180,17 @@ async function playStreamedAudio(
   const audio = new Audio();
   audio.src = URL.createObjectURL(mediaSource);
 
-  if (signal) {
-    signal.addEventListener("abort", () => {
-      audio.pause();
-      URL.revokeObjectURL(audio.src);
-    });
-  }
-
   await new Promise<void>((resolve, reject) => {
+    if (signal) {
+      // Resolve (not reject) on abort so the caller's await completes instead
+      // of hanging forever when playback is cancelled mid-stream.
+      signal.addEventListener("abort", () => {
+        audio.pause();
+        URL.revokeObjectURL(audio.src);
+        resolve();
+      });
+    }
+
     mediaSource.addEventListener(
       "sourceopen",
       async () => {
@@ -229,10 +232,21 @@ async function playStreamedAudio(
               mediaSource.endOfStream();
             return;
           }
-          sourceBuffer.appendBuffer(queue.shift()!.buffer as ArrayBuffer);
+          try {
+            sourceBuffer.appendBuffer(queue.shift()!.buffer as ArrayBuffer);
+          } catch (err) {
+            // Without this the awaited Promise would hang: updateend never
+            // fires after a failed append, so nothing resolves it.
+            reject(
+              err instanceof Error ? err : new Error("appendBuffer failed"),
+            );
+          }
         };
 
         sourceBuffer.addEventListener("updateend", appendNext);
+        sourceBuffer.addEventListener("error", () =>
+          reject(new Error("audio decode failed")),
+        );
 
         audio.onended = () => {
           URL.revokeObjectURL(audio.src);

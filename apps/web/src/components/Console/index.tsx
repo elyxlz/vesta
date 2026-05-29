@@ -137,6 +137,8 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
       streamLogs(name, (event) => {
         switch (event.kind) {
           case "Line": {
+            // A line means the connection is healthy, so reset the backoff.
+            reconnectDelayRef.current = RECONNECT_BASE;
             const stripped = stripAnsi(event.text);
             setLines((prev) => {
               const next = [...prev, stripped];
@@ -158,8 +160,6 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
             }
             break;
         }
-      }).then(() => {
-        reconnectDelayRef.current = RECONNECT_BASE;
       });
     };
   });

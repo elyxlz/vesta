@@ -15,6 +15,8 @@ export function streamLogs(
     }
 
     const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}`;
+    const existing = logSources.get(name);
+    if (existing) existing.close();
     const es = new EventSource(url);
     logSources.set(name, es);
 

@@ -44,7 +44,7 @@ interface GatewayContextValue {
   agents: AgentInfo[];
   agentsFetched: boolean;
   send: (event: object) => boolean;
-  triggerGatewayUpdate: () => void;
+  triggerGatewayUpdate: () => Promise<boolean>;
   checkForUpdate: () => Promise<void>;
 }
 
@@ -61,7 +61,7 @@ const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   send: () => false,
-  triggerGatewayUpdate: () => {},
+  triggerGatewayUpdate: async () => false,
   checkForUpdate: async () => {},
 };
 
@@ -89,12 +89,16 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
 
-  const triggerGatewayUpdate = () => {
-    apiFetch("/gateway/update", { method: "POST" }).catch((err) => {
+  const triggerGatewayUpdate = async (): Promise<boolean> => {
+    try {
+      await apiFetch("/gateway/update", { method: "POST" });
+    } catch (err) {
       console.warn("[gateway] update request failed:", err);
-    });
+      return false;
+    }
     skipVersionGateRef.current = true;
     setConnectEpoch((e) => e + 1);
+    return true;
   };
 
   const checkForUpdate = async () => {

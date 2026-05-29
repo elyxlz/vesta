@@ -22,6 +22,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
+  const handshakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const dashboardService = agent.services?.dashboard;
   const hasDashboard = !!dashboardService;
@@ -51,6 +52,9 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   useEffect(() => {
     handshakeRef.current = false;
+    return () => {
+      if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
+    };
   }, [iframeKey]);
 
   const conn = getConnection();
@@ -184,7 +188,10 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         if (handshakeRef.current) {
           setLoaded(true);
         } else {
-          setTimeout(() => {
+          if (handshakeTimerRef.current)
+            clearTimeout(handshakeTimerRef.current);
+          handshakeTimerRef.current = setTimeout(() => {
+            handshakeTimerRef.current = null;
             if (handshakeRef.current) {
               setLoaded(true);
             } else {

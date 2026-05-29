@@ -13,9 +13,10 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
     useGateway();
   const [updating, setUpdating] = useState(false);
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     setUpdating(true);
-    triggerGatewayUpdate();
+    const ok = await triggerGatewayUpdate();
+    if (!ok) setUpdating(false);
   };
 
   const hostname = (() => {
