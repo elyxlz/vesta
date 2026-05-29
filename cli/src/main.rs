@@ -342,6 +342,21 @@ fn authenticate_agent(client: &client::Client, name: &str) {
     eprintln!("authenticated!");
 }
 
+// Agent-less OAuth — returns credentials JSON to inject at create time.
+fn oauth_for_setup(client: &client::Client) -> String {
+    let auth = client
+        .start_auth_standalone()
+        .unwrap_or_else(|e| platform::die(&e));
+    eprintln!("open this URL to authenticate:");
+    eprintln!("  {}", auth.auth_url);
+    try_open_browser(&auth.auth_url);
+
+    let code = prompt("paste the auth code");
+    client
+        .complete_auth_standalone(&auth.session_id, &code)
+        .unwrap_or_else(|e| platform::die(&e))
+}
+
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
@@ -522,10 +537,27 @@ fn run(cli: Cli) {
 
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
-            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()) {
+
+            // Claude path: OAuth standalone first, then create_agent injects creds.
+            // OpenRouter path: the key is the credential, no OAuth needed.
+            let credentials = if openrouter.is_some() {
+                None
+            } else {
+                eprintln!("authenticating claude...");
+                Some(oauth_for_setup(&c))
+            };
+
+            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), credentials.as_deref()) {
                 Ok(name) => eprintln!("created agent '{name}'"),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
+                    // If we already collected fresh Claude credentials, inject them into the
+                    // existing agent — otherwise the user just authenticated for nothing.
+                    if let Some(creds) = credentials.as_deref() {
+                        c.inject_token(&name, creds)
+                            .unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("credentials refreshed");
+                    }
                 }
                 Err(e) if e.contains("already exists") => {
                     platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
@@ -535,9 +567,6 @@ fn run(cli: Cli) {
 
             if openrouter.is_some() {
                 eprintln!("running on OpenRouter (no Claude login needed)");
-            } else {
-                eprintln!("authenticating claude...");
-                authenticate_agent(&c, &name);
             }
             eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
             c.wait_until_alive(&name, START_READY_TIMEOUT)
@@ -553,7 +582,7 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()).unwrap_or_else(|e| platform::die(&e));
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), None).unwrap_or_else(|e| platform::die(&e));
             if openrouter.is_some() {
                 eprintln!("created (running on OpenRouter)");
             } else {

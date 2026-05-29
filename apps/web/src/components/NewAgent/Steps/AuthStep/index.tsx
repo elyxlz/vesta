@@ -1,42 +1,36 @@
-import { useNavigate } from "react-router-dom";
 import { AuthFlow } from "@/components/AuthFlow";
-import { deleteAgent, type AuthStartResult } from "@/api";
-import { useGateway } from "@/providers/GatewayProvider";
-import { useOnboarding } from "@/stores/use-onboarding";
+import { ProgressBar } from "@/components/ProgressBar";
+import { completeAuth, type AuthStartResult } from "@/api";
 
 export function AuthStep({
-  agentName,
   authStart,
-  onDone,
+  startError,
+  onCredentialsReady,
+  onCancel,
 }: {
-  agentName: string;
-  authStart: AuthStartResult;
-  onDone: () => void;
+  authStart: AuthStartResult | null;
+  startError: string | null;
+  onCredentialsReady: (credentials: string) => void;
+  onCancel: () => void;
 }) {
-  const navigate = useNavigate();
-  const { agents } = useGateway();
-  const setStep = useOnboarding((s) => s.setStep);
-
   return (
-    <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-      <AuthFlow
-        agentName={agentName}
-        authUrl={authStart.auth_url}
-        sessionId={authStart.session_id}
-        onCancel={async () => {
-          if (agents.length > 1) {
-            navigate("/");
-          } else {
-            setStep("name");
-          }
-          try {
-            await deleteAgent(agentName);
-          } catch {
-            /* best-effort cleanup */
-          }
-        }}
-        onComplete={onDone}
-      />
+    <div className="flex w-[260px] max-w-full flex-col items-center gap-3 px-4">
+      {authStart ? (
+        <AuthFlow
+          authUrl={authStart.auth_url}
+          onSubmitCode={async (code) => {
+            const creds = await completeAuth(authStart.session_id, code);
+            onCredentialsReady(creds);
+          }}
+          onCancel={onCancel}
+        />
+      ) : startError ? (
+        <div className="flex flex-col items-center gap-3 py-2">
+          <p className="text-xs text-destructive text-center">{startError}</p>
+        </div>
+      ) : (
+        <ProgressBar message="starting authentication..." />
+      )}
     </div>
   );
 }

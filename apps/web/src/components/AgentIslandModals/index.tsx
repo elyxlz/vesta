@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AuthFlow } from "@/components/AuthFlow";
+import { submitAuthCode } from "@/api";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
@@ -53,13 +54,12 @@ export function AgentIslandModals() {
           </DialogHeader>
           {authStart ? (
             <AuthFlow
-              agentName={name}
               authUrl={authStart.auth_url}
-              sessionId={authStart.session_id}
+              onSubmitCode={(code) =>
+                submitAuthCode(name, authStart.session_id, code)
+              }
               onCancel={clearAuthState}
-              onComplete={() => {
-                clearAuthState();
-              }}
+              onComplete={clearAuthState}
             />
           ) : authStarting ? (
             <div className="flex flex-col items-center gap-3 py-2">

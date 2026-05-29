@@ -14,6 +14,7 @@ mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod jwt;
+mod openrouter;
 mod paths;
 mod time_utils;
 mod self_update;

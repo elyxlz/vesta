@@ -105,7 +105,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         from .openrouter_proxy import start_proxy
 
         state.openrouter_runner, proxy_port = await start_proxy(zdr=config.openrouter_zdr)
-        os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
+        # Pass the proxy URL into ClaudeAgentOptions.env (build_client_options reads
+        # this) instead of mutating os.environ — otherwise every subprocess we spawn
+        # inherits ANTHROPIC_BASE_URL and silently routes through the OpenRouter proxy.
+        state.openrouter_base_url = f"http://127.0.0.1:{proxy_port}"
         logger.init(f"OpenRouter proxy on 127.0.0.1:{proxy_port} (ZDR {'on' if config.openrouter_zdr else 'off'})")
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()

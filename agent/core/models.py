@@ -51,6 +51,7 @@ class State:
     # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
     ws_runner: "AppRunner | None" = None
     openrouter_runner: "AppRunner | None" = None
+    openrouter_base_url: str | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)

@@ -213,6 +213,13 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # 1M-context beta and thinking are Anthropic-only; drop them on OpenRouter.
     is_openrouter = config.agent_provider == "openrouter"
 
+    # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
+    # os.environ here would leak the proxy URL into every other subprocess
+    # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
+    sdk_env: dict[str, str] = {}
+    if is_openrouter and state.openrouter_base_url:
+        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_base_url
+
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
@@ -228,4 +235,5 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},
         resume=state.persisted.session_id,
+        env=sdk_env,
     )

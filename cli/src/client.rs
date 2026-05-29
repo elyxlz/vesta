@@ -313,7 +313,7 @@ impl Client {
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>, openrouter: Option<&OpenRouterArgs>) -> Result<String, String> {
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>, openrouter: Option<&OpenRouterArgs>, credentials: Option<&str>) -> Result<String, String> {
         let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
             body["timezone"] = serde_json::json!(tz);
@@ -322,6 +322,9 @@ impl Client {
             body["openrouter_key"] = serde_json::json!(openrouter.key);
             body["openrouter_model"] = serde_json::json!(openrouter.model);
             body["openrouter_zdr"] = serde_json::json!(openrouter.zdr);
+        }
+        if let Some(creds) = credentials {
+            body["credentials"] = serde_json::json!(creds);
         }
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp
@@ -413,6 +416,28 @@ impl Client {
         let body = serde_json::json!({"session_id": session_id, "code": code});
         self.post_json(&format!("/agents/{name}/auth/code"), &body)?;
         Ok(())
+    }
+
+    // Agent-less OAuth — used by `vesta setup` to obtain credentials before the
+    // agent exists, then passed to create_agent.
+    pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
+        let resp = self.post("/auth/start")?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    pub fn complete_auth_standalone(&self, session_id: &str, code: &str) -> Result<String, String> {
+        let body = serde_json::json!({"session_id": session_id, "code": code});
+        let resp = self.post_json("/auth/complete", &body)?;
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        v["credentials"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "no credentials in response".to_string())
     }
 
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {

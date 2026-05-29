@@ -14,7 +14,13 @@ export {
 } from "./agents";
 export { fetchMemory, saveMemory } from "./memory";
 export { fetchPersonalities, type Personality } from "./personalities";
-export { authenticate, submitAuthCode, type AuthStartResult } from "./auth";
+export {
+  authenticate,
+  submitAuthCode,
+  startAuth,
+  completeAuth,
+  type AuthStartResult,
+} from "./auth";
 export { streamLogs, stopLogs } from "./logs";
 export { connectToServer } from "./server";
 export { isNewer, checkAndInstallUpdate, type UpdateInfo } from "./updates";
