@@ -433,8 +433,12 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
             }
         }
     }
-    // OpenRouter agents have no OAuth credentials; the injected provider file is their auth marker.
-    read_container_file(docker, cname, PROVIDER_ENV_PATH).await.is_some()
+    // OpenRouter agents have no OAuth credentials; their provider file is the auth marker. Require it
+    // to actually declare openrouter mode (not merely exist), so a stray/empty file can't authenticate.
+    match read_container_file(docker, cname, PROVIDER_ENV_PATH).await {
+        Some(provider) => provider.contains("AGENT_PROVIDER=openrouter"),
+        None => false,
+    }
 }
 
 /// Readiness check: the agent binds its WS port only once it's ready to serve requests.
@@ -816,31 +820,52 @@ pub struct OpenRouterConfig {
     pub zdr: bool,
 }
 
+/// Wrap a value in single quotes for safe sourcing in a shell file, escaping embedded single quotes.
+/// The provider file is `. `-sourced, so an unquoted user-supplied key/model could otherwise inject
+/// shell commands or break the export.
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// The shell file (sourced by the entrypoint) that puts an OpenRouter agent into provider mode.
 /// ANTHROPIC_BASE_URL is set by the agent at runtime to its local ZDR proxy; the SDK reads
 /// ANTHROPIC_AUTH_TOKEN from the env and sends it as the bearer token through that proxy.
 pub fn openrouter_provider_file(cfg: &OpenRouterConfig) -> String {
+    let model = shell_single_quote(&cfg.model);
+    let key = shell_single_quote(&cfg.api_key);
+    let zdr = if cfg.zdr { 1 } else { 0 };
     format!(
         "export AGENT_PROVIDER=openrouter\n\
-         export AGENT_MODEL={}\n\
-         export ANTHROPIC_AUTH_TOKEN={}\n\
+         export AGENT_MODEL={model}\n\
+         export ANTHROPIC_AUTH_TOKEN={key}\n\
          export ANTHROPIC_API_KEY=\n\
-         export ANTHROPIC_SMALL_FAST_MODEL={}\n\
-         export OPENROUTER_ZDR={}\n",
-        cfg.model,
-        cfg.api_key,
-        cfg.model,
-        if cfg.zdr { 1 } else { 0 },
+         export ANTHROPIC_SMALL_FAST_MODEL={model}\n\
+         export OPENROUTER_ZDR={zdr}\n",
     )
 }
 
 /// Write the provider file into an agent's container and source it from ~/.bashrc (which the
-/// entrypoint already sources; it is empty in a fresh image). The container only needs to exist
-/// (created or running); docker cp works on stopped containers, so this runs before the first start.
+/// entrypoint already sources). The container only needs to exist (created or running); docker cp
+/// works on stopped containers, so this runs before the first start.
+///
+/// The ~/.bashrc source line is appended idempotently (preserving any existing content, e.g. a
+/// custom image's bashrc), and the provider file is written LAST: since its presence is the auth
+/// marker (see is_authenticated), it must only appear once sourcing is in place, so a partial
+/// injection can never look like a fully-configured agent.
 pub async fn inject_openrouter(docker: &Docker, agent_name: &str, cfg: &OpenRouterConfig) -> Result<(), DockerError> {
     let cname = container_name(agent_name);
-    docker_cp_content(docker, &cname, &openrouter_provider_file(cfg), PROVIDER_ENV_PATH).await?;
-    docker_cp_content(docker, &cname, &format!(". {PROVIDER_ENV_PATH}\n"), "/root/.bashrc").await
+    let source_line = format!(". {PROVIDER_ENV_PATH}");
+    let existing = read_container_file(docker, &cname, "/root/.bashrc").await.unwrap_or_default();
+    if !existing.contains(&source_line) {
+        let mut updated = existing;
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(&source_line);
+        updated.push('\n');
+        docker_cp_content(docker, &cname, &updated, "/root/.bashrc").await?;
+    }
+    docker_cp_content(docker, &cname, &openrouter_provider_file(cfg), PROVIDER_ENV_PATH).await
 }
 
 /// Compute the upstream ref the agent should sync against.
@@ -2122,10 +2147,10 @@ mod tests {
             zdr: true,
         });
         assert!(zdr_on.contains("export AGENT_PROVIDER=openrouter\n"));
-        assert!(zdr_on.contains("export AGENT_MODEL=anthropic/claude-sonnet-4-6\n"));
-        assert!(zdr_on.contains("export ANTHROPIC_AUTH_TOKEN=sk-or-v1-xyz\n"));
+        assert!(zdr_on.contains("export AGENT_MODEL='anthropic/claude-sonnet-4-6'\n"));
+        assert!(zdr_on.contains("export ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n"));
         assert!(zdr_on.contains("export ANTHROPIC_API_KEY=\n"));
-        assert!(zdr_on.contains("export ANTHROPIC_SMALL_FAST_MODEL=anthropic/claude-sonnet-4-6\n"));
+        assert!(zdr_on.contains("export ANTHROPIC_SMALL_FAST_MODEL='anthropic/claude-sonnet-4-6'\n"));
         assert!(zdr_on.contains("export OPENROUTER_ZDR=1\n"));
 
         let zdr_off = openrouter_provider_file(&OpenRouterConfig {
@@ -2134,6 +2159,18 @@ mod tests {
             zdr: false,
         });
         assert!(zdr_off.contains("export OPENROUTER_ZDR=0\n"));
+    }
+
+    #[test]
+    fn openrouter_provider_file_escapes_shell_metacharacters() {
+        let injected = openrouter_provider_file(&OpenRouterConfig {
+            api_key: "k'; touch /tmp/pwned #".into(),
+            model: "m".into(),
+            zdr: true,
+        });
+        // The single quote is escaped (' -> '\'') so the injected command cannot break out of the export.
+        assert!(injected.contains(r"export ANTHROPIC_AUTH_TOKEN='k'\''; touch /tmp/pwned #'"));
+        assert!(!injected.contains("TOKEN=k';"));
     }
 
     // --- Dockerignore pattern matching ---
