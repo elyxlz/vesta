@@ -93,7 +93,7 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
         try:
             usage_data = msg.usage or {}
             cost = msg.total_cost_usd
-            duration_s = msg.duration_ms / 1000 if msg.duration_ms else None
+            duration_s = msg.duration_ms / 1000 if msg.duration_ms is not None else None
             parts = []
             if usage_data:
                 input_tok = usage_data.get("input_tokens", 0)

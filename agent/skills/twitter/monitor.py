@@ -199,7 +199,12 @@ def _parse_pub_date(pub_date: str) -> "datetime | None":
     try:
         from email.utils import parsedate_to_datetime
 
-        return parsedate_to_datetime(pub_date)
+        parsed = parsedate_to_datetime(pub_date)
+        # Normalize naive datetimes (pubDate without a timezone) to UTC so comparisons
+        # against the tz-aware min_pub_dt don't raise TypeError and silently drop the tweet.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
     except (ValueError, TypeError) as e:
         logger.debug(f"Failed to parse pubDate '{pub_date}': {e}")
         return None
