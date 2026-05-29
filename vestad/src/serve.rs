@@ -418,6 +418,9 @@ struct CreateBody {
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
     seed_personality: Option<String>,
+    openrouter_key: Option<String>,
+    openrouter_model: Option<String>,
+    openrouter_zdr: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -431,6 +434,15 @@ async fn create_agent_handler(
     }
     let manage_core_code = body.manage_agent_code.unwrap_or(true);
     tracing::info!(name = %name, manage_core_code, "creating agent");
+
+    let openrouter = match body.openrouter_key {
+        Some(api_key) => match body.openrouter_model {
+            Some(model) => Some(docker::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
+            None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
+        },
+        None => None,
+    };
+
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -441,7 +453,7 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), openrouter.as_ref())
             .await
             .map_err(map_docker_err)?;
 

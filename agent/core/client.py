@@ -12,7 +12,7 @@ from claude_agent_sdk import (
     Message,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
+from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import logger
 from . import models as vm
@@ -210,17 +210,21 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
+    # The 1M context beta and extended thinking are Anthropic-only; OpenRouter routes (incl. non-Claude
+    # models) reject or ignore them, so drop both when running via OpenRouter.
+    is_openrouter = config.agent_provider == "openrouter"
+
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
-        betas=["context-1m-2025-08-07"],
+        betas=[] if is_openrouter else ["context-1m-2025-08-07"],
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
         setting_sources=["project"],
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
-        thinking=config.thinking,
+        thinking=ThinkingConfigDisabled(type="disabled") if is_openrouter else config.thinking,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},

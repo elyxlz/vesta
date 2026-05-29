@@ -50,6 +50,8 @@ class State:
     persisted: PersistedState = dc.field(default_factory=PersistedState)
     # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
     ws_runner: "AppRunner | None" = None
+    # In-process OpenRouter ZDR proxy (only set when agent_provider == "openrouter").
+    openrouter_runner: "AppRunner | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)

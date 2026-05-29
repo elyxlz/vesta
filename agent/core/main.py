@@ -101,6 +101,13 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     logger.init(f"{config.agent_name.upper()} started")
 
+    if config.agent_provider == "openrouter":
+        from .openrouter_proxy import start_proxy
+
+        state.openrouter_runner, proxy_port = await start_proxy(zdr=config.openrouter_zdr)
+        os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
+        logger.init(f"OpenRouter proxy on 127.0.0.1:{proxy_port} (ZDR {'on' if config.openrouter_zdr else 'off'})")
+
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     drop_pending_migrations(state=state, config=config, first_start=first_start)
@@ -145,6 +152,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         os._exit(1)
     if state.ws_runner is not None:
         await state.ws_runner.cleanup()
+    if state.openrouter_runner is not None:
+        await state.openrouter_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 

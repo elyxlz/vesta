@@ -200,6 +200,13 @@ pub struct Client {
     cert_fingerprint: Option<String>,
 }
 
+/// OpenRouter creation args, set when an agent runs on an OpenRouter API key instead of a Claude account.
+pub struct OpenRouterArgs {
+    pub key: String,
+    pub model: String,
+    pub zdr: bool,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Self {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -306,10 +313,15 @@ impl Client {
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>, openrouter: Option<&OpenRouterArgs>) -> Result<String, String> {
         let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
             body["timezone"] = serde_json::json!(tz);
+        }
+        if let Some(openrouter) = openrouter {
+            body["openrouter_key"] = serde_json::json!(openrouter.key);
+            body["openrouter_model"] = serde_json::json!(openrouter.model);
+            body["openrouter_zdr"] = serde_json::json!(openrouter.zdr);
         }
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp

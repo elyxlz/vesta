@@ -5,7 +5,7 @@ use bollard::Docker;
 use crate::docker::{
     container_created, container_name, container_size_rw, container_status, create_container,
     docker_cp_content, docker_root_dir, image_exists, inspect_container,
-    list_images_by_reference, remove_container_force, remove_image,
+    list_images_by_reference, read_openrouter_config, remove_container_force, remove_image,
     snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
     AgentEnvConfig, ContainerStatus, DockerError,
 };
@@ -440,7 +440,8 @@ pub async fn restore_backup(
         .port
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(docker, &cname, backup_id, port, name, env_config, manage_core_code, None, None).await?;
+    let openrouter = read_openrouter_config(&env_config.agents_dir, name);
+    create_container(docker, &cname, backup_id, port, name, env_config, manage_core_code, None, None, openrouter.as_ref()).await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(

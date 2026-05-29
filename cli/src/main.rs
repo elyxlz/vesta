@@ -73,6 +73,15 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
+        /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
+        #[arg(long)]
+        openrouter_key: Option<String>,
+        /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
+        #[arg(long)]
+        openrouter_model: Option<String>,
+        /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
+        #[arg(long)]
+        no_zdr: bool,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -82,6 +91,15 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
+        /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
+        #[arg(long)]
+        openrouter_key: Option<String>,
+        /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
+        #[arg(long)]
+        openrouter_model: Option<String>,
+        /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
+        #[arg(long)]
+        no_zdr: bool,
     },
     /// Start an agent (or all agents if no name given)
     Start {
@@ -305,6 +323,12 @@ fn prompt_name() -> String {
     prompt("agent name")
 }
 
+fn build_openrouter_args(key: Option<String>, model: Option<String>, no_zdr: bool) -> Option<client::OpenRouterArgs> {
+    let key = key?;
+    let model = model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
+    Some(client::OpenRouterArgs { key, model, zdr: !no_zdr })
+}
+
 fn authenticate_agent(client: &client::Client, name: &str) {
     let auth = client.start_auth(name).unwrap_or_else(|e| platform::die(&e));
     eprintln!("open this URL to authenticate:");
@@ -489,15 +513,16 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code } => {
+        Command::Setup { yes, name, no_manage_core_code, openrouter_key, openrouter_model, no_zdr } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
+            let openrouter = build_openrouter_args(openrouter_key, openrouter_model, no_zdr);
             let timezone = detect_timezone();
-            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
+            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()) {
                 Ok(name) => eprintln!("created agent '{name}'"),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
@@ -508,8 +533,12 @@ fn run(cli: Cli) {
                 Err(e) => platform::die(&e),
             }
 
-            eprintln!("authenticating claude...");
-            authenticate_agent(&c, &name);
+            if openrouter.is_some() {
+                eprintln!("running on OpenRouter (no Claude login needed)");
+            } else {
+                eprintln!("authenticating claude...");
+                authenticate_agent(&c, &name);
+            }
             eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
             c.wait_until_alive(&name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
@@ -517,14 +546,19 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { name, no_manage_core_code } => {
+        Command::Create { name, no_manage_core_code, openrouter_key, openrouter_model, no_zdr } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
+            let openrouter = build_openrouter_args(openrouter_key, openrouter_model, no_zdr);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("created (run 'vesta auth {name}' to authenticate)");
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()).unwrap_or_else(|e| platform::die(&e));
+            if openrouter.is_some() {
+                eprintln!("created (running on OpenRouter)");
+            } else {
+                eprintln!("created (run 'vesta auth {name}' to authenticate)");
+            }
         }
 
         Command::Settings { name } => {
