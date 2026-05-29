@@ -8,6 +8,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
+import { validateOpenRouterKey } from "@/api/openrouter";
 
 export function KeyStep({
   initialKey,
@@ -20,13 +21,24 @@ export function KeyStep({
 }) {
   const [key, setKey] = useState(initialKey);
   const [zdr, setZdr] = useState(initialZdr);
+  const [validating, setValidating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const canContinue = key.trim() !== "";
+  const canContinue = key.trim() !== "" && !validating;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canContinue) return;
-    onNext(key.trim(), zdr);
+    setValidating(true);
+    setError(null);
+    try {
+      await validateOpenRouterKey(key.trim());
+      onNext(key.trim(), zdr);
+    } catch (e: unknown) {
+      setError((e as { message?: string })?.message || "key validation failed");
+    } finally {
+      setValidating(false);
+    }
   };
 
   return (
@@ -52,9 +64,15 @@ export function KeyStep({
             style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
             placeholder="sk-or-v1-..."
             value={key}
-            onChange={(e) => setKey(e.target.value)}
+            onChange={(e) => {
+              setKey(e.target.value);
+              if (error) setError(null);
+            }}
             autoFocus
           />
+          {error && (
+            <p className="text-[11px] text-destructive">{error}</p>
+          )}
         </Field>
         <div className="flex w-full items-center justify-between gap-3">
           <div className="flex flex-col">
@@ -68,7 +86,7 @@ export function KeyStep({
       </FieldGroup>
 
       <Button type="submit" className="w-full" disabled={!canContinue}>
-        next
+        {validating ? "checking key..." : "next"}
       </Button>
     </form>
   );
