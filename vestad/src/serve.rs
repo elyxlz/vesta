@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{agent_auth, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -440,7 +440,7 @@ async fn create_agent_handler(
 
     let openrouter = match body.openrouter_key {
         Some(api_key) => match body.openrouter_model {
-            Some(model) => Some(docker::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
+            Some(model) => Some(agent_auth::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
             None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
         },
         None => None,
@@ -468,17 +468,12 @@ async fn create_agent_handler(
             .map_err(map_docker_err)?;
 
     // Inject into the container fs (like OAuth creds) so it survives rebuild/rename and is agent-editable.
-    if let Some(openrouter) = &openrouter {
-        docker::inject_openrouter(&state.docker, &name, openrouter)
-            .await
-            .map_err(map_docker_err)?;
+    let auth = agent_auth::AgentAuth::for_agent(&state.docker, &name);
+    if let Some(or) = &openrouter {
+        auth.set_openrouter(or).await.map_err(map_docker_err)?;
     }
-
-    if let Some(credentials) = &body.credentials {
-        let cname = docker::container_name(&name);
-        docker::inject_credentials(&state.docker, &cname, credentials)
-            .await
-            .map_err(map_docker_err)?;
+    if let Some(creds) = &body.credentials {
+        auth.set_claude(creds).await.map_err(map_docker_err)?;
     }
 
     docker::start_agent(&state.docker, &name)
@@ -771,7 +766,7 @@ async fn set_provider_handler(
 
     let openrouter = match body.openrouter_key {
         Some(api_key) => match body.openrouter_model {
-            Some(model) => Some(docker::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
+            Some(model) => Some(agent_auth::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
             None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
         },
         None => None,
@@ -787,21 +782,15 @@ async fn set_provider_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
+    let auth = agent_auth::AgentAuth::for_container(&state.docker, &cname);
     if let Some(creds) = &body.credentials {
-        docker::inject_credentials(&state.docker, &cname, creds)
-            .await
-            .map_err(map_docker_err)?;
+        auth.set_claude(creds).await.map_err(map_docker_err)?;
         // If the agent was previously in OpenRouter mode, the provider file's env
-        // vars (AGENT_PROVIDER, ANTHROPIC_AUTH_TOKEN) would otherwise override the
-        // freshly-injected Claude credentials at boot. Clear it.
-        docker::clear_provider_file(&state.docker, &cname)
-            .await
-            .map_err(map_docker_err)?;
+        // vars would otherwise override the freshly-injected Claude credentials.
+        auth.clear_openrouter().await.map_err(map_docker_err)?;
     }
     if let Some(or) = &openrouter {
-        docker::inject_openrouter(&state.docker, &name, or)
-            .await
-            .map_err(map_docker_err)?;
+        auth.set_openrouter(or).await.map_err(map_docker_err)?;
     }
 
     docker::restart_agent(&state.docker, &name)

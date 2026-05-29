@@ -52,10 +52,6 @@ pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
-pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-// Sourced via ~/.bashrc; its presence marks an OpenRouter agent (see is_authenticated).
-pub const PROVIDER_ENV_PATH: &str = "/root/.claude/vesta-provider.env";
-const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
@@ -78,27 +74,25 @@ const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
-const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
-    "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",
-    ". /run/vestad-env",
-    ". ~/.bashrc || true",
-    // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
-    // file; absent for Claude agents. Sourced directly so we never have to mutate ~/.bashrc.
-    ". /root/.claude/vesta-provider.env 2>/dev/null || true",
-    "uv sync --frozen --project /root/agent",
-    // ~/.claude/skills is a real directory of per-skill symlinks. Both
-    // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
-    // core entries are linked last so they win any name collision. Reset
-    // every boot so uninstalled skills don't leave dangling symlinks.
-    "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills",
-    "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done",
-    "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json",
-    "cd /root/agent && exec uv run --frozen python -m core.main",
-];
-
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let script = AGENT_ENTRYPOINT_STEPS.join("; \\\n");
-    vec!["sh".into(), "-c".into(), script]
+    let steps: [String; 9] = [
+        "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
+        ". /run/vestad-env".into(),
+        ". ~/.bashrc || true".into(),
+        // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
+        // file; absent for Claude agents. Sourced directly so we never have to mutate ~/.bashrc.
+        format!(". {} 2>/dev/null || true", crate::agent_auth::PROVIDER_ENV_PATH),
+        "uv sync --frozen --project /root/agent".into(),
+        // ~/.claude/skills is a real directory of per-skill symlinks. Both
+        // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
+        // core entries are linked last so they win any name collision. Reset
+        // every boot so uninstalled skills don't leave dangling symlinks.
+        "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
+        "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
+        "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
+        "cd /root/agent && exec uv run --frozen python -m core.main".into(),
+    ];
+    vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
 
 const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
@@ -352,7 +346,10 @@ pub struct ContainerInfo {
 pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            if !is_authenticated(docker, cname).await {
+            if !crate::agent_auth::AgentAuth::for_container(docker, cname)
+                .is_authenticated()
+                .await
+            {
                 return AgentStatus::NotAuthenticated;
             }
             if info.port.is_some_and(is_agent_ready) {
@@ -423,63 +420,6 @@ pub async fn container_status(docker: &Docker, cname: &str) -> ContainerStatus {
 
 pub async fn read_container_file(docker: &Docker, cname: &str, container_path: &str) -> Option<String> {
     download_from_container(docker, cname, container_path).await
-}
-
-pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
-    if let Some(content) = read_container_file(docker, cname, CREDENTIALS_PATH).await {
-        if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() {
-                if expires_at > crate::time_utils::now_epoch_millis() as u64 {
-                    return true;
-                }
-            }
-        }
-    }
-    // OpenRouter agents have no OAuth creds; the provider file must declare
-    // openrouter mode AND carry a non-empty bearer token.
-    match read_container_file(docker, cname, PROVIDER_ENV_PATH).await {
-        Some(provider) => is_openrouter_authenticated(&provider),
-        None => false,
-    }
-}
-
-/// Parse a single `[export ]KEY=value` shell line; returns the unquoted value if
-/// `key` matches. Skips blank lines and `#`-comments. Strips one layer of single
-/// quotes (matching `shell_single_quote`'s output).
-fn parse_shell_export(line: &str, key: &str) -> Option<String> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with('#') {
-        return None;
-    }
-    let line = line.strip_prefix("export ").unwrap_or(line);
-    let (k, v) = line.split_once('=')?;
-    if k.trim() != key {
-        return None;
-    }
-    let v = v.trim();
-    let unquoted = v
-        .strip_prefix('\'')
-        .and_then(|s| s.strip_suffix('\''))
-        .unwrap_or(v);
-    Some(unquoted.to_string())
-}
-
-fn is_openrouter_authenticated(provider_file: &str) -> bool {
-    let mut provider_ok = false;
-    let mut token_ok = false;
-    for line in provider_file.lines() {
-        if let Some(v) = parse_shell_export(line, "AGENT_PROVIDER") {
-            if v == "openrouter" {
-                provider_ok = true;
-            }
-        }
-        if let Some(v) = parse_shell_export(line, "ANTHROPIC_AUTH_TOKEN") {
-            if !v.is_empty() {
-                token_ok = true;
-            }
-        }
-    }
-    provider_ok && token_ok
 }
 
 /// Readiness check: the agent binds its WS port only once it's ready to serve requests.
@@ -849,56 +789,6 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
-}
-
-/// Per-agent OpenRouter settings, injected into the container fs at PROVIDER_ENV_PATH (never on the host).
-#[derive(Clone)]
-pub struct OpenRouterConfig {
-    pub api_key: String,
-    pub model: String,
-    pub zdr: bool,
-}
-
-/// Single-quote a value for safe sourcing (key/model are user input); escapes embedded quotes.
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-/// Cheap haiku-class model the SDK reaches for on background work (compaction probes,
-/// summarization, intent classification). Hardcoded so picking an expensive primary
-/// model doesn't silently 5–10× background spend. Editable in the provider file post-create.
-const OPENROUTER_SMALL_FAST_MODEL: &str = "anthropic/claude-haiku-4.5";
-
-/// The sourced shell file that puts an agent into OpenRouter mode. ANTHROPIC_BASE_URL is set at
-/// runtime to the local ZDR proxy; the SDK sends ANTHROPIC_AUTH_TOKEN as the bearer token through it.
-pub fn openrouter_provider_file(cfg: &OpenRouterConfig) -> String {
-    let model = shell_single_quote(&cfg.model);
-    let key = shell_single_quote(&cfg.api_key);
-    let small_fast = shell_single_quote(OPENROUTER_SMALL_FAST_MODEL);
-    let zdr = if cfg.zdr { 1 } else { 0 };
-    format!(
-        "export AGENT_PROVIDER=openrouter\n\
-         export AGENT_MODEL={model}\n\
-         export ANTHROPIC_AUTH_TOKEN={key}\n\
-         export ANTHROPIC_API_KEY=\n\
-         export ANTHROPIC_SMALL_FAST_MODEL={small_fast}\n\
-         export OPENROUTER_ZDR={zdr}\n",
-    )
-}
-
-/// Inject OpenRouter mode into a (created or running) container. The agent entrypoint
-/// sources PROVIDER_ENV_PATH directly (see AGENT_ENTRYPOINT_STEPS), so we only need to
-/// write the provider file. Its presence is the OpenRouter auth marker.
-pub async fn inject_openrouter(docker: &Docker, agent_name: &str, cfg: &OpenRouterConfig) -> Result<(), DockerError> {
-    let cname = container_name(agent_name);
-    docker_cp_content(docker, &cname, &openrouter_provider_file(cfg), PROVIDER_ENV_PATH).await
-}
-
-/// Overwrite the OpenRouter provider file with empty content. The entrypoint will
-/// source it as a no-op, leaving any Claude credentials in effect. Used when
-/// switching an agent from OpenRouter back to Claude.
-pub async fn clear_provider_file(docker: &Docker, container: &str) -> Result<(), DockerError> {
-    docker_cp_content(docker, container, "", PROVIDER_ENV_PATH).await
 }
 
 /// Compute the upstream ref the agent should sync against.
@@ -1425,22 +1315,6 @@ pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content:
         .map(|f| f.to_str().unwrap_or("file"))
         .unwrap_or("file");
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
-}
-
-pub async fn inject_credentials(docker: &Docker, container: &str, credentials: &str) -> Result<(), DockerError> {
-    // Build a tar with .credentials.json and upload to /root/.claude/
-    let tar_data = tar_single_file(".credentials.json", credentials.as_bytes())?;
-    docker.upload_to_container(
-        container,
-        Some(UploadToContainerOptions {
-            path: "/root/.claude/".to_string(),
-            ..Default::default()
-        }),
-        bollard::body_full(Bytes::from(tar_data)),
-    ).await?;
-
-    docker_cp_content(docker, container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH).await?;
-    Ok(())
 }
 
 // --- Auth flow (split for HTTP API) ---
@@ -2170,67 +2044,6 @@ mod tests {
         let t1 = generate_agent_token();
         let t2 = generate_agent_token();
         assert_ne!(t1, t2);
-    }
-
-    #[test]
-    fn openrouter_provider_file_format() {
-        let zdr_on = openrouter_provider_file(&OpenRouterConfig {
-            api_key: "sk-or-v1-xyz".into(),
-            model: "anthropic/claude-sonnet-4-6".into(),
-            zdr: true,
-        });
-        assert!(zdr_on.contains("export AGENT_PROVIDER=openrouter\n"));
-        assert!(zdr_on.contains("export AGENT_MODEL='anthropic/claude-sonnet-4-6'\n"));
-        assert!(zdr_on.contains("export ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n"));
-        assert!(zdr_on.contains("export ANTHROPIC_API_KEY=\n"));
-        assert!(zdr_on.contains("export ANTHROPIC_SMALL_FAST_MODEL='anthropic/claude-haiku-4.5'\n"));
-        assert!(zdr_on.contains("export OPENROUTER_ZDR=1\n"));
-
-        let zdr_off = openrouter_provider_file(&OpenRouterConfig {
-            api_key: "k".into(),
-            model: "deepseek/deepseek-v4".into(),
-            zdr: false,
-        });
-        assert!(zdr_off.contains("export OPENROUTER_ZDR=0\n"));
-    }
-
-    #[test]
-    fn openrouter_auth_check_rejects_partial_or_commented_files() {
-        // Happy path: full provider file is authenticated.
-        let happy = "export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n";
-        assert!(is_openrouter_authenticated(happy));
-
-        // Commented-out provider line must not authenticate.
-        let commented = "# export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n";
-        assert!(!is_openrouter_authenticated(commented));
-
-        // Prefix-extended name (e.g. AGENT_PROVIDER=openrouter_test) must not match.
-        let extended = "export AGENT_PROVIDER=openrouter_test\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n";
-        assert!(!is_openrouter_authenticated(extended));
-
-        // Empty token must not authenticate even with the provider line present.
-        let empty_token = "export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN=''\n";
-        assert!(!is_openrouter_authenticated(empty_token));
-
-        // Provider declared but no token line at all.
-        let no_token = "export AGENT_PROVIDER=openrouter\n";
-        assert!(!is_openrouter_authenticated(no_token));
-
-        // Substring-only stub (legacy contains() check would have passed this).
-        let substring_only = "# example: AGENT_PROVIDER=openrouter\n";
-        assert!(!is_openrouter_authenticated(substring_only));
-    }
-
-    #[test]
-    fn openrouter_provider_file_escapes_shell_metacharacters() {
-        let injected = openrouter_provider_file(&OpenRouterConfig {
-            api_key: "k'; touch /tmp/pwned #".into(),
-            model: "m".into(),
-            zdr: true,
-        });
-        // The single quote is escaped (' -> '\'') so the injected command cannot break out of the export.
-        assert!(injected.contains(r"export ANTHROPIC_AUTH_TOKEN='k'\''; touch /tmp/pwned #'"));
-        assert!(!injected.contains("TOKEN=k';"));
     }
 
     // --- Dockerignore pattern matching ---

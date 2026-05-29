@@ -3,6 +3,7 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
+mod agent_auth;
 mod agent_code;
 mod agent_embed;
 mod agent_proxy;
