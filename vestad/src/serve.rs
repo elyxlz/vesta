@@ -421,8 +421,8 @@ struct CreateBody {
     openrouter_key: Option<String>,
     openrouter_model: Option<String>,
     openrouter_zdr: Option<bool>,
-    /// Pre-fetched Claude OAuth credentials JSON, obtained via /auth/start +
-    /// /auth/complete before this call. Mutually exclusive with openrouter_*.
+    /// Pre-fetched Claude OAuth credentials JSON, obtained via the
+    /// /providers/claude/oauth/{start,complete} pair. Mutually exclusive with openrouter_*.
     credentials: Option<String>,
 }
 
@@ -680,67 +680,6 @@ async fn drop_rename_notification(
     docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
         .await
         .map_err(|e| e.to_string())
-}
-
-// --- Auth endpoints ---
-
-#[derive(Serialize)]
-struct AuthFlowResponse {
-    auth_url: String,
-    session_id: String,
-}
-
-#[derive(Deserialize)]
-struct AuthCodeBody {
-    session_id: String,
-    code: String,
-}
-
-// Agent-less OAuth: runs the PKCE dance without binding to a container, returning
-// the credentials JSON to the caller. The caller then either passes them into
-// POST /agents (new agent) or POST /agents/{name}/provider (existing agent).
-
-async fn start_auth_standalone_handler(
-    State(state): State<SharedState>,
-) -> Result<Json<AuthFlowResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let (auth_url, code_verifier, auth_state) = docker::start_auth_flow();
-    let session_id: String = (0..16)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
-
-    state.clean_expired_sessions().await;
-
-    let mut sessions = state.auth_sessions.lock().await;
-    sessions.insert(
-        session_id.clone(),
-        auth::AuthSession {
-            code_verifier,
-            state: auth_state,
-            created: std::time::Instant::now(),
-        },
-    );
-
-    Ok(Json(AuthFlowResponse { auth_url, session_id }))
-}
-
-async fn complete_auth_standalone_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<AuthCodeBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    state.clean_expired_sessions().await;
-
-    let session = {
-        let mut sessions = state.auth_sessions.lock().await;
-        sessions
-            .remove(&body.session_id)
-            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /auth/start"))?
-    };
-
-    let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
-
-    Ok(Json(serde_json::json!({ "credentials": credentials })))
 }
 
 #[derive(Deserialize)]
@@ -1851,10 +1790,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/personalities", get(list_personalities_handler))
-        .route("/openrouter/models/top", get(crate::openrouter::list_top_models_handler))
-        .route("/openrouter/validate-key", post(crate::openrouter::validate_key_handler))
-        .route("/auth/start", post(start_auth_standalone_handler))
-        .route("/auth/complete", post(complete_auth_standalone_handler))
+        .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
+        .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
+        .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
+        .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))

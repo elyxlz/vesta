@@ -7,10 +7,9 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
-import {
-  fetchTopOpenRouterModels,
-  type OpenRouterModelOption,
-} from "@/api/openrouter";
+import { openrouterProvider } from "@/api";
+
+type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { ProviderIcon } from "../ProviderIcon";
 import { fuzzyMatch } from "../fuzzy";
 
@@ -37,7 +36,7 @@ export function ModelStep({
 
   useEffect(() => {
     let cancelled = false;
-    fetchTopOpenRouterModels()
+    openrouterProvider.fetchTopModels()
       .then((items) => {
         if (cancelled) return;
         setTopModels(items);

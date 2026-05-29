@@ -8,7 +8,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
-import { validateOpenRouterKey } from "@/api/openrouter";
+import { openrouterProvider } from "@/api";
 
 export function KeyStep({
   initialKey,
@@ -32,7 +32,7 @@ export function KeyStep({
     setValidating(true);
     setError(null);
     try {
-      await validateOpenRouterKey(key.trim());
+      await openrouterProvider.validateKey(key.trim());
       onNext(key.trim(), zdr);
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || "key validation failed");

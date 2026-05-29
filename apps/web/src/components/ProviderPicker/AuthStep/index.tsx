@@ -1,6 +1,8 @@
 import { AuthFlow } from "@/components/AuthFlow";
 import { ProgressBar } from "@/components/ProgressBar";
-import { completeAuth, type AuthStartResult } from "@/api";
+import { claudeProvider } from "@/api";
+
+type AuthStartResult = claudeProvider.OAuthStartResult;
 
 export function AuthStep({
   authStart,
@@ -19,7 +21,10 @@ export function AuthStep({
         <AuthFlow
           authUrl={authStart.auth_url}
           onSubmitCode={async (code) => {
-            const creds = await completeAuth(authStart.session_id, code);
+            const creds = await claudeProvider.completeOAuth(
+              authStart.session_id,
+              code,
+            );
             onCredentialsReady(creds);
           }}
           onCancel={onCancel}

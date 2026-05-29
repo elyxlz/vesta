@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeftIcon } from "lucide-react";
 import { fadeSlide } from "@/lib/motion";
-import { startAuth, type AuthStartResult } from "@/api";
+import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
+
+type AuthStartResult = claudeProvider.OAuthStartResult;
 import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
@@ -32,7 +34,7 @@ export function ProviderPicker({
   useEffect(() => {
     if (step !== "auth" || authStart !== null || authStartError !== null) return;
     let cancelled = false;
-    startAuth()
+    claudeProvider.startOAuth()
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })

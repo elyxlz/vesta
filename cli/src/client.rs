@@ -409,7 +409,7 @@ impl Client {
     // `vesta setup` (pre-create) and `vesta auth <name>` (post-create reauth),
     // followed by either POST /agents or POST /agents/{name}/provider.
     pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
-        let resp = self.post("/auth/start")?;
+        let resp = self.post("/providers/claude/oauth/start")?;
         resp.into_body()
             .read_json()
             .map_err(|e| format!("parse error: {e}"))
@@ -417,7 +417,7 @@ impl Client {
 
     pub fn complete_auth_standalone(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
-        let resp = self.post_json("/auth/complete", &body)?;
+        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
         let v: serde_json::Value = resp
             .into_body()
             .read_json()
@@ -430,7 +430,7 @@ impl Client {
 
     pub fn validate_openrouter_key(&self, key: &str) -> Result<(), String> {
         let body = serde_json::json!({"key": key});
-        self.post_json("/openrouter/validate-key", &body)?;
+        self.post_json("/providers/openrouter/validate-key", &body)?;
         Ok(())
     }
 
