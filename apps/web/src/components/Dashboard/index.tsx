@@ -188,7 +188,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         if (handshakeRef.current) {
           setLoaded(true);
         } else {
-          if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
+          if (handshakeTimerRef.current)
+            clearTimeout(handshakeTimerRef.current);
           handshakeTimerRef.current = setTimeout(() => {
             handshakeTimerRef.current = null;
             if (handshakeRef.current) {

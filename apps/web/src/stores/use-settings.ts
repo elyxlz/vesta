@@ -26,7 +26,9 @@ export const useSettings = create<SettingsState>((set) => ({
         set((s) => ({ usageError: { ...s.usageError, [agentName]: true } }));
       })
       .finally(() => {
-        set((s) => ({ usageLoading: { ...s.usageLoading, [agentName]: false } }));
+        set((s) => ({
+          usageLoading: { ...s.usageLoading, [agentName]: false },
+        }));
       });
   },
 }));

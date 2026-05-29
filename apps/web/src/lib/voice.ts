@@ -237,7 +237,9 @@ async function playStreamedAudio(
           } catch (err) {
             // Without this the awaited Promise would hang: updateend never
             // fires after a failed append, so nothing resolves it.
-            reject(err instanceof Error ? err : new Error("appendBuffer failed"));
+            reject(
+              err instanceof Error ? err : new Error("appendBuffer failed"),
+            );
           }
         };
 
