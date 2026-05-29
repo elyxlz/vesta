@@ -536,8 +536,12 @@ fn run(cli: Cli) {
             let timezone = detect_timezone();
 
             // Claude path: OAuth standalone first, then create_agent injects creds.
-            // OpenRouter path: the key is the credential, no OAuth needed.
-            let credentials = if openrouter.is_some() {
+            // OpenRouter path: validate the key against OpenRouter so a bad key
+            // fails here, not silently on every agent message after create.
+            let credentials = if let Some(or) = &openrouter {
+                eprintln!("checking OpenRouter key...");
+                c.validate_openrouter_key(&or.key)
+                    .unwrap_or_else(|e| platform::die(&e));
                 None
             } else {
                 eprintln!("authenticating claude...");
@@ -579,6 +583,11 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
+            if let Some(or) = &openrouter {
+                eprintln!("checking OpenRouter key...");
+                c.validate_openrouter_key(&or.key)
+                    .unwrap_or_else(|e| platform::die(&e));
+            }
             let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), None).unwrap_or_else(|e| platform::die(&e));
             if openrouter.is_some() {
                 eprintln!("created (running on OpenRouter)");

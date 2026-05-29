@@ -428,6 +428,12 @@ impl Client {
             .ok_or_else(|| "no credentials in response".to_string())
     }
 
+    pub fn validate_openrouter_key(&self, key: &str) -> Result<(), String> {
+        let body = serde_json::json!({"key": key});
+        self.post_json("/openrouter/validate-key", &body)?;
+        Ok(())
+    }
+
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
         // Validate JSON shape before posting; backend stores the string verbatim.
         serde_json::from_str::<serde_json::Value>(token)

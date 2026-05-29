@@ -13,19 +13,13 @@ export async function fetchTopOpenRouterModels(): Promise<
   return apiJson<OpenRouterModelOption[]>("/openrouter/models/top");
 }
 
-// Hits OpenRouter's /api/v1/key endpoint with the user's key. 200 = valid auth,
-// 401 = bad key. CORS-allowed so the browser can call it directly — the key
-// never goes through vestad, just from the user's browser to OpenRouter.
-const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
-
+// Vestad proxies the check to OpenRouter's /api/v1/key, throwing on 401.
+// Going through vestad keeps the web and CLI paths symmetric: both clients
+// call the same endpoint, and the validation logic lives in one place.
 export async function validateOpenRouterKey(key: string): Promise<void> {
-  const resp = await fetch(OPENROUTER_KEY_URL, {
-    headers: { Authorization: `Bearer ${key}` },
+  await apiJson("/openrouter/validate-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
   });
-  if (resp.status === 401) {
-    throw new Error("invalid API key");
-  }
-  if (!resp.ok) {
-    throw new Error(`openrouter returned HTTP ${resp.status}`);
-  }
 }

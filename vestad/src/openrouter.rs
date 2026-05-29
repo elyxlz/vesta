@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 const TOP_MODELS_URL: &str =
     "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
 const TOP_MODELS_LIMIT: usize = 20;
+const KEY_INFO_URL: &str = "https://openrouter.ai/api/v1/key";
 
 #[derive(Serialize)]
 pub struct TopModel {
@@ -65,4 +66,34 @@ pub async fn list_top_models_handler(
         })
         .collect();
     Ok(Json(models))
+}
+
+#[derive(Deserialize)]
+pub struct ValidateKeyBody {
+    pub key: String,
+}
+
+/// Probes OpenRouter's /api/v1/key with the user-supplied key. 200 means the key
+/// is valid; 401 means it isn't. Lets both CLI and web validate before commit.
+pub async fn validate_key_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<ValidateKeyBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let resp = state
+        .http_client
+        .get(KEY_INFO_URL)
+        .bearer_auth(&body.key)
+        .send()
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("openrouter request failed: {e}")))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(err_response(StatusCode::BAD_REQUEST, "invalid API key"));
+    }
+    if !resp.status().is_success() {
+        return Err(err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("openrouter returned HTTP {}", resp.status()),
+        ));
+    }
+    Ok(Json(serde_json::json!({"ok": true})))
 }

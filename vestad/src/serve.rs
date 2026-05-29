@@ -1852,6 +1852,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/tunnel", get(tunnel_handler))
         .route("/personalities", get(list_personalities_handler))
         .route("/openrouter/models/top", get(crate::openrouter::list_top_models_handler))
+        .route("/openrouter/validate-key", post(crate::openrouter::validate_key_handler))
         .route("/auth/start", post(start_auth_standalone_handler))
         .route("/auth/complete", post(complete_auth_standalone_handler))
         .route("/agents", get(list_agents_handler))
