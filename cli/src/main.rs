@@ -329,21 +329,10 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
     Some(client::OpenRouterArgs { key, model, zdr: !flags.no_zdr })
 }
 
-fn authenticate_agent(client: &client::Client, name: &str) {
-    let auth = client.start_auth(name).unwrap_or_else(|e| platform::die(&e));
-    eprintln!("open this URL to authenticate:");
-    eprintln!("  {}", auth.auth_url);
-    try_open_browser(&auth.auth_url);
-
-    let code = prompt("paste the auth code");
-    client
-        .complete_auth(name, &auth.session_id, &code)
-        .unwrap_or_else(|e| platform::die(&e));
-    eprintln!("authenticated!");
-}
-
-// Agent-less OAuth — returns credentials JSON to inject at create time.
-fn oauth_for_setup(client: &client::Client) -> String {
+// Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
+// returns the credentials JSON. Caller passes it to create_agent (new agent)
+// or inject_token (existing agent reauth).
+fn oauth_dance(client: &client::Client) -> String {
     let auth = client
         .start_auth_standalone()
         .unwrap_or_else(|e| platform::die(&e));
@@ -355,6 +344,14 @@ fn oauth_for_setup(client: &client::Client) -> String {
     client
         .complete_auth_standalone(&auth.session_id, &code)
         .unwrap_or_else(|e| platform::die(&e))
+}
+
+fn authenticate_agent(client: &client::Client, name: &str) {
+    let credentials = oauth_dance(client);
+    client
+        .inject_token(name, &credentials)
+        .unwrap_or_else(|e| platform::die(&e));
+    eprintln!("authenticated!");
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
@@ -544,7 +541,7 @@ fn run(cli: Cli) {
                 None
             } else {
                 eprintln!("authenticating claude...");
-                Some(oauth_for_setup(&c))
+                Some(oauth_dance(&c))
             };
 
             match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), credentials.as_deref()) {

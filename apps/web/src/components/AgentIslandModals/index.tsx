@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -8,7 +9,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -17,8 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ProgressBar";
-import { AuthFlow } from "@/components/AuthFlow";
-import { submitAuthCode } from "@/api";
+import { ProviderPicker } from "@/components/ProviderPicker";
+import { setProvider } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
@@ -26,15 +26,14 @@ export function AgentIslandModals() {
   const { name } = useSelectedAgent();
   const {
     showAuth,
-    authStarting,
-    authStart,
-    authError,
-    handleOpenAuth,
     clearAuthState,
     deleteDialogOpen,
     setDeleteDialogOpen,
     handleDelete,
   } = useModals();
+
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   return (
     <>
@@ -42,46 +41,48 @@ export function AgentIslandModals() {
         drawerOnMobile
         open={showAuth}
         onOpenChange={(open) => {
-          if (!open) clearAuthState();
+          if (!open) {
+            clearAuthState();
+            setSubmitError(null);
+            setSubmitting(false);
+          }
         }}
       >
         <DialogContent className="sm:max-w-lg" showCloseButton>
           <DialogHeader>
-            <DialogTitle>authenticate {name}</DialogTitle>
+            <DialogTitle>reconfigure {name}</DialogTitle>
             <DialogDescription className="sr-only">
-              complete sign-in for this agent
+              switch providers or refresh credentials for this agent
             </DialogDescription>
           </DialogHeader>
-          {authStart ? (
-            <AuthFlow
-              authUrl={authStart.auth_url}
-              onSubmitCode={(code) =>
-                submitAuthCode(name, authStart.session_id, code)
-              }
-              onCancel={clearAuthState}
-              onComplete={clearAuthState}
-            />
-          ) : authStarting ? (
-            <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-sm text-muted-foreground">
-                starting authentication...
-              </p>
-              <ProgressBar message="waiting..." />
-              <Button variant="link" size="sm" onClick={clearAuthState}>
-                cancel
-              </Button>
+          {submitting ? (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <ProgressBar message="applying new provider config..." />
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-xs text-destructive text-center">
-                {authError || "authentication failed"}
-              </p>
-              <Button size="sm" onClick={() => void handleOpenAuth()}>
-                retry
-              </Button>
-              <Button variant="link" size="sm" onClick={clearAuthState}>
-                cancel
-              </Button>
+              <ProviderPicker
+                onDone={async (result) => {
+                  setSubmitting(true);
+                  setSubmitError(null);
+                  try {
+                    await setProvider(name, result);
+                    clearAuthState();
+                  } catch (e: unknown) {
+                    setSubmitError(
+                      (e as { message?: string })?.message ||
+                        "failed to update provider",
+                    );
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}
+              />
+              {submitError && (
+                <p className="text-xs text-destructive text-center">
+                  {submitError}
+                </p>
+              )}
             </div>
           )}
         </DialogContent>

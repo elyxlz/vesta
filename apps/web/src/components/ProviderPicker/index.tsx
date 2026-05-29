@@ -1,30 +1,55 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeftIcon } from "lucide-react";
 import { fadeSlide } from "@/lib/motion";
-import type { OpenRouterConfig } from "@/api/agents";
+import { startAuth, type AuthStartResult } from "@/api";
+import type { ProviderResult } from "@/api/agents";
 import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
+import { AuthStep } from "./AuthStep";
 import type { ProviderMode } from "./types";
 
-type InternalStep = "choice" | "key" | "model";
+type InternalStep = "choice" | "auth" | "key" | "model";
 
 export function ProviderPicker({
   onDone,
   onBack,
 }: {
-  onDone: (config: OpenRouterConfig | null) => void;
+  onDone: (result: ProviderResult) => void;
   onBack?: () => void;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   const [key, setKey] = useState("");
   const [zdr, setZdr] = useState(true);
   const [model, setModel] = useState("");
+  const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
+  const [authStartError, setAuthStartError] = useState<string | null>(null);
+
+  // Kick off the standalone OAuth session once when entering the auth substep.
+  // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
+  // PKCE session and invalidate any code the user already pasted.
+  useEffect(() => {
+    if (step !== "auth" || authStart !== null || authStartError !== null) return;
+    let cancelled = false;
+    startAuth()
+      .then((res) => {
+        if (!cancelled) setAuthStart(res);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setAuthStartError(
+          (e as { message?: string })?.message || "failed to start auth",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, authStart, authStartError]);
 
   const handleChoice = (mode: ProviderMode) => {
     if (mode === "claude") {
-      onDone(null);
+      setStep("auth");
       return;
     }
     setStep("key");
@@ -37,13 +62,22 @@ export function ProviderPicker({
   };
 
   const handleModelSubmit = (newModel: string) => {
-    onDone({ key, model: newModel, zdr });
+    onDone({ kind: "openrouter", config: { key, model: newModel, zdr } });
+  };
+
+  const handleCredentialsReady = (credentials: string) => {
+    onDone({ kind: "claude", credentials });
   };
 
   const back = (() => {
     if (step === "choice") return onBack;
-    if (step === "key") return () => setStep("choice");
-    return () => setStep("key");
+    if (step === "model") return () => setStep("key");
+    // auth and key both return to the choice screen.
+    return () => {
+      setAuthStart(null);
+      setAuthStartError(null);
+      setStep("choice");
+    };
   })();
 
   return (
@@ -62,6 +96,18 @@ export function ProviderPicker({
       <AnimatePresence mode="wait">
         <motion.div key={step} {...fadeSlide} className="w-full">
           {step === "choice" && <ChoiceStep onPick={handleChoice} />}
+          {step === "auth" && (
+            <AuthStep
+              authStart={authStart}
+              startError={authStartError}
+              onCredentialsReady={handleCredentialsReady}
+              onCancel={() => {
+                setAuthStart(null);
+                setAuthStartError(null);
+                setStep("choice");
+              }}
+            />
+          )}
           {step === "key" && (
             <KeyStep
               initialKey={key}

@@ -695,85 +695,15 @@ struct AuthFlowResponse {
     session_id: String,
 }
 
-async fn start_auth_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<AuthFlowResponse>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let (auth_url, code_verifier, auth_state) = docker::start_auth_flow();
-    let session_id: String = (0..16)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
-
-    state.clean_expired_sessions().await;
-
-    let mut sessions = state.auth_sessions.lock().await;
-    let now = std::time::Instant::now();
-    sessions.insert(
-        session_id.clone(),
-        auth::AuthSession {
-            code_verifier,
-            state: auth_state,
-            created: now,
-        },
-    );
-
-    Ok(Json(AuthFlowResponse {
-        auth_url,
-        session_id,
-    }))
-}
-
 #[derive(Deserialize)]
 struct AuthCodeBody {
     session_id: String,
     code: String,
 }
 
-async fn complete_auth_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<AuthCodeBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    state.clean_expired_sessions().await;
-
-    let session = {
-        let mut sessions = state.auth_sessions.lock().await;
-        sessions
-            .remove(&body.session_id)
-            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /agents/{name}/auth"))?
-    };
-
-    let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
-
-    docker::inject_credentials(&state.docker, &cname, &credentials)
-        .await
-        .map_err(map_docker_err)?;
-
-    // Restart the agent so it picks up the new credentials.
-    // Clients poll /status to detect when the agent becomes alive.
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    docker::restart_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
-
-    Ok(ok_json())
-}
-
-// Agent-less OAuth pair: runs the PKCE dance without binding to a container.
-// The caller passes the returned credentials into POST /agents at create time.
-// Used by the onboarding wizard so OAuth happens before the agent exists.
+// Agent-less OAuth: runs the PKCE dance without binding to a container, returning
+// the credentials JSON to the caller. The caller then either passes them into
+// POST /agents (new agent) or POST /agents/{name}/provider (existing agent).
 
 async fn start_auth_standalone_handler(
     State(state): State<SharedState>,
@@ -819,21 +749,62 @@ async fn complete_auth_standalone_handler(
 }
 
 #[derive(Deserialize)]
-struct AuthTokenBody {
-    token: serde_json::Value,
+struct SetProviderBody {
+    /// Pre-fetched Claude OAuth credentials JSON. Mutually exclusive with openrouter_*.
+    credentials: Option<String>,
+    openrouter_key: Option<String>,
+    openrouter_model: Option<String>,
+    openrouter_zdr: Option<bool>,
 }
 
-async fn inject_token_handler(
+/// Set or refresh an existing agent's provider config. Mirrors the create-agent
+/// body shape: either `credentials` (Claude OAuth blob) or `openrouter_*` fields.
+/// Injects the relevant config and restarts the agent so it takes effect.
+async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(body): Json<AuthTokenBody>,
+    Json(body): Json<SetProviderBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
-    let credentials = body.token.to_string();
-    docker::inject_credentials(&state.docker, &cname, &credentials)
+    let openrouter = match body.openrouter_key {
+        Some(api_key) => match body.openrouter_model {
+            Some(model) => Some(docker::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
+            None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
+        },
+        None => None,
+    };
+
+    if openrouter.is_some() && body.credentials.is_some() {
+        return Err(err_response(StatusCode::BAD_REQUEST, "credentials and openrouter_key are mutually exclusive"));
+    }
+    if openrouter.is_none() && body.credentials.is_none() {
+        return Err(err_response(StatusCode::BAD_REQUEST, "must provide either credentials or openrouter_key"));
+    }
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if let Some(creds) = &body.credentials {
+        docker::inject_credentials(&state.docker, &cname, creds)
+            .await
+            .map_err(map_docker_err)?;
+        // If the agent was previously in OpenRouter mode, the provider file's env
+        // vars (AGENT_PROVIDER, ANTHROPIC_AUTH_TOKEN) would otherwise override the
+        // freshly-injected Claude credentials at boot. Clear it.
+        docker::clear_provider_file(&state.docker, &cname)
+            .await
+            .map_err(map_docker_err)?;
+    }
+    if let Some(or) = &openrouter {
+        docker::inject_openrouter(&state.docker, &name, or)
+            .await
+            .map_err(map_docker_err)?;
+    }
+
+    docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
@@ -1904,9 +1875,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/auth", post(start_auth_handler))
-        .route("/agents/{name}/auth/code", post(complete_auth_handler))
-        .route("/agents/{name}/auth/token", post(inject_token_handler))
+        .route("/agents/{name}/provider", post(set_provider_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))

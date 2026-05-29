@@ -894,6 +894,13 @@ pub async fn inject_openrouter(docker: &Docker, agent_name: &str, cfg: &OpenRout
     docker_cp_content(docker, &cname, &openrouter_provider_file(cfg), PROVIDER_ENV_PATH).await
 }
 
+/// Overwrite the OpenRouter provider file with empty content. The entrypoint will
+/// source it as a no-op, leaving any Claude credentials in effect. Used when
+/// switching an agent from OpenRouter back to Claude.
+pub async fn clear_provider_file(docker: &Docker, container: &str) -> Result<(), DockerError> {
+    docker_cp_content(docker, container, "", PROVIDER_ENV_PATH).await
+}
+
 /// Compute the upstream ref the agent should sync against.
 ///
 /// Dev builds: vestad's current git branch, re-evaluated on every call so that

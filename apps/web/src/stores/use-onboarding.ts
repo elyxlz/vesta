@@ -4,7 +4,6 @@ export type OnboardingStep =
   | "name"
   | "provider"
   | "creating"
-  | "auth"
   | "personality"
   | "done";
 

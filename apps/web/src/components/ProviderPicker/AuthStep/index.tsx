@@ -14,7 +14,7 @@ export function AuthStep({
   onCancel: () => void;
 }) {
   return (
-    <div className="flex w-[260px] max-w-full flex-col items-center gap-3 px-4">
+    <div className="flex w-full flex-col items-center gap-3">
       {authStart ? (
         <AuthFlow
           authUrl={authStart.auth_url}
@@ -25,9 +25,9 @@ export function AuthStep({
           onCancel={onCancel}
         />
       ) : startError ? (
-        <div className="flex flex-col items-center gap-3 py-2">
-          <p className="text-xs text-destructive text-center">{startError}</p>
-        </div>
+        <p className="text-xs text-destructive text-center py-2">
+          {startError}
+        </p>
       ) : (
         <ProgressBar message="starting authentication..." />
       )}

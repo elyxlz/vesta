@@ -405,21 +405,9 @@ impl Client {
         }
     }
 
-    pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {
-        let resp = self.post(&format!("/agents/{name}/auth"))?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
-    }
-
-    pub fn complete_auth(&self, name: &str, session_id: &str, code: &str) -> Result<(), String> {
-        let body = serde_json::json!({"session_id": session_id, "code": code});
-        self.post_json(&format!("/agents/{name}/auth/code"), &body)?;
-        Ok(())
-    }
-
-    // Agent-less OAuth — used by `vesta setup` to obtain credentials before the
-    // agent exists, then passed to create_agent.
+    // Agent-less OAuth — runs the PKCE dance independent of any agent. Used by
+    // `vesta setup` (pre-create) and `vesta auth <name>` (post-create reauth),
+    // followed by either POST /agents or POST /agents/{name}/provider.
     pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
         let resp = self.post("/auth/start")?;
         resp.into_body()
@@ -441,10 +429,11 @@ impl Client {
     }
 
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
-        let token_value: serde_json::Value =
-            serde_json::from_str(token).map_err(|e| format!("invalid token JSON: {e}"))?;
-        let body = serde_json::json!({"token": token_value});
-        self.post_json(&format!("/agents/{name}/auth/token"), &body)?;
+        // Validate JSON shape before posting; backend stores the string verbatim.
+        serde_json::from_str::<serde_json::Value>(token)
+            .map_err(|e| format!("invalid token JSON: {e}"))?;
+        let body = serde_json::json!({"credentials": token});
+        self.post_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())
     }
 
