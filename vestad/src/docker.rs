@@ -53,8 +53,7 @@ pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-// Sourced by the entrypoint. Present only for OpenRouter agents; its existence also marks the agent
-// as authenticated (no OAuth credentials file). Lives in the container fs so it survives snapshots.
+// Sourced via ~/.bashrc; its presence marks an OpenRouter agent (see is_authenticated).
 pub const PROVIDER_ENV_PATH: &str = "/root/.claude/vesta-provider.env";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
@@ -433,8 +432,7 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
             }
         }
     }
-    // OpenRouter agents have no OAuth credentials; their provider file is the auth marker. Require it
-    // to actually declare openrouter mode (not merely exist), so a stray/empty file can't authenticate.
+    // OpenRouter agents have no OAuth creds; require the provider file to declare openrouter mode.
     match read_container_file(docker, cname, PROVIDER_ENV_PATH).await {
         Some(provider) => provider.contains("AGENT_PROVIDER=openrouter"),
         None => false,
@@ -810,9 +808,7 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
-/// Per-agent OpenRouter settings. Injected once at create into the container filesystem at
-/// PROVIDER_ENV_PATH (like OAuth credentials), so they persist across rebuild/rename/backup via
-/// the container snapshot and stay editable by the agent itself. Never stored on the host.
+/// Per-agent OpenRouter settings, injected into the container fs at PROVIDER_ENV_PATH (never on the host).
 #[derive(Clone)]
 pub struct OpenRouterConfig {
     pub api_key: String,
@@ -820,16 +816,13 @@ pub struct OpenRouterConfig {
     pub zdr: bool,
 }
 
-/// Wrap a value in single quotes for safe sourcing in a shell file, escaping embedded single quotes.
-/// The provider file is `. `-sourced, so an unquoted user-supplied key/model could otherwise inject
-/// shell commands or break the export.
+/// Single-quote a value for safe sourcing (key/model are user input); escapes embedded quotes.
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-/// The shell file (sourced by the entrypoint) that puts an OpenRouter agent into provider mode.
-/// ANTHROPIC_BASE_URL is set by the agent at runtime to its local ZDR proxy; the SDK reads
-/// ANTHROPIC_AUTH_TOKEN from the env and sends it as the bearer token through that proxy.
+/// The sourced shell file that puts an agent into OpenRouter mode. ANTHROPIC_BASE_URL is set at
+/// runtime to the local ZDR proxy; the SDK sends ANTHROPIC_AUTH_TOKEN as the bearer token through it.
 pub fn openrouter_provider_file(cfg: &OpenRouterConfig) -> String {
     let model = shell_single_quote(&cfg.model);
     let key = shell_single_quote(&cfg.api_key);
@@ -844,14 +837,9 @@ pub fn openrouter_provider_file(cfg: &OpenRouterConfig) -> String {
     )
 }
 
-/// Write the provider file into an agent's container and source it from ~/.bashrc (which the
-/// entrypoint already sources). The container only needs to exist (created or running); docker cp
-/// works on stopped containers, so this runs before the first start.
-///
-/// The ~/.bashrc source line is appended idempotently (preserving any existing content, e.g. a
-/// custom image's bashrc), and the provider file is written LAST: since its presence is the auth
-/// marker (see is_authenticated), it must only appear once sourcing is in place, so a partial
-/// injection can never look like a fully-configured agent.
+/// Inject OpenRouter mode into a (created or running) container before first start. Appends the
+/// ~/.bashrc source line idempotently to preserve existing content, and writes the provider file
+/// LAST so its presence (the auth marker) implies sourcing is in place, never a half injection.
 pub async fn inject_openrouter(docker: &Docker, agent_name: &str, cfg: &OpenRouterConfig) -> Result<(), DockerError> {
     let cname = container_name(agent_name);
     let source_line = format!(". {PROVIDER_ENV_PATH}");

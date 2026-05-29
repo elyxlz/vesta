@@ -210,8 +210,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
-    # The 1M context beta and extended thinking are Anthropic-only; OpenRouter routes (incl. non-Claude
-    # models) reject or ignore them, so drop both when running via OpenRouter.
+    # 1M-context beta and thinking are Anthropic-only; drop them on OpenRouter.
     is_openrouter = config.agent_provider == "openrouter"
 
     return ClaudeAgentOptions(

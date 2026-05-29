@@ -227,6 +227,13 @@ async def _auth_middleware(request: web.Request, handler):
     return await handler(request)
 
 
+async def start_runner(app: web.Application, *, shutdown_timeout: float = 5.0) -> web.AppRunner:
+    """Set up and return an aiohttp AppRunner. Caller starts a TCPSite/SockSite on it."""
+    runner = web.AppRunner(app, shutdown_timeout=shutdown_timeout)
+    await runner.setup()
+    return runner
+
+
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
@@ -246,10 +253,8 @@ async def start_ws_server(
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 
-    runner = web.AppRunner(app, shutdown_timeout=5.0)
-    await runner.setup()
-    site = web.TCPSite(runner, host, config.ws_port)
-    await site.start()
+    runner = await start_runner(app)
+    await web.TCPSite(runner, host, config.ws_port).start()
     return runner
 
 

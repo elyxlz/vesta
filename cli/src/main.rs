@@ -60,6 +60,20 @@ struct Cli {
     command: Option<Command>,
 }
 
+/// Flags shared by `setup` and `create` for running an agent on OpenRouter instead of a Claude account.
+#[derive(clap::Args)]
+struct OpenRouterFlags {
+    /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
+    #[arg(long)]
+    openrouter_key: Option<String>,
+    /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
+    #[arg(long)]
+    openrouter_model: Option<String>,
+    /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
+    #[arg(long)]
+    no_zdr: bool,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Create agent, start it, and authenticate Claude
@@ -73,15 +87,8 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
-        /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
-        #[arg(long)]
-        openrouter_key: Option<String>,
-        /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
-        #[arg(long)]
-        openrouter_model: Option<String>,
-        /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
-        #[arg(long)]
-        no_zdr: bool,
+        #[command(flatten)]
+        openrouter: OpenRouterFlags,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -91,15 +98,8 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
-        /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
-        #[arg(long)]
-        openrouter_key: Option<String>,
-        /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
-        #[arg(long)]
-        openrouter_model: Option<String>,
-        /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
-        #[arg(long)]
-        no_zdr: bool,
+        #[command(flatten)]
+        openrouter: OpenRouterFlags,
     },
     /// Start an agent (or all agents if no name given)
     Start {
@@ -323,10 +323,10 @@ fn prompt_name() -> String {
     prompt("agent name")
 }
 
-fn build_openrouter_args(key: Option<String>, model: Option<String>, no_zdr: bool) -> Option<client::OpenRouterArgs> {
-    let key = key?;
-    let model = model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
-    Some(client::OpenRouterArgs { key, model, zdr: !no_zdr })
+fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArgs> {
+    let key = flags.openrouter_key?;
+    let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
+    Some(client::OpenRouterArgs { key, model, zdr: !flags.no_zdr })
 }
 
 fn authenticate_agent(client: &client::Client, name: &str) {
@@ -513,14 +513,14 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code, openrouter_key, openrouter_model, no_zdr } => {
+        Command::Setup { yes, name, no_manage_core_code, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
-            let openrouter = build_openrouter_args(openrouter_key, openrouter_model, no_zdr);
+            let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
             match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()) {
                 Ok(name) => eprintln!("created agent '{name}'"),
@@ -546,12 +546,12 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { name, no_manage_core_code, openrouter_key, openrouter_model, no_zdr } => {
+        Command::Create { name, no_manage_core_code, openrouter } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
-            let openrouter = build_openrouter_args(openrouter_key, openrouter_model, no_zdr);
+            let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
             let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref()).unwrap_or_else(|e| platform::die(&e));
             if openrouter.is_some() {

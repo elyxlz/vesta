@@ -457,8 +457,7 @@ async fn create_agent_handler(
             .await
             .map_err(map_docker_err)?;
 
-    // Inject OpenRouter config into the container fs before first start (like OAuth credentials),
-    // so it persists across rebuild/rename via snapshot and stays editable by the agent.
+    // Inject into the container fs (like OAuth creds) so it survives rebuild/rename and is agent-editable.
     if let Some(openrouter) = &openrouter {
         docker::inject_openrouter(&state.docker, &name, openrouter)
             .await

@@ -1,10 +1,8 @@
 """Localhost proxy that pins OpenRouter zero-data-retention providers.
 
-Claude Code sends fixed Anthropic-shaped request bodies and offers no hook to add
-OpenRouter's `provider` routing field, which is the only way to enforce ZDR per request.
-So when an agent runs via OpenRouter we point ANTHROPIC_BASE_URL at this in-process proxy:
-it rewrites each JSON body to require zero-data-retention providers (when enabled) and
-streams the upstream response straight back, leaving auth headers untouched.
+Claude Code sends fixed Anthropic-shaped bodies with no hook for OpenRouter's `provider` routing
+field, the only per-request way to enforce ZDR. So in OpenRouter mode we point ANTHROPIC_BASE_URL
+at this proxy, which injects the field and streams the response back, leaving auth headers untouched.
 """
 
 import json
@@ -14,13 +12,11 @@ import aiohttp
 from aiohttp import web
 
 from . import logger
+from .api import start_runner
 
 OPENROUTER_UPSTREAM = "https://openrouter.ai/api"
-# Stripped from the forwarded request: Host is set by the client lib from the URL,
-# Content-Length is recomputed after body rewrite, and we let aiohttp negotiate encoding.
+# aiohttp recomputes these from the (rewritten) body and decompresses, so the originals no longer apply.
 _STRIP_REQUEST_HEADERS = {"host", "content-length", "accept-encoding"}
-# Stripped from the response: aiohttp decompresses the body, so the original framing/encoding
-# headers no longer describe the bytes we forward.
 _STRIP_RESPONSE_HEADERS = {"content-length", "content-encoding", "transfer-encoding", "connection"}
 
 
@@ -84,7 +80,6 @@ async def start_proxy(*, zdr: bool) -> tuple[web.AppRunner, int]:
     app.router.add_route("*", "/{tail:.*}", _make_handler(session, zdr=zdr))
     app.on_cleanup.append(lambda _app: session.close())
 
-    runner = web.AppRunner(app)
-    await runner.setup()
+    runner = await start_runner(app)
     await web.SockSite(runner, sock).start()
     return runner, port
