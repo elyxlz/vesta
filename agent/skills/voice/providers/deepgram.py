@@ -118,7 +118,7 @@ class DeepgramStt:
                 ("utterance_end_ms", str(eot_timeout_ms)),
             ]
             keyterm_param = "keywords"
-            url = f"{DEEPGRAM_WS}/v1/listen?{urlencode(params)}"
+            listen_path = "/v1/listen"
         else:
             params = [
                 ("model", MODEL),
@@ -128,9 +128,11 @@ class DeepgramStt:
                 ("eot_timeout_ms", str(eot_timeout_ms)),
             ]
             keyterm_param = "keyterm"
-            url = f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
+            listen_path = "/v2/listen"
         for term in keyterms:
             params.append((keyterm_param, term))
+        # Build the URL only after keyterms are appended, otherwise they are dropped.
+        url = f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
 
         headers = {"Authorization": f"Token {api_key}"}
 

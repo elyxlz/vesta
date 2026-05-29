@@ -89,6 +89,46 @@ def test_retries_after_dream_hour_when_not_done_today(tmp_path):
     assert len(list(config.notifications_dir.glob("nightly_dream-*.json"))) == 1
 
 
+def test_catches_up_past_midnight_for_late_dreamer_hour(tmp_path):
+    """A late dreamer_hour (e.g. 22:00) must still catch up after midnight.
+
+    Protects against a regression where the window `hour < dreamer_hour + CATCHUP` had no
+    modulo-24 wraparound, so post-midnight hours (0-3) silently fell through and the dream
+    was dropped for the day.
+    """
+    from core.loops import process_nightly_memory
+
+    config = _setup(tmp_path, dreamer_hour=22)
+    state = vm.State()
+    state.persisted.last_dreamer_run = dt.datetime(2025, 6, 14, 22, 0, 0)  # prior day
+    after_midnight = dt.datetime(2025, 6, 15, 1, 0, 0)  # within 22:00 + 6h window
+
+    with (
+        patch("core.loops._now", return_value=after_midnight),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+    assert len(list(config.notifications_dir.glob("nightly_dream-*.json"))) == 1
+
+
+def test_skips_outside_catchup_window_for_late_dreamer_hour(tmp_path):
+    """With dreamer_hour=22, an afternoon hour (14:00) is outside the circular window and must not fire."""
+    from core.loops import process_nightly_memory
+
+    config = _setup(tmp_path, dreamer_hour=22)
+    state = vm.State()
+    afternoon = dt.datetime(2025, 6, 15, 14, 0, 0)
+
+    with (
+        patch("core.loops._now", return_value=afternoon),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+    assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
+
+
 def test_drop_does_not_persist_last_dreamer_run(tmp_path):
     """Dropping the notification must not advance persisted.last_dreamer_run — only the agent's mark_dreamer_complete call does that.
 

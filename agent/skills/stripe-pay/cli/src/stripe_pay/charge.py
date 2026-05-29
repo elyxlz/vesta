@@ -31,6 +31,20 @@ from .auth import AuthError, load_active_token
 from .config import Config
 
 
+# Stripe zero-decimal currencies: the smallest unit equals the major unit, so the
+# amount must NOT be multiplied by 100. https://stripe.com/docs/currencies#zero-decimal
+ZERO_DECIMAL_CURRENCIES = frozenset(
+    {"bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"}
+)
+
+
+def _to_minor_units(amount: float, currency: str) -> int:
+    """Convert a major-unit amount to Stripe minor units, respecting zero-decimal currencies."""
+    if currency.lower() in ZERO_DECIMAL_CURRENCIES:
+        return int(round(amount))
+    return int(round(amount * 100))
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -188,7 +202,7 @@ def _spend_request_requires_link_approval(
         # in-app prompt.
         preview = stripe.SpendRequest.preview(  # type: ignore[attr-defined]
             access_token=access_token,
-            amount=int(round(amount * 100)),
+            amount=_to_minor_units(amount, currency),
             currency=currency.lower(),
             merchant=merchant,
         )
@@ -218,7 +232,7 @@ def _create_single_use_card(
     # if the SDK renames it the patch is one line.
     card_obj = stripe.Issuing.AgentCard.create(  # type: ignore[attr-defined]
         access_token=access_token,
-        amount=int(round(amount * 100)),
+        amount=_to_minor_units(amount, currency),
         currency=currency.lower(),
         merchant=merchant,
         metadata={"reason": reason[:500], "skill": "vesta-stripe-pay"},

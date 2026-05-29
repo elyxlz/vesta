@@ -320,9 +320,9 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     now = _now()
-    if now.hour < config.nightly_memory_hour:
-        return
-    if now.hour >= config.nightly_memory_hour + DREAMER_CATCHUP_HOURS:
+    # Circular window so a late hour (e.g. 22:00) still catches up past midnight.
+    hours_since_start = (now.hour - config.nightly_memory_hour) % 24
+    if hours_since_start >= DREAMER_CATCHUP_HOURS:
         return
     last = state.persisted.last_dreamer_run
     if last is not None and last.date() >= now.date():
