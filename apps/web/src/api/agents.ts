@@ -1,8 +1,15 @@
 import { apiJson } from "./client";
 
+export interface OpenRouterConfig {
+  key: string;
+  model: string;
+  zdr: boolean;
+}
+
 export async function createAgent(
   name: string,
   seedPersonality?: string,
+  openrouter?: OpenRouterConfig,
 ): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
@@ -12,6 +19,11 @@ export async function createAgent(
       name,
       timezone,
       seed_personality: seedPersonality,
+      ...(openrouter && {
+        openrouter_key: openrouter.key,
+        openrouter_model: openrouter.model,
+        openrouter_zdr: openrouter.zdr,
+      }),
     }),
   });
 }

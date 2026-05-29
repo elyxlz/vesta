@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { createAgent, authenticate, type AuthStartResult } from "@/api";
+import type { OpenRouterConfig } from "@/api/agents";
 import { fadeSlide } from "@/lib/motion";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
+import { ProviderStep } from "./Steps/ProviderStep";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { AuthStep } from "./Steps/AuthStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
@@ -15,6 +17,7 @@ export function NewAgent() {
   const [agentName, setAgentName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [seedPersonality, setSeedPersonality] = useState<string | null>(null);
+  const [openrouter, setOpenrouter] = useState<OpenRouterConfig | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,7 +30,13 @@ export function NewAgent() {
     let cancelled = false;
     (async () => {
       try {
-        await createAgent(agentName, seedPersonality);
+        await createAgent(agentName, seedPersonality, openrouter ?? undefined);
+        if (cancelled) return;
+        // OpenRouter agents authenticate via their key, so skip the OAuth step.
+        if (openrouter) {
+          setStep("done");
+          return;
+        }
         const auth = await authenticate(agentName);
         if (cancelled) return;
         setAuthStart(auth);
@@ -43,9 +52,18 @@ export function NewAgent() {
     return () => {
       cancelled = true;
     };
-  }, [step, agentName, seedPersonality, setStep]);
+  }, [step, agentName, seedPersonality, openrouter, setStep]);
 
   const content = (() => {
+    if (step === "provider")
+      return (
+        <ProviderStep
+          onChosen={(or) => {
+            setOpenrouter(or);
+            setStep("personality");
+          }}
+        />
+      );
     if (step === "personality")
       return (
         <PersonalityStep
@@ -71,7 +89,7 @@ export function NewAgent() {
         onNamed={(name) => {
           setAgentName(name);
           setCreateError(null);
-          setStep("personality");
+          setStep("provider");
         }}
       />
     );
