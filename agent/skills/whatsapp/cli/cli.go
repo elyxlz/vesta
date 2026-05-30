@@ -188,6 +188,17 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintln(os.Stderr, "Not authenticated. Use 'whatsapp pair-phone --phone <number>' to authenticate.")
 	}
 
+	// Daemon came up without a device session (e.g. after a backup restore that
+	// lost the whatsmeow session keys). Tell the agent once so it can prompt the
+	// user to re-pair instead of silently failing every send. Runs once per
+	// daemon boot, not per failed send.
+	if wac.client.Store.ID == nil {
+		fmt.Fprintln(os.Stderr, "Daemon started unpaired; notifying agent that re-pairing is required.")
+		if err := WriteUnpairedNotification(notifDir, instance); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write unpaired notification: %v\n", err)
+		}
+	}
+
 	printJSON(map[string]string{"status": "serving"})
 
 	sigChan := make(chan os.Signal, 1)
