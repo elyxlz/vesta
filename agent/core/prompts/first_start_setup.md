@@ -5,7 +5,7 @@ Hello world. First wake. Do these in order, then stop:
 3. In MEMORY.md, replace every `[agent_name]` with your name.
 4. Run `~/agent/core/skills/personality/SETUP.md` end to end (registers the voice in the restart skill, adopts it now).
 5. Set up tasks, app-chat, and dashboard from their SKILL.md / SETUP.md. Silently, no asking.
-6. **Call `mark_setup_done`.** This records completion and brings the WebSocket server online. Until you call it, no users can reach you.
+6. **Call `mark_setup_done`.** This records first-start completion so setup doesn't re-run on every reboot.
 7. Use the app-chat skill to say hi.
 8. Get their name.
 9. If `$TZ` looks set already, confirm it. Otherwise ask where they're based and use the `timezone` skill to set it. The new value only takes effect after the restart in the final step. Update MEMORY.md §4 with name, location, timezone.

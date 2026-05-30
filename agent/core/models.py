@@ -50,7 +50,7 @@ class State:
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     persisted: PersistedState = dc.field(default_factory=PersistedState)
-    # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
+    # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: "AppRunner | None" = None
     openrouter_runner: "AppRunner | None" = None
     openrouter_base_url: str | None = None
