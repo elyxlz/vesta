@@ -36,7 +36,8 @@ export function ModelStep({
 
   useEffect(() => {
     let cancelled = false;
-    openrouterProvider.fetchTopModels()
+    openrouterProvider
+      .fetchTopModels()
       .then((items) => {
         if (cancelled) return;
         setTopModels(items);
@@ -77,9 +78,7 @@ export function ModelStep({
     <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
       <div className="flex flex-col items-center gap-1 text-center">
         <h2 className="text-base font-semibold">pick a model</h2>
-        <FieldDescription>
-          top models on OpenRouter this week.
-        </FieldDescription>
+        <FieldDescription>top models on OpenRouter this week.</FieldDescription>
       </div>
 
       <FieldGroup className="w-full gap-3">

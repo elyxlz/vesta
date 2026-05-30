@@ -70,9 +70,7 @@ export function KeyStep({
             }}
             autoFocus
           />
-          {error && (
-            <p className="text-[11px] text-destructive">{error}</p>
-          )}
+          {error && <p className="text-[11px] text-destructive">{error}</p>}
         </Field>
         <div className="flex w-full items-center justify-between gap-3">
           <div className="flex flex-col">

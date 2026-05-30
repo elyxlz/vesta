@@ -60,7 +60,11 @@ export async function waitUntilRunning(
       `/agents/${encodeURIComponent(name)}`,
     );
     if (resp.status === "alive" || resp.status === "not_authenticated") return;
-    if (resp.status === "dead" || resp.status === "stopped" || resp.status === "not_found") {
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found"
+    ) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
@@ -79,7 +83,12 @@ export async function waitUntilAlive(
       `/agents/${encodeURIComponent(name)}`,
     );
     if (resp.status === "alive") return;
-    if (resp.status === "dead" || resp.status === "stopped" || resp.status === "not_found" || resp.status === "not_authenticated") {
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found" ||
+      resp.status === "not_authenticated"
+    ) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));

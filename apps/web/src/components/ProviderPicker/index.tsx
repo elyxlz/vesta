@@ -32,9 +32,11 @@ export function ProviderPicker({
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
   // PKCE session and invalidate any code the user already pasted.
   useEffect(() => {
-    if (step !== "auth" || authStart !== null || authStartError !== null) return;
+    if (step !== "auth" || authStart !== null || authStartError !== null)
+      return;
     let cancelled = false;
-    claudeProvider.startOAuth()
+    claudeProvider
+      .startOAuth()
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })
@@ -111,11 +113,7 @@ export function ProviderPicker({
             />
           )}
           {step === "key" && (
-            <KeyStep
-              initialKey={key}
-              initialZdr={zdr}
-              onNext={handleKeyNext}
-            />
+            <KeyStep initialKey={key} initialZdr={zdr} onNext={handleKeyNext} />
           )}
           {step === "model" && (
             <ModelStep

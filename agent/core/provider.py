@@ -169,7 +169,7 @@ def _parse_shell_export(line: str, key: str) -> str | None:
     if not line or line.startswith("#"):
         return None
     if line.startswith("export "):
-        line = line[len("export "):]
+        line = line[len("export ") :]
     if "=" not in line:
         return None
     k, _, v = line.partition("=")
