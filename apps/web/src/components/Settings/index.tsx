@@ -24,6 +24,7 @@ import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
+import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,
@@ -55,6 +56,7 @@ export function SettingsDialog({
     checkForUpdate,
   } = useGateway();
   const [checking, setChecking] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
 
   const onCheckForUpdate = async () => {
     setChecking(true);
@@ -219,6 +221,7 @@ export function SettingsDialog({
           </MenuSection>
         </div>
       </DialogContent>
+      <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
     </Dialog>
   );
 }
