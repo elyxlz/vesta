@@ -94,8 +94,8 @@ fn creation_flow() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("flow")).unwrap();
 
-    let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "not_authenticated");
+    let status = c.wait_until_running(&agent.name, 60).unwrap();
+    assert_eq!(status, "not_authenticated");
 
     inject_fake_token(&c, &agent.name);
     assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
