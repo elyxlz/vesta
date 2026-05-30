@@ -138,20 +138,7 @@ fn extract_server_error(body: &str) -> Option<String> {
 }
 
 fn urlencod(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => {
-                out.push('%');
-                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
-                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
-            }
-        }
-    }
-    out
+    percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
 /// Read an SSE stream, returning the data from the "done" event or an error.
