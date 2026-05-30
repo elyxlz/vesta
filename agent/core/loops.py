@@ -340,10 +340,24 @@ def _is_new_json(change: Change, path: str) -> bool:
     return change != Change.deleted and path.endswith(".json")
 
 
-async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.Path, stop: asyncio.Event) -> None:
-    """Watch the notifications directory for new .json files and signal the monitor loop."""
-    async for _ in awatch(notifications_dir, stop_event=stop, recursive=False, debounce=100, watch_filter=_is_new_json):
-        notify.set()
+async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.Path, shutdown: asyncio.Event) -> None:
+    """Watch the notifications directory for new .json files and signal the monitor loop.
+
+    watchfiles SETS the stop_event it is handed when its watch thread is torn down, so we never pass the shared
+    shutdown_event directly: any watcher exception would then flip shutdown_event and wedge the whole process
+    silently. We hand awatch a local event and bridge the shared shutdown_event into it instead."""
+    local_stop = asyncio.Event()
+
+    async def _bridge() -> None:
+        await shutdown.wait()
+        local_stop.set()
+
+    bridge_task = asyncio.create_task(_bridge())
+    try:
+        async for _ in awatch(notifications_dir, stop_event=local_stop, recursive=False, debounce=100, watch_filter=_is_new_json):
+            notify.set()
+    finally:
+        bridge_task.cancel()
 
 
 async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -353,7 +367,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
     pending_passive: list[vm.Notification] = []
     notify = asyncio.Event()
 
-    watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, stop=state.shutdown_event))
+    watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, shutdown=state.shutdown_event))
 
     try:
         while state.shutdown_event and not state.shutdown_event.is_set():
