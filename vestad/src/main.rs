@@ -15,6 +15,8 @@ mod control_ws;
 mod docker;
 mod jwt;
 mod paths;
+mod restic;
+mod restic_embed;
 mod time_utils;
 mod self_update;
 mod serve;
