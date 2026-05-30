@@ -7,13 +7,12 @@ use axum::{
     Json,
 };
 
-use crate::{agent_status, docker};
+use crate::docker;
 use crate::serve::{ServiceEntry, SharedState, err_response, ok_json};
 
 pub async fn invalidate_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
-    body: Option<Json<serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let settings = state.settings.read().await;
     let exists = settings
@@ -28,12 +27,8 @@ pub async fn invalidate_service_handler(
     }
     drop(settings);
 
-    let scope = body
-        .and_then(|Json(v)| v.get("scope").and_then(|s| s.as_str().map(String::from)));
-    state
-        .agent_status_cache
-        .invalidate_service(&name, &service_name, scope.as_deref());
-    tracing::debug!(agent = %name, service = %service_name, ?scope, "service invalidated");
+    state.agent_status_cache.invalidate_service(&name, &service_name);
+    tracing::debug!(agent = %name, service = %service_name, "service invalidated");
     Ok(ok_json())
 }
 
@@ -48,7 +43,7 @@ fn build_agents_message(
     agents: &[docker::ListEntry],
     activity: &HashMap<String, String>,
     services: &HashMap<String, HashMap<String, ServiceEntry>>,
-    invalidations: &HashMap<String, HashMap<String, agent_status::DrainedInvalidation>>,
+    revs: &HashMap<String, HashMap<String, u64>>,
 ) -> serde_json::Value {
     let enriched: Vec<serde_json::Value> = agents
         .iter()
@@ -58,19 +53,18 @@ fn build_agents_message(
                 let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
                 map.insert("activityState".into(), serde_json::Value::String(state.into()));
 
-                let agent_inv = invalidations.get(&a.name);
+                let agent_revs = revs.get(&a.name);
                 let svc_obj: serde_json::Map<String, serde_json::Value> = services
                     .get(&a.name)
                     .map(|svc_map| {
                         svc_map
                             .iter()
                             .map(|(svc_name, entry)| {
-                                let inv = agent_inv.and_then(|m| m.get(svc_name));
+                                let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
                                 let val = serde_json::json!({
                                     "port": entry.port,
                                     "public": entry.public,
-                                    "rev": inv.map(|i| i.rev).unwrap_or(0),
-                                    "scopes": inv.map(|i| &i.scopes).unwrap_or(&Vec::new()),
+                                    "rev": rev,
                                 });
                                 (svc_name.clone(), val)
                             })
@@ -110,8 +104,8 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     let agents = agents_rx.borrow_and_update().clone();
     let activity = activity_rx.borrow_and_update().clone();
     let services = services_rx.borrow_and_update().clone();
-    let invalidations = state.agent_status_cache.drain_invalidations();
-    let msg = build_agents_message(&agents, &activity, &services, &invalidations);
+    let revs = state.agent_status_cache.service_revs();
+    let msg = build_agents_message(&agents, &activity, &services, &revs);
     if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
         return;
     }
@@ -135,8 +129,8 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         let agents = agents_rx.borrow_and_update().clone();
         let activity = activity_rx.borrow_and_update().clone();
         let services = services_rx.borrow_and_update().clone();
-        let invalidations = state.agent_status_cache.drain_invalidations();
-        let msg = build_agents_message(&agents, &activity, &services, &invalidations);
+        let revs = state.agent_status_cache.service_revs();
+        let msg = build_agents_message(&agents, &activity, &services, &revs);
         if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
             break;
         }
