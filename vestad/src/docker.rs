@@ -1,9 +1,9 @@
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::{
     BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
-    ImportImageOptions, InspectContainerOptions, ListContainersOptions, ListImagesOptions,
+    ImportImageOptions, InspectContainerOptions, ListContainersOptions,
     RemoveContainerOptions, RemoveImageOptions, RestartContainerOptions, StopContainerOptions,
-    TagImageOptions, UploadToContainerOptions,
+    UploadToContainerOptions,
 };
 use bollard::Docker;
 use bytes::Bytes;
@@ -1035,11 +1035,6 @@ pub async fn start_container(docker: &Docker, cname: &str) -> bool {
     docker.start_container(cname, None).await.is_ok()
 }
 
-pub async fn tag_image(docker: &Docker, source: &str, repo: &str, tag: &str) -> Result<(), DockerError> {
-    docker.tag_image(source, Some(TagImageOptions { repo: Some(repo.to_string()), tag: Some(tag.to_string()) })).await?;
-    Ok(())
-}
-
 pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerError> {
     docker.remove_image(image, Some(RemoveImageOptions { force: true, ..Default::default() }), None).await?;
     Ok(())
@@ -1122,40 +1117,18 @@ pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Resu
     Ok(loaded_image)
 }
 
-pub async fn image_exists(docker: &Docker, image: &str) -> bool {
-    docker.inspect_image(image).await.is_ok()
-}
-
-pub async fn list_images_by_reference(docker: &Docker, reference: &str) -> Vec<(String, u64)> {
-    let mut filters = HashMap::new();
-    filters.insert("reference".to_string(), vec![reference.to_string()]);
-    let opts = ListImagesOptions {
-        filters: Some(filters),
-        ..Default::default()
-    };
-    match docker.list_images(Some(opts)).await {
-        Ok(images) => {
-            images.into_iter()
-                .flat_map(|img| {
-                    let size = img.size as u64;
-                    img.repo_tags.into_iter().map(move |tag| (tag, size))
-                })
-                .collect()
-        }
-        Err(_) => Vec::new(),
-    }
-}
-
-pub async fn docker_root_dir(docker: &Docker) -> String {
-    match docker.info().await {
-        Ok(info) => info.docker_root_dir.unwrap_or_else(|| "/var/lib/docker".to_string()),
-        Err(_) => "/var/lib/docker".to_string(),
-    }
-}
 
 pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
     let info = docker.inspect_container(cname, Some(InspectContainerOptions { size: true })).await.ok()?;
     info.size_rw.map(|s| s as u64)
+}
+
+/// Total size of the container's root filesystem (image layers + writable layer).
+/// This is what `docker export` streams out, so it's the right basis for sizing
+/// the first, full restic snapshot.
+pub async fn container_size_root_fs(docker: &Docker, cname: &str) -> Option<u64> {
+    let info = docker.inspect_container(cname, Some(InspectContainerOptions { size: true })).await.ok()?;
+    info.size_root_fs.map(|s| s as u64)
 }
 
 pub async fn container_created(docker: &Docker, cname: &str) -> Option<String> {
@@ -1727,6 +1700,7 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
+    crate::restic::remove_repo(name);
     Ok(())
 }
 
@@ -1924,6 +1898,9 @@ pub async fn rename_agent(
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
     create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None).await?;
+
+    // Repos are keyed by agent name, so carry the backup history across the rename.
+    crate::restic::rename_repo(old_name, new_name)?;
 
     Ok(())
 }
@@ -2252,7 +2229,7 @@ mod tests {
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
 
         // Verify image exists
-        assert!(image_exists(&docker, &img.tag).await, "snapshot image should exist");
+        assert!(docker.inspect_image(&img.tag).await.is_ok(), "snapshot image should exist");
     }
 
     #[tokio::test]

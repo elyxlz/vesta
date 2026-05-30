@@ -273,7 +273,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         except TimeoutError:
                             continue
 
-                        await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                        state.processor_busy = True
+                        try:
+                            await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                        finally:
+                            state.processor_busy = False
                 finally:
                     state.client = None
                     state.interrupt_event = None
@@ -316,9 +320,9 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     now = _now()
-    if now.hour < config.nightly_memory_hour:
-        return
-    if now.hour >= config.nightly_memory_hour + DREAMER_CATCHUP_HOURS:
+    # Circular window so a late hour (e.g. 22:00) still catches up past midnight.
+    hours_since_start = (now.hour - config.nightly_memory_hour) % 24
+    if hours_since_start >= DREAMER_CATCHUP_HOURS:
         return
     last = state.persisted.last_dreamer_run
     if last is not None and last.date() >= now.date():
@@ -367,8 +371,11 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 now = _now()
 
                 if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                    check_proactive_task(config=config)
                     last_proactive = now
+                    if state.processor_busy or not queue.empty():
+                        logger.debug("Proactive check skipped: agent is busy — waiting full interval")
+                    else:
+                        check_proactive_task(config=config)
 
                 if (now - last_dreamer_check).total_seconds() >= 3600:
                     process_nightly_memory(state=state, config=config)

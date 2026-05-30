@@ -1967,9 +1967,10 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 }
 
-                backup::cleanup_backups(&state.docker, &backups, &ret).await;
+                backup::cleanup_backups(name, &backups, &ret).await;
             }
 
+            backup::cleanup_legacy_backups(&state.docker).await;
             tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
         }
     });
@@ -2051,6 +2052,11 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
+    {
+        // Reclaim legacy docker-image backups (also runs after each backup cycle).
+        let state = state.clone();
+        tokio::spawn(async move { backup::cleanup_legacy_backups(&state.docker).await; });
+    }
     if dev_mode {
         tracing::info!("dev mode: auto-update disabled");
     } else {

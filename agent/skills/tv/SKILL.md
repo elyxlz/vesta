@@ -17,7 +17,7 @@ Control a Samsung Smart TV via the WebSocket API.
 
 ## Quick Start
 
-**IMPORTANT: Always auto-discover the TV's IP first.** The IP can change after power cycles. Never hardcode a static IP. Always check the ARP table for the TV's MAC address.
+Auto-discover the TV's IP first. The IP can change after power cycles, so don't hardcode a static IP; check the ARP table for the TV's MAC address.
 
 ```python
 import subprocess, re

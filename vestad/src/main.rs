@@ -17,6 +17,8 @@ mod docker;
 mod jwt;
 mod paths;
 mod providers;
+mod restic;
+mod restic_embed;
 mod time_utils;
 mod self_update;
 mod serve;

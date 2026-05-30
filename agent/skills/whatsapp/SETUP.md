@@ -109,7 +109,7 @@ Check status:
 whatsapp authenticate
 ```
 
-**NEVER restart the daemon after the user has authenticated.** Restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
+**Don't restart the daemon after the user has authenticated.** Restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
 
 ### Troubleshooting: "Can't link at this time"
 

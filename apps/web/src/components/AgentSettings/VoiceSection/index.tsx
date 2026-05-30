@@ -585,7 +585,10 @@ function VoicePicker({
     if (!opt.preview) return;
     const audio = new Audio(opt.preview);
     audio.onended = () => setPlayingId(null);
-    audio.play();
+    audio.play().catch(() => {
+      if (audioRef.current === audio) audioRef.current = null;
+      setPlayingId((current) => (current === opt.value ? null : current));
+    });
     audioRef.current = audio;
     setPlayingId(opt.value);
   };

@@ -13,10 +13,11 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty";
 import { isTauri } from "@/lib/env";
+import { compareVersions } from "@/lib/version";
 
 interface VersionMismatchDialogProps {
   gatewayVersion: string;
-  onUpdateGateway: () => void;
+  onUpdateGateway: () => Promise<boolean>;
 }
 
 async function updateApp(gatewayVersion: string) {
@@ -43,7 +44,7 @@ export function VersionMismatchDialog({
   gatewayVersion,
   onUpdateGateway,
 }: VersionMismatchDialogProps) {
-  const appIsOlder = gatewayVersion > __APP_VERSION__;
+  const appIsOlder = compareVersions(__APP_VERSION__, gatewayVersion) < 0;
   const hint = appIsOlder ? "update your app" : "update your gateway";
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,10 +54,14 @@ export function VersionMismatchDialog({
     setUpdating(false);
   }, [gatewayVersion]);
 
-  const handleUpdateGateway = () => {
+  const handleUpdateGateway = async () => {
     setUpdating(true);
     setError(null);
-    onUpdateGateway();
+    const ok = await onUpdateGateway();
+    if (!ok) {
+      setError("update failed");
+      setUpdating(false);
+    }
   };
 
   const handleUpdateApp = async () => {

@@ -88,6 +88,12 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        # Ignore unrelated requests (e.g. the browser's /favicon.ico) so they
+        # don't prematurely end the wait loop with an empty capture.
+        if "code" not in params and "error" not in params:
+            self.send_response(204)
+            self.end_headers()
+            return
         type(self).captured = {
             "code": params.get("code", [None])[0],
             "state": params.get("state", [None])[0],

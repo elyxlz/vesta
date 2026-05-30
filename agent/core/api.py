@@ -77,7 +77,7 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                 continue
             msg_type = data["type"]
             if msg_type in ("message", "chat"):
-                if "text" not in data:
+                if "text" not in data or not isinstance(data["text"], str):
                     continue
                 text = data["text"].strip()
                 if text:
@@ -188,10 +188,12 @@ async def _usage_handler(request: web.Request) -> web.Response:
                 headers=headers,
                 timeout=_aiohttp.ClientTimeout(total=10),
             ) as resp:
-                body = await resp.json()
                 if resp.status != 200:
+                    # Read as text first: an upstream error body may not be JSON, and resp.json() would
+                    # raise ContentTypeError, masking the real status behind a generic 502.
+                    body = await resp.text()
                     return web.json_response({"error": f"anthropic returned {resp.status}", "body": body}, status=resp.status)
-                return web.json_response(body)
+                return web.json_response(await resp.json())
     except (TimeoutError, _aiohttp.ClientError) as e:
         logger.error(f"usage fetch failed: {e}")
         return web.json_response({"error": str(e)}, status=502)

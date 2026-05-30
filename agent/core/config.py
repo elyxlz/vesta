@@ -7,6 +7,7 @@ from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisable
 
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
+_THINKING_ENABLED_BUDGET_TOKENS = 10000
 
 
 class VestaConfig(pyd_settings.BaseSettings):
@@ -44,6 +45,22 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_token: str | None = None
 
     agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
+
+    @pyd.field_validator("thinking", mode="before")
+    @classmethod
+    def _parse_thinking(cls, value: object) -> object:
+        # The THINKING env var is documented as a plain string (adaptive|enabled|disabled);
+        # coerce it into the SDK's config dict. JSON object values pass through untouched.
+        if isinstance(value, str):
+            mode = value.strip().lower()
+            if mode in ("", "adaptive"):
+                return ThinkingConfigAdaptive(type="adaptive", display="summarized")
+            if mode == "enabled":
+                return ThinkingConfigEnabled(type="enabled", budget_tokens=_THINKING_ENABLED_BUDGET_TOKENS)
+            if mode == "disabled":
+                return ThinkingConfigDisabled(type="disabled")
+            raise ValueError(f"THINKING must be adaptive|enabled|disabled (or a JSON config object), got {value!r}")
+        return value
 
     @pyd.field_validator("agent_dir", mode="before")
     @classmethod

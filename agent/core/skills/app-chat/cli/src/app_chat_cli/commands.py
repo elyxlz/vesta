@@ -68,6 +68,29 @@ def _api_get(base_url: str, path: str, params: dict[str, str]) -> dict[str, obje
         return {"error": str(exc)}
 
 
+_MESSAGE_TYPES = ("user", "assistant", "chat")
+
+
+def _recent_messages(base_url: str, limit: int) -> list[dict[str, str]] | dict[str, object]:
+    """Fetch the last `limit` chat messages, paging back through /history past non-message events."""
+    collected: list[dict[str, str]] = []
+    cursor: int | None = None
+    while len(collected) < limit:
+        params = {"limit": str(limit), "cursor": str(cursor)} if cursor is not None else {"limit": str(limit)}
+        data = _api_get(base_url, "/history", params)
+        if "error" in data:
+            return data
+        if "events" not in data:
+            return {"error": "unexpected response from /history"}
+        events = tp.cast(list[dict[str, str]], data["events"])
+        messages = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events if e["type"] in _MESSAGE_TYPES]
+        collected = messages + collected
+        cursor = tp.cast("int | None", data["cursor"])
+        if cursor is None:
+            break
+    return collected[-limit:]
+
+
 def cmd_history(args: argparse.Namespace) -> None:
     query = args.search
     limit = args.limit
@@ -84,16 +107,8 @@ def cmd_history(args: argparse.Namespace) -> None:
             sys.exit(1)
         print(json.dumps(data["results"], indent=2))
     else:
-        params = {"limit": str(limit)}
-        data = _api_get(base_url, "/history", params)
-        if "error" in data:
-            print(json.dumps(data))
+        result = _recent_messages(base_url, limit)
+        if isinstance(result, dict):
+            print(json.dumps(result))
             sys.exit(1)
-        if "events" not in data:
-            print(json.dumps({"error": "unexpected response from /history"}))
-            sys.exit(1)
-        events = tp.cast(list[dict[str, str]], data["events"])
-        results = [
-            {"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events if e["type"] in ("user", "assistant", "chat")
-        ]
-        print(json.dumps(results, indent=2))
+        print(json.dumps(result, indent=2))

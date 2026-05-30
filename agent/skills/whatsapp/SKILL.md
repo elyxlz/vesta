@@ -98,7 +98,7 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. This means:
 
 1. **Rebuild**: `cd ~/agent/skills/whatsapp/cli && CGO_ENABLED=1 go build -tags "fts5" -o ~/.local/bin/whatsapp .`
-2. **Restart daemon**: The running daemon uses the old binary. You MUST restart it to pick up changes:
+2. **Restart daemon**: The running daemon uses the old binary. Restart it to pick up changes:
    ```bash
    screen -S whatsapp -X quit
    sleep 1

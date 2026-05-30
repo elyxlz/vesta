@@ -53,9 +53,14 @@ export function FileEditor({
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
+  // Only the value at editor-creation time matters; tracking it in a ref keeps
+  // it out of the effect deps so a parent re-render (e.g. saving, which updates
+  // the content prop) does not destroy and rebuild the live editor.
+  const initialContentRef = useRef(initialContent);
 
   useEffect(() => {
     onChangeRef.current = onChange;
+    initialContentRef.current = initialContent;
   });
 
   useEffect(() => {
@@ -84,12 +89,12 @@ export function FileEditor({
     if (lang) extensions.push(lang);
 
     const view = new EditorView({
-      state: EditorState.create({ doc: initialContent, extensions }),
+      state: EditorState.create({ doc: initialContentRef.current, extensions }),
       parent: container,
     });
 
     return () => view.destroy();
-  }, [path, initialContent, readonly, encoding]);
+  }, [path, readonly, encoding]);
 
   if (encoding === "base64") {
     return (

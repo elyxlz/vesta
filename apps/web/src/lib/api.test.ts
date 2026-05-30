@@ -17,4 +17,9 @@ describe("isNewer", () => {
     expect(isNewer("0.1.104", "0.1.105")).toBe(false);
     expect(isNewer("0.1.0", "0.2.0")).toBe(false);
   });
+
+  it("handles prerelease suffixes without NaN", () => {
+    expect(isNewer("0.2.0-rc1", "0.1.0")).toBe(true);
+    expect(isNewer("0.1.0", "0.2.0-rc1")).toBe(false);
+  });
 });
