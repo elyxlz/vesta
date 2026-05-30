@@ -204,7 +204,6 @@ pub struct Client {
 pub struct OpenRouterArgs {
     pub key: String,
     pub model: String,
-    pub zdr: bool,
 }
 
 impl Client {
@@ -330,7 +329,7 @@ impl Client {
     }
 
     /// Provision an existing agent with provider credentials. Either Claude
-    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model/zdr).
+    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
     pub fn set_provider_credentials(&self, name: &str, credentials: &str) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
@@ -343,7 +342,6 @@ impl Client {
         let body = serde_json::json!({
             "openrouter_key": args.key,
             "openrouter_model": args.model,
-            "openrouter_zdr": args.zdr,
         });
         self.post_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())

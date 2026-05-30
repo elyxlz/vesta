@@ -3,7 +3,6 @@ import { apiJson, apiFetch } from "./client";
 export interface OpenRouterConfig {
   key: string;
   model: string;
-  zdr: boolean;
 }
 
 export type ProviderResult =
@@ -23,7 +22,6 @@ export async function setProvider(
       : {
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
-          openrouter_zdr: result.config.zdr,
         };
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "POST",

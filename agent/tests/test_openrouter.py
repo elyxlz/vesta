@@ -1,47 +1,18 @@
-"""Tests for OpenRouter provider mode: config parsing, ZDR injection, and SDK option gating."""
-
-import json
+"""Tests for OpenRouter provider mode: config parsing and SDK option gating."""
 
 import core.models as vm
 from core.client import build_client_options
-from core.openrouter_proxy import inject_provider
-
-
-def test_inject_provider_adds_zdr_to_json_body():
-    body = json.dumps({"model": "anthropic/claude-sonnet-4-6", "messages": []}).encode()
-    out = json.loads(inject_provider(body, zdr=True))
-    assert out["provider"] == {"zdr": True, "data_collection": "deny"}
-
-
-def test_inject_provider_noop_when_disabled():
-    body = json.dumps({"model": "x"}).encode()
-    assert inject_provider(body, zdr=False) == body
-
-
-def test_inject_provider_passes_through_non_json():
-    assert inject_provider(b"not json", zdr=True) == b"not json"
-    assert inject_provider(b"", zdr=True) == b""
-
-
-def test_inject_provider_merges_existing_provider():
-    body = json.dumps({"provider": {"order": ["anthropic"]}}).encode()
-    out = json.loads(inject_provider(body, zdr=True))
-    assert out["provider"]["order"] == ["anthropic"]
-    assert out["provider"]["zdr"] is True
 
 
 def test_config_parses_provider_env(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_ZDR", "0")
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     assert config.agent_provider == "openrouter"
-    assert config.openrouter_zdr is False
 
 
 def test_config_defaults_to_claude(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     assert config.agent_provider == "claude"
-    assert config.openrouter_zdr is True
 
 
 def _config_with_memory(tmp_path, **overrides):
@@ -66,3 +37,4 @@ def test_build_client_options_drops_anthropic_features_for_openrouter(tmp_path, 
     thinking = options.thinking
     assert thinking is not None and thinking["type"] == "disabled"
     assert options.model == "anthropic/claude-sonnet-4-6"
+    assert options.env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"

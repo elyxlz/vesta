@@ -101,16 +101,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     logger.init(f"{config.agent_name.upper()} started")
 
-    if config.agent_provider == "openrouter":
-        from .openrouter_proxy import start_proxy
-
-        state.openrouter_runner, proxy_port = await start_proxy(zdr=config.openrouter_zdr)
-        # Pass the proxy URL into ClaudeAgentOptions.env (build_client_options reads
-        # this) instead of mutating os.environ — otherwise every subprocess we spawn
-        # inherits ANTHROPIC_BASE_URL and silently routes through the OpenRouter proxy.
-        state.openrouter_base_url = f"http://127.0.0.1:{proxy_port}"
-        logger.init(f"OpenRouter proxy on 127.0.0.1:{proxy_port} (ZDR {'on' if config.openrouter_zdr else 'off'})")
-
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     drop_pending_migrations(state=state, config=config, first_start=first_start)
@@ -156,8 +146,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         os._exit(1)
     if state.ws_runner is not None:
         await state.ws_runner.cleanup()
-    if state.openrouter_runner is not None:
-        await state.openrouter_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
@@ -177,12 +165,12 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
     from .events import EventBus
-    from .provider import Provider
+    from .provider import derive_status
 
     event_bus = EventBus(data_dir=config.data_dir)
-    provider = Provider(config, persisted)
-    logger.init(f"Provider: {provider.status.kind} ({provider.status.state.value})")
-    return vm.State(persisted=persisted, event_bus=event_bus, provider=provider)
+    provider_status = derive_status(config, persisted)
+    logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")
+    return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 
 
 async def async_main() -> None:

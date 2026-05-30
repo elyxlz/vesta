@@ -59,7 +59,7 @@ impl<'a> AgentProvider<'a> {
     }
 
     /// POST the agent's /provider with the given JSON body. Body shape:
-    /// `{ "credentials": "..." }` or `{ "openrouter_key": "...", "openrouter_model": "...", "openrouter_zdr": true }`.
+    /// `{ "credentials": "..." }` or `{ "openrouter_key": "...", "openrouter_model": "..." }`.
     pub async fn set(&self, body: &serde_json::Value) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client

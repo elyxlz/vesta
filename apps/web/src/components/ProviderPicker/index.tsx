@@ -23,7 +23,6 @@ export function ProviderPicker({
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   const [key, setKey] = useState("");
-  const [zdr, setZdr] = useState(true);
   const [model, setModel] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
@@ -59,14 +58,13 @@ export function ProviderPicker({
     setStep("key");
   };
 
-  const handleKeyNext = (newKey: string, newZdr: boolean) => {
+  const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    setZdr(newZdr);
     setStep("model");
   };
 
   const handleModelSubmit = (newModel: string) => {
-    onDone({ kind: "openrouter", config: { key, model: newModel, zdr } });
+    onDone({ kind: "openrouter", config: { key, model: newModel } });
   };
 
   const handleCredentialsReady = (credentials: string) => {
@@ -113,7 +111,7 @@ export function ProviderPicker({
             />
           )}
           {step === "key" && (
-            <KeyStep initialKey={key} initialZdr={zdr} onNext={handleKeyNext} />
+            <KeyStep initialKey={key} onNext={handleKeyNext} />
           )}
           {step === "model" && (
             <ModelStep

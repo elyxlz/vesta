@@ -22,7 +22,11 @@ from . import state_store
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_memory_path
+from .provider import observed_401
 from .tools import build_vesta_tools_server
+
+# OpenRouter's Anthropic-compatible endpoint. The SDK appends /v1/messages.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -148,14 +152,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             # terminal verdict. On either, flip provider state and interrupt the
             # SDK so the user doesn't sit through ~3min of retry storm.
             if isinstance(msg, SystemMessage) and msg.subtype == "api_retry" and "error_status" in msg.data and msg.data["error_status"] == 401:
-                if state.provider is not None:
-                    state.provider.observed_401()
+                state.provider_status = observed_401(state.provider_status, config=config, persisted=state.persisted)
                 logger.error("Upstream 401 detected; interrupting SDK to skip retry storm")
                 await attempt_interrupt(state, config=config, reason="auth_failed")
                 break
             if isinstance(msg, ResultMessage) and msg.api_error_status == 401:
-                if state.provider is not None:
-                    state.provider.observed_401()
+                state.provider_status = observed_401(state.provider_status, config=config, persisted=state.persisted)
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
@@ -229,11 +231,11 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     is_openrouter = config.agent_provider == "openrouter"
 
     # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
-    # os.environ here would leak the proxy URL into every other subprocess
+    # os.environ here would leak the OpenRouter URL into every other subprocess
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
     sdk_env: dict[str, str] = {}
-    if is_openrouter and state.openrouter_base_url:
-        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_base_url
+    if is_openrouter:
+        sdk_env["ANTHROPIC_BASE_URL"] = OPENROUTER_BASE_URL
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,

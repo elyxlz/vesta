@@ -69,9 +69,6 @@ struct OpenRouterFlags {
     /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
     #[arg(long)]
     openrouter_model: Option<String>,
-    /// Allow non zero-data-retention OpenRouter providers (ZDR is enforced by default)
-    #[arg(long)]
-    no_zdr: bool,
 }
 
 #[derive(Subcommand)]
@@ -326,7 +323,7 @@ fn prompt_name() -> String {
 fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArgs> {
     let key = flags.openrouter_key?;
     let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
-    Some(client::OpenRouterArgs { key, model, zdr: !flags.no_zdr })
+    Some(client::OpenRouterArgs { key, model })
 }
 
 // Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,

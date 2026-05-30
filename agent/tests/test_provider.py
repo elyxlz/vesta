@@ -1,41 +1,40 @@
-"""Tests for the agent's Provider class. Mirror of the deleted Rust tests in
-vestad/src/agent_auth.rs — covers OpenRouter file format/shell-escaping,
-provider-file parser (commented/partial/prefix-extended), and Claude credentials
-auth check (refresh-token-aware)."""
+"""Tests for the agent's provider-auth state. Mirror of the Rust tests in
+vestad/src/providers/openrouter.rs — covers OpenRouter file format/shell-escaping,
+provider-file parser (commented/partial/prefix-extended), Claude credentials auth
+check (refresh-token-aware), and the boot/runtime state transitions."""
 
 import json
 
 import pytest
 
 from core.provider import (
-    Provider,
     ProviderAuthState,
     _check_claude_auth,
     _openrouter_provider_file,
     _openrouter_token_present,
     _provider_declares_openrouter,
+    derive_status,
+    observed_401,
+    set_claude,
+    set_openrouter,
 )
-from core.state_store import PersistedState
+from core.state_store import PersistedState, load_state
 
 
 # --- OpenRouter file format ---
 
 
 def test_openrouter_provider_file_format():
-    f = _openrouter_provider_file("sk-or-v1-xyz", "anthropic/claude-sonnet-4-6", zdr=True)
+    f = _openrouter_provider_file("sk-or-v1-xyz", "anthropic/claude-sonnet-4-6")
     assert "export AGENT_PROVIDER=openrouter\n" in f
     assert "export AGENT_MODEL='anthropic/claude-sonnet-4-6'\n" in f
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n" in f
     assert "export ANTHROPIC_API_KEY=\n" in f
     assert "export ANTHROPIC_SMALL_FAST_MODEL='anthropic/claude-haiku-4.5'\n" in f
-    assert "export OPENROUTER_ZDR=1\n" in f
-
-    off = _openrouter_provider_file("k", "deepseek/deepseek-v4", zdr=False)
-    assert "export OPENROUTER_ZDR=0\n" in off
 
 
 def test_openrouter_provider_file_escapes_shell_metacharacters():
-    injected = _openrouter_provider_file("k'; touch /tmp/pwned #", "m", zdr=True)
+    injected = _openrouter_provider_file("k'; touch /tmp/pwned #", "m")
     assert "export ANTHROPIC_AUTH_TOKEN='k'\\''; touch /tmp/pwned #'" in injected
     assert "TOKEN=k';" not in injected
 
@@ -108,13 +107,13 @@ def test_claude_auth_malformed_json_fails():
     assert not _check_claude_auth(json.dumps({"claudeAiOauth": None}))
 
 
-# --- Provider class transitions ---
+# --- State transitions (free functions) ---
 
 
 @pytest.fixture
-def provider(tmp_path, monkeypatch, config):
+def prov(tmp_path, monkeypatch, config):
     # Redirect the module-level path constants into the tmp dir so we don't
-    # touch the real ~/.claude during tests.
+    # touch the real ~/.claude during tests. Returns (config, persisted).
     from core import provider as provider_mod
 
     home = tmp_path / "home"
@@ -122,107 +121,85 @@ def provider(tmp_path, monkeypatch, config):
     monkeypatch.setattr(provider_mod, "CLAUDE_JSON_PATH", home / ".claude.json")
     monkeypatch.setattr(provider_mod, "PROVIDER_ENV_PATH", home / ".claude" / "vesta-provider.env")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    persisted = PersistedState()
-    return Provider(config, persisted)
+    return config, PersistedState()
 
 
-def test_set_claude_writes_and_flips_state(provider):
+def test_set_claude_writes_and_flips_state(prov):
     from core import provider as provider_mod
 
+    config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    provider.set_claude(creds_json)
-    assert provider.status.state == ProviderAuthState.AUTHENTICATED
-    assert provider.status.kind == "claude"
+    status = set_claude(creds_json, config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "claude"
     assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
     assert provider_mod.CLAUDE_JSON_PATH.read_text() == '{"hasCompletedOnboarding":true}'
 
 
-def test_set_claude_clears_openrouter_provider_file(provider):
+def test_set_claude_clears_openrouter_provider_file(prov):
     from core import provider as provider_mod
 
+    config, persisted = prov
     # Pre-existing OpenRouter file.
     provider_mod.PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    provider_mod.PROVIDER_ENV_PATH.write_text(_openrouter_provider_file("k", "m", True))
+    provider_mod.PROVIDER_ENV_PATH.write_text(_openrouter_provider_file("k", "m"))
 
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    provider.set_claude(creds_json)
+    set_claude(creds_json, config=config, persisted=persisted)
     # Provider file should be empty so its exports don't override Claude creds at boot.
     assert provider_mod.PROVIDER_ENV_PATH.read_text() == ""
 
 
-def test_set_openrouter_writes_and_flips_state(provider):
+def test_set_openrouter_writes_and_flips_state(prov):
     from core import provider as provider_mod
 
-    provider.set_openrouter("sk-or-v1-x", "deepseek/deepseek-v4-flash", zdr=True)
-    assert provider.status.state == ProviderAuthState.AUTHENTICATED
-    assert provider.status.kind == "openrouter"
-    assert provider.status.model == "deepseek/deepseek-v4-flash"
+    config, persisted = prov
+    status = set_openrouter("sk-or-v1-x", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "openrouter"
+    assert status.model == "deepseek/deepseek-v4-flash"
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
     assert "export AGENT_PROVIDER=openrouter\n" in content
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
 
 
-def test_observed_401_flips_state(provider):
+def test_observed_401_flips_state(prov):
+    config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    provider.set_claude(creds_json)
-    assert provider.status.state == ProviderAuthState.AUTHENTICATED
-    provider.observed_401()
-    assert provider.status.state == ProviderAuthState.NOT_AUTHENTICATED
+    status = set_claude(creds_json, config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    status = observed_401(status, config=config, persisted=persisted)
+    assert status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
 
 
-def test_observed_401_persists_across_restart(tmp_path, monkeypatch, config):
-    from core import provider as provider_mod
-
-    home = tmp_path / "home"
-    monkeypatch.setattr(provider_mod, "CREDENTIALS_PATH", home / ".claude" / ".credentials.json")
-    monkeypatch.setattr(provider_mod, "CLAUDE_JSON_PATH", home / ".claude.json")
-    monkeypatch.setattr(provider_mod, "PROVIDER_ENV_PATH", home / ".claude" / "vesta-provider.env")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
-    persisted = PersistedState()
-    p1 = Provider(config, persisted)
+def test_observed_401_persists_across_restart(prov):
+    config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    p1.set_claude(creds_json)
-    p1.observed_401()
+    status = set_claude(creds_json, config=config, persisted=persisted)
+    observed_401(status, config=config, persisted=persisted)
 
-    # Simulate restart by constructing a new Provider with reloaded persisted state.
-    from core.state_store import load_state
-
+    # Simulate restart: reload persisted state and re-derive.
     persisted2 = load_state(config)
-    p2 = Provider(config, persisted2)
-    assert p2.status.state == ProviderAuthState.NOT_AUTHENTICATED
+    status2 = derive_status(config, persisted2)
+    assert status2.state == ProviderAuthState.NOT_AUTHENTICATED
 
 
-def test_boot_derives_authenticated_from_disk_when_no_persisted_state(tmp_path, monkeypatch, config):
+def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
     from core import provider as provider_mod
 
-    home = tmp_path / "home"
-    monkeypatch.setattr(provider_mod, "CREDENTIALS_PATH", home / ".claude" / ".credentials.json")
-    monkeypatch.setattr(provider_mod, "PROVIDER_ENV_PATH", home / ".claude" / "vesta-provider.env")
-    monkeypatch.setattr(provider_mod, "CLAUDE_JSON_PATH", home / ".claude.json")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
+    config, persisted = prov
     # Pre-seed disk with valid Claude creds, no persisted auth state.
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(creds_json)
 
-    persisted = PersistedState()
-    p = Provider(config, persisted)
-    assert p.status.state == ProviderAuthState.AUTHENTICATED
-    assert p.status.kind == "claude"
+    status = derive_status(config, persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "claude"
 
 
-def test_boot_with_no_credentials_at_all_is_not_authenticated(tmp_path, monkeypatch, config):
-    from core import provider as provider_mod
-
-    home = tmp_path / "home"
-    monkeypatch.setattr(provider_mod, "CREDENTIALS_PATH", home / ".claude" / ".credentials.json")
-    monkeypatch.setattr(provider_mod, "PROVIDER_ENV_PATH", home / ".claude" / "vesta-provider.env")
-    monkeypatch.setattr(provider_mod, "CLAUDE_JSON_PATH", home / ".claude.json")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
-    persisted = PersistedState()
-    p = Provider(config, persisted)
-    assert p.status.state == ProviderAuthState.NOT_AUTHENTICATED
-    assert p.status.kind == "none"
+def test_boot_with_no_credentials_at_all_is_not_authenticated(prov):
+    config, persisted = prov
+    status = derive_status(config, persisted)
+    assert status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert status.kind == "none"

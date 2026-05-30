@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import {
   Field,
   FieldGroup,
@@ -12,15 +11,12 @@ import { openrouterProvider } from "@/api";
 
 export function KeyStep({
   initialKey,
-  initialZdr,
   onNext,
 }: {
   initialKey: string;
-  initialZdr: boolean;
-  onNext: (key: string, zdr: boolean) => void;
+  onNext: (key: string) => void;
 }) {
   const [key, setKey] = useState(initialKey);
-  const [zdr, setZdr] = useState(initialZdr);
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +29,7 @@ export function KeyStep({
     setError(null);
     try {
       await openrouterProvider.validateKey(key.trim());
-      onNext(key.trim(), zdr);
+      onNext(key.trim());
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || "key validation failed");
     } finally {
@@ -72,15 +68,6 @@ export function KeyStep({
           />
           {error && <p className="text-[11px] text-destructive">{error}</p>}
         </Field>
-        <div className="flex w-full items-center justify-between gap-3">
-          <div className="flex flex-col">
-            <span className="text-xs font-medium">zero data retention</span>
-            <span className="text-[11px] text-muted-foreground">
-              only route to providers that don't store data
-            </span>
-          </div>
-          <Switch checked={zdr} onCheckedChange={setZdr} />
-        </div>
       </FieldGroup>
 
       <Button type="submit" className="w-full" disabled={!canContinue}>

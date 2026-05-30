@@ -15,7 +15,7 @@ from .state_store import PersistedState
 if tp.TYPE_CHECKING:
     from aiohttp.web import AppRunner
 
-    from .provider import Provider
+    from .provider import ProviderStatus
 
 __all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
 
@@ -52,9 +52,7 @@ class State:
     persisted: PersistedState = dc.field(default_factory=PersistedState)
     # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: "AppRunner | None" = None
-    openrouter_runner: "AppRunner | None" = None
-    openrouter_base_url: str | None = None
-    provider: "Provider | None" = None
+    provider_status: "ProviderStatus | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     processor_busy: bool = False

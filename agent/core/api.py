@@ -23,7 +23,7 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
 from .helpers import get_memory_path
-from .provider import CREDENTIALS_PATH
+from .provider import CREDENTIALS_PATH, set_claude, set_openrouter
 
 if tp.TYPE_CHECKING:
     from .models import State
@@ -206,18 +206,19 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
     to the web UI. Agent is the source of truth — vestad knows nothing about
     credential file formats."""
     state = request.app["state"]
-    if state.provider is None:
+    if state.provider_status is None:
         return web.json_response({"error": "provider not initialized"}, status=503)
-    status = state.provider.status
+    status = state.provider_status
     return web.json_response({"state": status.state.value, "kind": status.kind, "model": status.model})
 
 
 async def _provider_set_handler(request: web.Request) -> web.Response:
     """Apply new provider credentials. Mutually exclusive: either Claude
-    OAuth `credentials` OR the openrouter_* triple. Vestad orchestrates the
+    OAuth `credentials` OR the openrouter_* pair. Vestad orchestrates the
     container restart that picks up env-var changes."""
     state = request.app["state"]
-    if state.provider is None:
+    config: VestaConfig = request.app["config"]
+    if state.provider_status is None:
         return web.json_response({"error": "provider not initialized"}, status=503)
     try:
         data = await request.json()
@@ -233,15 +234,14 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
 
     if has_creds:
         try:
-            state.provider.set_claude(data["credentials"])
+            state.provider_status = set_claude(data["credentials"], config=config, persisted=state.persisted)
         except (json.JSONDecodeError, TypeError, OSError) as e:
             return web.json_response({"error": f"set_claude failed: {e}"}, status=400)
     else:
         if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
             return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
-        zdr = data["openrouter_zdr"] if "openrouter_zdr" in data and isinstance(data["openrouter_zdr"], bool) else True
         try:
-            state.provider.set_openrouter(data["openrouter_key"], data["openrouter_model"], zdr)
+            state.provider_status = set_openrouter(data["openrouter_key"], data["openrouter_model"], config=config, persisted=state.persisted)
         except OSError as e:
             return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
 
