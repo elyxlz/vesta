@@ -45,6 +45,14 @@ type reactionNotif struct {
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
+type authNotif struct {
+	Source    string `json:"source"`
+	Type      string `json:"type"`
+	Instance  string `json:"instance,omitempty"`
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp"`
+}
+
 func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -113,4 +121,18 @@ func WriteReactionNotification(
 		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
+}
+
+// WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a
+// device session and needs re-pairing. Passive (no interrupt field), so it batches
+// until the agent is idle. Called once per unpaired daemon boot.
+func WriteUnpairedNotification(notifDir, instance string) error {
+	n := authNotif{
+		Source:    "whatsapp",
+		Type:      "unpaired",
+		Instance:  instance,
+		Message:   "WhatsApp daemon started without a paired device session. Re-pairing is required: follow the whatsapp skill SETUP.md to scan a new QR code or use pair-phone.",
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	return writeNotificationFile(notifDir, n, "unpaired")
 }
