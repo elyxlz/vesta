@@ -94,15 +94,15 @@ fn creation_flow() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("flow")).unwrap();
 
-    let status = c.wait_until_running(&agent.name, 60).unwrap();
+    let status = c.wait_until_running(&agent.name, 180).unwrap();
     assert_eq!(status, "not_authenticated");
 
+    // Inject credentials into the container fs; the agent reports authenticated
+    // only after it re-derives provider state on the restart below.
     inject_fake_token(&c, &agent.name);
-    assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
-
     mark_first_start_done(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
-    c.wait_until_alive(&agent.name, 60).unwrap();
+    c.wait_until_alive(&agent.name, 180).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "alive");

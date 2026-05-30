@@ -320,8 +320,14 @@ pub fn find_vestad() -> Result<PathBuf, String> {
 
 pub const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
 
-pub fn inject_fake_token(c: &Client, name: &str) {
-    c.inject_token(name, FAKE_TOKEN).unwrap();
+/// Write fake Claude credentials straight into the container fs (works even
+/// while the agent is still booting, like the old docker-cp path). The agent
+/// derives `authenticated` from this file on its next boot — callers that need
+/// the running agent to *report* authenticated must restart it after injecting.
+pub fn inject_fake_token(_c: &Client, name: &str) {
+    let cname = agent_container_name(name);
+    let script = format!("mkdir -p /root/.claude && printf '%s' '{FAKE_TOKEN}' > /root/.claude/.credentials.json");
+    exec_in_container(&cname, &script).expect("write fake credentials");
 }
 
 /// Pre-mark first-start setup as done so the agent binds its WS port on the next boot

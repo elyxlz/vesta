@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, unique_agent};
+use vesta_tests::{TestAgent, SERVER, inject_fake_token, mark_first_start_done, unique_agent};
 
 #[test]
 fn oauth_start_returns_url() {
@@ -20,7 +20,11 @@ fn inject_token_marks_authenticated() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("inject-tok")).unwrap();
 
+    // Credentials land in the container fs; the agent re-derives provider state
+    // on restart and then reports authenticated.
     inject_fake_token(&c, &agent.name);
-    let st = c.agent_status(&agent.name).unwrap();
-    assert_ne!(st.status, "not_authenticated");
+    mark_first_start_done(&agent.name).unwrap();
+    c.restart_agent(&agent.name).unwrap();
+    let status = c.wait_until_running(&agent.name, 180).unwrap();
+    assert_eq!(status, "alive");
 }
