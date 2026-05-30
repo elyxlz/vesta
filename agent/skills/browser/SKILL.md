@@ -9,6 +9,10 @@ Raw Chrome DevTools Protocol. Accessibility-tree snapshots with numbered refs (`
 for the ergonomic path, and `click(x, y)` + screenshots for everything accessibility can't see.
 The helpers are Python, short, and agent-editable. When something is missing, write it.
 
+`SharedArrayBuffer` is enabled by default, so web apps that require cross-origin isolation
+(COEP `require-corp` / COOP `same-origin`) load and render normally. No stealth or Xvfb
+workarounds are needed for those apps.
+
 **Setup**: [SETUP.md](SETUP.md)
 
 ## Search first
