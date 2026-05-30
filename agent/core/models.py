@@ -15,6 +15,8 @@ from .state_store import PersistedState
 if tp.TYPE_CHECKING:
     from aiohttp.web import AppRunner
 
+    from .provider import Provider
+
 __all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
 
 CORE_SOURCE = "core"
@@ -52,6 +54,7 @@ class State:
     ws_runner: "AppRunner | None" = None
     openrouter_runner: "AppRunner | None" = None
     openrouter_base_url: str | None = None
+    provider: "Provider | None" = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)

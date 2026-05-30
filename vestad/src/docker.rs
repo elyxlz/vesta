@@ -81,7 +81,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         ". ~/.bashrc || true".into(),
         // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
         // file; absent for Claude agents. Sourced directly so we never have to mutate ~/.bashrc.
-        format!(". {} 2>/dev/null || true", crate::agent_auth::PROVIDER_ENV_PATH),
+        ". /root/.claude/vesta-provider.env 2>/dev/null || true".into(),
         "uv sync --frozen --project /root/agent".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
@@ -343,19 +343,27 @@ pub struct ContainerInfo {
     pub id: Option<String>,
 }
 
-pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
+pub async fn combined_status(
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+    cname: &str,
+    info: &ContainerInfo,
+) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            if !crate::agent_auth::AgentAuth::for_container(docker, cname)
-                .is_authenticated()
-                .await
-            {
-                return AgentStatus::NotAuthenticated;
+            // WS port not yet bound → agent still booting.
+            if !info.port.is_some_and(is_agent_ready) {
+                return AgentStatus::Starting;
             }
-            if info.port.is_some_and(is_agent_ready) {
-                AgentStatus::Alive
-            } else {
-                AgentStatus::Starting
+            // Agent's own /provider/status is the source of truth for provider auth.
+            // If the WS server is up but /provider isn't responding yet (transient
+            // mid-boot state), treat as Starting; the next ~3s poll will resolve.
+            let agent_name = name_from_cname(cname);
+            let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            match provider.status().await {
+                Ok(s) if s.state == "authenticated" => AgentStatus::Alive,
+                Ok(_) => AgentStatus::NotAuthenticated,
+                Err(_) => AgentStatus::Starting,
             }
         }
         ContainerStatus::Dead => AgentStatus::Dead,
@@ -416,10 +424,6 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
 
 pub async fn container_status(docker: &Docker, cname: &str) -> ContainerStatus {
     inspect_container(docker, cname, None).await.status
-}
-
-pub async fn read_container_file(docker: &Docker, cname: &str, container_path: &str) -> Option<String> {
-    download_from_container(docker, cname, container_path).await
 }
 
 /// Readiness check: the agent binds its WS port only once it's ready to serve requests.
@@ -1465,27 +1469,36 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
 
 // --- High-level operations (used by serve.rs handlers) ---
 
-pub async fn get_status(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<StatusJson, DockerError> {
+pub async fn get_status(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    name: &str,
+    agents_dir: &std::path::Path,
+) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(docker, &cname, Some(agents_dir)).await;
 
     Ok(StatusJson {
         name: name.to_string(),
-        status: combined_status(docker, &cname, &info).await,
+        status: combined_status(http_client, agents_dir, &cname, &info).await,
         id: info.id,
         ws_port: info.port.unwrap_or(0),
     })
 }
 
-pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<ListEntry> {
+pub async fn list_agents(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+) -> Vec<ListEntry> {
     let agents = list_managed_agents(docker).await;
     let mut entries = Vec::new();
     for ManagedAgent { cname, agent_name } in &agents {
         let info = inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(docker, cname, &info).await,
+            status: combined_status(http_client, agents_dir, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
         });
     }

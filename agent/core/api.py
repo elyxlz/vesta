@@ -5,6 +5,8 @@ Routes:
   - GET  /history              paginated event history (cursor optional)
   - GET  /search               full-text search over events
   - GET  /usage                plan usage limits and rate limit status
+  - GET  /provider/status      LLM-provider auth state
+  - POST /provider             set Claude credentials or OpenRouter config
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -12,7 +14,7 @@ Routes:
 import asyncio
 import json
 import logging
-import pathlib as pl
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
@@ -21,6 +23,10 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
 from .helpers import get_memory_path
+from .provider import CREDENTIALS_PATH
+
+if tp.TYPE_CHECKING:
+    from .models import State
 
 logger = logging.getLogger("vesta.api")
 
@@ -151,7 +157,6 @@ async def _search_handler(request: web.Request) -> web.Response:
     return web.json_response({"results": results})
 
 
-CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 OAUTH_BETA_HEADER = "oauth-2025-04-20"
 
@@ -190,6 +195,55 @@ async def _usage_handler(request: web.Request) -> web.Response:
     except (TimeoutError, _aiohttp.ClientError) as e:
         logger.error(f"usage fetch failed: {e}")
         return web.json_response({"error": str(e)}, status=502)
+
+
+async def _provider_status_handler(request: web.Request) -> web.Response:
+    """Report the agent's LLM-provider authentication state.
+
+    Read by vestad on every status poll to surface 'alive' vs 'not_authenticated'
+    to the web UI. Agent is the source of truth — vestad knows nothing about
+    credential file formats."""
+    state = request.app["state"]
+    if state.provider is None:
+        return web.json_response({"error": "provider not initialized"}, status=503)
+    status = state.provider.status
+    return web.json_response({"state": status.state.value, "kind": status.kind, "model": status.model})
+
+
+async def _provider_set_handler(request: web.Request) -> web.Response:
+    """Apply new provider credentials. Mutually exclusive: either Claude
+    OAuth `credentials` OR the openrouter_* triple. Vestad orchestrates the
+    container restart that picks up env-var changes."""
+    state = request.app["state"]
+    if state.provider is None:
+        return web.json_response({"error": "provider not initialized"}, status=503)
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+
+    has_creds = "credentials" in data and isinstance(data["credentials"], str)
+    has_or = "openrouter_key" in data and isinstance(data["openrouter_key"], str)
+    if has_creds and has_or:
+        return web.json_response({"error": "credentials and openrouter_key are mutually exclusive"}, status=400)
+    if not has_creds and not has_or:
+        return web.json_response({"error": "must provide either credentials or openrouter_key"}, status=400)
+
+    if has_creds:
+        try:
+            state.provider.set_claude(data["credentials"])
+        except (json.JSONDecodeError, TypeError, OSError) as e:
+            return web.json_response({"error": f"set_claude failed: {e}"}, status=400)
+    else:
+        if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
+            return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
+        zdr = data["openrouter_zdr"] if "openrouter_zdr" in data and isinstance(data["openrouter_zdr"], bool) else True
+        try:
+            state.provider.set_openrouter(data["openrouter_key"], data["openrouter_model"], zdr)
+        except OSError as e:
+            return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
+
+    return web.json_response({"ok": True})
 
 
 async def _memory_get_handler(request: web.Request) -> web.Response:
@@ -237,6 +291,7 @@ async def start_runner(app: web.Application, *, shutdown_timeout: float = 5.0) -
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
+    state: "State | None" = None,
     *,
     host: str = "0.0.0.0",
 ) -> web.AppRunner:
@@ -244,12 +299,15 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token
     app["config"] = config
+    app["state"] = state
     app["websockets"] = weakref.WeakSet()
     app.on_shutdown.append(_close_all_websockets)
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/provider/status", _provider_status_handler)
+    app.router.add_post("/provider", _provider_set_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

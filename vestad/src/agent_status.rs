@@ -147,7 +147,12 @@ impl AgentStatusCache {
 
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to alive agents for activity state relay.
-pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, docker: Docker, agents_dir: PathBuf) {
+pub fn spawn_agent_status_task(
+    cache: Arc<AgentStatusCache>,
+    docker: Docker,
+    http_client: reqwest::Client,
+    agents_dir: PathBuf,
+) {
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let (activity_event_tx, mut activity_event_rx) =
@@ -155,7 +160,7 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, docker: Docker, age
 
         loop {
             // Poll agent list via async bollard
-            let agents = docker::list_agents(&docker, &agents_dir).await;
+            let agents = docker::list_agents(&docker, &http_client, &agents_dir).await;
 
             // Update the agents watch channel (only notifies if changed)
             cache.agents_tx.send_if_modified(|current| {

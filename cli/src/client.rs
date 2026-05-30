@@ -313,18 +313,13 @@ impl Client {
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>, openrouter: Option<&OpenRouterArgs>, credentials: Option<&str>) -> Result<String, String> {
+    /// Create an empty agent container. Provider config is sent separately via
+    /// `set_provider` once the agent is up (vestad no longer accepts credentials
+    /// at create time — see refactor for agent-owned auth state).
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
         let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
             body["timezone"] = serde_json::json!(tz);
-        }
-        if let Some(openrouter) = openrouter {
-            body["openrouter_key"] = serde_json::json!(openrouter.key);
-            body["openrouter_model"] = serde_json::json!(openrouter.model);
-            body["openrouter_zdr"] = serde_json::json!(openrouter.zdr);
-        }
-        if let Some(creds) = credentials {
-            body["credentials"] = serde_json::json!(creds);
         }
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp
@@ -332,6 +327,26 @@ impl Client {
             .read_json()
             .map_err(|e| format!("parse error: {e}"))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
+    }
+
+    /// Provision an existing agent with provider credentials. Either Claude
+    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model/zdr).
+    pub fn set_provider_credentials(&self, name: &str, credentials: &str) -> Result<(), String> {
+        serde_json::from_str::<serde_json::Value>(credentials)
+            .map_err(|e| format!("invalid credentials JSON: {e}"))?;
+        let body = serde_json::json!({"credentials": credentials});
+        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
+    }
+
+    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
+        let body = serde_json::json!({
+            "openrouter_key": args.key,
+            "openrouter_model": args.model,
+            "openrouter_zdr": args.zdr,
+        });
+        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
     }
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
@@ -381,6 +396,29 @@ impl Client {
     pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
         self.post(&format!("/agents/{name}/rebuild"))?;
         Ok(())
+    }
+
+    /// Poll until status is `alive` OR `not_authenticated`. Used right after
+    /// `create_agent` to know the agent's HTTP server is up and ready to accept
+    /// `POST /agents/{name}/provider` — a brand-new empty agent will report
+    /// `not_authenticated` until the provider is provisioned.
+    pub fn wait_until_running(&self, name: &str, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?;
+            match status.status.as_str() {
+                "alive" | "not_authenticated" => return Ok(()),
+                "not_found" | "dead" | "stopped" =>
+                    return Err(format!("{}: {}", name, status.status)),
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("{}: timeout waiting for HTTP server (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
     }
 
     /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
@@ -434,14 +472,6 @@ impl Client {
         Ok(())
     }
 
-    pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
-        // Validate JSON shape before posting; backend stores the string verbatim.
-        serde_json::from_str::<serde_json::Value>(token)
-            .map_err(|e| format!("invalid token JSON: {e}"))?;
-        let body = serde_json::json!({"credentials": token});
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
-        Ok(())
-    }
 
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
         let resp = self.post(&format!("/agents/{name}/backups"))?;

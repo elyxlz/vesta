@@ -120,7 +120,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     # First-start defers WS until the agent calls `mark_setup_done` (the readiness signal vestad polls).
     # Every other boot binds WS immediately so restart greetings that poll the WS port don't deadlock.
     if not first_start:
-        state.ws_runner = await start_ws_server(state.event_bus, config)
+        state.ws_runner = await start_ws_server(state.event_bus, config, state)
         logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
@@ -176,9 +176,12 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
     from .events import EventBus
+    from .provider import Provider
 
     event_bus = EventBus(data_dir=config.data_dir)
-    return vm.State(persisted=persisted, event_bus=event_bus)
+    provider = Provider(config, persisted)
+    logger.init(f"Provider: {provider.status.kind} ({provider.status.state.value})")
+    return vm.State(persisted=persisted, event_bus=event_bus, provider=provider)
 
 
 async def async_main() -> None:

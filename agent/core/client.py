@@ -10,6 +10,8 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    ResultMessage,
+    SystemMessage,
     ThinkingBlock,
 )
 from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
@@ -141,6 +143,20 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
+            # Detect upstream 401s emitted by the SDK as structured stream events.
+            # `api_retry` fires once per backoff attempt; `ResultMessage` is the
+            # terminal verdict. On either, flip provider state and interrupt the
+            # SDK so the user doesn't sit through ~3min of retry storm.
+            if isinstance(msg, SystemMessage) and msg.subtype == "api_retry" \
+                    and "error_status" in msg.data and msg.data["error_status"] == 401:
+                if state.provider is not None:
+                    state.provider.observed_401()
+                logger.error("Upstream 401 detected; interrupting SDK to skip retry storm")
+                await attempt_interrupt(state, config=config, reason="auth_failed")
+                break
+            if isinstance(msg, ResultMessage) and msg.api_error_status == 401:
+                if state.provider is not None:
+                    state.provider.observed_401()
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)

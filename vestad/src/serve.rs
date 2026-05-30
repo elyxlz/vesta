@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_auth, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -408,7 +408,7 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents = docker::list_agents(&state.docker, &state.env_config.agents_dir).await;
+    let agents = docker::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
     Json(agents)
 }
 
@@ -418,12 +418,6 @@ struct CreateBody {
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
     seed_personality: Option<String>,
-    openrouter_key: Option<String>,
-    openrouter_model: Option<String>,
-    openrouter_zdr: Option<bool>,
-    /// Pre-fetched Claude OAuth credentials JSON, obtained via the
-    /// /providers/claude/oauth/{start,complete} pair. Mutually exclusive with openrouter_*.
-    credentials: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -438,21 +432,6 @@ async fn create_agent_handler(
     let manage_core_code = body.manage_agent_code.unwrap_or(true);
     tracing::info!(name = %name, manage_core_code, "creating agent");
 
-    let openrouter = match body.openrouter_key {
-        Some(api_key) => match body.openrouter_model {
-            Some(model) => Some(agent_auth::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
-            None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
-        },
-        None => None,
-    };
-
-    if openrouter.is_some() && body.credentials.is_some() {
-        return Err(err_response(
-            StatusCode::BAD_REQUEST,
-            "credentials and openrouter_key are mutually exclusive",
-        ));
-    }
-
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -462,19 +441,13 @@ async fn create_agent_handler(
         save_settings(&settings);
     }
 
+    // Create + start an empty agent. Provider config arrives via a separate
+    // POST /agents/{name}/provider once the agent is up — the agent owns its
+    // own credential files now, vestad only orchestrates.
     let name =
         docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
             .await
             .map_err(map_docker_err)?;
-
-    // Inject into the container fs (like OAuth creds) so it survives rebuild/rename and is agent-editable.
-    let auth = agent_auth::AgentAuth::for_agent(&state.docker, &name);
-    if let Some(or) = &openrouter {
-        auth.set_openrouter(or).await.map_err(map_docker_err)?;
-    }
-    if let Some(creds) = &body.credentials {
-        auth.set_claude(creds).await.map_err(map_docker_err)?;
-    }
 
     docker::start_agent(&state.docker, &name)
         .await
@@ -487,7 +460,7 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = docker::get_status(&state.docker, &name, &state.env_config.agents_dir)
+    let status = docker::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
     Ok(Json(status))
@@ -682,60 +655,41 @@ async fn drop_rename_notification(
         .map_err(|e| e.to_string())
 }
 
-#[derive(Deserialize)]
-struct SetProviderBody {
-    /// Pre-fetched Claude OAuth credentials JSON. Mutually exclusive with openrouter_*.
-    credentials: Option<String>,
-    openrouter_key: Option<String>,
-    openrouter_model: Option<String>,
-    openrouter_zdr: Option<bool>,
-}
-
-/// Set or refresh an existing agent's provider config. Mirrors the create-agent
-/// body shape: either `credentials` (Claude OAuth blob) or `openrouter_*` fields.
-/// Injects the relevant config and restarts the agent so it takes effect.
+/// Set or refresh an existing agent's provider config. Body is forwarded
+/// verbatim to the agent's `POST /provider` (the agent owns file writes and
+/// format knowledge). After the write succeeds, vestad restarts the container
+/// so env-var changes (OpenRouter mode) take effect on next boot, then bumps
+/// the status cache so the web sees the change without waiting for next poll.
 async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(body): Json<SetProviderBody>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
-    let openrouter = match body.openrouter_key {
-        Some(api_key) => match body.openrouter_model {
-            Some(model) => Some(agent_auth::OpenRouterConfig { api_key, model, zdr: body.openrouter_zdr.unwrap_or(true) }),
-            None => return Err(err_response(StatusCode::BAD_REQUEST, "openrouter_model is required when openrouter_key is set")),
-        },
-        None => None,
-    };
-
-    if openrouter.is_some() && body.credentials.is_some() {
-        return Err(err_response(StatusCode::BAD_REQUEST, "credentials and openrouter_key are mutually exclusive"));
-    }
-    if openrouter.is_none() && body.credentials.is_none() {
-        return Err(err_response(StatusCode::BAD_REQUEST, "must provide either credentials or openrouter_key"));
-    }
-
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let auth = agent_auth::AgentAuth::for_container(&state.docker, &cname);
-    if let Some(creds) = &body.credentials {
-        auth.set_claude(creds).await.map_err(map_docker_err)?;
-        // If the agent was previously in OpenRouter mode, the provider file's env
-        // vars would otherwise override the freshly-injected Claude credentials.
-        auth.clear_openrouter().await.map_err(map_docker_err)?;
+    // Agent must be running to receive the proxy call; auto-start stopped agents.
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name)
+            .await
+            .map_err(map_docker_err)?;
     }
-    if let Some(or) = &openrouter {
-        auth.set_openrouter(or).await.map_err(map_docker_err)?;
-    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.set(&body)
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
 
     docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
+    // TODO: poke agent_status_cache so the web sees the change inside ~50ms
+    // instead of waiting for the next 3s poll.
     Ok(ok_json())
 }
 
@@ -2092,6 +2046,7 @@ pub async fn run_server(cfg: ServerConfig) {
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
+        state.http_client.clone(),
         state.env_config.agents_dir.clone(),
     );
     let app = build_router(state.clone());

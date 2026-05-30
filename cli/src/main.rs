@@ -330,8 +330,7 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
 }
 
 // Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
-// returns the credentials JSON. Caller passes it to create_agent (new agent)
-// or inject_token (existing agent reauth).
+// returns the credentials JSON. Caller passes it to set_provider_credentials.
 fn oauth_dance(client: &client::Client) -> String {
     let auth = client
         .start_auth_standalone()
@@ -349,7 +348,7 @@ fn oauth_dance(client: &client::Client) -> String {
 fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
     client
-        .inject_token(name, &credentials)
+        .set_provider_credentials(name, &credentials)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -535,44 +534,54 @@ fn run(cli: Cli) {
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
 
-            // Claude path: OAuth standalone first, then create_agent injects creds.
-            // OpenRouter path: validate the key against OpenRouter so a bad key
-            // fails here, not silently on every agent message after create.
-            let credentials = if let Some(or) = &openrouter {
+            // OpenRouter path: validate the key client-side first so a bad key
+            // fails fast (no point creating an agent we'd immediately fail to
+            // provision). Claude path: no pre-validation possible without a
+            // running agent; OAuth happens after create.
+            if let Some(or) = &openrouter {
                 eprintln!("checking OpenRouter key...");
                 c.validate_openrouter_key(&or.key)
                     .unwrap_or_else(|e| platform::die(&e));
-                None
-            } else {
-                eprintln!("authenticating claude...");
-                Some(oauth_dance(&c))
-            };
+            }
 
-            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), credentials.as_deref()) {
-                Ok(name) => eprintln!("created agent '{name}'"),
+            // 1. Create an empty agent. Vestad no longer accepts credentials at
+            //    create time — the agent owns its own auth state.
+            let created_name = match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
+                Ok(n) => { eprintln!("created agent '{n}'"); n }
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
-                    // If we already collected fresh Claude credentials, inject them into the
-                    // existing agent — otherwise the user just authenticated for nothing.
-                    if let Some(creds) = credentials.as_deref() {
-                        c.inject_token(&name, creds)
-                            .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("credentials refreshed");
-                    }
+                    name.clone()
                 }
                 Err(e) if e.contains("already exists") => {
                     platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
                 }
                 Err(e) => platform::die(&e),
+            };
+
+            // 2. Wait for the agent's HTTP server to be up so it can receive POST /provider.
+            eprintln!("waiting for agent to start...");
+            c.wait_until_running(&created_name, START_READY_TIMEOUT)
+                .unwrap_or_else(|e| platform::die(&e));
+
+            // 3. Provision the provider. OpenRouter is a single API call; Claude
+            //    requires the OAuth dance first.
+            if let Some(or) = &openrouter {
+                c.set_provider_openrouter(&created_name, or)
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("running on OpenRouter (no Claude login needed)");
+            } else {
+                eprintln!("authenticating claude...");
+                let credentials = oauth_dance(&c);
+                c.set_provider_credentials(&created_name, &credentials)
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("authenticated!");
             }
 
-            if openrouter.is_some() {
-                eprintln!("running on OpenRouter (no Claude login needed)");
-            }
+            // 4. Wait for the agent to come fully alive after the provision-triggered restart.
             eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
-            c.wait_until_alive(&name, START_READY_TIMEOUT)
+            c.wait_until_alive(&created_name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("agent '{name}' is ready.");
+            eprintln!("agent '{created_name}' is ready.");
 
         }
 
@@ -583,13 +592,25 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
+
             if let Some(or) = &openrouter {
                 eprintln!("checking OpenRouter key...");
                 c.validate_openrouter_key(&or.key)
                     .unwrap_or_else(|e| platform::die(&e));
             }
-            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref(), openrouter.as_ref(), None).unwrap_or_else(|e| platform::die(&e));
-            if openrouter.is_some() {
+
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref())
+                .unwrap_or_else(|e| platform::die(&e));
+
+            // If --openrouter-key was provided, finish provisioning the agent
+            // immediately. Otherwise leave it unprovisioned for the user to run
+            // `vesta auth` later.
+            if let Some(or) = &openrouter {
+                eprintln!("waiting for agent to start...");
+                c.wait_until_running(&name, START_READY_TIMEOUT)
+                    .unwrap_or_else(|e| platform::die(&e));
+                c.set_provider_openrouter(&name, or)
+                    .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("created (running on OpenRouter)");
             } else {
                 eprintln!("created (run 'vesta auth {name}' to authenticate)");
@@ -663,7 +684,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.inject_token(&name, &token_str)
+                c.set_provider_credentials(&name, &token_str)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {

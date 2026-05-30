@@ -83,7 +83,7 @@ def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
         state.persisted.first_start_done = True
         state_store.save_state(state.persisted, config)
         if state.ws_runner is None:
-            state.ws_runner = await start_ws_server(state.event_bus, config)
+            state.ws_runner = await start_ws_server(state.event_bus, config, state)
             logger.init(f"WebSocket server started on port {config.ws_port}")
         logger.startup("setup_done marked by agent — WS online")
         return {"content": [{"type": "text", "text": "setup_done; WS online"}]}

@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { createAgent } from "@/api";
-import type { OpenRouterConfig } from "@/api/agents";
+import {
+  setProvider,
+  waitUntilRunning,
+  waitUntilAlive,
+  type OpenRouterConfig,
+  type ProviderResult,
+} from "@/api/agents";
 import { fadeSlide } from "@/lib/motion";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
@@ -9,6 +15,9 @@ import { ProviderPicker } from "@/components/ProviderPicker";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
 import { DoneStep } from "./Steps/DoneStep";
+
+// Generous timeout — first-time setup pulls + builds the agent image.
+const START_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function NewAgent() {
   const step = useOnboarding((s) => s.step);
@@ -29,13 +38,26 @@ export function NewAgent() {
     let cancelled = false;
     (async () => {
       try {
-        await createAgent(
-          agentName,
-          seedPersonality,
-          openrouter ?? undefined,
-          credentials ?? undefined,
-        );
+        // Phase 1: create the empty agent container.
+        await createAgent(agentName, seedPersonality);
         if (cancelled) return;
+
+        // Phase 2: wait for the agent's HTTP server to be reachable.
+        await waitUntilRunning(agentName, START_TIMEOUT_MS);
+        if (cancelled) return;
+
+        // Phase 3: provision the provider via POST /agents/{name}/provider.
+        const result: ProviderResult =
+          openrouter !== null
+            ? { kind: "openrouter", config: openrouter }
+            : { kind: "claude", credentials: credentials ?? "" };
+        await setProvider(agentName, result);
+        if (cancelled) return;
+
+        // Phase 4: wait for the provision-triggered restart to settle.
+        await waitUntilAlive(agentName, START_TIMEOUT_MS);
+        if (cancelled) return;
+
         setStep("done");
       } catch (e) {
         if (cancelled) return;
