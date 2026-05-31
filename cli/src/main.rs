@@ -84,6 +84,11 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
+        /// Claude OAuth credentials JSON, to provision Claude without the interactive
+        /// login (the non-interactive counterpart to the OpenRouter flags). Get it
+        /// from `vesta auth` or an existing agent.
+        #[arg(long)]
+        claude_token: Option<String>,
         #[command(flatten)]
         openrouter: OpenRouterFlags,
     },
@@ -330,26 +335,39 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
     Some(client::OpenRouterArgs { key, model })
 }
 
-/// Resolve which provider `vesta setup` should provision the agent with.
-///
-/// Precedence: explicit `--openrouter-key` flag (non-interactive, key validated
-/// here) -> `--yes` (non-interactive, defaults to a Claude account) -> an
-/// interactive prompt asking the user to choose Claude or OpenRouter. Returns
-/// `Some` for OpenRouter (key already validated), `None` for a Claude account.
-fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, yes: bool) -> Option<client::OpenRouterArgs> {
+/// How `vesta setup` will provision the agent once it's created.
+enum ProvisionPlan {
+    /// Run on OpenRouter (key already validated).
+    OpenRouter(client::OpenRouterArgs),
+    /// Provision Claude from credentials supplied up front (non-interactive).
+    ClaudeCredentials(String),
+    /// Provision Claude via the interactive OAuth dance after create.
+    ClaudeOAuth,
+}
+
+/// Resolve how `vesta setup` should provision the agent. Every interactive prompt
+/// has a non-interactive flag equivalent:
+/// - `--openrouter-key` (+ `--openrouter-model`) -> OpenRouter, no prompts
+/// - `--claude-token` -> Claude from supplied credentials, no prompts
+/// - `--yes` with neither -> defaults to Claude (OAuth dance still runs)
+/// - otherwise -> prompt for the provider (and key/model, or OAuth)
+fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, yes: bool) -> ProvisionPlan {
+    if flags.openrouter_key.is_some() && claude_token.is_some() {
+        platform::die("--openrouter-key and --claude-token are mutually exclusive");
+    }
     if flags.openrouter_key.is_some() {
         let args = build_openrouter_args(flags).unwrap_or_else(|| platform::die("internal: openrouter key vanished"));
         eprintln!("checking OpenRouter key...");
         c.validate_openrouter_key(&args.key).unwrap_or_else(|e| platform::die(&e));
-        return Some(args);
+        return ProvisionPlan::OpenRouter(args);
     }
-    if yes {
-        return None;
+    if let Some(credentials) = claude_token {
+        return ProvisionPlan::ClaudeCredentials(credentials);
     }
-    if !prompt_use_openrouter() {
-        return None;
+    if yes || !prompt_use_openrouter() {
+        return ProvisionPlan::ClaudeOAuth;
     }
-    Some(prompt_openrouter_interactive(c, flags.openrouter_model))
+    ProvisionPlan::OpenRouter(prompt_openrouter_interactive(c, flags.openrouter_model))
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
@@ -605,7 +623,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code, openrouter } => {
+        Command::Setup { yes, name, no_manage_core_code, claude_token, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -617,7 +635,7 @@ fn run(cli: Cli) {
             // is validated client-side here so a bad key fails fast, before we
             // create an agent we'd immediately fail to provision. Claude needs
             // no pre-validation; OAuth happens after create.
-            let openrouter = resolve_setup_provider(&c, openrouter, yes);
+            let plan = resolve_setup_provider(&c, openrouter, claude_token, yes);
             let timezone = detect_timezone();
 
             // 1. Create an empty agent. Vestad no longer accepts credentials at
@@ -639,18 +657,27 @@ fn run(cli: Cli) {
             c.wait_until_running(&created_name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
 
-            // 3. Provision the provider. OpenRouter is a single API call; Claude
-            //    requires the OAuth dance first.
-            if let Some(or) = &openrouter {
-                c.set_provider_openrouter(&created_name, or)
-                    .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("running on OpenRouter (no Claude login needed)");
-            } else {
-                eprintln!("authenticating claude...");
-                let credentials = oauth_dance(&c);
-                c.set_provider_credentials(&created_name, &credentials)
-                    .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("authenticated!");
+            // 3. Provision the provider. OpenRouter and supplied Claude credentials
+            //    are a single API call; an interactive Claude setup runs the OAuth
+            //    dance first.
+            match plan {
+                ProvisionPlan::OpenRouter(or) => {
+                    c.set_provider_openrouter(&created_name, &or)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("running on OpenRouter (no Claude login needed)");
+                }
+                ProvisionPlan::ClaudeCredentials(credentials) => {
+                    c.set_provider_credentials(&created_name, &credentials)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("authenticated (claude)");
+                }
+                ProvisionPlan::ClaudeOAuth => {
+                    eprintln!("authenticating claude...");
+                    let credentials = oauth_dance(&c);
+                    c.set_provider_credentials(&created_name, &credentials)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("authenticated!");
+                }
             }
 
             // 4. Wait for the agent to come fully alive after the provision-triggered
