@@ -39,12 +39,12 @@ if mount | grep -q '/root/agent/core '; then
 fi
 ```
 
-## 4. First merge
+## 4. First sync
 
-Follow [SKILL.md](SKILL.md) from step 2 (checkpoint + merge). On this first merge only, add `--allow-unrelated-histories`:
+Now run the normal sync. On a fresh repo there's no shared history with upstream, so it re-anchors automatically (takes the upstream tree as the base and replays your owned files on top):
 
 ```bash
-git -C ~ merge FETCH_HEAD --no-edit --allow-unrelated-histories
+~/agent/skills/upstream-sync/scripts/sync.sh
 ```
 
-Expect a wall of `warning: unable to unlink ...: Read-only file system` for `agent/core/` paths. Bind mounts, harmless.
+Expect a wall of `warning: unable to unlink ...: Read-only file system` for `agent/core/` paths. Bind mounts, harmless. From here on, `sync.sh` is the only command you need to pull upstream; see [SKILL.md](SKILL.md).

@@ -11,6 +11,7 @@ paths, and the no-common-ancestor re-anchor (including a committed-core divergen
 which is the exact failure that put `agent/core/` onto an agent's branch).
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -21,7 +22,13 @@ import pytest
 AGENT_ROOT = pl.Path(__file__).resolve().parents[1]
 NARROW = AGENT_ROOT / "skills/upstream-sync/scripts/narrow-sparse-checkout.sh"
 REANCHOR = AGENT_ROOT / "skills/upstream-sync/scripts/reanchor.sh"
+SYNC = AGENT_ROOT / "skills/upstream-sync/scripts/sync.sh"
+STATUS = AGENT_ROOT / "skills/upstream-sync/scripts/status.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
+
+
+def _registry(names):
+    return json.dumps([{"name": n} for n in sorted(names)], indent=2) + "\n"
 
 NARROW_HEADER = ["/agent/", "!/agent/core/", "!/agent/pyproject.toml", "!/agent/uv.lock", "!/agent/skills/*/", "/.gitignore"]
 
@@ -87,16 +94,31 @@ def make_upstream(path, skills):
     for name in skills:
         (sk / name).mkdir()
         (sk / name / "SKILL.md").write_text(f"# upstream {name}\n")
+    (sk / "index.json").write_text(_registry(skills))
     _git(["add", "-A"], path)
     _git(["commit", "-q", "-m", "upstream"], path)
     return "main"
 
 
+def _upstream_skill_names(path):
+    sk = path / "agent" / "skills"
+    return [p.name for p in sk.iterdir() if p.is_dir() and (p / "SKILL.md").exists()]
+
+
 def add_upstream_skill(path, name, body):
     (path / "agent" / "skills" / name).mkdir(parents=True)
     (path / "agent" / "skills" / name / "SKILL.md").write_text(body)
+    (path / "agent" / "skills" / "index.json").write_text(_registry(_upstream_skill_names(path)))
     _git(["add", "-A"], path)
     _git(["commit", "-q", "-m", f"add {name}"], path)
+
+
+def add_upstream_file(path, rel, content, msg):
+    p = path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content)
+    _git(["add", "-A"], path)
+    _git(["commit", "-q", "-m", msg], path)
 
 
 def make_synced_agent(home, upstream, *, cone_includes, broad=False):
@@ -123,6 +145,7 @@ def make_synthetic_agent(home, upstream, *, installed, self_authored=(), memory,
     for name in list(installed) + list(self_authored):
         (sk / name).mkdir(parents=True, exist_ok=True)
         (sk / name / "SKILL.md").write_text(f"# LOCAL {name}\n")
+    (sk / "index.json").write_text(_registry(list(installed) + list(self_authored)))
     if core_content is not None:
         (home / "agent" / "core").mkdir(parents=True, exist_ok=True)
         (home / "agent" / "core" / "x.py").write_text(core_content)
@@ -318,3 +341,122 @@ def test_reanchor_no_common_ancestor_pulls_upstream_and_preserves_owned(tmp_path
 
     # No conflict markers anywhere.
     assert "<<<<<<<" not in (home / "agent" / "MEMORY.md").read_text()
+
+
+# --- sync.sh ------------------------------------------------------------------
+
+MAIN = {"VESTA_UPSTREAM_REF": "main"}
+
+
+def test_sync_up_to_date(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+    assert "up to date" in r.stdout.lower()
+
+
+def test_sync_clean_merge_pulls_content(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])
+    add_upstream_file(up, "agent/settings.txt", "UPSTREAM SETTINGS v2\n", "bump settings")
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+    assert (home / "agent" / "settings.txt").read_text() == "UPSTREAM SETTINGS v2\n"
+
+
+def test_sync_keeps_index_json_as_full_registry(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha", "zeta"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])  # only alpha on disk
+    add_upstream_skill(up, "newreg", "# newreg\n")  # registry grows upstream
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+
+    names = {s["name"] for s in json.loads((home / "agent" / "skills" / "index.json").read_text())}
+    assert names == {"alpha", "zeta", "newreg"}, "index.json must stay the full upstream registry"
+    # ...but the uninstalled skills are not on disk (sparse worktree).
+    assert not (home / "agent" / "skills" / "newreg").exists()
+    assert not (home / "agent" / "skills" / "zeta").exists()
+
+
+def test_sync_reanchors_when_no_common_ancestor(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha", "zeta"])
+    home = tmp_path / "agent"
+    make_synthetic_agent(home, up, installed=["alpha"], self_authored=["mine"], memory="# USER MEMORY\n", core_content="LOCAL CORE\n")
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+    assert "re-anchor" in r.stdout.lower()
+
+    assert (home / "agent" / "MEMORY.md").read_text() == "# USER MEMORY\n"
+    assert (home / "agent" / "skills" / "mine" / "SKILL.md").exists()
+    names = {s["name"] for s in json.loads((home / "agent" / "skills" / "index.json").read_text())}
+    assert names == {"alpha", "zeta"}
+    assert _git(["show", "HEAD:agent/core/x.py"], home) == "UPSTREAM CORE\n"
+
+
+def test_sync_conflict_then_finish(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])
+    (home / "agent" / "MEMORY.md").write_text("# AGENT change\n")
+    _git(["add", "-A"], home)
+    _git(["commit", "-q", "-m", "local memory"], home)
+    add_upstream_file(up, "agent/MEMORY.md", "# UPSTREAM change\n", "upstream memory")
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "conflict" in r.stdout.lower()
+    assert "agent/MEMORY.md" in r.stdout
+
+    # Resolve and re-run; sync finalises.
+    (home / "agent" / "MEMORY.md").write_text("# RESOLVED\n")
+    _git(["add", "agent/MEMORY.md"], home)
+    r2 = _run(SYNC, home, extra_env=MAIN)
+    assert r2.returncode == 0, r2.stderr
+    assert (home / "agent" / "MEMORY.md").read_text() == "# RESOLVED\n"
+    assert _merge_base(home).returncode == 0  # upstream now an ancestor
+
+
+# --- status.sh ----------------------------------------------------------------
+
+
+def test_status_reports_behind_ahead_and_changes(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])
+    (home / "agent" / "MEMORY.md").write_text("# mine\n")
+    _git(["add", "-A"], home)
+    _git(["commit", "-q", "-m", "mine"], home)
+    add_upstream_file(up, "agent/settings.txt", "v2\n", "up settings")
+
+    r = _run(STATUS, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+    assert "behind: 1" in r.stdout
+    assert "ahead: 1" in r.stdout
+    assert "incoming" in r.stdout.lower()
+    assert "agent/MEMORY.md" in r.stdout  # your change
+    assert "settings.txt" not in r.stdout.split("your changes")[-1]  # not mislabelled as yours
+
+
+def test_status_reports_no_shared_history(tmp_path):
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synthetic_agent(home, up, installed=["alpha"], memory="x\n")
+
+    r = _run(STATUS, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stderr
+    assert "no shared history" in r.stdout.lower()
