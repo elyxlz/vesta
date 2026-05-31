@@ -20,8 +20,7 @@ export function AgentIslandExpanded({
   error,
 }: AgentIslandExpandedProps) {
   const { provider } = useProvider(name);
-  const model =
-    provider?.kind === "openrouter" ? provider.model : null;
+  const model = provider && provider.kind !== "none" ? provider.model : null;
   return (
     <div className="flex h-[168px] w-[168px] flex-col items-center justify-center gap-2 will-change-transform">
       <motion.div
