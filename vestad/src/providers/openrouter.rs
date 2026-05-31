@@ -6,6 +6,8 @@ const TOP_MODELS_URL: &str =
     "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
 const TOP_MODELS_LIMIT: usize = 20;
 const KEY_INFO_URL: &str = "https://openrouter.ai/api/v1/key";
+// OpenRouter quotes pricing per token; the picker shows it per million tokens.
+const TOKENS_PER_PRICE_UNIT: f64 = 1_000_000.0;
 
 #[derive(Serialize)]
 pub struct TopModel {
@@ -13,6 +15,9 @@ pub struct TopModel {
     pub label: String,
     pub author: String,
     pub context_length: Option<u64>,
+    /// USD per million prompt/completion tokens, when OpenRouter reports it.
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +38,23 @@ struct FrontendModel {
     author: String,
     author_display_name: Option<String>,
     context_length: Option<u64>,
+    endpoint: Option<FrontendEndpoint>,
+}
+
+#[derive(Deserialize)]
+struct FrontendEndpoint {
+    pricing: Option<FrontendPricing>,
+}
+
+#[derive(Deserialize)]
+struct FrontendPricing {
+    prompt: Option<String>,
+    completion: Option<String>,
+}
+
+// OpenRouter reports per-token prices as decimal strings; convert to USD per million.
+fn price_per_million(raw: &Option<String>) -> Option<f64> {
+    raw.as_ref()?.parse::<f64>().ok().map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
 }
 
 pub async fn list_top_models_handler(
@@ -58,11 +80,20 @@ pub async fn list_top_models_handler(
         .models
         .into_iter()
         .take(TOP_MODELS_LIMIT)
-        .map(|m| TopModel {
-            label: m.short_name.or(m.name).unwrap_or_else(|| m.slug.clone()),
-            author: m.author_display_name.unwrap_or(m.author),
-            slug: m.slug,
-            context_length: m.context_length,
+        .map(|m| {
+            let pricing = m.endpoint.and_then(|e| e.pricing);
+            let (input_price, output_price) = match pricing {
+                Some(p) => (price_per_million(&p.prompt), price_per_million(&p.completion)),
+                None => (None, None),
+            };
+            TopModel {
+                label: m.short_name.or(m.name).unwrap_or_else(|| m.slug.clone()),
+                author: m.author_display_name.unwrap_or(m.author),
+                slug: m.slug,
+                context_length: m.context_length,
+                input_price,
+                output_price,
+            }
         })
         .collect();
     Ok(Json(models))

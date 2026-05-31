@@ -223,6 +223,9 @@ function ModelCard({
           {model.context_length
             ? ` · ${formatContextLength(model.context_length)} ctx`
             : ""}
+          {formatPrice(model.input_price, model.output_price)
+            ? ` · ${formatPrice(model.input_price, model.output_price)}`
+            : ""}
         </span>
       </div>
     </button>
@@ -235,4 +238,19 @@ function formatContextLength(n: number): string {
   }
   if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
   return String(n);
+}
+
+// input/output price in USD per million tokens, or null when not reported.
+function formatPrice(
+  input?: number | null,
+  output?: number | null,
+): string | null {
+  if (input == null || output == null) return null;
+  if (input === 0 && output === 0) return "free";
+  return `${formatUsd(input)}/${formatUsd(output)} Mtok`;
+}
+
+function formatUsd(price: number): string {
+  if (price >= 1) return `$${price.toFixed(2).replace(/\.?0+$/, "")}`;
+  return `$${price.toFixed(2)}`;
 }
