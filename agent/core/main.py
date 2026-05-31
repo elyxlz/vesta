@@ -107,11 +107,12 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     greeting_reason = "first_start" if first_start else restart_reason
     drop_greeting_notification(config=config, state=state, reason=greeting_reason)
 
-    # First-start defers WS until the agent calls `mark_setup_done` (the readiness signal vestad polls).
-    # Every other boot binds WS immediately so restart greetings that poll the WS port don't deadlock.
-    if not first_start:
-        state.ws_runner = await start_ws_server(state.event_bus, config)
-        logger.init(f"WebSocket server started on port {config.ws_port}")
+    # Bind the HTTP/WS server on every boot, including first start. vestad reaches
+    # /provider and /provider/status over this port to read auth state and deliver
+    # credentials, so a fresh unauthenticated agent must be reachable before the
+    # first_start_setup conversation (which itself needs a provider) can run.
+    state.ws_runner = await start_ws_server(state.event_bus, config, state)
+    logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
     processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state, config=config))
@@ -164,9 +165,12 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
     from .events import EventBus
+    from .provider import derive_status
 
     event_bus = EventBus(data_dir=config.data_dir)
-    return vm.State(persisted=persisted, event_bus=event_bus)
+    provider_status = derive_status(config, persisted)
+    logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")
+    return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 
 
 async def async_main() -> None:

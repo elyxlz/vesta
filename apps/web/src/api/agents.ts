@@ -1,5 +1,38 @@
-import { apiJson } from "./client";
+import { apiJson, apiFetch } from "./client";
 
+export interface OpenRouterConfig {
+  key: string;
+  model: string;
+}
+
+export type ProviderResult =
+  | { kind: "claude"; credentials: string }
+  | { kind: "openrouter"; config: OpenRouterConfig };
+
+/// Switch (or refresh) an existing agent's provider. Mirrors createAgent's body:
+/// either `credentials` (Claude OAuth blob) or `openrouter_*` fields. Vestad
+/// injects the config, clears the obsolete file if needed, and restarts the agent.
+export async function setProvider(
+  name: string,
+  result: ProviderResult,
+): Promise<void> {
+  const body =
+    result.kind === "claude"
+      ? { credentials: result.credentials }
+      : {
+          openrouter_key: result.config.key,
+          openrouter_model: result.config.model,
+        };
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/// Create an empty agent container. Provider config is sent separately via
+/// `setProvider` once the agent is up — vestad no longer accepts credentials
+/// at create time (the agent owns its own auth state).
 export async function createAgent(
   name: string,
   seedPersonality?: string,
@@ -8,12 +41,57 @@ export async function createAgent(
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      timezone,
-      seed_personality: seedPersonality,
-    }),
+    body: JSON.stringify({ name, timezone, seed_personality: seedPersonality }),
   });
+}
+
+/// Poll /agents/{name} until it reports "alive" or "not_authenticated".
+/// A brand-new empty agent boots into not_authenticated until provisioned.
+export async function waitUntilRunning(
+  name: string,
+  timeoutMs: number,
+  pollIntervalMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const resp = await apiJson<{ status: string }>(
+      `/agents/${encodeURIComponent(name)}`,
+    );
+    if (resp.status === "alive" || resp.status === "not_authenticated") return;
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found"
+    ) {
+      throw new Error(`${name}: ${resp.status}`);
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`${name}: timed out waiting for HTTP server`);
+}
+
+export async function waitUntilAlive(
+  name: string,
+  timeoutMs: number,
+  pollIntervalMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const resp = await apiJson<{ status: string }>(
+      `/agents/${encodeURIComponent(name)}`,
+    );
+    if (resp.status === "alive") return;
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found" ||
+      resp.status === "not_authenticated"
+    ) {
+      throw new Error(`${name}: ${resp.status}`);
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`${name}: timed out waiting to become alive`);
 }
 
 export async function startAgent(name: string): Promise<void> {

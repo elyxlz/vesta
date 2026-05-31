@@ -10,9 +10,11 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    ResultMessage,
+    SystemMessage,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
+from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import logger
 from . import models as vm
@@ -20,7 +22,16 @@ from . import state_store
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_memory_path
+from .provider import observed_provider_failure
 from .tools import build_vesta_tools_server
+
+# OpenRouter's Anthropic-compatible endpoint. The SDK appends /v1/messages.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+
+# Terminal upstream statuses that mean the provider can't be used as configured:
+# 401 (invalid/expired auth) and 402 (insufficient credits). Both flip the agent
+# to not_authenticated and stop the retry storm rather than burning ~3min retrying.
+TERMINAL_PROVIDER_ERRORS = (401, 402)
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -141,6 +152,17 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
+            # Detect upstream 401s emitted by the SDK as structured stream events.
+            # `api_retry` fires once per backoff attempt; `ResultMessage` is the
+            # terminal verdict. On either, flip provider state and interrupt the
+            # SDK so the user doesn't sit through ~3min of retry storm.
+            if isinstance(msg, SystemMessage) and msg.subtype == "api_retry" and "error_status" in msg.data and msg.data["error_status"] in TERMINAL_PROVIDER_ERRORS:
+                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
+                logger.error(f"Upstream {msg.data['error_status']} detected; interrupting SDK to skip retry storm")
+                await attempt_interrupt(state, config=config, reason="auth_failed")
+                break
+            if isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS:
+                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
@@ -210,19 +232,30 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
+    # 1M-context beta and thinking are Anthropic-only; drop them on OpenRouter.
+    is_openrouter = config.agent_provider == "openrouter"
+
+    # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
+    # os.environ here would leak the OpenRouter URL into every other subprocess
+    # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
+    sdk_env: dict[str, str] = {}
+    if is_openrouter:
+        sdk_env["ANTHROPIC_BASE_URL"] = OPENROUTER_BASE_URL
+
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
-        betas=["context-1m-2025-08-07"],
+        betas=[] if is_openrouter else ["context-1m-2025-08-07"],
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
         setting_sources=["project"],
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
-        thinking=config.thinking,
+        thinking=ThinkingConfigDisabled(type="disabled") if is_openrouter else config.thinking,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},
         resume=state.persisted.session_id,
+        env=sdk_env,
     )

@@ -137,7 +137,7 @@ CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if not CREDENTIALS_PATH.exists():
+    if config.agent_provider == "claude" and not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
 

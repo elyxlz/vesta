@@ -219,6 +219,7 @@ impl Client {
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
                 return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
             }
             std::thread::sleep(backoff);
@@ -226,21 +227,49 @@ impl Client {
         }
     }
 
-    pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {
-        let resp = self.post(&format!("/agents/{}/auth", name))?;
+    /// Poll until the agent's HTTP server is bound (a settled status, not the
+    /// transient "starting"). Auth state is now served by the agent over its WS
+    /// port, so callers must wait for that port before asserting auth status.
+    pub fn wait_until_running(&self, name: &str, timeout_secs: u64) -> Result<String, String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut backoff = std::time::Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?.status;
+            match status.as_str() {
+                "alive" | "setting_up" | "not_authenticated" => return Ok(status),
+                "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
+                _ => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
+                return Err(format!("{}: timeout waiting for running (status: {})", name, status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+        }
+    }
+
+    /// Standalone Claude OAuth start (not agent-scoped). Returns the auth URL and session id.
+    pub fn oauth_start(&self) -> Result<AuthFlowResponse, String> {
+        let resp = self.post("/providers/claude/oauth/start")?;
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn complete_auth(&self, name: &str, session_id: &str, code: &str) -> Result<(), String> {
+    /// Standalone Claude OAuth completion. Returns the credentials JSON on success.
+    pub fn oauth_complete(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
-        self.post_json(&format!("/agents/{}/auth/code", name), &body)?;
-        Ok(())
+        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
+        let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
+        v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
     }
 
+    /// Provision an agent with Claude credentials via the new provider endpoint.
+    /// `token` is the credentials JSON string. The agent must be running (its WS
+    /// port bound) to receive the call, so this waits for it first.
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
-        let token_value: serde_json::Value = serde_json::from_str(token).map_err(|e| format!("invalid token JSON: {}", e))?;
-        let body = serde_json::json!({"token": token_value});
-        self.post_json(&format!("/agents/{}/auth/token", name), &body)?;
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"credentials": token});
+        self.post_json(&format!("/agents/{}/provider", name), &body)?;
         Ok(())
     }
 

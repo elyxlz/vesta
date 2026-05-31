@@ -19,6 +19,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     Key overrides:
         AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (default: "opus")
         AGENT_NAME    - agent name (default: "vesta")
+        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key) (default: "claude")
         LOG_LEVEL     - DEBUG | INFO | WARNING | ERROR (default: "INFO")
         THINKING      - adaptive | enabled | disabled (default: "adaptive")
         PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
@@ -105,3 +106,4 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     agent_name: str = "vesta"
     agent_model: str = "opus"
+    agent_provider: tp.Literal["claude", "openrouter"] = "claude"
