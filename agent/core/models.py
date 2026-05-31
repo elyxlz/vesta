@@ -54,6 +54,10 @@ class State:
     # assumes 200k for non-Anthropic models (claude-code#46416), so we pass it via
     # CLAUDE_CODE_MAX_CONTEXT_TOKENS to fix premature autocompact. None = unresolved.
     openrouter_max_tokens: int | None = None
+    # Local OpenRouter caching proxy: the SDK subprocess routes ANTHROPIC_BASE_URL here
+    # so requests can be rewritten for prompt-cache hits. Both set once at boot.
+    openrouter_proxy_url: str | None = None
+    cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     processor_busy: bool = False

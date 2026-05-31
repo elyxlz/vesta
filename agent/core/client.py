@@ -27,8 +27,6 @@ from .helpers import get_memory_path
 from .provider import observed_provider_failure
 from .tools import build_vesta_tools_server
 
-# OpenRouter's Anthropic-compatible endpoint. The SDK appends /v1/messages.
-OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
@@ -279,7 +277,11 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
     sdk_env: dict[str, str] = {}
     if is_openrouter:
-        sdk_env["ANTHROPIC_BASE_URL"] = OPENROUTER_BASE_URL
+        # The SDK always routes through the local caching proxy, never OpenRouter
+        # directly. start_cache_proxy runs first in message_processor, so the URL is set.
+        if not state.openrouter_proxy_url:
+            raise RuntimeError("OpenRouter cache proxy not started before building client options")
+        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
         # Tell claude-code the model's real window so autocompact uses the right
         # threshold instead of its 200k default for non-Anthropic models.
         if state.openrouter_max_tokens:

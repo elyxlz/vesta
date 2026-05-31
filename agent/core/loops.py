@@ -17,6 +17,7 @@ from . import state_store
 from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
+from .openrouter_cache import start_cache_proxy
 from .provider import CREDENTIALS_PATH
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
@@ -256,10 +257,13 @@ async def _run_messages_with_interrupts(
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
-    if config.agent_provider == "openrouter" and state.openrouter_max_tokens is None:
-        state.openrouter_max_tokens = await resolve_openrouter_max_tokens(config)
-        if state.openrouter_max_tokens:
-            logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens")
+    if config.agent_provider == "openrouter":
+        if state.openrouter_max_tokens is None:
+            state.openrouter_max_tokens = await resolve_openrouter_max_tokens(config)
+            if state.openrouter_max_tokens:
+                logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens")
+        if state.openrouter_proxy_url is None:
+            await start_cache_proxy(config, state)
     options = build_client_options(config, state)
     retried = False
     while True:

@@ -146,6 +146,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         os._exit(1)
     if state.ws_runner is not None:
         await state.ws_runner.cleanup()
+    if state.cache_proxy_runner is not None:
+        await state.cache_proxy_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
