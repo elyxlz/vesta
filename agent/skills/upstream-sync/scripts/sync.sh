@@ -99,19 +99,18 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
 fi
 
 # --- Phase B: fresh sync ---
+# Stop tracking vestad-managed paths (they come from the read-only mount, never via git) and
+# gitignore them BEFORE the first `git add`. On a fresh `git init` agent they are present on
+# disk, untracked and outside the sparse cone; staging them before they are ignored makes
+# `git add` exit 1 and (under set -e) aborts the very first sync. Idempotent.
+untrack_managed
+ensure_gitignored
+
 say "Checkpoint local work"
 git add agent/ --ignore-errors
 git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | xargs -r git reset -q HEAD -- 2>/dev/null || true
 if ! git diff --cached --quiet; then
   git commit -q -m "chore: checkpoint before sync to $REF"
-fi
-
-# Stop tracking vestad-managed paths (they come from the read-only mount, never via git)
-# and gitignore them so the mounted copies never show up. Idempotent.
-untrack_managed
-ensure_gitignored
-if ! git diff --cached --quiet; then
-  git commit -q -m "chore: stop tracking vestad-managed paths"
 fi
 
 say "Narrow sparse cone"
