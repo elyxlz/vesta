@@ -432,10 +432,26 @@ impl Client {
     /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
     /// surface as immediate errors; the agent cannot become ready from those.
     pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
+        self.wait_until_alive_with_progress(name, timeout, |_| {})
+    }
+
+    /// Same as [`wait_until_alive`], but invokes `on_change` with the new status
+    /// each time it changes, so callers can surface progress (e.g. `setting_up`).
+    pub fn wait_until_alive_with_progress(
+        &self,
+        name: &str,
+        timeout: Duration,
+        mut on_change: impl FnMut(&str),
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         let mut backoff = Duration::from_millis(200);
+        let mut last = String::new();
         loop {
             let status = self.agent_status(name)?;
+            if status.status != last {
+                on_change(&status.status);
+                last = status.status.clone();
+            }
             match status.status.as_str() {
                 "alive" => return Ok(()),
                 "not_found" | "dead" | "stopped" | "not_authenticated" =>
