@@ -24,14 +24,11 @@ git checkout -b "$AGENT_NAME"
 
 `agent/skills/*/` is opt-in: only skills already on disk (the defaults baked into the image) are re-included. New upstream skills land in `agent/skills/index.json` (the registry) but stay off disk until `skills-install` adds them.
 
-## 2. Local ignores
+## 2. Local ignores (bulky files only)
 
-Write `~/agent/.gitignore` so the vestad-managed read-only mounts are never tracked, plus bulky machine-local files:
+`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) from its `managed.gitignore` template, so you don't list those. Just add bulky machine-local globs:
 
 ```
-/core/
-/pyproject.toml
-/uv.lock
 *.bin
 *.onnx
 *.pt
@@ -47,8 +44,6 @@ dist/
 .venv/
 __pycache__/
 ```
-
-`agent/core/`, `pyproject.toml` and `uv.lock` are vestad's engine, delivered read-only by the container image. The agent never tracks or contributes them, so git ignores them and `sync.sh` strips them from every merge.
 
 ## 3. First sync
 
