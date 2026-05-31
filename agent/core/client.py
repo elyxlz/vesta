@@ -228,13 +228,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     system_prompt = memory_path.read_text()
 
     name = config.agent_name
-    home = config.agent_dir.parent
-    # State home up front so `~/agent/...` references in MEMORY.md and skills map to
-    # an absolute path with no guesswork — the Read/Edit tools require the absolute form.
-    system_prompt = (
-        f"Your name is {name}. Your home directory is `{home}`, so `~/agent/...` paths "
-        f"(in MEMORY.md and skills) are `{config.agent_dir}/...`.\n\n{system_prompt}"
-    )
+    system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
