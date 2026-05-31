@@ -409,9 +409,13 @@ pub async fn start_tunnel(
     std::fs::write(&cf_config_path, &cf_config)
         .map_err(|e| format!("failed to write cloudflared config: {}", e))?;
 
+    // Force HTTP/2 over TCP instead of the QUIC/UDP default. Home and laptop NAT
+    // devices aggressively time out idle UDP flows, which silently drops the
+    // tunnel and yields error 1033 on the next request (e.g. the first file
+    // share after an idle period). TCP keeps the connection alive far longer.
     let child = tokio::process::Command::new(cloudflared)
         .args([
-            "tunnel", "--config", cf_config_path.to_str().unwrap(),
+            "tunnel", "--protocol", "http2", "--config", cf_config_path.to_str().unwrap(),
             "run", "--token", &tc.tunnel_token,
         ])
         .stdout(std::process::Stdio::null())
