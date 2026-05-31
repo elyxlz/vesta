@@ -72,6 +72,13 @@ Any git command that mutates the worktree (`sparse-checkout reapply`/`init`, `ch
    ```
    If clean, skip to step 8.
 
+   **No common ancestor.** If the merge reports a wall of conflicts and `git -C ~ merge-base HEAD FETCH_HEAD` prints nothing, your branch and upstream share no history (the upstream repo was recreated). Don't resolve those by hand, they're false conflicts. Abort and re-anchor:
+   ```bash
+   git -C ~ merge --abort
+   ~/agent/skills/upstream-sync/scripts/reanchor.sh
+   ```
+   This takes the upstream tree as the new base and replays your owned files (`MEMORY.md`, installed skills, `.gitignore`) on top. You still pull in all upstream content. Then skip to step 8.
+
 7. **Resolve conflicts.**
    - Treat conflicts as integration work, not `ours` vs `theirs`. Default goal: preserve both behaviors.
    - Small: rewrite the merged file so both changes coexist.
