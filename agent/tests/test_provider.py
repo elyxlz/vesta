@@ -16,8 +16,8 @@ from core.provider import (
     derive_status,
     observed_provider_failure,
     set_claude,
+    set_model,
     set_openrouter,
-    set_openrouter_model,
 )
 from core.state_store import PersistedState, load_state
 
@@ -133,11 +133,16 @@ def test_set_claude_writes_and_flips_state(prov):
     status = set_claude(creds_json, config=config, persisted=persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
+    assert status.model == config.agent_model
     assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
     assert provider_mod.CLAUDE_JSON_PATH.read_text() == '{"hasCompletedOnboarding":true}'
+    # Provider file declares claude + the model (single source of truth).
+    content = provider_mod.PROVIDER_ENV_PATH.read_text()
+    assert "export AGENT_PROVIDER=claude\n" in content
+    assert f"export AGENT_MODEL='{config.agent_model}'\n" in content
 
 
-def test_set_claude_clears_openrouter_provider_file(prov):
+def test_set_claude_clears_openrouter_token(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
@@ -147,8 +152,20 @@ def test_set_claude_clears_openrouter_provider_file(prov):
 
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     set_claude(creds_json, config=config, persisted=persisted)
-    # Provider file should be empty so its exports don't override Claude creds at boot.
-    assert provider_mod.PROVIDER_ENV_PATH.read_text() == ""
+    # Switching to Claude rewrites the file to claude mode with the token cleared,
+    # so a stale OpenRouter key can't leak into the SDK env at next boot.
+    content = provider_mod.PROVIDER_ENV_PATH.read_text()
+    assert "export AGENT_PROVIDER=claude\n" in content
+    assert "export ANTHROPIC_AUTH_TOKEN=\n" in content
+    assert "'k'" not in content
+
+
+def test_set_claude_honors_explicit_model(prov):
+    config, persisted = prov
+    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+    status = set_claude(creds_json, "sonnet", config=config, persisted=persisted)
+    assert status.kind == "claude"
+    assert status.model == "sonnet"
 
 
 def test_set_openrouter_writes_and_flips_state(prov):
@@ -164,12 +181,12 @@ def test_set_openrouter_writes_and_flips_state(prov):
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
 
 
-def test_set_openrouter_model_preserves_key(prov):
+def test_set_model_preserves_openrouter_key(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
     set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
-    status = set_openrouter_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
+    status = set_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
     assert status.kind == "openrouter"
     assert status.model == "anthropic/claude-sonnet-4.6"
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
@@ -178,10 +195,26 @@ def test_set_openrouter_model_preserves_key(prov):
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n" in content
 
 
-def test_set_openrouter_model_without_existing_provider_raises(prov):
+def test_set_model_changes_claude_model(prov):
+    from core import provider as provider_mod
+
+    config, persisted = prov
+    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+    set_claude(creds_json, "opus", config=config, persisted=persisted)
+    status = set_model("haiku", config=config, persisted=persisted)
+    assert status.kind == "claude"
+    assert status.model == "haiku"
+    # Creds untouched; only the model line changes.
+    assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
+    assert "export AGENT_MODEL='haiku'\n" in provider_mod.PROVIDER_ENV_PATH.read_text()
+    # And it re-derives as claude/haiku at boot.
+    assert derive_status(config, persisted).model == "haiku"
+
+
+def test_set_model_without_provider_raises(prov):
     config, persisted = prov
     with pytest.raises(ValueError):
-        set_openrouter_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
+        set_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
 
 
 def test_observed_provider_failure_flips_state(prov):

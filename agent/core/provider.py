@@ -6,11 +6,13 @@ middleware in `api.py`).
 
 `ProviderStatus` is the in-memory state, derived at boot from PersistedState +
 disk files via `derive_status`. It is replaced at runtime by:
-- explicit writes via POST /provider (`set_claude` / `set_openrouter`)
-- runtime 401 observations from the SDK stream (`observed_401`)
+- explicit writes via POST /provider (`set_claude` / `set_openrouter` / `set_model`)
+- terminal upstream errors seen in the SDK stream (`observed_provider_failure`)
 
-Each mutation persists to PersistedState so a runtime 401 isn't silently
-forgotten across a container restart (e.g., dreamer-restart).
+`vesta-provider.env` is the single source of truth for AGENT_PROVIDER + AGENT_MODEL
+for both providers (OpenRouter additionally stores its key there); the Claude OAuth
+blob lives in `.credentials.json`. Each mutation persists to PersistedState so a
+runtime failure isn't silently forgotten across a container restart (e.g. dreamer).
 """
 
 import dataclasses as dc
@@ -60,47 +62,52 @@ def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderSta
     return ProviderStatus(state=state, kind=kind, model=model)
 
 
-def set_claude(credentials_json: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Write Claude OAuth credentials and return the new (authenticated) status.
-    Clears any prior OpenRouter provider file so its env-var exports don't
-    override the Claude creds at next boot."""
+def set_claude(credentials_json: str, model: str | None = None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Write Claude OAuth credentials + the Claude provider file and return the
+    new (authenticated) status. The provider file records AGENT_PROVIDER=claude +
+    AGENT_MODEL and clears the OpenRouter exports, so switching OpenRouter->Claude
+    leaves no stale token/base-url behind. `model` defaults to the configured model."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
+    chosen = model or config.agent_model
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    if PROVIDER_ENV_PATH.exists():
-        PROVIDER_ENV_PATH.write_text("")
-    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=config.agent_model)
+    _write_provider_file(_claude_provider_file(chosen))
+    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=chosen)
     _persist(status, config=config, persisted=persisted)
-    logger.startup("Provider set to claude (authenticated)")
+    logger.startup(f"Provider set to claude model={chosen}")
     return status
 
 
 def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
     """Write the OpenRouter provider env file and return the new (authenticated)
     status. The agent must be restarted by vestad for the env vars to take effect."""
-    PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROVIDER_ENV_PATH.write_text(_openrouter_provider_file(key, model))
+    _write_provider_file(_openrouter_provider_file(key, model))
     status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model)
     _persist(status, config=config, persisted=persisted)
     logger.startup(f"Provider set to openrouter model={model}")
     return status
 
 
-def set_openrouter_model(model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Change only the model for an OpenRouter agent, preserving the stored key.
-    Lets the app switch models without the user re-entering the API key. Raises
-    if the agent isn't on OpenRouter or has no key on file to preserve."""
-    if not PROVIDER_ENV_PATH.exists():
-        raise ValueError("no OpenRouter provider configured")
-    content = PROVIDER_ENV_PATH.read_text()
-    if not _provider_declares_openrouter(content):
-        raise ValueError("agent is not running on OpenRouter")
-    key = _parse_first_export(content, "ANTHROPIC_AUTH_TOKEN")
-    if not key:
-        raise ValueError("no OpenRouter key on file to preserve")
-    return set_openrouter(key, model, config=config, persisted=persisted)
+def set_model(model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Change only the model, keeping the current provider and (for OpenRouter)
+    the stored key. Works for both providers; raises if none is configured. Lets
+    the app switch models without re-supplying credentials."""
+    status = derive_status(config, persisted)
+    if status.kind == "openrouter":
+        key = _parse_first_export(PROVIDER_ENV_PATH.read_text(), "ANTHROPIC_AUTH_TOKEN")
+        if not key:
+            raise ValueError("no OpenRouter key on file to preserve")
+        return set_openrouter(key, model, config=config, persisted=persisted)
+    if status.kind == "claude":
+        # OAuth blob in .credentials.json is untouched; only the model changes.
+        _write_provider_file(_claude_provider_file(model))
+        new_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=model)
+        _persist(new_status, config=config, persisted=persisted)
+        logger.startup(f"Model set to {model} (claude)")
+        return new_status
+    raise ValueError("no provider configured")
 
 
 def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
@@ -123,12 +130,16 @@ def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: Persiste
 
 
 def _derive_kind_and_model(config: VestaConfig) -> tuple[ProviderKind, str | None]:
-    """Provider file's env exports win over Claude credentials at boot."""
+    """The provider file (AGENT_PROVIDER + AGENT_MODEL) is the source of truth and
+    wins over bare credentials. A legacy/empty file (no AGENT_PROVIDER) falls back
+    to credential presence, so pre-existing Claude agents keep working until their
+    next provider write rewrites the file in the new format."""
     if PROVIDER_ENV_PATH.exists():
         content = PROVIDER_ENV_PATH.read_text()
-        if _provider_declares_openrouter(content):
+        provider = _parse_first_export(content, "AGENT_PROVIDER")
+        if provider in ("openrouter", "claude"):
             model = _parse_first_export(content, "AGENT_MODEL") or config.agent_model
-            return "openrouter", model
+            return tp.cast(ProviderKind, provider), model
     if CREDENTIALS_PATH.exists():
         return "claude", config.agent_model
     return "none", None
@@ -139,7 +150,7 @@ def _derive_state_from_disk(kind: ProviderKind) -> ProviderAuthState:
         content = PROVIDER_ENV_PATH.read_text()
         ok = _provider_declares_openrouter(content) and _openrouter_token_present(content)
     elif kind == "claude":
-        ok = _check_claude_auth(CREDENTIALS_PATH.read_text())
+        ok = CREDENTIALS_PATH.exists() and _check_claude_auth(CREDENTIALS_PATH.read_text())
     else:
         ok = False
     return ProviderAuthState.AUTHENTICATED if ok else ProviderAuthState.NOT_AUTHENTICATED
@@ -152,6 +163,24 @@ def _shell_single_quote(value: str) -> str:
     """Single-quote a value for safe shell sourcing; escapes embedded quotes."""
     escaped = value.replace("'", "'\\''")
     return f"'{escaped}'"
+
+
+def _write_provider_file(content: str) -> None:
+    PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROVIDER_ENV_PATH.write_text(content)
+
+
+def _claude_provider_file(model: str) -> str:
+    """The sourced shell file for Claude mode. Records the model and explicitly
+    clears the OpenRouter exports so an OpenRouter->Claude switch leaves no stale
+    token behind (Claude auth itself lives in .credentials.json, not here)."""
+    return (
+        "export AGENT_PROVIDER=claude\n"
+        f"export AGENT_MODEL={_shell_single_quote(model)}\n"
+        "export ANTHROPIC_AUTH_TOKEN=\n"
+        "export ANTHROPIC_API_KEY=\n"
+        "export ANTHROPIC_SMALL_FAST_MODEL=\n"
+    )
 
 
 def _openrouter_provider_file(key: str, model: str) -> str:

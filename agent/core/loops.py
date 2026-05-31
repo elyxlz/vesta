@@ -17,6 +17,7 @@ from . import state_store
 from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
+from .provider import CREDENTIALS_PATH
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -130,9 +131,6 @@ async def process_batch(
         await queue.put((format_notification_batch(external, suffix=suffix), False))
 
     await delete_notification_files(notifications)
-
-
-CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:

@@ -9,9 +9,9 @@ export type ProviderResult =
   | { kind: "claude"; credentials: string }
   | { kind: "openrouter"; config: OpenRouterConfig };
 
-/// Switch (or refresh) an existing agent's provider. Mirrors createAgent's body:
-/// either `credentials` (Claude OAuth blob) or `openrouter_*` fields. Vestad
-/// injects the config, clears the obsolete file if needed, and restarts the agent.
+/// Switch (or refresh) an existing agent's provider. Body is either `credentials`
+/// (Claude OAuth blob) or the `openrouter_*` pair. The agent owns the file writes
+/// and clears the obsolete provider config; vestad proxies the call and restarts.
 export async function setProvider(
   name: string,
   result: ProviderResult,
@@ -42,13 +42,14 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// Change only the model for an OpenRouter agent, reusing the stored key.
-/// Vestad restarts the agent so the new model takes effect.
+/// Change only the model, keeping the current provider (and, for OpenRouter, the
+/// stored key). Works for both Claude and OpenRouter. Vestad restarts the agent
+/// so the new model takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ openrouter_model: model }),
+    body: JSON.stringify({ model }),
   });
 }
 

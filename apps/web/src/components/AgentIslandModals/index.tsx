@@ -50,7 +50,7 @@ export function AgentIslandModals() {
       >
         <DialogContent className="sm:max-w-lg" showCloseButton>
           <DialogHeader>
-            <DialogTitle>reconfigure {name}</DialogTitle>
+            <DialogTitle>provider for {name}</DialogTitle>
             <DialogDescription className="sr-only">
               switch providers or refresh credentials for this agent
             </DialogDescription>

@@ -17,24 +17,34 @@ export function ModelStep({
   initialModel,
   onModelChange,
   onSubmit,
+  models,
+  allowCustom = true,
+  submitLabel = "continue",
 }: {
   initialModel: string;
-  onModelChange: (model: string) => void;
+  onModelChange?: (model: string) => void;
   onSubmit: (model: string) => void;
+  /// Fixed model list (e.g. Claude opus/sonnet/haiku). When provided, the step
+  /// shows just these and skips the OpenRouter fetch, search, and custom-slug.
+  models?: OpenRouterModelOption[];
+  allowCustom?: boolean;
+  submitLabel?: string;
 }) {
-  const [model, setModelInternal] = useState(initialModel);
+  const isFixed = models !== undefined;
+  const [model, setModelInternal] = useState(initialModel || models?.[0]?.slug || "");
   const [query, setQuery] = useState("");
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
-    null,
+    models ?? null,
   );
   const [customMode, setCustomMode] = useState(false);
 
   const setModel = (next: string) => {
     setModelInternal(next);
-    onModelChange(next);
+    onModelChange?.(next);
   };
 
   useEffect(() => {
+    if (isFixed) return;
     let cancelled = false;
     openrouterProvider
       .fetchTopModels()
@@ -43,7 +53,7 @@ export function ModelStep({
         setTopModels(items);
         if (items.length > 0 && model === "") {
           setModelInternal(items[0].slug);
-          onModelChange(items[0].slug);
+          onModelChange?.(items[0].slug);
         }
       })
       .catch(() => {
@@ -78,13 +88,22 @@ export function ModelStep({
     <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
       <div className="flex flex-col items-center gap-1 text-center">
         <h2 className="text-base font-semibold">pick a model</h2>
-        <FieldDescription>top models on OpenRouter this week.</FieldDescription>
+        <FieldDescription>
+          {isFixed ? "choose a model." : "top models on OpenRouter this week."}
+        </FieldDescription>
       </div>
 
       <FieldGroup className="w-full gap-3">
         <Field>
           <FieldLabel htmlFor="or-model-search">Model</FieldLabel>
-          {customMode ? (
+          {isFixed ? (
+            <ModelCardList
+              models={filtered}
+              selected={model}
+              onSelect={setModel}
+              loading={false}
+            />
+          ) : customMode ? (
             <>
               <Input
                 id="or-model-custom"
@@ -115,20 +134,22 @@ export function ModelStep({
                 onSelect={setModel}
                 loading={topModels === null}
               />
-              <button
-                type="button"
-                className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
-                onClick={() => setCustomMode(true)}
-              >
-                use a custom slug →
-              </button>
+              {allowCustom && (
+                <button
+                  type="button"
+                  className="self-start text-[11px] text-muted-foreground hover:text-foreground transition"
+                  onClick={() => setCustomMode(true)}
+                >
+                  use a custom slug →
+                </button>
+              )}
             </>
           )}
         </Field>
       </FieldGroup>
 
       <Button type="submit" className="w-full" disabled={!canContinue}>
-        continue
+        {submitLabel}
       </Button>
     </form>
   );

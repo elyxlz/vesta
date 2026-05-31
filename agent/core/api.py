@@ -23,7 +23,7 @@ from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
 from .helpers import get_memory_path
 from .models import State
-from .provider import CREDENTIALS_PATH, set_claude, set_openrouter, set_openrouter_model
+from .provider import CREDENTIALS_PATH, set_claude, set_model, set_openrouter
 
 
 logger = logging.getLogger("vesta.api")
@@ -218,9 +218,10 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
 
 
 async def _provider_set_handler(request: web.Request) -> web.Response:
-    """Apply new provider config. Three shapes, mutually exclusive: Claude OAuth
-    `credentials`; the `openrouter_key` + `openrouter_model` pair (switch provider /
-    refresh key); or `openrouter_model` alone (change model, keep the stored key).
+    """Apply new provider config. Mutually exclusive body shapes:
+    - `{credentials, model?}`            -> set Claude (OAuth blob, optional model)
+    - `{openrouter_key, openrouter_model}` -> set OpenRouter (switch / refresh key)
+    - `{model}`                          -> change model only, keep current provider
     Vestad orchestrates the container restart that picks up env-var changes."""
     state = request.app["state"]
     config: VestaConfig = request.app["config"]
@@ -233,32 +234,35 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
 
     has_creds = "credentials" in data and isinstance(data["credentials"], str)
     has_or = "openrouter_key" in data and isinstance(data["openrouter_key"], str)
-    has_model = "openrouter_model" in data and isinstance(data["openrouter_model"], str)
+    has_model = "model" in data and isinstance(data["model"], str)
     if has_creds and has_or:
         return web.json_response({"error": "credentials and openrouter_key are mutually exclusive"}, status=400)
     if not has_creds and not has_or and not has_model:
-        return web.json_response({"error": "must provide credentials, openrouter_key, or openrouter_model"}, status=400)
+        return web.json_response({"error": "must provide credentials, openrouter_key, or model"}, status=400)
 
     if has_creds:
+        claude_model = data["model"] if has_model else None
         try:
-            state.provider_status = set_claude(data["credentials"], config=config, persisted=state.persisted)
-        except (json.JSONDecodeError, TypeError, OSError) as e:
-            return web.json_response({"error": f"set_claude failed: {e}"}, status=400)
+            state.provider_status = set_claude(data["credentials"], claude_model, config=config, persisted=state.persisted)
+        except (json.JSONDecodeError, TypeError) as e:
+            return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
+        except OSError as e:
+            return web.json_response({"error": f"set_claude failed: {e}"}, status=500)
     elif has_or:
-        if not has_model:
+        if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
             return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
         try:
             state.provider_status = set_openrouter(data["openrouter_key"], data["openrouter_model"], config=config, persisted=state.persisted)
         except OSError as e:
             return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
     else:
-        # Model-only change: reuse the key already on file.
+        # Model-only change: keep the current provider and any stored key.
         try:
-            state.provider_status = set_openrouter_model(data["openrouter_model"], config=config, persisted=state.persisted)
+            state.provider_status = set_model(data["model"], config=config, persisted=state.persisted)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         except OSError as e:
-            return web.json_response({"error": f"set_openrouter_model failed: {e}"}, status=500)
+            return web.json_response({"error": f"set_model failed: {e}"}, status=500)
 
     return web.json_response({"ok": True})
 
