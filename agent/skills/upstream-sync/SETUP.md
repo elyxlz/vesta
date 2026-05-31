@@ -26,7 +26,7 @@ git checkout -b "$AGENT_NAME"
 
 ## 2. Local ignores (bulky files only)
 
-`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) from its `managed.gitignore` template, so you don't list those. Just add bulky machine-local globs:
+`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) by writing them to `.git/info/exclude`, so you don't list those. Just add bulky machine-local globs:
 
 ```
 *.bin

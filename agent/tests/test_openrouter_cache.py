@@ -80,8 +80,17 @@ def test_sniff_usage_returns_none_when_a_field_is_missing():
     assert _sniff_usage(b'{"usage":{"input_tokens":152}}') is None
 
 
+def _stats_app(providers):
+    from aiohttp import web
+
+    app = web.Application()
+    app["cache_stats"] = {"n": 0, "input": 0, "cache_read": 0}
+    app["providers"] = providers
+    return app
+
+
 def test_record_cache_usage_windows_and_resets():
-    app = {"cache_stats": {"n": 0, "input": 0, "cache_read": 0}, "providers": {"m": "Alibaba"}}
+    app = _stats_app({"m": "Alibaba"})
     for _ in range(_CACHE_LOG_EVERY - 1):
         _record_cache_usage(app, 1000, 900)
     assert app["cache_stats"]["n"] == _CACHE_LOG_EVERY - 1  # not yet flushed
@@ -91,7 +100,7 @@ def test_record_cache_usage_windows_and_resets():
 
 def test_record_cache_usage_handles_zero_input_window():
     # all cold writes (input 0) must not divide-by-zero at the flush boundary
-    app = {"cache_stats": {"n": 0, "input": 0, "cache_read": 0}, "providers": {"m": None}}
+    app = _stats_app({"m": None})
     for _ in range(_CACHE_LOG_EVERY):
         _record_cache_usage(app, 0, 0)
     assert app["cache_stats"]["n"] == 0

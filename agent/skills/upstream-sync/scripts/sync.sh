@@ -52,13 +52,17 @@ untrack_managed() {
   git ls-files -- $MANAGED | xargs -r git update-index --force-remove
 }
 
+# Ignore the vestad-managed mounts via the repo-LOCAL exclude file, never the committed
+# agent/.gitignore. Editing the tracked .gitignore would (a) conflict on every first sync
+# (no shared history + a one-sided edit on both branches) and (b) leak these machine-local
+# mount ignores upstream. .git/info/exclude is per-checkout and never committed. Idempotent.
 ensure_gitignored() {
-  local gi="agent/.gitignore" line
-  [ -f "$gi" ] || : > "$gi"
-  while IFS= read -r line; do
-    [ -n "$line" ] && { grep -qFx "$line" "$gi" || printf '%s\n' "$line" >> "$gi"; }
-  done < "$HERE/../managed.gitignore"
-  git add --sparse "$gi" 2>/dev/null || true
+  local exclude=".git/info/exclude" path
+  mkdir -p .git/info
+  [ -f "$exclude" ] || : > "$exclude"
+  for path in $MANAGED; do
+    grep -qFx "$path" "$exclude" 2>/dev/null || printf '%s\n' "$path" >> "$exclude"
+  done
 }
 
 summary() {
