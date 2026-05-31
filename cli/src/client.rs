@@ -206,6 +206,15 @@ pub struct OpenRouterArgs {
     pub model: String,
 }
 
+/// A model entry from OpenRouter's top-weekly list, used to populate the
+/// interactive model picker in `vesta setup`.
+#[derive(serde::Deserialize)]
+pub struct OpenRouterModel {
+    pub slug: String,
+    pub label: String,
+    pub author: String,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Self {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -468,6 +477,11 @@ impl Client {
         let body = serde_json::json!({"key": key});
         self.post_json("/providers/openrouter/validate-key", &body)?;
         Ok(())
+    }
+
+    pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
+        let resp = self.get("/providers/openrouter/models/top")?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
     }
 
 

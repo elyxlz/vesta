@@ -73,9 +73,9 @@ struct OpenRouterFlags {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create agent, start it, and authenticate Claude
+    /// Create agent, start it, and authenticate (prompts for Claude vs OpenRouter)
     Setup {
-        /// Skip confirmation prompts
+        /// Skip prompts: assume yes, and default to a Claude account unless --openrouter-key is given
         #[arg(long, short)]
         yes: bool,
         /// Agent name (prompted interactively if omitted)
@@ -302,14 +302,18 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
     );
 }
 
-fn prompt(label: &str) -> String {
+fn prompt_raw(label: &str) -> String {
     eprint!("{label}: ");
     io::stderr().flush().ok();
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
         .unwrap_or_else(|_| platform::die(&format!("failed to read {label}")));
-    let value = input.trim().to_string();
+    input.trim().to_string()
+}
+
+fn prompt(label: &str) -> String {
+    let value = prompt_raw(label);
     if value.is_empty() {
         platform::die(&format!("{label} is required"));
     }
@@ -324,6 +328,86 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
     let key = flags.openrouter_key?;
     let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
     Some(client::OpenRouterArgs { key, model })
+}
+
+/// Resolve which provider `vesta setup` should provision the agent with.
+///
+/// Precedence: explicit `--openrouter-key` flag (non-interactive, key validated
+/// here) -> `--yes` (non-interactive, defaults to a Claude account) -> an
+/// interactive prompt asking the user to choose Claude or OpenRouter. Returns
+/// `Some` for OpenRouter (key already validated), `None` for a Claude account.
+fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, yes: bool) -> Option<client::OpenRouterArgs> {
+    if flags.openrouter_key.is_some() {
+        let args = build_openrouter_args(flags).unwrap_or_else(|| platform::die("internal: openrouter key vanished"));
+        eprintln!("checking OpenRouter key...");
+        c.validate_openrouter_key(&args.key).unwrap_or_else(|e| platform::die(&e));
+        return Some(args);
+    }
+    if yes {
+        return None;
+    }
+    if !prompt_use_openrouter() {
+        return None;
+    }
+    Some(prompt_openrouter_interactive(c, flags.openrouter_model))
+}
+
+/// Ask the user which provider to run the agent on. Defaults to a Claude
+/// account (empty input or "1"). Returns true if the user picked OpenRouter.
+fn prompt_use_openrouter() -> bool {
+    eprintln!("how should this agent authenticate?");
+    eprintln!("  1) Claude account  — log in with your Claude subscription (default)");
+    eprintln!("  2) OpenRouter      — run on an OpenRouter API key");
+    loop {
+        match prompt_raw("choice [1]").as_str() {
+            "" | "1" => return false,
+            "2" => return true,
+            _ => eprintln!("  please enter 1 or 2"),
+        }
+    }
+}
+
+/// Interactively collect an OpenRouter key (validated, with retry) and a model
+/// slug. A model passed via `--openrouter-model` is reused without prompting.
+fn prompt_openrouter_interactive(c: &client::Client, preset_model: Option<String>) -> client::OpenRouterArgs {
+    let key = loop {
+        let key = prompt("OpenRouter API key (from openrouter.ai/keys)");
+        eprintln!("checking key...");
+        match c.validate_openrouter_key(&key) {
+            Ok(()) => break key,
+            Err(e) => eprintln!("  {e}. try again."),
+        }
+    };
+    let model = preset_model.unwrap_or_else(|| prompt_openrouter_model(c));
+    client::OpenRouterArgs { key, model }
+}
+
+/// Prompt for an OpenRouter model. Shows the top-weekly models as a numbered
+/// list (pick by number) and always accepts a custom `provider/model` slug.
+/// Falls back to a free-text prompt if the model list can't be fetched.
+fn prompt_openrouter_model(c: &client::Client) -> String {
+    let models = match c.fetch_top_openrouter_models() {
+        Ok(models) if !models.is_empty() => models,
+        _ => return prompt("model slug (e.g. anthropic/claude-sonnet-4-6)"),
+    };
+    eprintln!("top models on OpenRouter this week:");
+    for (idx, model) in models.iter().enumerate() {
+        eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug);
+    }
+    eprintln!("  or type a custom provider/model slug");
+    loop {
+        let input = prompt("model (number or slug)");
+        if let Ok(choice) = input.parse::<usize>() {
+            match models.get(choice.wrapping_sub(1)) {
+                Some(model) => return model.slug.clone(),
+                None => {
+                    eprintln!("  pick a number between 1 and {}", models.len());
+                    continue;
+                }
+            }
+        }
+        return input;
+    }
 }
 
 // Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
@@ -528,18 +612,13 @@ fn run(cli: Cli) {
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
-            let openrouter = build_openrouter_args(openrouter);
+            // Choose the provider before creating anything: with no flags this
+            // prompts interactively (Claude vs OpenRouter). The OpenRouter key
+            // is validated client-side here so a bad key fails fast, before we
+            // create an agent we'd immediately fail to provision. Claude needs
+            // no pre-validation; OAuth happens after create.
+            let openrouter = resolve_setup_provider(&c, openrouter, yes);
             let timezone = detect_timezone();
-
-            // OpenRouter path: validate the key client-side first so a bad key
-            // fails fast (no point creating an agent we'd immediately fail to
-            // provision). Claude path: no pre-validation possible without a
-            // running agent; OAuth happens after create.
-            if let Some(or) = &openrouter {
-                eprintln!("checking OpenRouter key...");
-                c.validate_openrouter_key(&or.key)
-                    .unwrap_or_else(|e| platform::die(&e));
-            }
 
             // 1. Create an empty agent. Vestad no longer accepts credentials at
             //    create time — the agent owns its own auth state.
