@@ -14,7 +14,7 @@ import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { router } from "@/router";
-import type { VestaEvent } from "@/lib/types";
+import type { AgentInfo, VestaEvent } from "@/lib/types";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -89,6 +89,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const permissionRef = useRef<boolean>(false);
   const tapsRef = useRef<Map<string, TapEntry>>(new Map());
   const chattingAgentRef = useRef<string | null>(null);
+  const prevStatusRef = useRef<Map<string, AgentInfo["status"]>>(new Map());
 
   useEffect(() => {
     const onVisible = () => {
@@ -252,6 +253,28 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       taps.clear();
     };
   }, []);
+
+  useEffect(() => {
+    for (const agent of agents) {
+      const previous = prevStatusRef.current.get(agent.name);
+      prevStatusRef.current.set(agent.name, agent.status);
+      if (!previous || previous === agent.status) continue;
+      if (agent.status !== "not_authenticated") continue;
+      if (!permissionRef.current) continue;
+      try {
+        const n = new Notification(`${agent.name} needs to sign in again`, {
+          body: "Vesta lost its Claude credentials. Tap to re-authenticate.",
+          tag: `${agent.name}-not-authenticated`,
+        });
+        n.onclick = () => {
+          void focusAndNavigate(agent.name);
+          n.close();
+        };
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [agents]);
 
   const value = useMemo(
     () => ({ notifyAssistant, setChattingAgent }),
