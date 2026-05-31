@@ -366,6 +366,65 @@ pub fn agent_container_name(agent_name: &str) -> String {
     format!("vesta-{}-{}", user, agent_name)
 }
 
+/// Print an agent container's state + logs to stderr. Called when a wait helper
+/// times out so CI shows *why* the agent never became ready (crash loop, bind
+/// error, etc.) instead of a bare "timeout (status: starting)". Best-effort:
+/// every probe is allowed to fail (the container may be mid-restart).
+pub fn dump_agent_diagnostics(agent_name: &str) {
+    // Multi-user tests name containers vesta-<testuser>-<name>, so the $USER-based
+    // name won't match. Fall back to a suffix search over all vesta containers.
+    let cname = match docker_cmd(&["ps", "-a", "--format", "{{.Names}}"]) {
+        Ok(list) => list
+            .lines()
+            .find(|n| n.ends_with(&format!("-{agent_name}")) && n.starts_with("vesta-"))
+            .map(str::to_string)
+            .unwrap_or_else(|| agent_container_name(agent_name)),
+        Err(_) => agent_container_name(agent_name),
+    };
+    eprintln!("\n========== AGENT DIAGNOSTICS: {cname} ==========");
+    match docker_cmd(&[
+        "inspect",
+        &cname,
+        "--format",
+        "status={{.State.Status}} exitCode={{.State.ExitCode}} restarts={{.RestartCount}} oom={{.State.OOMKilled}}",
+    ]) {
+        Ok(state) => eprintln!("state: {state}"),
+        Err(e) => eprintln!("inspect failed: {e}"),
+    }
+    eprintln!("--- docker logs (tail 60) ---");
+    match docker_cmd(&["logs", "--tail", "60", &cname]) {
+        Ok(logs) if !logs.trim().is_empty() => eprintln!("{logs}"),
+        Ok(_) => eprintln!("(empty — agent runs with a tty; see vesta.log below)"),
+        Err(e) => eprintln!("({e})"),
+    }
+    // A crash-looping container's overlay fs is unreadable mid-restart, so `docker cp`
+    // would fail. Stop the restart loop first to settle the filesystem, then read the
+    // agent's own structured log.
+    let _ = docker_cmd(&["update", "--restart=no", &cname]);
+    let _ = docker_cmd(&["stop", "-t", "2", &cname]);
+    eprintln!("--- vesta.log (tail 80) ---");
+    match cp_container_file(&cname, "/root/agent/logs/vesta.log") {
+        Some(content) if !content.trim().is_empty() => {
+            let tail: Vec<&str> = content.lines().rev().take(80).collect();
+            for line in tail.iter().rev() {
+                eprintln!("{line}");
+            }
+        }
+        _ => eprintln!("(not captured — agent likely crashed before its logger started)"),
+    }
+    eprintln!("========== END DIAGNOSTICS: {cname} ==========\n");
+}
+
+/// Copy a file out of a (possibly restarting) container via `docker cp` and return its text.
+fn cp_container_file(cname: &str, container_path: &str) -> Option<String> {
+    let tmp = std::env::temp_dir().join(format!("vesta-diag-{}", std::process::id()));
+    let tmp_str = tmp.to_str()?;
+    docker_cmd(&["cp", &format!("{cname}:{container_path}"), tmp_str]).ok()?;
+    let content = std::fs::read_to_string(&tmp).ok();
+    let _ = std::fs::remove_file(&tmp);
+    content
+}
+
 /// Container is up (regardless of auth/readiness state).
 pub fn is_up(status: &str) -> bool {
     matches!(status, "not_authenticated" | "starting" | "alive" | "restarting")

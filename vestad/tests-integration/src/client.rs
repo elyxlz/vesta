@@ -219,6 +219,7 @@ impl Client {
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
                 return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
             }
             std::thread::sleep(backoff);
@@ -240,6 +241,7 @@ impl Client {
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
                 return Err(format!("{}: timeout waiting for running (status: {})", name, status));
             }
             std::thread::sleep(backoff);

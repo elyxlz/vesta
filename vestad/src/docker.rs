@@ -80,8 +80,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
         // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
-        // file; absent for Claude agents. Sourced directly so we never have to mutate ~/.bashrc.
-        ". /root/.claude/vesta-provider.env 2>/dev/null || true".into(),
+        // file; absent for Claude agents. Guard with `[ -f ]`: `.` is a POSIX special
+        // built-in, so sourcing a missing file makes dash exit the whole script (and
+        // `|| true` does NOT catch it), which would crash-loop every Claude agent.
+        "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
         "uv sync --frozen --project /root/agent".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
