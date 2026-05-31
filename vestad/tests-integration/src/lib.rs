@@ -333,12 +333,20 @@ pub fn inject_fake_token(_c: &Client, name: &str) {
 /// Pre-mark first-start setup as done so the agent reports `alive` (not `setting_up`)
 /// on the next boot without waiting for the SDK to call `mark_setup_done`. Tests run
 /// with a fake token, so no real SDK session can drive that tool call.
+///
+/// Writing state.json while the agent is running isn't enough: the running agent
+/// holds `first_start_done=false` in memory and rewrites state.json on its graceful
+/// shutdown, clobbering this write on the next restart. So write the flag, SIGKILL
+/// the agent (no graceful save), then start it fresh so the boot reads `true`; from
+/// then on the in-memory value survives normal restarts.
 pub fn mark_first_start_done(name: &str) -> Result<(), String> {
     let cname = agent_container_name(name);
     exec_in_container(
         &cname,
         r#"mkdir -p /root/agent/data && printf '{"first_start_done": true}' > /root/agent/data/state.json"#,
     )?;
+    docker_cmd(&["kill", &cname])?;
+    docker_cmd(&["start", &cname])?;
     Ok(())
 }
 
