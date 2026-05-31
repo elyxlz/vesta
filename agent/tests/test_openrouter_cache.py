@@ -2,7 +2,7 @@
 
 import core.models as vm
 from core.client import build_client_options
-from core.openrouter_cache import _usage_int, transform_request
+from core.openrouter_cache import _CACHE_LOG_EVERY, _record_cache_usage, _sniff_usage, _usage_int, transform_request
 
 
 def _claude_code_body():
@@ -67,6 +67,34 @@ def test_transform_is_passthrough_without_provider():
 def test_transform_handles_missing_or_empty_system():
     assert transform_request({"model": "m"}, provider="Alibaba", session_id="s") == {"model": "m"}
     assert "provider" not in transform_request({"model": "m", "system": []}, provider="Alibaba", session_id="s")
+
+
+def test_sniff_usage_extracts_both_fields():
+    # final message_delta-style chunk carries both counters
+    chunk = b'data: {"type":"message_delta","usage":{"input_tokens":152,"output_tokens":9,"cache_read_input_tokens":21632}}'
+    assert _sniff_usage(chunk) == (152, 21632)
+
+
+def test_sniff_usage_returns_none_when_a_field_is_missing():
+    assert _sniff_usage(b'{"usage":{"output_tokens":9,"cache_read_input_tokens":21632}}') is None
+    assert _sniff_usage(b'{"usage":{"input_tokens":152}}') is None
+
+
+def test_record_cache_usage_windows_and_resets():
+    app = {"cache_stats": {"n": 0, "input": 0, "cache_read": 0}, "providers": {"m": "Alibaba"}}
+    for _ in range(_CACHE_LOG_EVERY - 1):
+        _record_cache_usage(app, 1000, 900)
+    assert app["cache_stats"]["n"] == _CACHE_LOG_EVERY - 1  # not yet flushed
+    _record_cache_usage(app, 1000, 900)
+    assert app["cache_stats"] == {"n": 0, "input": 0, "cache_read": 0}  # window flushed + reset
+
+
+def test_record_cache_usage_handles_zero_input_window():
+    # all cold writes (input 0) must not divide-by-zero at the flush boundary
+    app = {"cache_stats": {"n": 0, "input": 0, "cache_read": 0}, "providers": {"m": None}}
+    for _ in range(_CACHE_LOG_EVERY):
+        _record_cache_usage(app, 0, 0)
+    assert app["cache_stats"]["n"] == 0
 
 
 def test_usage_int_parses_safely():

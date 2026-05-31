@@ -47,6 +47,10 @@ _CACHE_TTL = "1h"  # survive the idle gaps typical of a personal assistant (defa
 _SHUTDOWN_TIMEOUT = 5.0  # bound proxy drain on shutdown (matches the WS server's start_runner)
 _HOP_BY_HOP = ("content-length", "content-encoding", "transfer-encoding", "connection")
 _PROBE_SYSTEM = ("You are a helpful assistant who answers concisely. " * 40 + "\n") * 20
+_CACHE_LOG_EVERY = 50  # summarize the hit rate once per this many model requests
+_LOW_CACHE_FRACTION = 0.2  # below this over a window (with a provider verified) => warn caching is broken
+_RE_INPUT_TOKENS = re.compile(rb'"input_tokens":(\d+)')
+_RE_CACHE_READ = re.compile(rb'"cache_read_input_tokens":(\d+)')
 
 
 # --- pure request transforms (unit-tested) ---
@@ -212,6 +216,7 @@ async def _handle(request: web.Request) -> web.StreamResponse:
         except (json.JSONDecodeError, ValueError):
             pass
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length", "transfer-encoding")}
+    sniff = request.path.endswith("/v1/messages")
     client: aiohttp.ClientSession = request.app["client"]
     async with client.request(request.method, OPENROUTER_API + request.raw_path, data=body, headers=headers) as upstream:
         # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the
@@ -220,10 +225,48 @@ async def _handle(request: web.Request) -> web.StreamResponse:
         resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
+        sample: tuple[int, int] | None = None
         async for chunk in upstream.content.iter_any():
+            if sniff and b"cache_read_input_tokens" in chunk:
+                found = _sniff_usage(chunk)
+                if found is not None:
+                    sample = found  # keep the last (final message_delta) usage
             await response.write(chunk)
         await response.write_eof()
+        if sample is not None:
+            _record_cache_usage(request.app, *sample)
         return response
+
+
+def _sniff_usage(chunk: bytes) -> tuple[int, int] | None:
+    """Extract (input_tokens, cache_read_input_tokens) from a response chunk if both
+    are present, else None. Cheap: only runs when the chunk already contains the marker."""
+    mi = _RE_INPUT_TOKENS.search(chunk)
+    mc = _RE_CACHE_READ.search(chunk)
+    if mi is None or mc is None:
+        return None
+    return int(mi.group(1)), int(mc.group(1))
+
+
+def _record_cache_usage(app: web.Application, input_tokens: int, cache_read: int) -> None:
+    """Accumulate cache stats and, once per window, log the hit rate (or warn if a
+    provider was verified but hits collapsed — i.e. caching silently broke).
+
+    Safe without a lock: the read-modify-write below has no await, so it is atomic on
+    the single-threaded event loop."""
+    stats = app["cache_stats"]
+    stats["n"] += 1
+    stats["input"] += input_tokens
+    stats["cache_read"] += cache_read
+    if stats["n"] < _CACHE_LOG_EVERY:
+        return
+    fraction = stats["cache_read"] / stats["input"] if stats["input"] else 0.0
+    summary = f"OpenRouter cache: {stats['n']} requests, {fraction:.0%} of input tokens served from cache"
+    if any(app["providers"].values()) and fraction < _LOW_CACHE_FRACTION:
+        logger.warning(f"{summary} — caching may be broken (a provider was verified but hits are near zero)")
+    else:
+        logger.usage(summary)
+    stats["n"] = stats["input"] = stats["cache_read"] = 0
 
 
 async def _close_client(app: web.Application) -> None:
@@ -259,6 +302,7 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
         app["providers"] = providers
         app["session_id"] = f"vesta-{config.agent_name}"
         app["client"] = client
+        app["cache_stats"] = {"n": 0, "input": 0, "cache_read": 0}
         app.on_cleanup.append(_close_client)
         app.router.add_route("*", "/{tail:.*}", _handle)
 
