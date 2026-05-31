@@ -1,6 +1,6 @@
 # Upstream Sync Setup
 
-First-time only. The ongoing checkpoint + merge flow lives in [SKILL.md](SKILL.md).
+First-time only. The ongoing flow lives in [SKILL.md](SKILL.md) (`sync.sh`).
 
 ## 1. Init
 
@@ -22,29 +22,38 @@ git config user.email "$AGENT_NAME@vesta"
 git checkout -b "$AGENT_NAME"
 ```
 
-Sparse keeps `agent/core/`, `pyproject.toml`, `uv.lock` out of the worktree (vestad bind-mounts them read-only) and treats `agent/skills/*/` as opt-in: only directories that already exist on disk (the defaults baked into the image) are added back as includes. New upstream skills land in the index and `agent/skills/index.json`, but stay off disk and out of `git status` until `skills-install` adds them. Root `.gitignore` arrives on the first merge.
+`agent/skills/*/` is opt-in: only skills already on disk (the defaults baked into the image) are re-included. New upstream skills land in `agent/skills/index.json` (the registry) but stay off disk until `skills-install` adds them.
 
 ## 2. Local ignores
 
-Write `~/agent/.gitignore` with bulky/machine-local globs: `*.bin *.onnx *.pt *.db *.sqlite *.mp3 *.mp4 *.wav *.zip *.tar.gz node_modules/ dist/ .venv/ __pycache__/`. Add anything else you spot.
+Write `~/agent/.gitignore` so the vestad-managed read-only mounts are never tracked, plus bulky machine-local files:
 
-## 3. Populate index, skip-worktree bind mounts
-
-```bash
-git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
-git -C ~ read-tree FETCH_HEAD 2>/dev/null || true
-git -C ~ sparse-checkout reapply
-if mount | grep -q '/root/agent/core '; then
-  git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
-fi
+```
+/core/
+/pyproject.toml
+/uv.lock
+*.bin
+*.onnx
+*.pt
+*.db
+*.sqlite
+*.mp3
+*.mp4
+*.wav
+*.zip
+*.tar.gz
+node_modules/
+dist/
+.venv/
+__pycache__/
 ```
 
-## 4. First sync
+`agent/core/`, `pyproject.toml` and `uv.lock` are vestad's engine, delivered read-only by the container image. The agent never tracks or contributes them, so git ignores them and `sync.sh` strips them from every merge.
 
-Now run the normal sync. On a fresh repo there's no shared history with upstream, so it re-anchors automatically (takes the upstream tree as the base and replays your owned files on top):
+## 3. First sync
 
 ```bash
 ~/agent/skills/upstream-sync/scripts/sync.sh
 ```
 
-Expect a wall of `warning: unable to unlink ...: Read-only file system` for `agent/core/` paths. Bind mounts, harmless. From here on, `sync.sh` is the only command you need to pull upstream; see [SKILL.md](SKILL.md).
+It commits the baked-in defaults as your starting point, then merges upstream (a fresh repo has no shared history, so genuinely different files may conflict, resolve and re-run). From here on, `sync.sh` is the only command you need to pull upstream.

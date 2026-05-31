@@ -21,7 +21,6 @@ import pytest
 
 AGENT_ROOT = pl.Path(__file__).resolve().parents[1]
 NARROW = AGENT_ROOT / "skills/upstream-sync/scripts/narrow-sparse-checkout.sh"
-REANCHOR = AGENT_ROOT / "skills/upstream-sync/scripts/reanchor.sh"
 SYNC = AGENT_ROOT / "skills/upstream-sync/scripts/sync.sh"
 STATUS = AGENT_ROOT / "skills/upstream-sync/scripts/status.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
@@ -271,79 +270,6 @@ def test_skills_install_without_upstream_ref_errors_and_reverts(tmp_path):
     assert "/agent/skills/extra/" not in _sparse(home)
 
 
-# --- reanchor.sh --------------------------------------------------------------
-
-
-def test_reanchor_errors_without_fetch_head(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synthetic_agent(home, up, installed=["alpha"], memory="x\n")
-
-    r = _run(REANCHOR, home)
-    assert r.returncode == 1
-    assert "FETCH_HEAD" in r.stderr
-
-
-def test_reanchor_noops_when_common_ancestor(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])
-    _git(["fetch", "origin", "main"], home)
-    head_before = _git(["rev-parse", "HEAD"], home).strip()
-
-    r = _run(REANCHOR, home)
-    assert r.returncode == 0
-    assert "common ancestor" in r.stdout
-    assert _git(["rev-parse", "HEAD"], home).strip() == head_before
-
-
-def test_reanchor_no_common_ancestor_pulls_upstream_and_preserves_owned(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha", "zeta"])  # zeta is an upstream-only, not-installed skill
-    home = tmp_path / "agent"
-    make_synthetic_agent(
-        home,
-        up,
-        installed=["alpha"],
-        self_authored=["mine"],
-        memory="# USER MEMORY\nemilio\n",
-        core_content="LOCAL CORE\n",  # a committed core divergence (the production bug)
-    )
-
-    _git(["fetch", "origin", "main"], home)
-    assert _merge_base(home).returncode != 0, "fixture must have no common ancestor"
-
-    r = _run(REANCHOR, home)
-    assert r.returncode == 0, r.stderr
-
-    # Now anchored: upstream is an ancestor.
-    assert _merge_base(home).returncode == 0
-
-    # Owned files preserved verbatim.
-    assert (home / "agent" / "MEMORY.md").read_text() == "# USER MEMORY\nemilio\n"
-    assert (home / "agent" / "skills" / "alpha" / "SKILL.md").read_text() == "# LOCAL alpha\n"
-    assert (home / "agent" / "skills" / "mine" / "SKILL.md").exists()  # self-authored kept
-    assert (home / ".gitignore").read_text() == "local-ignore\n"
-
-    # All upstream content is now tracked.
-    tracked = _git(["ls-files"], home)
-    assert "agent/skills/zeta/SKILL.md" in tracked
-    assert "agent/core/x.py" in tracked
-    assert "agent/settings.txt" in tracked
-
-    # Uninstalled upstream skill stays off disk (cone), non-owned in-cone file is upstream's.
-    assert not (home / "agent" / "skills" / "zeta").exists()
-    assert _git(["show", "HEAD:agent/settings.txt"], home) == "UPSTREAM SETTINGS\n"
-
-    # The committed core divergence is gone: HEAD core matches upstream, not "LOCAL CORE".
-    assert _git(["show", "HEAD:agent/core/x.py"], home) == "UPSTREAM CORE\n"
-
-    # No conflict markers anywhere.
-    assert "<<<<<<<" not in (home / "agent" / "MEMORY.md").read_text()
-
-
 # --- sync.sh ------------------------------------------------------------------
 
 MAIN = {"VESTA_UPSTREAM_REF": "main"}
@@ -389,48 +315,69 @@ def test_sync_keeps_index_json_as_full_registry(tmp_path):
     assert not (home / "agent" / "skills" / "zeta").exists()
 
 
-def test_sync_reanchors_when_no_common_ancestor(tmp_path):
+def test_sync_no_common_ancestor_surfaces_real_conflicts(tmp_path):
+    """No shared history (recreated repo): sync merges with --allow-unrelated-histories
+    and only genuinely different owned files conflict, no hardcoded preserve list."""
     up = tmp_path / "up"
-    make_upstream(up, ["alpha", "zeta"])
+    make_upstream(up, ["alpha"])
     home = tmp_path / "agent"
-    make_synthetic_agent(home, up, installed=["alpha"], self_authored=["mine"], memory="# USER MEMORY\n", core_content="LOCAL CORE\n")
+    make_synthetic_agent(home, up, installed=["alpha"], memory="# MY MEMORY\n")
+    _git(["fetch", "origin", "main"], home)
+    assert _merge_base(home).returncode != 0  # unrelated histories
 
     r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-    assert "re-anchor" in r.stdout.lower()
+    assert r.returncode == 2, r.stdout + r.stderr  # real conflicts surface
+    assert "MEMORY.md" in r.stdout
 
-    assert (home / "agent" / "MEMORY.md").read_text() == "# USER MEMORY\n"
-    assert (home / "agent" / "skills" / "mine" / "SKILL.md").exists()
-    names = {s["name"] for s in json.loads((home / "agent" / "skills" / "index.json").read_text())}
-    assert names == {"alpha", "zeta"}
-    assert _git(["show", "HEAD:agent/core/x.py"], home) == "UPSTREAM CORE\n"
+    for rel in _git(["diff", "--name-only", "--diff-filter=U"], home).split():
+        _git(["checkout", "--theirs", "--", rel], home)
+        _git(["add", "--", rel], home)
+    r2 = _run(SYNC, home, extra_env=MAIN)
+    assert r2.returncode == 0, r2.stderr
 
 
-def test_sync_conflict_then_finish(tmp_path):
+def test_sync_untracks_vestad_managed_core(tmp_path):
+    """An agent that tracked agent/core has it dropped from tracking on sync, and stays
+    gitignored (no noise)."""
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=["alpha"])  # a clone, so core is tracked
+    assert "agent/core/x.py" in _git(["ls-files"], home)
+    add_upstream_file(up, "agent/core/x.py", "UPSTREAM CORE v2\n", "bump core")
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "agent/core/x.py" not in _git(["ls-files"], home)  # no longer tracked
+    assert "agent/core" not in _git(["status", "--short"], home)  # gitignored, no noise
+
+
+def test_sync_quiet_against_read_only_core(tmp_path):
+    """The real bind-mount case: agent/core is a read-only directory on disk. sync merges a
+    core-less copy of upstream, so git never touches core, no read-only error even when
+    upstream changed core."""
     up = tmp_path / "up"
     make_upstream(up, ["alpha"])
     home = tmp_path / "agent"
     make_synced_agent(home, up, cone_includes=["alpha"])
-    (home / "agent" / "MEMORY.md").write_text("# AGENT change\n")
-    _git(["add", "-A"], home)
-    _git(["commit", "-q", "-m", "local memory"], home)
-    add_upstream_file(up, "agent/MEMORY.md", "# UPSTREAM change\n", "upstream memory")
+    core_dir = home / "agent" / "core"
+    core_dir.mkdir(parents=True, exist_ok=True)
+    (core_dir / "x.py").write_text("MOUNTED CORE\n")
+    add_upstream_file(up, "agent/core/x.py", "UPSTREAM CORE v2\n", "bump core")
 
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 2, r.stdout + r.stderr
-    assert "conflict" in r.stdout.lower()
-    assert "agent/MEMORY.md" in r.stdout
+    os.chmod(core_dir, 0o555)
+    try:
+        r = _run(SYNC, home, extra_env=MAIN)
+    finally:
+        os.chmod(core_dir, 0o755)
 
-    # Resolve and re-run; sync finalises.
-    (home / "agent" / "MEMORY.md").write_text("# RESOLVED\n")
-    _git(["add", "agent/MEMORY.md"], home)
-    r2 = _run(SYNC, home, extra_env=MAIN)
-    assert r2.returncode == 0, r2.stderr
-    assert (home / "agent" / "MEMORY.md").read_text() == "# RESOLVED\n"
-    assert _merge_base(home).returncode == 0  # upstream now an ancestor
-
-
-# --- status.sh ----------------------------------------------------------------
+    assert r.returncode == 0, r.stdout + r.stderr
+    blob = r.stdout + r.stderr
+    assert "Read-only file system" not in blob
+    assert "Permission denied" not in blob
+    assert "unable to unlink" not in blob
+    assert (core_dir / "x.py").read_text() == "MOUNTED CORE\n"  # untouched
+    assert "agent/core/x.py" not in _git(["ls-files"], home)  # not tracked
 
 
 def test_status_reports_behind_ahead_and_changes(tmp_path):
