@@ -10,32 +10,62 @@ if [ -d "$DEST" ]; then
     exit 0
 fi
 
-# SETUP.md initialises sparse-checkout with `!/agent/skills/*/` so uninstalled
-# skills stay off disk. `sparse-checkout add` appends a re-include pattern
-# after that exclude (later patterns win), pulling this skill into the worktree
-# while leaving the rest excluded. Future merges will track this skill normally.
 echo "Installing '$SKILL_NAME' via sparse checkout..."
 
-REPO_ROOT=$(git -C ~ rev-parse --show-toplevel)
-git -C "$REPO_ROOT" sparse-checkout add "agent/skills/$SKILL_NAME"
+REPO_ROOT="$(git -C ~ rev-parse --show-toplevel)"
+SPARSE_FILE="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)/info/sparse-checkout"
+INCLUDE="/agent/skills/$SKILL_NAME/"
 
-# Fetch the skill content from upstream if not already available locally
+if [ ! -f "$SPARSE_FILE" ]; then
+    echo "Error: sparse-checkout is not initialised ($SPARSE_FILE missing). Run upstream-sync SETUP first." >&2
+    exit 1
+fi
+
+# SETUP.md initialises sparse-checkout with `!/agent/skills/*/` so uninstalled skills
+# stay off disk. We append a re-include line after that exclude (later patterns win),
+# managing the file directly rather than via `sparse-checkout add` so the revert below
+# is an exact line removal, not a fragile re-parse of `sparse-checkout list`.
+added_include=0
+revert_include() {
+    [ "$added_include" -eq 1 ] || return 0
+    if grep -vFx "$INCLUDE" "$SPARSE_FILE" > "$SPARSE_FILE.tmp"; then
+        mv "$SPARSE_FILE.tmp" "$SPARSE_FILE"
+    else
+        rm -f "$SPARSE_FILE.tmp"
+    fi
+    git -C "$REPO_ROOT" sparse-checkout reapply || true
+}
+
+if ! grep -qFx "$INCLUDE" "$SPARSE_FILE"; then
+    printf '%s\n' "$INCLUDE" >> "$SPARSE_FILE"
+    added_include=1
+fi
+git -C "$REPO_ROOT" sparse-checkout reapply
+
+# If the skill is already in the local tree, reapply materialised it. Otherwise pull
+# it from upstream.
 if [ ! -d "$DEST" ]; then
     UPSTREAM_REF="${VESTA_UPSTREAM_REF:-}"
-    if [ -n "$UPSTREAM_REF" ]; then
-        git -C "$REPO_ROOT" fetch --depth 1 origin "$UPSTREAM_REF" 2>/dev/null || true
-        git -C "$REPO_ROOT" checkout FETCH_HEAD -- "agent/skills/$SKILL_NAME" 2>/dev/null || true
+    if [ -z "$UPSTREAM_REF" ]; then
+        revert_include
+        echo "Error: VESTA_UPSTREAM_REF is unset; cannot fetch '$SKILL_NAME'." >&2
+        exit 1
     fi
+    if ! git -C "$REPO_ROOT" fetch --depth 1 origin "$UPSTREAM_REF"; then
+        revert_include
+        echo "Error: failed to fetch upstream ref '$UPSTREAM_REF'." >&2
+        exit 1
+    fi
+    git -C "$REPO_ROOT" checkout FETCH_HEAD -- "agent/skills/$SKILL_NAME" 2>/dev/null || true
 fi
 
 if [ ! -d "$DEST" ]; then
-    # Remove from sparse checkout since the skill doesn't exist upstream
-    git -C "$REPO_ROOT" sparse-checkout set $(git -C "$REPO_ROOT" sparse-checkout list | grep -v "^agent/skills/$SKILL_NAME$")
-    echo "Error: skill '$SKILL_NAME' not found in registry."
+    revert_include
+    echo "Error: skill '$SKILL_NAME' not found in registry." >&2
     exit 1
 fi
 
 echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then
-    echo "This skill requires setup — read $DEST/SETUP.md for instructions."
+    echo "This skill requires setup, read $DEST/SETUP.md for instructions."
 fi

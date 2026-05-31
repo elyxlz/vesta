@@ -1,6 +1,6 @@
 # Upstream Sync Setup
 
-First-time only. The ongoing checkpoint + merge flow lives in [SKILL.md](SKILL.md).
+First-time only. The ongoing flow lives in [SKILL.md](SKILL.md) (`sync.sh`).
 
 ## 1. Init
 
@@ -22,29 +22,33 @@ git config user.email "$AGENT_NAME@vesta"
 git checkout -b "$AGENT_NAME"
 ```
 
-Sparse keeps `agent/core/`, `pyproject.toml`, `uv.lock` out of the worktree (vestad bind-mounts them read-only) and treats `agent/skills/*/` as opt-in: only directories that already exist on disk (the defaults baked into the image) are added back as includes. New upstream skills land in the index and `agent/skills/index.json`, but stay off disk and out of `git status` until `skills-install` adds them. Root `.gitignore` arrives on the first merge.
+`agent/skills/*/` is opt-in: only skills already on disk (the defaults baked into the image) are re-included. New upstream skills land in `agent/skills/index.json` (the registry) but stay off disk until `skills-install` adds them.
 
-## 2. Local ignores
+## 2. Local ignores (bulky files only)
 
-Write `~/agent/.gitignore` with bulky/machine-local globs: `*.bin *.onnx *.pt *.db *.sqlite *.mp3 *.mp4 *.wav *.zip *.tar.gz node_modules/ dist/ .venv/ __pycache__/`. Add anything else you spot.
+`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) from its `managed.gitignore` template, so you don't list those. Just add bulky machine-local globs:
 
-## 3. Populate index, skip-worktree bind mounts
-
-```bash
-git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
-git -C ~ read-tree FETCH_HEAD 2>/dev/null || true
-git -C ~ sparse-checkout reapply
-if mount | grep -q '/root/agent/core '; then
-  git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
-fi
+```
+*.bin
+*.onnx
+*.pt
+*.db
+*.sqlite
+*.mp3
+*.mp4
+*.wav
+*.zip
+*.tar.gz
+node_modules/
+dist/
+.venv/
+__pycache__/
 ```
 
-## 4. First merge
-
-Follow [SKILL.md](SKILL.md) from step 2 (checkpoint + merge). On this first merge only, add `--allow-unrelated-histories`:
+## 3. First sync
 
 ```bash
-git -C ~ merge FETCH_HEAD --no-edit --allow-unrelated-histories
+~/agent/skills/upstream-sync/scripts/sync.sh
 ```
 
-Expect a wall of `warning: unable to unlink ...: Read-only file system` for `agent/core/` paths. Bind mounts, harmless.
+It commits the baked-in defaults as your starting point, then merges upstream (a fresh repo has no shared history, so genuinely different files may conflict, resolve and re-run). From here on, `sync.sh` is the only command you need to pull upstream.
