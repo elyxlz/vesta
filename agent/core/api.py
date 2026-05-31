@@ -207,7 +207,14 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
     if state.provider_status is None:
         return web.json_response({"error": "provider not initialized"}, status=503)
     status = state.provider_status
-    return web.json_response({"state": status.state.value, "kind": status.kind, "model": status.model})
+    return web.json_response({
+        "state": status.state.value,
+        "kind": status.kind,
+        "model": status.model,
+        # vestad gates "alive" on this: an authenticated agent that hasn't yet
+        # finished first-start setup (or whose first model call failed) is not ready.
+        "setup_complete": state.persisted.first_start_done,
+    })
 
 
 async def _provider_set_handler(request: web.Request) -> web.Response:

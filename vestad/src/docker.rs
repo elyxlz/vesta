@@ -120,6 +120,10 @@ pub enum ContainerStatus {
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Alive,
+    /// Authenticated and reachable, but first-start setup hasn't completed yet
+    /// (the agent hasn't called `mark_setup_done`). Transient on a fresh agent;
+    /// distinct from `Alive` so callers don't treat a half-provisioned agent as ready.
+    SettingUp,
     Starting,
     NotAuthenticated,
     Stopped,
@@ -363,7 +367,8 @@ pub async fn combined_status(
             let agent_name = name_from_cname(cname);
             let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
             match provider.status().await {
-                Ok(s) if s.state == "authenticated" => AgentStatus::Alive,
+                Ok(s) if s.state == "authenticated" && s.setup_complete => AgentStatus::Alive,
+                Ok(s) if s.state == "authenticated" => AgentStatus::SettingUp,
                 Ok(_) => AgentStatus::NotAuthenticated,
                 Err(_) => AgentStatus::Starting,
             }

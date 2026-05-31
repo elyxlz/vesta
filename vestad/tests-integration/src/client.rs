@@ -236,7 +236,7 @@ impl Client {
         loop {
             let status = self.agent_status(name)?.status;
             match status.as_str() {
-                "alive" | "not_authenticated" => return Ok(status),
+                "alive" | "setting_up" | "not_authenticated" => return Ok(status),
                 "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
                 _ => {}
             }

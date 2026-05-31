@@ -653,10 +653,15 @@ fn run(cli: Cli) {
                 eprintln!("authenticated!");
             }
 
-            // 4. Wait for the agent to come fully alive after the provision-triggered restart.
+            // 4. Wait for the agent to come fully alive after the provision-triggered
+            //    restart. "alive" now means first-start setup actually completed — a
+            //    bad provider (e.g. an OpenRouter key with no credits) flips the agent
+            //    to not_authenticated here instead of falsely reporting ready.
             eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
             c.wait_until_alive(&created_name, START_READY_TIMEOUT)
-                .unwrap_or_else(|e| platform::die(&e));
+                .unwrap_or_else(|e| platform::die(&format!(
+                    "{e}\nfirst-start setup did not complete. check the agent's logs: vesta logs {created_name}"
+                )));
             eprintln!("agent '{created_name}' is ready.");
 
         }

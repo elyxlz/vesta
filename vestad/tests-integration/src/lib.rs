@@ -330,9 +330,9 @@ pub fn inject_fake_token(_c: &Client, name: &str) {
     exec_in_container(&cname, &script).expect("write fake credentials");
 }
 
-/// Pre-mark first-start setup as done so the agent binds its WS port on the next boot
-/// without waiting for Claude to call `mark_setup_done`. Tests run with a fake token so
-/// no real SDK session can drive that tool call.
+/// Pre-mark first-start setup as done so the agent reports `alive` (not `setting_up`)
+/// on the next boot without waiting for the SDK to call `mark_setup_done`. Tests run
+/// with a fake token, so no real SDK session can drive that tool call.
 pub fn mark_first_start_done(name: &str) -> Result<(), String> {
     let cname = agent_container_name(name);
     exec_in_container(
@@ -427,7 +427,7 @@ fn cp_container_file(cname: &str, container_path: &str) -> Option<String> {
 
 /// Container is up (regardless of auth/readiness state).
 pub fn is_up(status: &str) -> bool {
-    matches!(status, "not_authenticated" | "starting" | "alive" | "restarting")
+    matches!(status, "not_authenticated" | "starting" | "setting_up" | "alive" | "restarting")
 }
 
 pub struct ReleasedVestad {

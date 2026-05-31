@@ -24,6 +24,14 @@ pub struct ProviderStatus {
     pub kind: String,
     #[serde(default)]
     pub model: Option<String>,
+    /// Whether the agent finished first-start setup. Defaults to `true` so an
+    /// older agent that doesn't report the field isn't stuck reporting `SettingUp`.
+    #[serde(default = "default_setup_complete")]
+    pub setup_complete: bool,
+}
+
+fn default_setup_complete() -> bool {
+    true
 }
 
 pub struct AgentProvider<'a> {
@@ -84,5 +92,24 @@ impl<'a> AgentProvider<'a> {
             (Some(p), Some(t)) => Ok((p, t)),
             _ => Err(format!("agent '{}' missing port/token (env file not yet written)", self.name)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_complete_defaults_true_when_absent() {
+        // Older agents predate the field; absence must not strand them in SettingUp.
+        let s: ProviderStatus = serde_json::from_str(r#"{"state":"authenticated","kind":"claude"}"#).unwrap();
+        assert!(s.setup_complete);
+    }
+
+    #[test]
+    fn setup_complete_parsed_when_present() {
+        let s: ProviderStatus =
+            serde_json::from_str(r#"{"state":"authenticated","kind":"openrouter","setup_complete":false}"#).unwrap();
+        assert!(!s.setup_complete);
     }
 }

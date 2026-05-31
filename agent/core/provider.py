@@ -88,15 +88,17 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
     return status
 
 
-def observed_401(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
-    """Called by the SDK response-stream handler when an upstream 401 is seen.
-    Returns the status flipped to NOT_AUTHENTICATED (persisted so it survives a
-    restart), or the input unchanged when there's nothing to flip."""
+def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
+    """Called by the SDK response-stream handler on a terminal upstream auth/billing
+    error (401 invalid auth, 402 insufficient credits). Returns the status flipped to
+    NOT_AUTHENTICATED (persisted so it survives a restart), or the input unchanged when
+    there's nothing to flip. A flipped provider needs re-provisioning to recover (a 402
+    won't clear on its own until the key has credits and the agent is re-provisioned)."""
     if status is None or status.state == ProviderAuthState.NOT_AUTHENTICATED:
         return status
     new_status = dc.replace(status, state=ProviderAuthState.NOT_AUTHENTICATED)
     _persist(new_status, config=config, persisted=persisted)
-    logger.error(f"Provider {new_status.kind} flipped to not_authenticated (observed 401)")
+    logger.error(f"Provider {new_status.kind} flipped to not_authenticated (upstream auth/billing error)")
     return new_status
 
 

@@ -14,7 +14,7 @@ from core.provider import (
     _openrouter_token_present,
     _provider_declares_openrouter,
     derive_status,
-    observed_401,
+    observed_provider_failure,
     set_claude,
     set_openrouter,
 )
@@ -163,20 +163,29 @@ def test_set_openrouter_writes_and_flips_state(prov):
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
 
 
-def test_observed_401_flips_state(prov):
+def test_observed_provider_failure_flips_state(prov):
     config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     status = set_claude(creds_json, config=config, persisted=persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
-    status = observed_401(status, config=config, persisted=persisted)
+    status = observed_provider_failure(status, config=config, persisted=persisted)
     assert status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
 
 
-def test_observed_401_persists_across_restart(prov):
+def test_observed_provider_failure_flips_openrouter_on_402(prov):
+    config, persisted = prov
+    status = set_openrouter("sk-or-v1-key", "anthropic/claude-sonnet-4-6", config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    # A 402 (insufficient credits) on the first model call flips an OpenRouter agent.
+    status = observed_provider_failure(status, config=config, persisted=persisted)
+    assert status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
+
+
+def test_observed_provider_failure_persists_across_restart(prov):
     config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     status = set_claude(creds_json, config=config, persisted=persisted)
-    observed_401(status, config=config, persisted=persisted)
+    observed_provider_failure(status, config=config, persisted=persisted)
 
     # Simulate restart: reload persisted state and re-derive.
     persisted2 = load_state(config)
