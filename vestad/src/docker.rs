@@ -1151,6 +1151,33 @@ pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), 
 // --- Snapshot ---
 
 const SNAPSHOT_TIMEOUT_SECS: u64 = 7200; // 2 hours — 25GB+ containers can take a long time
+const IMPORT_PIPELINE_MAX_ATTEMPTS: u32 = 3;
+const IMPORT_PIPELINE_RETRY_DELAY_SECS: u64 = 3;
+
+/// Retry a self-contained `docker import` pipeline (`docker export | docker import`
+/// or `restic dump | docker import`). These occasionally fail mid-stream with a
+/// transient daemon error such as "unexpected EOF"; each attempt rebuilds the
+/// image from scratch, so retrying is safe. Runs inside `spawn_blocking`, so the
+/// blocking sleep between attempts is fine.
+pub(crate) fn retry_import_pipeline<F>(label: &str, mut attempt: F) -> Result<(), DockerError>
+where
+    F: FnMut() -> Result<(), DockerError>,
+{
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(e) if tries < IMPORT_PIPELINE_MAX_ATTEMPTS => {
+                tracing::warn!(
+                    "{label} attempt {tries}/{IMPORT_PIPELINE_MAX_ATTEMPTS} failed, retrying in {IMPORT_PIPELINE_RETRY_DELAY_SECS}s: {e}"
+                );
+                std::thread::sleep(std::time::Duration::from_secs(IMPORT_PIPELINE_RETRY_DELAY_SECS));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
 
 /// Snapshot a container's filesystem as a new image using `docker export | docker import`.
 /// Unlike `docker commit`, this doesn't depend on parent image layers existing.
@@ -1163,41 +1190,43 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
     tokio::time::timeout(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || {
-            let mut export_child = std::process::Command::new("docker")
-                .args(["export", &cname])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
+            retry_import_pipeline("docker snapshot", || {
+                let mut export_child = std::process::Command::new("docker")
+                    .args(["export", &cname])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
 
-            let export_stdout = export_child.stdout.take()
-                .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
+                let export_stdout = export_child.stdout.take()
+                    .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
 
-            let mut import_args = vec!["import".to_string()];
-            for change in &changes {
-                import_args.push("--change".to_string());
-                import_args.push(change.clone());
-            }
-            import_args.push("-".to_string());
-            import_args.push(tag);
+                let mut import_args = vec!["import".to_string()];
+                for change in &changes {
+                    import_args.push("--change".to_string());
+                    import_args.push(change.clone());
+                }
+                import_args.push("-".to_string());
+                import_args.push(tag.clone());
 
-            let import_output = std::process::Command::new("docker")
-                .args(&import_args)
-                .stdin(export_stdout)
-                .output()
-                .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+                let import_output = std::process::Command::new("docker")
+                    .args(&import_args)
+                    .stdin(export_stdout)
+                    .output()
+                    .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
 
-            let export_output = export_child.wait_with_output()
-                .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
-            if !export_output.status.success() {
-                let stderr = String::from_utf8_lossy(&export_output.stderr);
-                return Err(DockerError::Failed(format!("docker export failed: {stderr}")));
-            }
-            if !import_output.status.success() {
-                let stderr = String::from_utf8_lossy(&import_output.stderr);
-                return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
-            }
-            Ok(())
+                let export_output = export_child.wait_with_output()
+                    .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
+                if !export_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&export_output.stderr);
+                    return Err(DockerError::Failed(format!("docker export failed: {stderr}")));
+                }
+                if !import_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&import_output.stderr);
+                    return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
+                }
+                Ok(())
+            })
         }),
     )
     .await
@@ -1926,6 +1955,32 @@ mod tests {
     #[test]
     fn normalize_simple() {
         assert_eq!(normalize_name("MyAgent"), "myagent");
+    }
+
+    #[test]
+    fn retry_import_pipeline_recovers_after_transient_failure() {
+        let tries = std::cell::Cell::new(0u32);
+        let result = retry_import_pipeline("test", || {
+            tries.set(tries.get() + 1);
+            if tries.get() < 2 {
+                Err(DockerError::Failed("unexpected EOF".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(tries.get(), 2);
+    }
+
+    #[test]
+    fn retry_import_pipeline_gives_up_and_returns_last_error() {
+        let tries = std::cell::Cell::new(0u32);
+        let result = retry_import_pipeline("test", || {
+            tries.set(tries.get() + 1);
+            Err(DockerError::Failed("always fails".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(tries.get(), IMPORT_PIPELINE_MAX_ATTEMPTS);
     }
 
     #[test]
