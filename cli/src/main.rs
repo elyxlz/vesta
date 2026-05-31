@@ -324,11 +324,27 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     client::Client::new(&config)
 }
 
+// Ask the configured vestad for the latest release tag so the CLI does not hit
+// the GitHub API directly. vestad keeps a cached, ETag-conditional view of the
+// latest release. Returns None when no server is configured or the request
+// fails, letting callers fall back to a direct GitHub check.
+fn fetch_latest_via_gateway(force: bool) -> Option<String> {
+    let config = common::load_server_config()?;
+    let client = client::Client::new(&config);
+    let result = if force {
+        client.check_latest_release_tag()
+    } else {
+        client.latest_release_tag()
+    };
+    result.ok().flatten()
+}
+
 fn check_latest_version() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
     eprintln!("current version: v{current}");
 
-    let latest = fetch_latest_release_tag(None)
+    let latest = fetch_latest_via_gateway(true)
+        .or_else(|| fetch_latest_release_tag(None))
         .unwrap_or_else(|| platform::die("failed to check for updates"));
 
     if latest == current {
@@ -430,7 +446,7 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
     }
 
     Some(std::thread::spawn(move || {
-        let latest = fetch_latest_release_tag(Some(5))?;
+        let latest = fetch_latest_via_gateway(false).or_else(|| fetch_latest_release_tag(Some(5)))?;
         let _ = std::fs::create_dir_all(&cache_dir);
         let _ = std::fs::write(&cache_file, &latest);
         if version_less_than(env!("CARGO_PKG_VERSION"), &latest) {

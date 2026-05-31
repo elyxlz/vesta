@@ -137,6 +137,15 @@ fn extract_server_error(body: &str) -> Option<String> {
     v["error"].as_str().map(|s| s.to_string())
 }
 
+fn extract_latest_version(value: &serde_json::Value) -> Option<String> {
+    let tag = value["latest_version"].as_str()?.trim().trim_start_matches('v');
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
+}
+
 fn urlencod(s: &str) -> String {
     percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
@@ -277,6 +286,29 @@ impl Client {
             .map_err(|e| map_error(&self.base_url, e))?;
         check_response(resp)?;
         Ok(())
+    }
+
+    // Read vestad's cached view of the latest release. vestad polls GitHub on
+    // our behalf (with an ETag conditional request), so routing through it keeps
+    // every client on one machine from hitting the GitHub API independently.
+    pub fn latest_release_tag(&self) -> Result<Option<String>, String> {
+        let resp = self.get("/version")?;
+        let value: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        Ok(extract_latest_version(&value))
+    }
+
+    // Force vestad to refresh from GitHub, then return the latest tag. Used by
+    // the explicit `vesta update` so it does not act on a stale cached value.
+    pub fn check_latest_release_tag(&self) -> Result<Option<String>, String> {
+        let resp = self.post("/version/check")?;
+        let value: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        Ok(extract_latest_version(&value))
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
