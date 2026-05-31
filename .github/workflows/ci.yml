@@ -195,9 +195,19 @@ jobs:
         working-directory: vestad
         run: cargo build
 
+      # These exercise a real Docker daemon, which occasionally hiccups on
+      # transient container/image operations. Retry once so a single flaky op
+      # doesn't fail the whole job (the build above is already cached).
       - name: Run integration tests (excludes live tests)
-        working-directory: vestad
-        run: cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 18
+          max_attempts: 2
+          retry_wait_seconds: 15
+          shell: bash
+          command: |
+            cd vestad
+            cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
 
   # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
   check-vesta:
@@ -808,8 +818,10 @@ jobs:
           python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
-      # Retry: Gradle bootstraps from GitHub on first run; GitHub release CDN
-      # occasionally 502s and there's no built-in retry on the Gradle wrapper.
+      # Retry: Gradle bootstraps from GitHub on first run, and resolves Kotlin/
+      # Android deps from Maven Central + plugins.gradle.org, which intermittently
+      # 403/502. retry_wait_seconds backs off so a transient block clears between
+      # attempts instead of all 3 retries hitting it back-to-back.
       - name: Build Android APK
         uses: nick-fields/retry@v4
         env:
@@ -817,6 +829,7 @@ jobs:
         with:
           timeout_minutes: 30
           max_attempts: 3
+          retry_wait_seconds: 30
           shell: bash
           command: |
             cd apps/mobile
