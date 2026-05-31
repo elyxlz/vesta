@@ -14,7 +14,6 @@ Routes:
 import asyncio
 import json
 import logging
-import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
@@ -23,10 +22,9 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
 from .helpers import get_memory_path
+from .models import State
 from .provider import CREDENTIALS_PATH, set_claude, set_openrouter
 
-if tp.TYPE_CHECKING:
-    from .models import State
 
 logger = logging.getLogger("vesta.api")
 
@@ -293,7 +291,7 @@ async def start_runner(app: web.Application, *, shutdown_timeout: float = 5.0) -
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
-    state: "State | None" = None,
+    state: State | None = None,
     *,
     host: str = "0.0.0.0",
 ) -> web.AppRunner:
