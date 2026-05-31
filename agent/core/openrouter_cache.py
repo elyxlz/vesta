@@ -23,6 +23,7 @@ provider is momentarily unavailable. The proxy is the single, always-on request
 path for the OpenRouter provider; the SDK never talks to OpenRouter directly.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -43,6 +44,8 @@ _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 _MAX_PROBE_CANDIDATES = 4
 _MIN_CACHE_FRACTION = 0.5  # warm call must read back at least half the prefix to count as caching
 _CACHE_TTL = "1h"  # survive the idle gaps typical of a personal assistant (default is 5 min)
+_SHUTDOWN_TIMEOUT = 5.0  # bound proxy drain on shutdown (matches the WS server's start_runner)
+_HOP_BY_HOP = ("content-length", "content-encoding", "transfer-encoding", "connection")
 _PROBE_SYSTEM = ("You are a helpful assistant who answers concisely. " * 40 + "\n") * 20
 
 
@@ -167,17 +170,29 @@ async def _probe_caches(session: aiohttp.ClientSession, model: str, key: str, pr
     return cache_read >= _MIN_CACHE_FRACTION * cold_input
 
 
+_PROBE_ERRORS = (aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError)
+
+
 async def _resolve_provider(session: aiohttp.ClientSession, model: str, key: str) -> str | None:
-    """Cheapest provider that verifiably prefix-caches `model`, or None (uncached)."""
+    """Cheapest provider that verifiably prefix-caches `model`, or None (uncached).
+
+    A transient failure probing one candidate must not abandon the rest, so each
+    candidate is guarded independently; a malformed OpenRouter response (TypeError)
+    is caught too rather than escaping into start_cache_proxy."""
     try:
         candidates = await _cache_capable_providers(session, model, key)
-        for candidate in candidates[:_MAX_PROBE_CANDIDATES]:
-            if await _probe_caches(session, model, key, candidate):
-                logger.startup(f"OpenRouter caching: {model} -> {candidate} (verified)")
-                return candidate
-    except (aiohttp.ClientError, TimeoutError, ValueError, KeyError) as e:
-        logger.warning(f"OpenRouter cache-provider probe failed for {model}: {e}")
+    except _PROBE_ERRORS as e:
+        logger.warning(f"OpenRouter endpoint lookup failed for {model}: {e}")
         return None
+    for candidate in candidates[:_MAX_PROBE_CANDIDATES]:
+        try:
+            verified = await _probe_caches(session, model, key, candidate)
+        except _PROBE_ERRORS as e:
+            logger.warning(f"OpenRouter cache probe of {candidate} for {model} failed: {e}")
+            continue
+        if verified:
+            logger.startup(f"OpenRouter caching: {model} -> {candidate} (verified)")
+            return candidate
     logger.warning(f"OpenRouter caching: no verified caching provider for {model}; running uncached")
     return None
 
@@ -199,8 +214,11 @@ async def _handle(request: web.Request) -> web.StreamResponse:
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length", "transfer-encoding")}
     client: aiohttp.ClientSession = request.app["client"]
     async with client.request(request.method, OPENROUTER_API + request.raw_path, data=body, headers=headers) as upstream:
-        ctype = upstream.headers["Content-Type"] if "Content-Type" in upstream.headers else "application/json"
-        response = web.StreamResponse(status=upstream.status, headers={"Content-Type": ctype})
+        # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the
+        # SDK keeps its backoff signals. aiohttp already decompressed the body and the
+        # StreamResponse re-frames length/encoding, so drop those hop-by-hop headers.
+        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
+        response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
         async for chunk in upstream.content.iter_any():
             await response.write(chunk)
@@ -220,33 +238,44 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
     resolution is best-effort — a model with no verified caching provider (or no key
     to probe with) simply passes through uncached, but the proxy still runs."""
     client = aiohttp.ClientSession()
-    providers: dict[str, str | None] = {}
-    if "ANTHROPIC_AUTH_TOKEN" in os.environ and os.environ["ANTHROPIC_AUTH_TOKEN"]:
-        key = os.environ["ANTHROPIC_AUTH_TOKEN"]
-        models = [config.agent_model]
-        if "ANTHROPIC_SMALL_FAST_MODEL" in os.environ and os.environ["ANTHROPIC_SMALL_FAST_MODEL"]:
-            small_fast = os.environ["ANTHROPIC_SMALL_FAST_MODEL"]
-            if small_fast not in models:
-                models.append(small_fast)
-        for model in models:
-            providers[model] = await _resolve_provider(client, model, key)
-    else:
-        logger.warning("OpenRouter caching: no ANTHROPIC_AUTH_TOKEN to probe with; proxy passes through uncached")
-
-    app = web.Application()
-    app["providers"] = providers
-    app["session_id"] = f"vesta-{config.agent_name}"
-    app["client"] = client
-    app.on_cleanup.append(_close_client)
-    app.router.add_route("*", "/{tail:.*}", _handle)
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.SockSite(runner, sock).start()
+    started = False
+    try:
+        providers: dict[str, str | None] = {}
+        if "ANTHROPIC_AUTH_TOKEN" in os.environ and os.environ["ANTHROPIC_AUTH_TOKEN"]:
+            key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+            models = [config.agent_model]
+            if "ANTHROPIC_SMALL_FAST_MODEL" in os.environ and os.environ["ANTHROPIC_SMALL_FAST_MODEL"]:
+                small_fast = os.environ["ANTHROPIC_SMALL_FAST_MODEL"]
+                if small_fast not in models:
+                    models.append(small_fast)
+            # Probe models concurrently so boot isn't serialized across them.
+            resolved = await asyncio.gather(*(_resolve_provider(client, model, key) for model in models))
+            providers = dict(zip(models, resolved))
+        else:
+            logger.warning("OpenRouter caching: no ANTHROPIC_AUTH_TOKEN to probe with; proxy passes through uncached")
+
+        app = web.Application()
+        app["providers"] = providers
+        app["session_id"] = f"vesta-{config.agent_name}"
+        app["client"] = client
+        app.on_cleanup.append(_close_client)
+        app.router.add_route("*", "/{tail:.*}", _handle)
+
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT)
+        await runner.setup()
+        await web.SockSite(runner, sock).start()
+        started = True
+    finally:
+        if not started:
+            # Bring-up failed partway: close the session + listen socket so we don't
+            # leak them on the crash/restart that an unset proxy URL will trigger.
+            sock.close()
+            await client.close()
+
     state.cache_proxy_runner = runner
     state.openrouter_proxy_url = f"http://127.0.0.1:{port}"
     logger.startup(f"OpenRouter cache proxy listening on {state.openrouter_proxy_url}")
