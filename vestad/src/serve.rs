@@ -1757,7 +1757,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
-        .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/personalities", get(list_personalities_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
@@ -1822,11 +1821,21 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Gateway logs: accepts either API key or the agent's token (agent self-diagnosis)
+    let gateway_logs = Router::new()
+        .route("/gateway/logs", get(gateway_logs_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected)
         .merge(agents_services)
         .merge(agents_services_read)
+        .merge(gateway_logs)
         .merge(agents_proxy)
         .merge(crate::app_static::router())
         .layer(

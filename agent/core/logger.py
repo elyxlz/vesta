@@ -73,10 +73,6 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
         _file_handler.emit(clean_record)
 
 
-def _cat(symbol: str, color: str, prefix: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
-    _log(f"{symbol} [{color}][{prefix}][/{color}] {msg}", level=level)
-
-
 def _system_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
     _log(f"* [cyan][SYSTEM][/cyan] - [dim][{phase}][/dim] {msg}", level=level)
 

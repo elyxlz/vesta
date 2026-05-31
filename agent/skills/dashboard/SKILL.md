@@ -55,7 +55,7 @@ The dashboard is a high-density UI, not a standard app interface. Default shadcn
 
 **1. Typography**
 *   Default text: `text-sm`
-*   Secondary text / labels: `text-xs text-muted-foreground`
+*   Secondary text / labels: `text-xs text-muted-foreground`. Do NOT lower the opacity (no `text-muted-foreground/70`), especially on tiny labels like `text-[10px]`: it washes out and becomes unreadable on the dark theme.
 *   Large numbers only: `text-lg` or `text-xl font-semibold`
 *   Reserve `text-lg`+ for genuinely large numbers or when the user asks for it.
 

@@ -182,12 +182,12 @@ class EventBus:
     def tool_finished(self) -> None:
         self._active_tools = max(0, self._active_tools - 1)
 
-    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+    def _page(self, where_clause: str, params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
         if not self._conn or limit <= 0:
             return [], None
         rows = self._conn.execute(
-            "SELECT id, data FROM events ORDER BY id DESC LIMIT ?",
-            (limit + 1,),
+            f"SELECT id, data FROM events {where_clause}ORDER BY id DESC LIMIT ?",
+            (*params, limit + 1),
         ).fetchall()
         if not rows:
             return [], None
@@ -196,19 +196,11 @@ class EventBus:
         events = [json.loads(r[1]) for r in reversed(rows)]
         return events, rows[-1][0] if has_older else None
 
+    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+        return self._page("", (), limit)
+
     def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        if not self._conn or limit <= 0:
-            return [], None
-        rows = self._conn.execute(
-            "SELECT id, data FROM events WHERE id < ? ORDER BY id DESC LIMIT ?",
-            (cursor, limit + 1),
-        ).fetchall()
-        if not rows:
-            return [], None
-        has_older = len(rows) > limit
-        rows = rows[:limit]
-        events = [json.loads(r[1]) for r in reversed(rows)]
-        return events, rows[-1][0] if has_older else None
+        return self._page("WHERE id < ? ", (cursor,), limit)
 
     def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
         if not self._conn:

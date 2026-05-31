@@ -76,7 +76,7 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
 
 def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: vm.VestaConfig) -> None:
     """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
-    if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
+    if state.graceful_shutdown.is_set():
         return
     if task.cancelled():
         logger.error("message_processor cancelled unexpectedly — restarting")

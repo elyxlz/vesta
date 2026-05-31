@@ -10,7 +10,6 @@ export type AgentStatus =
 export interface ServiceInfo {
   port: number;
   rev: number;
-  scopes: string[];
 }
 
 export interface AgentInfo {

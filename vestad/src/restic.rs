@@ -365,41 +365,43 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
     tokio::time::timeout(
         std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-            // Best-effort removal of a previous restore image for this agent.
-            std::process::Command::new("docker")
-                .args(["rmi", "-f", &image_for_task])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .ok();
+            crate::docker::retry_import_pipeline("restic restore", || {
+                // Best-effort removal of a previous restore image for this agent.
+                std::process::Command::new("docker")
+                    .args(["rmi", "-f", &image_for_task])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .ok();
 
-            let mut dump_child = restic_command(&repo_name)?
-                .args(["dump", &backup_id, &tar_path])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| DockerError::Failed(format!("failed to start restic dump: {e}")))?;
+                let mut dump_child = restic_command(&repo_name)?
+                    .args(["dump", &backup_id, &tar_path])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| DockerError::Failed(format!("failed to start restic dump: {e}")))?;
 
-            let dump_stdout = dump_child.stdout.take()
-                .ok_or_else(|| DockerError::Failed("restic dump stdout not available".into()))?;
+                let dump_stdout = dump_child.stdout.take()
+                    .ok_or_else(|| DockerError::Failed("restic dump stdout not available".into()))?;
 
-            let import_output = std::process::Command::new("docker")
-                .args(["import", "-", &image_for_task])
-                .stdin(dump_stdout)
-                .output()
-                .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+                let import_output = std::process::Command::new("docker")
+                    .args(["import", "-", &image_for_task])
+                    .stdin(dump_stdout)
+                    .output()
+                    .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
 
-            let dump_output = dump_child.wait_with_output()
-                .map_err(|e| DockerError::Failed(format!("restic dump wait failed: {e}")))?;
-            if !dump_output.status.success() {
-                let stderr = String::from_utf8_lossy(&dump_output.stderr);
-                return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
-            }
-            if !import_output.status.success() {
-                let stderr = String::from_utf8_lossy(&import_output.stderr);
-                return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
-            }
-            Ok(())
+                let dump_output = dump_child.wait_with_output()
+                    .map_err(|e| DockerError::Failed(format!("restic dump wait failed: {e}")))?;
+                if !dump_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&dump_output.stderr);
+                    return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
+                }
+                if !import_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&import_output.stderr);
+                    return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
+                }
+                Ok(())
+            })
         }),
     )
     .await

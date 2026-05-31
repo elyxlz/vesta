@@ -98,6 +98,10 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - To add a new server: register with vestad to get a port, start it in a screen session, and add the command to the `## Services` section of `~/agent/skills/restart/SKILL.md`.
 - **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open, no auth token needed. Default is `false` (requires auth).
 
+### Self-diagnosis
+- Read the gateway (vestad) logs to debug gateway or container issues: `curl -sk "https://localhost:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"`
+- This returns the last N gateway log lines as Server-Sent Events, so parse the `data:` lines. It closes after the tail. Add `&follow=true` to keep streaming live.
+
 ### Self-Modification
 - Edit skills, prompts, MEMORY.md freely
 - **To change a config setting**: read `core/config.py` for all options and their env var names; set the env var in `~/.bashrc`, then call the `restart_vesta` MCP tool

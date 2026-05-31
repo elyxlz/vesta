@@ -77,7 +77,7 @@ STEALTH_ARGS = [
     "--autoplay-policy=user-gesture-required",
     "--disable-offer-store-unmasked-wallet-cards",
     "--disable-component-extensions-with-background-pages",
-    "--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance",
+    "--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance,SharedArrayBuffer",
     "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
     "--disable-features=AudioServiceOutOfProcess,TranslateUI,BlinkGenPropertyTrees",
 ]
@@ -216,6 +216,7 @@ def launch(
         "--disable-background-networking",
         "--disable-component-update",
         "--disable-features=Translate,MediaRouter",
+        "--enable-features=SharedArrayBuffer",
         "--disable-blink-features=AutomationControlled",
         "--disable-session-crashed-bubble",
         "--hide-crash-restore-bubble",
