@@ -11,8 +11,13 @@
 set -euo pipefail
 
 REPO="${HOME}"
-SPARSE_FILE="${REPO}/.git/info/sparse-checkout"
+SPARSE_FILE="$(git -C "$REPO" rev-parse --absolute-git-dir)/info/sparse-checkout"
 GUARD='!/agent/skills/*/'
+
+if [ ! -f "$SPARSE_FILE" ]; then
+  echo "error: $SPARSE_FILE missing; sparse-checkout is not initialised. Run upstream-sync SETUP first." >&2
+  exit 1
+fi
 
 if grep -qFx "$GUARD" "$SPARSE_FILE" 2>/dev/null; then
   echo "sparse-checkout already narrow; nothing to do"
