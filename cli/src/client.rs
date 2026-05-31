@@ -209,11 +209,13 @@ pub struct OpenRouterModel {
     pub slug: String,
     pub label: String,
     pub author: String,
-    /// USD per million prompt/completion tokens, when OpenRouter reports it.
+    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
     #[serde(default)]
     pub input_price: Option<f64>,
     #[serde(default)]
     pub output_price: Option<f64>,
+    #[serde(default)]
+    pub cache_read_price: Option<f64>,
 }
 
 impl Client {

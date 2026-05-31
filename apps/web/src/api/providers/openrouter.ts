@@ -5,9 +5,10 @@ export interface OpenRouterModelOption {
   label: string;
   author: string;
   context_length?: number;
-  // USD per million prompt/completion tokens, when OpenRouter reports it.
+  // USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
   input_price?: number | null;
   output_price?: number | null;
+  cache_read_price?: number | null;
 }
 
 export async function fetchTopModels(): Promise<OpenRouterModelOption[]> {

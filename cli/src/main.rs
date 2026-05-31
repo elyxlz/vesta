@@ -400,23 +400,34 @@ fn prompt_openrouter_interactive(c: &client::Client, preset_model: Option<String
     client::OpenRouterArgs { key, model }
 }
 
-/// Format a model's input/output price (USD per million tokens) for the picker
-/// list, or None when OpenRouter doesn't report pricing.
-fn fmt_model_price(input: Option<f64>, output: Option<f64>) -> Option<String> {
+/// Format a model's input/output/cache-read price (USD per million tokens) for the
+/// picker list, or None when OpenRouter doesn't report pricing. Cache read is shown
+/// only when present and non-zero.
+fn fmt_model_price(input: Option<f64>, output: Option<f64>, cache_read: Option<f64>) -> Option<String> {
     let (input, output) = (input?, output?);
-    if input == 0.0 && output == 0.0 {
+    if input == 0.0 && output == 0.0 && cache_read.unwrap_or(0.0) == 0.0 {
         return Some("free".to_string());
     }
-    Some(format!("{} in / {} out per Mtok", fmt_usd(input), fmt_usd(output)))
+    let mut price = format!("{} in / {} out", fmt_usd(input), fmt_usd(output));
+    if let Some(cache) = cache_read.filter(|c| *c > 0.0) {
+        price.push_str(&format!(" / {} cache read", fmt_usd(cache)));
+    }
+    price.push_str(" per Mtok");
+    Some(price)
 }
 
-/// `$0.10`, `$1.25`, `$15` — two decimals under a dollar, trailing zeros trimmed above.
+/// `$15`, `$1.25`, `$0.10`, `$0.0028` — two decimals in the cents range, trailing
+/// zeros trimmed at/above a dollar, and widened precision below a cent so tiny
+/// cache-read prices don't round away to `$0.00`.
 fn fmt_usd(price: f64) -> String {
-    let formatted = format!("${price:.2}");
-    if price >= 1.0 {
-        formatted.trim_end_matches('0').trim_end_matches('.').to_string()
+    if price == 0.0 {
+        "$0".to_string()
+    } else if price >= 1.0 {
+        format!("${price:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
+    } else if price >= 0.01 {
+        format!("${price:.2}")
     } else {
-        formatted
+        format!("${price:.4}").trim_end_matches('0').trim_end_matches('.').to_string()
     }
 }
 
@@ -430,7 +441,7 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
     };
     eprintln!("top models on OpenRouter this week:");
     for (idx, model) in models.iter().enumerate() {
-        match fmt_model_price(model.input_price, model.output_price) {
+        match fmt_model_price(model.input_price, model.output_price, model.cache_read_price) {
             Some(price) => eprintln!("  {:>2}) {} ({}) — {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
             None => eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug),
         }

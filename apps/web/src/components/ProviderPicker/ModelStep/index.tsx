@@ -223,8 +223,12 @@ function ModelCard({
           {model.context_length
             ? ` · ${formatContextLength(model.context_length)} ctx`
             : ""}
-          {formatPrice(model.input_price, model.output_price)
-            ? ` · ${formatPrice(model.input_price, model.output_price)}`
+          {formatPrice(
+            model.input_price,
+            model.output_price,
+            model.cache_read_price,
+          )
+            ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
             : ""}
         </span>
       </div>
@@ -240,17 +244,26 @@ function formatContextLength(n: number): string {
   return String(n);
 }
 
-// input/output price in USD per million tokens, or null when not reported.
+// input/output/cache-read price in USD per million tokens, or null when not
+// reported. Cache read is shown only when present and non-zero.
 function formatPrice(
   input?: number | null,
   output?: number | null,
+  cacheRead?: number | null,
 ): string | null {
   if (input == null || output == null) return null;
-  if (input === 0 && output === 0) return "free";
-  return `${formatUsd(input)}/${formatUsd(output)} Mtok`;
+  if (input === 0 && output === 0 && (cacheRead ?? 0) === 0) return "free";
+  let price = `${formatUsd(input)}/${formatUsd(output)} Mtok`;
+  if (cacheRead != null && cacheRead > 0) {
+    price += ` · ${formatUsd(cacheRead)} cache`;
+  }
+  return price;
 }
 
 function formatUsd(price: number): string {
+  if (price === 0) return "$0";
   if (price >= 1) return `$${price.toFixed(2).replace(/\.?0+$/, "")}`;
-  return `$${price.toFixed(2)}`;
+  if (price >= 0.01) return `$${price.toFixed(2)}`;
+  // sub-cent: widen precision so tiny cache-read prices don't vanish to $0.00.
+  return `$${price.toFixed(4).replace(/\.?0+$/, "")}`;
 }

@@ -15,9 +15,10 @@ pub struct TopModel {
     pub label: String,
     pub author: String,
     pub context_length: Option<u64>,
-    /// USD per million prompt/completion tokens, when OpenRouter reports it.
+    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +51,7 @@ struct FrontendEndpoint {
 struct FrontendPricing {
     prompt: Option<String>,
     completion: Option<String>,
+    input_cache_read: Option<String>,
 }
 
 // OpenRouter reports per-token prices as decimal strings; convert to USD per million.
@@ -82,9 +84,13 @@ pub async fn list_top_models_handler(
         .take(TOP_MODELS_LIMIT)
         .map(|m| {
             let pricing = m.endpoint.and_then(|e| e.pricing);
-            let (input_price, output_price) = match pricing {
-                Some(p) => (price_per_million(&p.prompt), price_per_million(&p.completion)),
-                None => (None, None),
+            let (input_price, output_price, cache_read_price) = match pricing {
+                Some(p) => (
+                    price_per_million(&p.prompt),
+                    price_per_million(&p.completion),
+                    price_per_million(&p.input_cache_read),
+                ),
+                None => (None, None, None),
             };
             TopModel {
                 label: m.short_name.or(m.name).unwrap_or_else(|| m.slug.clone()),
@@ -93,6 +99,7 @@ pub async fn list_top_models_handler(
                 context_length: m.context_length,
                 input_price,
                 output_price,
+                cache_read_price,
             }
         })
         .collect();
