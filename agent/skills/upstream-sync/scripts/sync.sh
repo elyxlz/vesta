@@ -88,6 +88,11 @@ if ! git diff --quiet -- agent/pyproject.toml agent/uv.lock 2>/dev/null; then
   git add --sparse agent/pyproject.toml agent/uv.lock 2>/dev/null || true
   git commit -q -m "chore: baseline bind-mount state" 2>/dev/null || true
 fi
+# Keep bind-mounted paths skip-worktree so the merge/reset never writes read-only
+# agent/core (the old "unable to unlink ... Read-only file system" wall of noise).
+if mount 2>/dev/null | grep -q '/root/agent/core '; then
+  git ls-files agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null | xargs -r git update-index --skip-worktree
+fi
 
 say "Narrow sparse cone"
 "$HERE/narrow-sparse-checkout.sh"

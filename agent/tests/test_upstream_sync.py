@@ -30,6 +30,7 @@ SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
 def _registry(names):
     return json.dumps([{"name": n} for n in sorted(names)], indent=2) + "\n"
 
+
 NARROW_HEADER = ["/agent/", "!/agent/core/", "!/agent/pyproject.toml", "!/agent/uv.lock", "!/agent/skills/*/", "/.gitignore"]
 
 BASE_ENV = {
