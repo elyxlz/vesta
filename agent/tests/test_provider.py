@@ -17,6 +17,7 @@ from core.provider import (
     observed_provider_failure,
     set_claude,
     set_openrouter,
+    set_openrouter_model,
 )
 from core.state_store import PersistedState, load_state
 
@@ -161,6 +162,26 @@ def test_set_openrouter_writes_and_flips_state(prov):
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
     assert "export AGENT_PROVIDER=openrouter\n" in content
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
+
+
+def test_set_openrouter_model_preserves_key(prov):
+    from core import provider as provider_mod
+
+    config, persisted = prov
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
+    status = set_openrouter_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
+    assert status.kind == "openrouter"
+    assert status.model == "anthropic/claude-sonnet-4.6"
+    content = provider_mod.PROVIDER_ENV_PATH.read_text()
+    # New model, same key.
+    assert "export AGENT_MODEL='anthropic/claude-sonnet-4.6'\n" in content
+    assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n" in content
+
+
+def test_set_openrouter_model_without_existing_provider_raises(prov):
+    config, persisted = prov
+    with pytest.raises(ValueError):
+        set_openrouter_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
 
 
 def test_observed_provider_failure_flips_state(prov):

@@ -88,6 +88,21 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
     return status
 
 
+def set_openrouter_model(model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Change only the model for an OpenRouter agent, preserving the stored key.
+    Lets the app switch models without the user re-entering the API key. Raises
+    if the agent isn't on OpenRouter or has no key on file to preserve."""
+    if not PROVIDER_ENV_PATH.exists():
+        raise ValueError("no OpenRouter provider configured")
+    content = PROVIDER_ENV_PATH.read_text()
+    if not _provider_declares_openrouter(content):
+        raise ValueError("agent is not running on OpenRouter")
+    key = _parse_first_export(content, "ANTHROPIC_AUTH_TOKEN")
+    if not key:
+        raise ValueError("no OpenRouter key on file to preserve")
+    return set_openrouter(key, model, config=config, persisted=persisted)
+
+
 def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
     """Called by the SDK response-stream handler on a terminal upstream auth/billing
     error (401 invalid auth, 402 insufficient credits). Returns the status flipped to

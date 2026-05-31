@@ -30,6 +30,28 @@ export async function setProvider(
   });
 }
 
+export interface ProviderInfo {
+  state: string;
+  kind: "claude" | "openrouter" | "none";
+  model: string | null;
+  setup_complete: boolean;
+}
+
+/// Read an agent's current provider (kind + model), proxied from the agent.
+export async function getProvider(name: string): Promise<ProviderInfo> {
+  return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
+}
+
+/// Change only the model for an OpenRouter agent, reusing the stored key.
+/// Vestad restarts the agent so the new model takes effect.
+export async function setModel(name: string, model: string): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ openrouter_model: model }),
+  });
+}
+
 /// Create an empty agent container. Provider config is sent separately via
 /// `setProvider` once the agent is up — vestad no longer accepts credentials
 /// at create time (the agent owns its own auth state).

@@ -655,6 +655,22 @@ async fn drop_rename_notification(
         .map_err(|e| e.to_string())
 }
 
+/// GET an existing agent's provider status (state/kind/model/setup_complete),
+/// proxied from the agent's `/provider/status`. Lets the web show the current
+/// provider and model (e.g. to offer a model switch) without owning that state.
+async fn get_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<agent_provider::ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .status()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
 /// Set or refresh an existing agent's provider config. Body is forwarded
 /// verbatim to the agent's `POST /provider` (the agent owns file writes and
 /// format knowledge). After the write succeeds, vestad restarts the container
@@ -1758,7 +1774,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", post(set_provider_handler))
+        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))

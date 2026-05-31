@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::docker::read_agent_port_and_token;
 
@@ -17,8 +17,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for provider writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Deserialize, Debug)]
-#[allow(dead_code)] // kind/model round out the API shape; read by future callers (logs, debugging).
+#[derive(Deserialize, Serialize, Debug)]
 pub struct ProviderStatus {
     pub state: String,
     pub kind: String,
