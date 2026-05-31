@@ -21,3 +21,10 @@ You own `agent/skills/`, `agent/MEMORY.md`, `agent/.gitignore`. Only installed s
 `agent/core/`, `agent/pyproject.toml`, `agent/uv.lock` are vestad's engine: read-only mounts, gitignored, never tracked or contributed. They update with the container image, not through git.
 
 First-time only: run [SETUP.md](SETUP.md) once, then `sync.sh` from then on.
+
+## Troubleshooting
+
+Old agents with a messed-up git setup (broad sparse cone, committed core, unrelated history) self-heal on the next `sync.sh`: it narrows the cone, untracks the vestad-managed paths, and merges. Expect real conflicts on the first run for owned files you'd edited, resolve and re-run.
+
+- **First sync hits many conflicts:** normal for a legacy/unrelated-history agent. They're only on files you actually changed; resolve each and re-run.
+- **Sync won't start ("not a git repository", empty `git status`, or tree looks stripped):** the workspace was never initialised or got wiped. Re-run [SETUP.md](SETUP.md), then `sync.sh`.
