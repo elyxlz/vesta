@@ -38,3 +38,17 @@ def test_build_client_options_drops_anthropic_features_for_openrouter(tmp_path, 
     assert thinking is not None and thinking["type"] == "disabled"
     assert options.model == "anthropic/claude-sonnet-4-6"
     assert options.env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+
+
+def test_build_client_options_passes_resolved_context_window(tmp_path, state):
+    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4")
+    state.openrouter_max_tokens = 1_000_000
+    options = build_client_options(config, state)
+    # Overrides claude-code's 200k default for non-Anthropic models (claude-code#46416).
+    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
+
+
+def test_build_client_options_omits_context_window_when_unresolved(tmp_path, state):
+    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4")
+    options = build_client_options(config, state)
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env

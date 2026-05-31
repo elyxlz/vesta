@@ -50,6 +50,10 @@ class State:
     # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: AppRunner | None = None
     provider_status: ProviderStatus | None = None
+    # OpenRouter model's real context window, resolved once at boot. claude-code
+    # assumes 200k for non-Anthropic models (claude-code#46416), so we pass it via
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS to fix premature autocompact. None = unresolved.
+    openrouter_max_tokens: int | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     processor_busy: bool = False

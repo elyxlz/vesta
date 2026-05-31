@@ -6,6 +6,8 @@ import os
 import signal
 import typing as tp
 
+import aiohttp
+
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -27,6 +29,38 @@ from .tools import build_vesta_tools_server
 
 # OpenRouter's Anthropic-compatible endpoint. The SDK appends /v1/messages.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+
+async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
+    """Look up the OpenRouter model's real context window. claude-code assumes a
+    200k window for non-Anthropic models (claude-code#46416), which makes
+    autocompact fire ~5x too early on a 1M model; passing the true value via
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes that. Returns None on any failure, so
+    claude-code falls back to its default — same behavior as before."""
+    if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                OPENROUTER_MODELS_URL,
+                headers={"Authorization": f"Bearer {os.environ['ANTHROPIC_AUTH_TOKEN']}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                body = await resp.json()
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        logger.warning(f"OpenRouter context-window lookup failed: {e}")
+        return None
+    models = body["data"] if isinstance(body, dict) and "data" in body else []
+    for entry in models:
+        if "id" in entry and entry["id"] == config.agent_model and "context_length" in entry:
+            ctx = entry["context_length"]
+            if isinstance(ctx, int) and ctx > 0:
+                return ctx
+    return None
+
 
 # Terminal upstream statuses that mean the provider can't be used as configured:
 # 401 (invalid/expired auth) and 402 (insufficient credits). Both flip the agent
@@ -246,6 +280,10 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     sdk_env: dict[str, str] = {}
     if is_openrouter:
         sdk_env["ANTHROPIC_BASE_URL"] = OPENROUTER_BASE_URL
+        # Tell claude-code the model's real window so autocompact uses the right
+        # threshold instead of its 200k default for non-Anthropic models.
+        if state.openrouter_max_tokens:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,

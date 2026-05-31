@@ -14,7 +14,7 @@ from watchfiles import awatch, Change
 from . import models as vm
 from . import logger
 from . import state_store
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .provider import CREDENTIALS_PATH
@@ -256,6 +256,10 @@ async def _run_messages_with_interrupts(
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
+    if config.agent_provider == "openrouter" and state.openrouter_max_tokens is None:
+        state.openrouter_max_tokens = await resolve_openrouter_max_tokens(config)
+        if state.openrouter_max_tokens:
+            logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens")
     options = build_client_options(config, state)
     retried = False
     while True:
