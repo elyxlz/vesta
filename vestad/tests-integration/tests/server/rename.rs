@@ -89,13 +89,25 @@ fn rename_drops_notification() {
     c.rename_agent(&old_name, &new_name).unwrap();
 
     let new_container = agent_container_name(&new_name);
-    let listing = exec_in_container(&new_container, "ls /root/agent/notifications/").unwrap();
-    let notif_file = listing
-        .lines()
-        .map(str::trim)
-        .find(|f| f.starts_with("rename-") && f.ends_with(".json"))
-        .unwrap_or_else(|| panic!("no rename-*.json notification found in:\n{listing}"))
-        .to_string();
+    // The notification is dropped after the renamed container comes back up, so
+    // the dir/file may not exist on first check on a slow CI runner. Poll until
+    // a rename-*.json appears rather than racing a single `ls`.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let notif_file = loop {
+        if let Ok(listing) = exec_in_container(&new_container, "ls /root/agent/notifications/") {
+            if let Some(found) = listing
+                .lines()
+                .map(str::trim)
+                .find(|f| f.starts_with("rename-") && f.ends_with(".json"))
+            {
+                break found.to_string();
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("no rename-*.json notification appeared in /root/agent/notifications/ within 60s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    };
 
     let body = exec_in_container(
         &new_container,
