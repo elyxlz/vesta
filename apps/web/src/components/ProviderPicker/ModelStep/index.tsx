@@ -31,7 +31,9 @@ export function ModelStep({
   submitLabel?: string;
 }) {
   const isFixed = models !== undefined;
-  const [model, setModelInternal] = useState(initialModel || models?.[0]?.slug || "");
+  const [model, setModelInternal] = useState(
+    initialModel || models?.[0]?.slug || "",
+  );
   const [query, setQuery] = useState("");
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
     models ?? null,

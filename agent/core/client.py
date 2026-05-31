@@ -156,7 +156,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             # `api_retry` fires once per backoff attempt; `ResultMessage` is the
             # terminal verdict. On either, flip provider state and interrupt the
             # SDK so the user doesn't sit through ~3min of retry storm.
-            if isinstance(msg, SystemMessage) and msg.subtype == "api_retry" and "error_status" in msg.data and msg.data["error_status"] in TERMINAL_PROVIDER_ERRORS:
+            if (
+                isinstance(msg, SystemMessage)
+                and msg.subtype == "api_retry"
+                and "error_status" in msg.data
+                and msg.data["error_status"] in TERMINAL_PROVIDER_ERRORS
+            ):
                 state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
                 logger.error(f"Upstream {msg.data['error_status']} detected; interrupting SDK to skip retry storm")
                 await attempt_interrupt(state, config=config, reason="auth_failed")

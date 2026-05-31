@@ -19,9 +19,24 @@ import { useModals } from "@/providers/ModalsProvider";
 
 // Claude OAuth exposes a small fixed set; the SDK takes these short aliases.
 const CLAUDE_MODELS: openrouterProvider.OpenRouterModelOption[] = [
-  { slug: "opus", label: "Claude Opus", author: "Anthropic", context_length: 200000 },
-  { slug: "sonnet", label: "Claude Sonnet", author: "Anthropic", context_length: 200000 },
-  { slug: "haiku", label: "Claude Haiku", author: "Anthropic", context_length: 200000 },
+  {
+    slug: "opus",
+    label: "Claude Opus",
+    author: "Anthropic",
+    context_length: 200000,
+  },
+  {
+    slug: "sonnet",
+    label: "Claude Sonnet",
+    author: "Anthropic",
+    context_length: 200000,
+  },
+  {
+    slug: "haiku",
+    label: "Claude Haiku",
+    author: "Anthropic",
+    context_length: 200000,
+  },
 ];
 
 /// Provider hub for an agent: shows the current provider + model, lets you
@@ -50,7 +65,9 @@ export function ProviderCard() {
       setOpen(false);
       refresh();
     } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "failed to change model");
+      setError(
+        (e as { message?: string })?.message || "failed to change model",
+      );
     } finally {
       setApplying(false);
     }
@@ -66,7 +83,9 @@ export function ProviderCard() {
           <span className="text-xs text-muted-foreground">
             {isOpenRouter ? "OpenRouter" : "Claude account"}
           </span>
-          <span className="text-sm break-all">{provider.model ?? "unknown"}</span>
+          <span className="text-sm break-all">
+            {provider.model ?? "unknown"}
+          </span>
         </div>
         <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
           change model
