@@ -95,12 +95,7 @@ class Bridge:
     async def _run_mcp(self, request: dict[str, tp.Any]) -> dict[str, tp.Any]:
         op = request["op"] if "op" in request else ""
         if op == "list":
-            return {
-                "tools": [
-                    {"name": d.name, "description": d.description, "inputSchema": d.input_schema}
-                    for d in self.tools.values()
-                ]
-            }
+            return {"tools": [{"name": d.name, "description": d.description, "inputSchema": d.input_schema} for d in self.tools.values()]}
         if op == "call":
             name = request["name"] if "name" in request else ""
             arguments = request["arguments"] if "arguments" in request and isinstance(request["arguments"], dict) else {}

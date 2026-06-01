@@ -89,7 +89,9 @@ def _thinking_env(options: ClaudeAgentOptions) -> dict[str, str]:
     return {}
 
 
-def _claude_args(options: ClaudeAgentOptions, *, session_id: str, resuming: bool, sysprompt_file: pl.Path, settings_file: pl.Path, mcp_file: pl.Path | None) -> list[str]:
+def _claude_args(
+    options: ClaudeAgentOptions, *, session_id: str, resuming: bool, sysprompt_file: pl.Path, settings_file: pl.Path, mcp_file: pl.Path | None
+) -> list[str]:
     args = ["claude"]
     if resuming:
         args += ["--resume", session_id]
@@ -279,11 +281,7 @@ class ClaudeSDKClient:
         env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         claude_cmd = " ".join(shlex.quote(a) for a in args)
         stderr = shlex.quote(str(self._stderr_path))
-        inner = (
-            f"{env_prefix} {claude_cmd} 2>{stderr}; "
-            f"printf '{_EXIT_MARKER}%s\\n' \"$?\" >>{stderr}; "
-            f"exec sleep 2147483647"
-        )
+        inner = f"{env_prefix} {claude_cmd} 2>{stderr}; printf '{_EXIT_MARKER}%s\\n' \"$?\" >>{stderr}; exec sleep 2147483647"
         await tmux.start_session(self._tmux_socket, self._tmux_session, cwd=self._cwd, command=inner)
 
     async def _await_ready(self) -> None:
@@ -350,7 +348,7 @@ class ClaudeSDKClient:
         for line in chunk.splitlines():
             if line.startswith(_EXIT_MARKER):
                 try:
-                    self._exit_code = int(line[len(_EXIT_MARKER):].strip())
+                    self._exit_code = int(line[len(_EXIT_MARKER) :].strip())
                 except ValueError:
                     self._exit_code = -1
                 self._transport._process.returncode = self._exit_code

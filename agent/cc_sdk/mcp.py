@@ -27,9 +27,7 @@ class McpServer:
     tools: list[ToolDef]
 
 
-def tool(
-    name: str, description: str, input_schema: dict[str, tp.Any]
-) -> tp.Callable[[ToolHandler], ToolDef]:
+def tool(name: str, description: str, input_schema: dict[str, tp.Any]) -> tp.Callable[[ToolHandler], ToolDef]:
     def decorator(handler: ToolHandler) -> ToolDef:
         return ToolDef(name=name, description=description, input_schema=input_schema, handler=handler)
 

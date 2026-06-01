@@ -26,9 +26,7 @@ async def _run(socket: str, *args: str, stdin: bytes | None = None) -> tuple[int
 
 
 async def start_session(socket: str, name: str, *, cwd: str, command: str, width: int = 220, height: int = 50) -> None:
-    rc, _, err = await _run(
-        socket, "new-session", "-d", "-s", name, "-x", str(width), "-y", str(height), "-c", cwd, "sh", "-c", command
-    )
+    rc, _, err = await _run(socket, "new-session", "-d", "-s", name, "-x", str(width), "-y", str(height), "-c", cwd, "sh", "-c", command)
     if rc != 0:
         raise RuntimeError(f"tmux new-session failed: {err.strip()}")
 
