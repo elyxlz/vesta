@@ -111,7 +111,10 @@ untrack_managed
 ensure_gitignored
 
 say "Checkpoint local work"
-git add agent/ --ignore-errors
+# --ignore-errors still exits non-zero when a path is outside the sparse cone (e.g. a
+# half-initialised cone), which would abort under `set -e`. Tolerate it: the checkpoint is
+# best-effort and the diff/commit below only acts on what actually staged.
+git add agent/ --ignore-errors >/dev/null 2>&1 || true
 git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | xargs -r git reset -q HEAD -- 2>/dev/null || true
 if ! git diff --cached --quiet; then
   git commit -q -m "chore: checkpoint before sync to $REF"

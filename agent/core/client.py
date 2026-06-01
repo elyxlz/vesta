@@ -296,7 +296,12 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
-        setting_sources=["project"],
+        # "user" enables discovery of ~/.claude/skills, where the entrypoint symlinks every
+        # installed skill (agent/skills/* + agent/core/skills/*); without it the Skill tool
+        # never sees them. "project" stays for CLAUDE.md loading. skills="all" turns the
+        # Skill tool on for every discovered skill (the single documented switch).
+        setting_sources=["user", "project"],
+        skills="all",
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
         thinking=ThinkingConfigDisabled(type="disabled") if is_openrouter else config.thinking,
         max_buffer_size=10 * 1024 * 1024,

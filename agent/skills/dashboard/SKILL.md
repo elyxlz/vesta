@@ -127,7 +127,8 @@ import { StarIcon } from "lucide-react"
 Rebuild, re-register with vestad, restart the preview server, and notify the Vesta app:
 
 ```bash
-cd ~/agent/skills/dashboard/app && npx vite build
+# First build only: node_modules is not baked into the image, so install deps once.
+cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
   -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -S dashboard -X quit 2>/dev/null
@@ -152,7 +153,7 @@ curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dash
 *   **Dashboard not showing?** `screen -ls | grep dashboard`
 *   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
 *   **Restart server:** Run the rebuild/restart block above.
-*   **Build failed or blank after deploy?** Run `cd ~/agent/skills/dashboard/app && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview.
+*   **Build failed or blank after deploy?** Run `cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview. `UNRESOLVED_IMPORT` / "Cannot find package" means deps were never installed, run `npm install` first.
 *   **Iframe stuck on an old build?** After a successful build and preview restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
 *   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
 *   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
