@@ -6,7 +6,7 @@ import time
 import typing as tp
 
 import pydantic as pyd
-from claude_agent_sdk import ClaudeSDKClient
+from cc_sdk import ClaudeSDKClient
 
 from .config import VestaConfig
 from .events import EventBus

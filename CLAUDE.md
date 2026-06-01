@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by the Claude Agent SDK. It monitors notifications, responds to messages, and handles tasks autonomously.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. Instead of the official Claude Agent SDK, the agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/cc_sdk/`, see its README) that exposes the same client surface.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Agent creation**: CLI/app -> `POST /agents` on vestad -> allocates unique WS port, generates agent token, writes `~/.config/vesta/vestad/agents/{agent}.env` -> builds/pulls Docker image -> creates container with host networking and bind-mounted env file (`/run/vestad-env`) -> container starts, sources env, runs `uv run python -m core.main` -> initializes EventBus (SQLite), starts WS server on allocated port, starts message processor and notification monitor tasks.
 
-**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls Claude Agent SDK (`client.query()`) -> streams response blocks (text, thinking, tool use) back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
+**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls the cc_sdk client (`client.query()`, which pastes the prompt into the tmux `claude` session) -> streams response blocks (text, thinking, tool use), reconstructed from the session transcript and native hooks, back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
 
 **Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
@@ -33,7 +33,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Auth**: vestad generates an API key at `~/.config/vesta/vestad/api-key` (clients use `Bearer` token or `?token=` query param). Each agent gets a unique `AGENT_TOKEN` for agent-to-vestad auth via `X-Agent-Token` header. TLS uses self-signed certs with fingerprint verification (no CA chain).
 
-**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are registered as tools via Claude Agent SDK. `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change.
+**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are loaded natively by Claude Code (via `setting_sources` + the skill directories). `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change.
 
 **Backup/restore**: each backup is a `restic` snapshot in a single deduplicated, compressed, encrypted repository at `~/.config/vesta/vestad/restic-repo` (passphrase at `~/.config/vesta/vestad/restic-password`). A snapshot is `docker export <container>` streamed into `restic backup --stdin`, tagged `agent:<name>` + `type:<backup_type>`; restore is `restic dump | docker import` into a fresh container. Because restic deduplicates, retaining many snapshots of a multi-GB agent costs roughly one full copy plus per-run diffs (the old `docker export|import` model wrote an independent full image per backup, which filled the host disk). `restic` is located on PATH or extracted from a copy embedded into the vestad binary at build time (`build.rs` vendors it into `vestad/vendored/`, `src/restic_embed.rs` bakes it in, `src/restic.rs` extracts it — same mechanism as cloudflared). Retention (3 daily, 2 weekly, 1 monthly default) is computed in `compute_backups_to_delete` and applied via `restic forget --prune`. The separate `vestad backup export/import` file path (`.tar.gz` via `docker export`) is unchanged and used for cross-machine transfer. All `~/agent/` state (events.db, session_id) survives backup/restore.
 

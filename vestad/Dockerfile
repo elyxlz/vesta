@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates tzdata gnupg screen && \
+    curl git ca-certificates tzdata gnupg screen tmux && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*

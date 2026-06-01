@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.2",
     "aiohttp>=3.13.5",
-    "claude-agent-sdk>=0.2.87",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "rich>=15.0.0",
@@ -35,7 +34,7 @@ pythonpath = [".", "skills"]
 
 
 [tool.ty.src]
-include = ["core", "tests"]
+include = ["core", "cc_sdk", "tests"]
 
 [tool.ty.environment]
 extra-paths = ["skills", "core/skills/app-chat/cli/src"]
