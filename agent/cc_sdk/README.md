@@ -55,3 +55,20 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
   `PYTHONSAFEPATH=1` so Python does not prepend their directory to `sys.path` — that
   would let `cc_sdk/types.py` shadow the stdlib `types` module and break them.
 - Requires `tmux` and the `claude` CLI on `PATH` (both installed in the agent image).
+- Running as root (the container default) needs `IS_SANDBOX=1` plus
+  `skipDangerousModePermissionPrompt` in `--settings`, or interactive claude blocks on
+  permission dialogs before `SessionStart` ever fires. Both are set automatically.
+
+## System prompt semantics
+
+`--system-prompt-file` replaces the entire ~27KB default Claude Code instruction body
+with `options.system_prompt` (verified by capturing the actual API request). The only
+remnant is a hardcoded one-line identity preamble that cannot be removed by any flag:
+
+- interactive (this SDK): `"You are Claude Code, Anthropic's official CLI for Claude."`
+- headless `--print` (the official SDK): `"You are a Claude agent, built on Anthropic's
+  Claude Agent SDK."`
+
+i.e. the official SDK never removed that line either — it just words it differently.
+The one mode that drops it (`--bare`) also disables hooks and OAuth auth, so it is not
+usable here.
