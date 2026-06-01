@@ -29,7 +29,12 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
 
 - **Prompts** are submitted by bracketed-pasting the text into the tmux pane and
   sending `Enter` (multi-line stays in the box; a single Enter submits; leading `/`
-  runs as a slash command). **Interrupt** sends `Escape`.
+  runs as a slash command). **Interrupt** sends a double `Escape`: the TUI's
+  escape-sequence parser buffers a lone ESC waiting for a follow-up byte that never
+  comes (verified against claude v2.1.159), so a second ESC is needed to flush the
+  first as a real keypress. An interrupted turn never fires its `Stop` hook (no late
+  Stop arrives either), so `interrupt()` credits the abandoned turn's Stop itself —
+  otherwise every later turn would wait for a Stop count it can never reach.
 - **Responses** are read by tailing the session transcript JSONL
   (`~/.claude/projects/<munged-cwd>/<session-id>.jsonl`); each main-agent `assistant`
   line becomes an `AssistantMessage` with the same block types as the SDK. A turn

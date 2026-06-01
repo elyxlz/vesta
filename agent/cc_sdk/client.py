@@ -8,7 +8,8 @@ protocol to a headless subprocess, it:
   * streams the assistant's reply by tailing the session transcript JSONL,
   * receives tool/subagent/compaction events as native command hooks routed through
     a unix-socket bridge, and exposes the agent's MCP tools via a stdio proxy,
-  * interrupts by sending Escape.
+  * interrupts by sending a double Escape (a lone ESC is swallowed by the TUI's
+    escape-sequence parser).
 
 The public surface (query / receive_response / interrupt / get_context_usage /
 session_id / async context manager) matches what core/ already calls.
@@ -223,7 +224,19 @@ class ClaudeSDKClient:
             await asyncio.sleep(_POLL_S)
 
     async def interrupt(self) -> None:
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Escape")
+        # Skip if the current turn already completed: at idle, Escapes don't interrupt
+        # anything and a double-Escape opens the TUI's rewind dialog instead.
+        if self._stops_received >= self._turn_index:
+            return
+        # A single ESC byte never registers: the TUI's escape-sequence parser buffers it
+        # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
+        # where a lone Escape let generation run to completion). Sending Escape twice
+        # flushes the first as a real Escape keypress and reliably interrupts.
+        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Escape", "Escape")
+        # An interrupted turn never fires its Stop hook (verified: no late Stop arrives
+        # either), so account for the abandoned turn here. Without this, every turn after
+        # an interrupt waits for a Stop count that can never be reached and hangs.
+        self._stops_received = max(self._stops_received, self._turn_index)
 
     async def get_context_usage(self) -> dict[str, tp.Any]:
         usage = self._last_usage or {}

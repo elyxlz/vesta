@@ -98,6 +98,49 @@ async def test_late_stop_does_not_complete_next_turn(tmp_path):
     assert client._stops_received >= threshold, "turn 2 completes only on its own Stop"
 
 
+# --- Interrupt: credits the abandoned turn's Stop and never fires Escapes at idle ---
+
+
+@pytest.mark.anyio
+async def test_interrupt_credits_missing_stop_and_double_escapes(tmp_path, monkeypatch):
+    """An interrupted turn never fires its Stop hook (verified against real claude), so
+    interrupt() must credit the missing Stop or every later turn hangs. The Escape must
+    be sent twice — the TUI's escape parser swallows a lone ESC."""
+    sent: list[tuple[str, ...]] = []
+
+    async def record_send_keys(socket: str, name: str, *keys: str) -> None:
+        sent.append(keys)
+
+    monkeypatch.setattr("cc_sdk.client.tmux.send_keys", record_send_keys)
+    client = _new_client(tmp_path)
+    client._turn_index = 3
+    client._stops_received = 2  # turns 1-2 completed, turn 3 in flight
+
+    await client.interrupt()
+    assert sent == [("Escape", "Escape")]
+    assert client._stops_received == 3
+
+
+@pytest.mark.anyio
+async def test_interrupt_at_idle_is_noop(tmp_path, monkeypatch):
+    """When the current turn already completed, Escapes must not be sent: at idle a
+    double-Escape opens the TUI's rewind dialog, and crediting another Stop would end
+    the next turn prematurely."""
+    sent: list[tuple[str, ...]] = []
+
+    async def record_send_keys(socket: str, name: str, *keys: str) -> None:
+        sent.append(keys)
+
+    monkeypatch.setattr("cc_sdk.client.tmux.send_keys", record_send_keys)
+    client = _new_client(tmp_path)
+    client._turn_index = 3
+    client._stops_received = 3  # turn 3 already completed
+
+    await client.interrupt()
+    assert sent == []
+    assert client._stops_received == 3
+
+
 # --- get_context_usage stays conservative until the larger window is proven active ---
 
 

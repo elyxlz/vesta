@@ -209,6 +209,60 @@ jobs:
             cd vestad
             cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
 
+  # ── Live agent e2e (real Claude, agent changes only) ─────────────────
+  # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
+  # secret (kept fresh by refresh-credentials.yml). The tests skip gracefully when
+  # the secret is unavailable (e.g. PRs from forks), so the job still passes there.
+  test-live:
+    needs: [version-check, detect-changes]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull agent image
+        run: docker pull ghcr.io/elyxlz/vesta:latest
+
+      - name: Write Claude credentials
+        env:
+          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
+        run: |
+          if [ -z "$CLAUDE_CREDENTIALS" ]; then
+            echo "CLAUDE_CREDENTIALS not available (fork PR?) — live tests will skip"
+            exit 0
+          fi
+          mkdir -p ~/.claude
+          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+
+      - name: Build vestad
+        working-directory: vestad
+        run: cargo build
+
+      - name: Run live e2e tests
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 40
+          max_attempts: 2
+          retry_wait_seconds: 30
+          shell: bash
+          command: |
+            cd vestad
+            cargo test -p vesta-tests --test live -- --test-threads=2
+
   # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
   check-vesta:
     needs: [version-check, detect-changes]
@@ -988,6 +1042,7 @@ jobs:
       - skills-index-check
       - test-frontend
       - test-integration
+      - test-live
       - check-vesta
       - build-vesta
       - build-vestad

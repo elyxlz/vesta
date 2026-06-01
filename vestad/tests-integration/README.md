@@ -29,9 +29,10 @@ tests/
     ports.rs        WS port uniqueness across users
     lifecycle.rs    independent stop/destroy across users
 
-  live/           live agent e2e — requires Claude credentials (3 tests)
+  live/           live agent e2e — requires Claude credentials (4 tests)
     common.rs       setup_live_agent, notifications, container helpers
     file_ops.rs     notification-driven file create/modify
+    mcp_tools.rs    in-conversation MCP tool use (cc_sdk stdio proxy + bridge with real claude)
     tree.rs         first-start migration (seeds old ~/vesta/ layout, verifies agent migrates it)
 
   oauth/          Anthropic OAuth endpoint reachability (4 tests)

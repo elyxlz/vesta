@@ -44,9 +44,10 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 ### Agent (run from `agent/`)
 
 ```bash
-uv run pytest tests/ --ignore=tests/test_e2e.py  # Unit tests
+uv run pytest tests/ --ignore=tests/test_e2e.py  # Unit + e2e transport tests
 uv run pytest tests/test_notifications.py         # Single module
 uv run pytest tests/ -k "test_batch"              # Single test by name
+uv run pytest tests/test_e2e_transport.py          # cc_sdk e2e (fake claude TUI in real tmux; requires tmux)
 uv run pytest skills/tasks/cli/tests/             # Skill CLI tests
 uv run ruff check                                 # Lint
 uv run ty check                                   # Type check
@@ -65,6 +66,7 @@ cd vestad && cargo build                   # Debug build
 cd vestad && cargo clippy -p vestad        # Lint vestad only (not tests-integration)
 cd vestad && cargo test -p vestad          # Unit tests
 cd vestad && cargo test -p vesta-tests     # Integration tests (requires Docker)
+cd vestad && cargo test -p vesta-tests --test live  # Live agent e2e (Docker + ~/.claude/.credentials.json; real Claude)
 ```
 
 ### Frontend (run from `apps/`)
@@ -116,7 +118,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/package.json`, `apps/mobile/src-tauri/Cargo.toml`, `apps/mobile/src-tauri/tauri.conf.json`, `apps/mobile/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
+Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/package.json`, `apps/mobile/src-tauri/Cargo.toml`, `apps/mobile/src-tauri/tauri.conf.json`, `apps/mobile/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest (incl. cc_sdk e2e transport tests under tmux), `uv.lock` freshness, and on agent changes a live agent e2e job (`test-live`) that runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` secret. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
 
 ## Karpathy Guidelines
 
