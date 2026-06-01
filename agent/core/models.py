@@ -50,9 +50,10 @@ class State:
     # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: AppRunner | None = None
     provider_status: ProviderStatus | None = None
-    # OpenRouter model's real context window, resolved once at boot. claude-code
-    # assumes 200k for non-Anthropic models (claude-code#46416), so we pass it via
-    # CLAUDE_CODE_MAX_CONTEXT_TOKENS to fix premature autocompact. None = unresolved.
+    # Effective context window passed via CLAUDE_CODE_MAX_CONTEXT_TOKENS: the OpenRouter
+    # model's real window (claude-code wrongly assumes 200k for non-Anthropic models,
+    # claude-code#46416) capped at config.max_context_tokens to bound prompt-cache read
+    # cost. Resolved once at boot. None = unresolved.
     openrouter_max_tokens: int | None = None
     # Local OpenRouter caching proxy: the SDK subprocess routes ANTHROPIC_BASE_URL here
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.

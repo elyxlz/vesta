@@ -259,9 +259,14 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
     logger.client("Creating new client session...")
     if config.agent_provider == "openrouter":
         if state.openrouter_max_tokens is None:
-            state.openrouter_max_tokens = await resolve_openrouter_max_tokens(config)
-            if state.openrouter_max_tokens:
-                logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens")
+            real_window = await resolve_openrouter_max_tokens(config)
+            if real_window:
+                # Cap at MAX_CONTEXT_TOKENS: cache-read cost scales with how large the
+                # cached prefix grows before autocompact, so big-window models default
+                # to a 200k working window unless the user raises the cap.
+                state.openrouter_max_tokens = min(real_window, config.max_context_tokens)
+                capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
+                logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
         if state.openrouter_proxy_url is None:
             await start_cache_proxy(config, state)
     options = build_client_options(config, state)

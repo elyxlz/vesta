@@ -32,9 +32,10 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     """Look up the OpenRouter model's real context window. claude-code assumes a
-    200k window for non-Anthropic models (claude-code#46416), which makes
-    autocompact fire ~5x too early on a 1M model; passing the true value via
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes that. Returns None on any failure, so
+    200k window for non-Anthropic models (claude-code#46416), so the value passed
+    via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
+    The caller caps this at config.max_context_tokens before passing it to the SDK
+    (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default — same behavior as before."""
     if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
         return None

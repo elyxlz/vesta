@@ -15,6 +15,19 @@ def test_config_defaults_to_claude(tmp_path):
     assert config.agent_provider == "claude"
 
 
+def test_config_max_context_tokens_defaults_to_200k(tmp_path):
+    """Big-window models are capped to a 200k working window by default: cache-read
+    cost scales with how large the cached prefix grows before autocompact."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    assert config.max_context_tokens == 200_000
+
+
+def test_config_max_context_tokens_env_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "400000")
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    assert config.max_context_tokens == 400_000
+
+
 def _config_with_memory(tmp_path, **overrides):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", **overrides)
     config.agent_dir.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,9 @@ class VestaConfig(pyd_settings.BaseSettings):
         PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
         NIGHTLY_MEMORY_HOUR      - hour 0-23 for nightly dream, unset to disable (default: 3)
         RESPONSE_TIMEOUT         - max seconds for a single response (default: 600)
+        MAX_CONTEXT_TOKENS       - cap on the context window passed to claude-code; smaller =
+                                   cheaper prompt-cache reads, larger = more context before
+                                   autocompact (default: 200000)
     """
 
     model_config = pyd_settings.SettingsConfigDict(extra="ignore", populate_by_name=True)
@@ -35,6 +38,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)
+    max_context_tokens: int = pyd.Field(default=200_000, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
     thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ThinkingConfigAdaptive(
