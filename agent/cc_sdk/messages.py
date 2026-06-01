@@ -114,3 +114,7 @@ class ClaudeAgentOptions:
     stderr: tp.Callable[[str], None] | None = None
     mcp_servers: dict[str, tp.Any] = dc.field(default_factory=dict)
     resume: str | None = None
+    # "all" enables the Skill tool for every skill discovered via setting_sources.
+    # Interactive Claude Code already does this by default, so the value is accepted
+    # for parity but needs no extra CLI flag.
+    skills: str | None = None
