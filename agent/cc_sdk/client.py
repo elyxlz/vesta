@@ -271,7 +271,12 @@ class ClaudeSDKClient:
         for event in self._hook_events():
             command = f"PYTHONSAFEPATH=1 {py} {shlex.quote(str(_FORWARD))} {shlex.quote(event)} {shlex.quote(self._sock_path)}"
             hooks[event] = [{"matcher": "*", "hooks": [{"type": "command", "command": command}]}]
-        (self._workdir / "settings.json").write_text(json.dumps({"hooks": hooks}))
+        # skipDangerousModePermissionPrompt suppresses the one-time "Bypass Permissions mode"
+        # acceptance dialog that interactive Claude Code shows on first use — without it the TUI
+        # blocks at that prompt forever and SessionStart never fires. (The headless SDK never hit
+        # this because dialogs are interactive-only.)
+        settings = {"skipDangerousModePermissionPrompt": True, "hooks": hooks}
+        (self._workdir / "settings.json").write_text(json.dumps(settings))
         if self._bridge.tools:
             mcp = {
                 "mcpServers": {
@@ -299,7 +304,10 @@ class ClaudeSDKClient:
             settings_file=settings_file,
             mcp_file=mcp_file,
         )
-        env = {"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+        # IS_SANDBOX=1 is required for bypassPermissions to work when the agent runs as root
+        # (the default in the container) — Claude Code otherwise refuses skip/bypass permissions
+        # under root for safety. The agent's container is exactly that isolated sandbox.
+        env = {"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "IS_SANDBOX": "1"}
         env.update(_thinking_env(self._options))
         env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         claude_cmd = " ".join(shlex.quote(a) for a in args)

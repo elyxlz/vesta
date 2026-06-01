@@ -52,6 +52,8 @@ def test_hook_commands_carry_safepath_guard(tmp_path):
     client = _new_client(tmp_path, hooks={})
     client._write_config_files()
     settings = json.loads((client._workdir / "settings.json").read_text())
+    # Suppresses the interactive bypass-mode acceptance dialog (blocks first-start as root otherwise).
+    assert settings["skipDangerousModePermissionPrompt"] is True
     # SessionStart + Stop are always wired even with no user hooks.
     for entries in settings["hooks"].values():
         command = entries[0]["hooks"][0]["command"]
