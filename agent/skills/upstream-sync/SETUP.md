@@ -4,25 +4,13 @@ First-time only. The ongoing flow lives in [SKILL.md](SKILL.md) (`sync.sh`).
 
 ## 1. Init
 
-`$AGENT_NAME` and `$VESTA_UPSTREAM_REF` are in `/run/vestad-env`.
+`$AGENT_NAME` and `$VESTA_UPSTREAM_REF` are in `/run/vestad-env`. Run the init script (idempotent):
 
 ```bash
-cd ~
-git init
-git remote add origin https://github.com/elyxlz/vesta.git
-git sparse-checkout init --no-cone
-{
-  printf '%s\n' '/agent/' '!/agent/core/' '!/agent/pyproject.toml' '!/agent/uv.lock' '!/agent/skills/*/' '/.gitignore'
-  for d in agent/skills/*/; do
-    [ -d "$d" ] && printf '/%s\n' "$d"
-  done
-} > .git/info/sparse-checkout
-git config user.name "$AGENT_NAME"
-git config user.email "$AGENT_NAME@vesta"
-git checkout -b "$AGENT_NAME"
+~/agent/skills/upstream-sync/scripts/init.sh
 ```
 
-`agent/skills/*/` is opt-in: only skills already on disk (the defaults baked into the image) are re-included. New upstream skills land in `agent/skills/index.json` (the registry) but stay off disk until `skills-install` adds them.
+It inits the repo, sets the remote, pins the sparse-checkout cone, configures your identity, and creates your branch. Do not hand-write the cone: `init.sh` builds the patterns with `find` so they stay repo-relative regardless of cwd. `agent/skills/*/` is opt-in: only skills already on disk (the defaults baked into the image) are re-included. New upstream skills land in `agent/skills/index.json` (the registry) but stay off disk until `skills-install` adds them.
 
 ## 2. Local ignores (bulky files only)
 
