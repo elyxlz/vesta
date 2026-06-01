@@ -128,7 +128,11 @@ class ClaudeSDKClient:
         self._bridge = Bridge(socket_path=self._sock_path, hooks=options.hooks, log=self._log)
         self._transcript_path: pl.Path | None = None
         self._offset = 0
-        self._turn_end: asyncio.Event | None = None
+        # Turns are matched to Stop hooks by COUNT, not by a shared event: the Nth Stop
+        # completes the Nth turn. A late Stop from an interrupted prior turn then only
+        # advances the count toward the current turn's threshold instead of ending it early.
+        self._turn_index = 0
+        self._stops_received = 0
         self._turn_started = 0.0
         self._last_usage: dict[str, tp.Any] | None = None
         self._exit_code: int | None = None
@@ -144,25 +148,37 @@ class ClaudeSDKClient:
         return self._session_id
 
     async def __aenter__(self) -> "ClaudeSDKClient":
-        _preseed_config(self._cwd)
-        self._register_internal_hooks()
-        for server in self._options.mcp_servers.values():
-            if isinstance(server, McpServer):
-                self._bridge.register_tools(server.tools)
-        await self._bridge.start()
-        self._write_config_files()
-        await self._launch()
-        self._monitor_task = asyncio.create_task(self._monitor())
-        await self._await_ready()
+        try:
+            _preseed_config(self._cwd)
+            self._register_internal_hooks()
+            for server in self._options.mcp_servers.values():
+                if isinstance(server, McpServer):
+                    self._bridge.register_tools(server.tools)
+            await self._bridge.start()
+            self._write_config_files()
+            await self._launch()
+            self._monitor_task = asyncio.create_task(self._monitor())
+            await self._await_ready()
+        except BaseException:
+            # __aexit__ is NOT called when __aenter__ raises, so a failed startup
+            # (e.g. resume failure) would otherwise leak the tmux server, the claude
+            # process, the bridge socket, the monitor task, and the temp dir — once per
+            # resume retry. Tear everything down before propagating.
+            await self._cleanup()
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        await self._cleanup()
+
+    async def _cleanup(self) -> None:
         if self._monitor_task is not None:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
+            self._monitor_task = None
         await tmux.kill_server(self._tmux_socket)
         await self._bridge.stop()
         for child in self._workdir.glob("*"):
@@ -184,7 +200,7 @@ class ClaudeSDKClient:
             self._offset = self._transcript_path.stat().st_size
         else:
             self._offset = 0
-        self._turn_end = asyncio.Event()
+        self._turn_index += 1
         self._turn_started = time.monotonic()
         await tmux.paste_text(self._tmux_socket, self._tmux_session, prompt)
         await asyncio.sleep(0.1)
@@ -193,10 +209,11 @@ class ClaudeSDKClient:
     async def receive_response(self) -> tp.AsyncIterator[tp.Any]:
         if self._transcript_path is None:
             return
+        threshold = self._turn_index
         while True:
             for msg in self._drain():
                 yield msg
-            if self._turn_end is not None and self._turn_end.is_set():
+            if self._stops_received >= threshold:
                 async for msg in self._post_stop_drain():
                     yield msg
                 yield self._make_result()
@@ -212,7 +229,13 @@ class ClaudeSDKClient:
         usage = self._last_usage or {}
         keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
         total = sum(usage[k] for k in keys if k in usage and isinstance(usage[k], int))
-        max_tokens = 1_000_000 if _BETA_1M in self._options.betas else _DEFAULT_MAX_TOKENS
+        # Don't assume the 1M beta took effect (it is silently ignored on some auth modes).
+        # Stay on the conservative 200k ceiling until usage actually exceeds it — which can
+        # only happen if the larger window is really active — so the overflow warning in
+        # diagnostics.log_context_usage still fires near the real limit instead of never.
+        max_tokens = _DEFAULT_MAX_TOKENS
+        if _BETA_1M in self._options.betas and total > _DEFAULT_MAX_TOKENS:
+            max_tokens = 1_000_000
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
@@ -225,8 +248,7 @@ class ClaudeSDKClient:
             self._ready.set()
 
         async def on_stop(payload: dict[str, tp.Any]) -> None:
-            if self._turn_end is not None:
-                self._turn_end.set()
+            self._stops_received += 1
 
         self._bridge.on("SessionStart", on_session_start)
         self._bridge.on("Stop", on_stop)
@@ -239,10 +261,11 @@ class ClaudeSDKClient:
     def _write_config_files(self) -> None:
         sysprompt = self._options.system_prompt or ""
         (self._workdir / "system_prompt.txt").write_text(sysprompt)
-        # PYTHONSAFEPATH stops Python from prepending the script's own directory (cc_sdk/)
-        # to sys.path, which would otherwise shadow the stdlib `types` module with cc_sdk/types.py
-        # and break these stdlib-only helpers. The agent process itself is unaffected (it imports
-        # cc_sdk as a package, never runs these by path).
+        # PYTHONSAFEPATH stops Python from prepending the script's own directory (cc_sdk/) to
+        # sys.path. That is the general guard so no cc_sdk module can shadow a stdlib module for
+        # these stdlib-only helpers when claude runs them by path (cc_sdk/types.py would otherwise
+        # shadow stdlib `types`). The agent process is unaffected — it imports cc_sdk as a package.
+        # test_cc_sdk.py asserts this guard is always emitted and that the helpers import cleanly.
         py = shlex.quote(sys.executable)
         hooks: dict[str, tp.Any] = {}
         for event in self._hook_events():
