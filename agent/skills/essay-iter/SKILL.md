@@ -81,14 +81,14 @@ for round = 1, 2, 3, ...:
 ## File layout
 
 ```
-/root/agent/skills/essay-iter/
+~/agent/skills/essay-iter/
   SKILL.md                  (this file)
   gptzero.py                (reverse-engineered AI detector)
   rubric_prompt.md          (sub-agent A prompt template)
   adversarial_prompt.md     (sub-agent B prompt template)
   citation_prompt.md        (sub-agent C prompt template)
 
-/root/.tasks/metadata/<task_id>_essay/
+~/.tasks/metadata/<task_id>_essay/
   approach.md               (locked plan from Phase 1)
   references/<n>.{md,pdf}   (in-distribution corpus)
   rubric.md                 (operative rubric)

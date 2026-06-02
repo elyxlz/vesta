@@ -55,8 +55,10 @@ jobs:
 
   # ── Version check ──────────────────────────────────────────────────────
   # Same skip as detect-changes; version-check has no `needs:` so the gate
-  # has to be explicit here. All build-* and check-* jobs `needs:` either
-  # detect-changes or version-check, so the skip cascades to them.
+  # has to be explicit here. Jobs with a plain `if:` skip automatically when
+  # their needs are skipped. Jobs using `!failure() && !cancelled()` opt out
+  # of that cascade, so they must also gate on
+  # `needs.detect-changes.result == 'success'` explicitly.
   version-check:
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
@@ -523,7 +525,8 @@ jobs:
   build-windows:
     needs: [version-check, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       needs.detect-changes.outputs.cli == 'true' ||
       github.event_name != 'pull_request'
       )
@@ -574,7 +577,8 @@ jobs:
   build-tauri-macos:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
@@ -648,7 +652,8 @@ jobs:
   build-tauri-linux:
     needs: [test-frontend, detect-changes, build-vestad]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
@@ -736,7 +741,8 @@ jobs:
   build-tauri-windows:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
@@ -814,7 +820,8 @@ jobs:
   build-tauri-android:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
@@ -936,7 +943,8 @@ jobs:
   build-tauri-ios:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
