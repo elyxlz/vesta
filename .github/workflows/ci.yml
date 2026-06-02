@@ -211,13 +211,15 @@ jobs:
             cd vestad
             cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
 
-  # ── Live agent e2e (real Claude, agent changes only) ─────────────────
+  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────────────────
   # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
-  # secret (kept fresh by refresh-credentials.yml). The tests skip gracefully when
-  # the secret is unavailable (e.g. PRs from forks), so the job still passes there.
+  # secret (kept fresh by refresh-credentials.yml). These are slow and spend real
+  # API tokens, so they do NOT run on PRs or master pushes — only on the release
+  # event, where they gate the release (the `release` and `push-image` jobs depend
+  # on this one, so a live-test failure blocks publishing artifacts and the image).
   test-live:
-    needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
+    needs: [version-check]
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -240,14 +242,15 @@ jobs:
 
       # The token must outlive the whole test run (so agents never need to refresh it
       # in-container — only refresh-credentials.yml may ever refresh this lineage).
-      # A stale/invalid secret degrades to a loud warning + skipped live tests rather
-      # than a red gate: infra rot must not block unrelated PRs.
+      # A MISSING secret (forks have no repo secrets) skips the live tests; a PRESENT
+      # but stale/malformed secret FAILS the release — it means the refresh-credentials
+      # pipeline is broken and we must not ship without live coverage having run.
       - name: Write Claude credentials
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
           if [ -z "$CLAUDE_CREDENTIALS" ]; then
-            echo "::warning::CLAUDE_CREDENTIALS not available (fork PR?) — live e2e tests will skip"
+            echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
             exit 0
           fi
           remaining=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
@@ -256,12 +259,12 @@ jobs:
           print(int(creds['claudeAiOauth']['expiresAt']/1000 - time.time()))
           " 2>/dev/null || echo "invalid")
           if [ "$remaining" = "invalid" ]; then
-            echo "::warning::CLAUDE_CREDENTIALS is malformed — live e2e tests will skip"
-            exit 0
+            echo "::error::CLAUDE_CREDENTIALS is malformed — re-seed it (see vestad/tests-integration/README.md)"
+            exit 1
           fi
           if [ "$remaining" -lt 3600 ]; then
-            echo "::warning::CLAUDE_CREDENTIALS access token expires in ${remaining}s (<1h) — live e2e tests will skip. Check the refresh-credentials workflow."
-            exit 0
+            echo "::error::CLAUDE_CREDENTIALS expires in ${remaining}s (<1h). The refresh-credentials workflow should keep it >=2h valid; it is broken or its GH_PAT lost secret access. Fix the pipeline before releasing."
+            exit 1
           fi
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
@@ -1068,7 +1071,6 @@ jobs:
       - skills-index-check
       - test-frontend
       - test-integration
-      - test-live
       - check-vesta
       - build-vesta
       - build-vestad
@@ -1090,8 +1092,10 @@ jobs:
           fi
 
   # ── Push Docker image (release only) ─────────────────────────────────
+  # Gated on test-live: a live-test failure (via !failure() over needs) skips the
+  # image push, so a broken agent is never published to :latest.
   push-image:
-    needs: [test-linux]
+    needs: [test-linux, test-live]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
@@ -1122,7 +1126,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
