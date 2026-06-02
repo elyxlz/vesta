@@ -10,15 +10,35 @@ inside the agent process. Usage:
 import json
 import socket
 import sys
+import time
 import typing as tp
 
 _DEFAULT_PROTOCOL = "2025-06-18"
+# Retry the bridge connect briefly: claude can spawn this proxy and fire its startup
+# tools/list before the agent's bridge socket is accepting, especially under first-start
+# load. A failed connect here makes claude mark the whole MCP server dead for the session,
+# so a few retries are the difference between working tools and silently-missing tools.
+_CONNECT_RETRIES = 40
+_CONNECT_BACKOFF_S = 0.25
+
+
+def _connect(sock_path: str) -> socket.socket:
+    last_err: OSError | None = None
+    for _ in range(_CONNECT_RETRIES):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(60)
+        try:
+            client.connect(sock_path)
+            return client
+        except (FileNotFoundError, ConnectionRefusedError, OSError) as exc:
+            last_err = exc
+            client.close()
+            time.sleep(_CONNECT_BACKOFF_S)
+    raise last_err if last_err is not None else OSError(f"could not connect to {sock_path}")
 
 
 def _bridge(sock_path: str, payload: dict[str, tp.Any]) -> dict[str, tp.Any]:
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(60)
-    client.connect(sock_path)
+    client = _connect(sock_path)
     try:
         client.sendall((json.dumps(payload) + "\n").encode())
         buf = b""

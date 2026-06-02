@@ -11,13 +11,32 @@ Always exits 0: a hook failure must never wedge the model's turn.
 import json
 import socket
 import sys
+import time
 import typing as tp
+
+# A few connect retries: under first-start load the bridge socket can momentarily refuse,
+# and a dropped SessionStart hook stalls startup until the whole session is retried.
+_CONNECT_RETRIES = 12
+_CONNECT_BACKOFF_S = 0.25
+
+
+def _connect(sock_path: str) -> socket.socket:
+    last_err: OSError | None = None
+    for _ in range(_CONNECT_RETRIES):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(15)
+        try:
+            client.connect(sock_path)
+            return client
+        except (FileNotFoundError, ConnectionRefusedError, OSError) as exc:
+            last_err = exc
+            client.close()
+            time.sleep(_CONNECT_BACKOFF_S)
+    raise last_err if last_err is not None else OSError(f"could not connect to {sock_path}")
 
 
 def _request(sock_path: str, payload: dict[str, object]) -> dict[str, object]:
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(15)
-    client.connect(sock_path)
+    client = _connect(sock_path)
     try:
         client.sendall((json.dumps(payload) + "\n").encode())
         buf = b""

@@ -229,6 +229,57 @@ async def test_mcp_tool_roundtrip_runs_handler_in_process(sandbox: Sandbox) -> N
 
 
 @pytest.mark.anyio
+async def test_startup_verifies_mcp_registration(sandbox: Sandbox) -> None:
+    """Reaching the input box proves the MCP server registered: claude lists the server's
+    tools at startup and the bridge records that contact. This is the positive side of the
+    health check that test_startup_aborts_when_mcp_never_registers exercises negatively."""
+
+    @cc_sdk.tool("noop", "Does nothing", {"type": "object"})
+    async def noop(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    server = cc_sdk.create_sdk_mcp_server("vesta", tools=[noop])
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), mcp_servers={"vesta": server})
+    async with ClaudeSDKClient(options=options) as client:
+        assert client._bridge._mcp_connected is not None and client._bridge._mcp_connected.is_set()
+
+
+@pytest.mark.anyio
+async def test_startup_aborts_when_mcp_never_registers(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The charbel regression: claude comes up but never registers the MCP server, so its
+    tools (mark_setup_done, ...) are silently absent. Startup must FAIL fast instead of
+    handing back a client whose control tools don't exist."""
+    monkeypatch.setenv("FAKE_CLAUDE_SKIP_MCP", "1")
+    monkeypatch.setattr("cc_sdk.client._MCP_CONNECT_TIMEOUT_S", 3.0)
+
+    @cc_sdk.tool("mark_setup_done", "Marks setup done", {"type": "object"})
+    async def mark_setup_done(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return {"content": [{"type": "text", "text": "done"}]}
+
+    server = cc_sdk.create_sdk_mcp_server("vesta", tools=[mark_setup_done])
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), mcp_servers={"vesta": server})
+    client = ClaudeSDKClient(options=options)
+    with pytest.raises(ClaudeSDKError) as exc_info:
+        await client.__aenter__()
+    assert "MCP" in str(exc_info.value) and "mark_setup_done" in str(exc_info.value)
+
+    # Failed startup must not leak the tmux server, bridge socket, or temp dir.
+    assert not client._workdir.exists()
+    assert not await cc_tmux.has_session(client._tmux_socket, client._tmux_session)
+
+
+@pytest.mark.anyio
+async def test_startup_ok_without_mcp_when_no_tools(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No MCP tools configured -> no registration to wait for -> startup proceeds normally."""
+    monkeypatch.setattr("cc_sdk.client._MCP_CONNECT_TIMEOUT_S", 3.0)
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd))
+    async with ClaudeSDKClient(options=options) as client:
+        await client.query("hello")
+        messages = await collect_with_timeout(client)
+        assert "echo: hello" in texts_of(messages)
+
+
+@pytest.mark.anyio
 async def test_user_hooks_dispatched_through_bridge(sandbox: Sandbox) -> None:
     """Native command hooks -> _forward.py -> unix socket -> registered HookMatcher callbacks."""
     received: list[tuple[dict[str, tp.Any], tp.Any]] = []

@@ -122,10 +122,10 @@ def text_blocks(text: str) -> list[dict[str, typing.Any]]:
     return [{"type": "text", "text": text}]
 
 
-def call_mcp(ctx: dict[str, typing.Any], name: str, arguments: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    """Spawn the configured MCP stdio server and round-trip a tool call, like the real TUI."""
+def _mcp_session(ctx: dict[str, typing.Any]):
+    """Open a JSON-RPC session to the configured MCP stdio server; returns (proc, rpc) or None."""
     if ctx["mcp_config"] is None:
-        return {"error": "no --mcp-config given"}
+        return None
     servers = ctx["mcp_config"]["mcpServers"]
     server = servers[sorted(servers)[0]]
     env = dict(os.environ)
@@ -134,7 +134,8 @@ def call_mcp(ctx: dict[str, typing.Any], name: str, arguments: dict[str, typing.
     proc = subprocess.Popen([server["command"], *server["args"]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, text=True)
     stdin, stdout = proc.stdin, proc.stdout
     if stdin is None or stdout is None:
-        return {"error": "mcp server pipes missing"}
+        proc.kill()
+        return None
 
     def rpc(method: str, params: dict[str, typing.Any], request_id: int | None = None) -> dict[str, typing.Any]:
         message: dict[str, typing.Any] = {"jsonrpc": "2.0", "method": method, "params": params}
@@ -146,11 +147,40 @@ def call_mcp(ctx: dict[str, typing.Any], name: str, arguments: dict[str, typing.
             return {}
         return json.loads(stdout.readline())
 
+    return proc, rpc
+
+
+def register_mcp(ctx: dict[str, typing.Any]) -> None:
+    """Mirror the real TUI: connect to the MCP server at startup and list its tools.
+
+    This is the bridge's registration health signal — the cc_sdk client waits for this
+    startup tools/list and aborts if it never arrives. FAKE_CLAUDE_SKIP_MCP simulates the
+    real-world failure where claude never registers the server (tools silently missing).
+    """
+    if ctx["mcp_config"] is None or "FAKE_CLAUDE_SKIP_MCP" in os.environ:
+        return
+    session = _mcp_session(ctx)
+    if session is None:
+        return
+    proc, rpc = session
+    rpc("initialize", {"protocolVersion": "2025-06-18"}, request_id=1)
+    rpc("notifications/initialized", {})
+    rpc("tools/list", {}, request_id=2)
+    proc.stdin.close()
+    proc.wait(timeout=10)
+
+
+def call_mcp(ctx: dict[str, typing.Any], name: str, arguments: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Spawn the configured MCP stdio server and round-trip a tool call, like the real TUI."""
+    session = _mcp_session(ctx)
+    if session is None:
+        return {"error": "no --mcp-config given"}
+    proc, rpc = session
     rpc("initialize", {"protocolVersion": "2025-06-18"}, request_id=1)
     rpc("notifications/initialized", {})
     listed = rpc("tools/list", {}, request_id=2)
     called = rpc("tools/call", {"name": name, "arguments": arguments}, request_id=3)
-    stdin.close()
+    proc.stdin.close()
     proc.wait(timeout=10)
     return {"tools": listed["result"]["tools"], "result": called["result"]}
 
@@ -324,6 +354,8 @@ def main() -> None:
     sys.stdout.flush()
 
     fire_hook(ctx, "SessionStart", {"source": "resume" if resuming else "startup", "model": flags["model"] if "model" in flags else "fake"})
+    # Real claude connects to each --mcp-config server and lists its tools at startup.
+    register_mcp(ctx)
     read_loop(ctx)
 
 

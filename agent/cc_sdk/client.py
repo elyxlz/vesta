@@ -39,6 +39,7 @@ _MCP_STDIO = _PKG_DIR / "_mcp_stdio.py"
 
 _EXIT_MARKER = "__CC_EXIT__:"
 _STARTUP_TIMEOUT_S = 120.0
+_MCP_CONNECT_TIMEOUT_S = 30.0
 _POLL_S = 0.15
 _POST_STOP_DRAIN_S = 2.5
 _ALWAYS_EVENTS = ("SessionStart", "Stop")
@@ -160,6 +161,7 @@ class ClaudeSDKClient:
             await self._launch()
             self._monitor_task = asyncio.create_task(self._monitor())
             await self._await_ready()
+            await self._verify_mcp_registered()
         except BaseException:
             # __aexit__ is NOT called when __aenter__ raises, so a failed startup
             # (e.g. resume failure) would otherwise leak the tmux server, the claude
@@ -337,6 +339,28 @@ class ClaudeSDKClient:
                 raise ClaudeSDKError(f"claude exited during startup (code {self._exit_code})\n{self._stderr_tail()}")
             await asyncio.sleep(_POLL_S)
         raise ClaudeSDKError(f"timed out waiting for claude session start\n{self._stderr_tail()}")
+
+    async def _verify_mcp_registered(self) -> None:
+        """Fail fast if claude did not register the in-process MCP server.
+
+        claude lists an MCP server's tools as soon as it connects at startup, so the
+        bridge sees that tools/list within seconds of SessionStart. If tools are
+        configured but the bridge never hears from the MCP server, claude failed to
+        register it (a load/timing-sensitive startup race observed under first-start) and
+        every `mcp__<server>__*` tool — including the agent's control tools like
+        mark_setup_done — is silently absent for the whole session. Raising here exits the
+        process so the supervisor restarts with a clean attempt instead of running blind.
+        """
+        if not self._bridge.tools:
+            return
+        if await self._bridge.wait_mcp_connected(_MCP_CONNECT_TIMEOUT_S):
+            return
+        raise ClaudeSDKError(
+            "claude did not register the in-process MCP server within "
+            f"{_MCP_CONNECT_TIMEOUT_S:.0f}s of session start — its tools "
+            f"({', '.join(sorted(self._bridge.tools))}) would be unavailable. "
+            f"Aborting so the session is retried.\n{self._stderr_tail()}"
+        )
 
     def _drain(self) -> list[tp.Any]:
         if self._transcript_path is None:

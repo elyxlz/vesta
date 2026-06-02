@@ -48,11 +48,18 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
 - **MCP tools** registered via `create_sdk_mcp_server` are exposed to `claude` as a
   real stdio MCP server (`_mcp_stdio.py`, wired with `--mcp-config`). The proxy
   forwards `tools/list` / `tools/call` to the bridge, so handlers run in the agent
-  process and can mutate live `State`.
+  process and can mutate live `State`. `claude` lists the server's tools as soon as it
+  connects at startup, so the bridge sees that `tools/list` within seconds of session
+  start — the client uses that as a **registration health check** (see below).
 - **Startup** pre-seeds `~/.claude.json` (onboarding + per-project trust) so a fresh
   container goes straight to the input box, launches `claude` with
-  `--permission-mode bypassPermissions`, and waits for the `SessionStart` hook (which
-  also hands us the transcript path).
+  `--permission-mode bypassPermissions`, waits for the `SessionStart` hook (which also
+  hands us the transcript path), then — if MCP tools are configured — waits for the MCP
+  server to reach the bridge. If it never does, `claude` failed to register the server
+  (a load/timing-sensitive startup race) and every `mcp__<server>__*` tool would be
+  silently missing for the whole session, so the client raises instead of running blind
+  and the supervisor restarts it. `_mcp_stdio.py` and `_forward.py` also retry the bridge
+  connect, since a single refused connect at startup makes `claude` disable the server.
 
 ## Notes
 
