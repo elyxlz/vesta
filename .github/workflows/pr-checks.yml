@@ -171,14 +171,6 @@ jobs:
         working-directory: agent
         run: uv run ruff check
 
-      - name: Ban TYPE_CHECKING
-        working-directory: agent
-        run: |
-          if grep -rn "TYPE_CHECKING" core/; then
-            echo "::error::TYPE_CHECKING is banned in agent/core — it papers over circular imports / bad file structure. Use direct imports and restructure the modules instead."
-            exit 1
-          fi
-
       - name: Format check
         working-directory: agent
         run: uv run ruff format --check

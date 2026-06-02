@@ -52,17 +52,13 @@ untrack_managed() {
   git ls-files -- $MANAGED | xargs -r git update-index --force-remove
 }
 
-# Ignore the vestad-managed mounts via the repo-LOCAL exclude file, never the committed
-# agent/.gitignore. Editing the tracked .gitignore would (a) conflict on every first sync
-# (no shared history + a one-sided edit on both branches) and (b) leak these machine-local
-# mount ignores upstream. .git/info/exclude is per-checkout and never committed. Idempotent.
 ensure_gitignored() {
-  local exclude=".git/info/exclude" path
-  mkdir -p .git/info
-  [ -f "$exclude" ] || : > "$exclude"
-  for path in $MANAGED; do
-    grep -qFx "$path" "$exclude" 2>/dev/null || printf '%s\n' "$path" >> "$exclude"
-  done
+  local gi="agent/.gitignore" line
+  [ -f "$gi" ] || : > "$gi"
+  while IFS= read -r line; do
+    [ -n "$line" ] && { grep -qFx "$line" "$gi" || printf '%s\n' "$line" >> "$gi"; }
+  done < "$HERE/../managed.gitignore"
+  git add --sparse "$gi" 2>/dev/null || true
 }
 
 summary() {
@@ -103,13 +99,6 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
 fi
 
 # --- Phase B: fresh sync ---
-# Stop tracking vestad-managed paths (they come from the read-only mount, never via git) and
-# gitignore them BEFORE the first `git add`. On a fresh `git init` agent they are present on
-# disk, untracked and outside the sparse cone; staging them before they are ignored makes
-# `git add` exit 1 and (under set -e) aborts the very first sync. Idempotent.
-untrack_managed
-ensure_gitignored
-
 say "Checkpoint local work"
 # --ignore-errors still exits non-zero when a path is outside the sparse cone (e.g. a
 # half-initialised cone), which would abort under `set -e`. Tolerate it: the checkpoint is
@@ -118,6 +107,14 @@ git add agent/ --ignore-errors >/dev/null 2>&1 || true
 git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | xargs -r git reset -q HEAD -- 2>/dev/null || true
 if ! git diff --cached --quiet; then
   git commit -q -m "chore: checkpoint before sync to $REF"
+fi
+
+# Stop tracking vestad-managed paths (they come from the read-only mount, never via git)
+# and gitignore them so the mounted copies never show up. Idempotent.
+untrack_managed
+ensure_gitignored
+if ! git diff --cached --quiet; then
+  git commit -q -m "chore: stop tracking vestad-managed paths"
 fi
 
 say "Narrow sparse cone"
