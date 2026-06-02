@@ -142,22 +142,11 @@ pub fn setup_live_agent(
     }
 
     client.inject_token(&agent.name, &credentials).expect("inject real credentials");
-    // Don't restart — the container is already running. If credentials were
-    // injected before the agent process checked for them (race with entrypoint),
-    // the first-start flow will process naturally. If not, restart to pick them up.
-    // Poll for ready first; only restart if the agent stays not_authenticated.
-    let ready_deadline = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let st = client.agent_status(&agent.name).unwrap();
-        if st.status != "not_authenticated" {
-            break;
-        }
-        if std::time::Instant::now() > ready_deadline {
-            client.restart_agent(&agent.name).expect("restart agent after auth timeout");
-            break;
-        }
-        thread::sleep(Duration::from_secs(2));
-    }
+    // Always restart after injection so the agent boots with BOTH the credentials and
+    // the AGENT_MODEL=sonnet override from ~/.bashrc. Without the restart, the
+    // already-running agent picks up the credentials but keeps the default (opus)
+    // model for the whole first-start conversation.
+    client.restart_agent(&agent.name).expect("restart agent to apply model + credentials");
     client.wait_until_alive(&agent.name, 600).expect("wait until alive");
     Some((agent, container))
 }

@@ -236,17 +236,35 @@ jobs:
       - name: Pull agent image
         run: docker pull ghcr.io/elyxlz/vesta:latest
 
+      # The token must outlive the whole test run (so agents never need to refresh it
+      # in-container — only refresh-credentials.yml may ever refresh this lineage).
+      # A stale/invalid secret degrades to a loud warning + skipped live tests rather
+      # than a red gate: infra rot must not block unrelated PRs.
       - name: Write Claude credentials
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
           if [ -z "$CLAUDE_CREDENTIALS" ]; then
-            echo "CLAUDE_CREDENTIALS not available (fork PR?) — live tests will skip"
+            echo "::warning::CLAUDE_CREDENTIALS not available (fork PR?) — live e2e tests will skip"
+            exit 0
+          fi
+          remaining=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
+          import sys, json, time
+          creds = json.load(sys.stdin)
+          print(int(creds['claudeAiOauth']['expiresAt']/1000 - time.time()))
+          " 2>/dev/null || echo "invalid")
+          if [ "$remaining" = "invalid" ]; then
+            echo "::warning::CLAUDE_CREDENTIALS is malformed — live e2e tests will skip"
+            exit 0
+          fi
+          if [ "$remaining" -lt 3600 ]; then
+            echo "::warning::CLAUDE_CREDENTIALS access token expires in ${remaining}s (<1h) — live e2e tests will skip. Check the refresh-credentials workflow."
             exit 0
           fi
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
           chmod 600 ~/.claude/.credentials.json
+          echo "credentials valid for another $((remaining / 60)) minutes"
 
       - name: Build vestad
         working-directory: vestad
