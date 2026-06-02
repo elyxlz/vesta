@@ -5,6 +5,12 @@ description: Reply to notifications with `source=app-chat` via `app-chat send`. 
 
 # App Chat - CLI: app-chat
 
+## Setup
+This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-only mount), not `~/agent/skills/`.
+```bash
+uv tool install ~/agent/core/skills/app-chat/cli
+```
+
 **Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications`
 **Restart**: Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 ```
