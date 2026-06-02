@@ -7,7 +7,7 @@ description: What to do after a container restart. Holds the per-skill service s
 
 Read `/run/vestad-env` so the values are in your context (Read tool, not bash).
 
-`screen -ls` to see what's already up. Start anything in `## Services` below that isn't. Then check User State in MEMORY.md and reach out on their preferred channel. Match the moment: new day → warm; mid-convo restart → brief; crash → mention it; middle of the night → wait.
+`screen -ls` to see what's already up. Start anything in the Services section below that isn't. Then check User State in MEMORY.md and reach out on their preferred channel. Match the moment: new day → warm; mid-convo restart → brief; crash → mention it; middle of the night → wait.
 
 ## Services
 
