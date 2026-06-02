@@ -3,17 +3,15 @@ import collections
 import dataclasses as dc
 import datetime as dt
 import time
-import typing as tp
 
 import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
 
+from aiohttp.web import AppRunner
+
 from .config import VestaConfig
 from .events import EventBus
 from .state_store import PersistedState
-
-if tp.TYPE_CHECKING:
-    from aiohttp.web import AppRunner
 
 __all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
 
@@ -49,7 +47,7 @@ class State:
     shutdown_count: int = 0
     persisted: PersistedState = dc.field(default_factory=PersistedState)
     # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
-    ws_runner: "AppRunner | None" = None
+    ws_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     processor_busy: bool = False
