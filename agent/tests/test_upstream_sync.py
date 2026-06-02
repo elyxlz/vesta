@@ -157,6 +157,39 @@ def make_synthetic_agent(home, upstream, *, installed, self_authored=(), memory,
     _git(["remote", "add", "origin", str(upstream)], home)
 
 
+# A committed agent/.gitignore the image ships and upstream also tracks. sync must NOT edit it
+# (else the one-sided edit conflicts on every no-shared-history first sync); managed-mount
+# ignores go to the repo-local .git/info/exclude instead.
+AGENT_GITIGNORE = "# agent ignores\n*.log\nnode_modules/\n"
+
+
+def make_first_start_agent(home, upstream, *, installed, memory):
+    """Real first start: `git init`, NO baseline commit, and the vestad-managed mounts
+    (agent/core, pyproject.toml, uv.lock) baked onto disk untracked and outside the sparse
+    cone. The first `git add` the repo ever sees is sync.sh's own checkpoint, so if sync
+    stages before gitignoring those paths, `git add` exits 1 on the out-of-cone files."""
+    home.mkdir(parents=True, exist_ok=True)
+    _git(["init", "-q", "-b", "agent"], home)
+    (home / "agent").mkdir(parents=True, exist_ok=True)
+    (home / "agent" / "MEMORY.md").write_text(memory)
+    (home / "agent" / ".gitignore").write_text(AGENT_GITIGNORE)
+    (home / ".gitignore").write_text("local-ignore\n")
+    sk = home / "agent" / "skills"
+    sk.mkdir(parents=True)
+    for name in installed:
+        (sk / name).mkdir(parents=True, exist_ok=True)
+        (sk / name / "SKILL.md").write_text(f"# LOCAL {name}\n")
+    (sk / "index.json").write_text(_registry(list(installed)))
+    (home / "agent" / "core").mkdir(parents=True, exist_ok=True)
+    (home / "agent" / "core" / "x.py").write_text("MOUNTED CORE\n")
+    (home / "agent" / "pyproject.toml").write_text("[project]\nname = 'agent'\n")
+    (home / "agent" / "uv.lock").write_text("lock\n")
+    _git(["sparse-checkout", "init", "--no-cone"], home)
+    _write_sparse(home, NARROW_HEADER + [f"/agent/skills/{n}/" for n in installed])
+    _git(["sparse-checkout", "reapply"], home)
+    _git(["remote", "add", "origin", str(upstream)], home)
+
+
 def place_skills_install(home):
     dst = home / "agent" / "skills" / "skills-registry" / "scripts" / "skills-install"
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -334,6 +367,33 @@ def test_sync_no_common_ancestor_surfaces_real_conflicts(tmp_path):
         _git(["add", "--", rel], home)
     r2 = _run(SYNC, home, extra_env=MAIN)
     assert r2.returncode == 0, r2.stderr
+
+
+def test_sync_first_start_with_managed_paths_on_disk(tmp_path):
+    """Regression: on a fresh `git init` agent the vestad-managed mounts (agent/core,
+    pyproject.toml, uv.lock) are on disk, untracked and outside the sparse cone. sync must
+    gitignore them BEFORE its first `git add`, or `git add agent/` exits 1 on the out-of-cone
+    files and (under set -e) the very first sync aborts. Owned files that differ from upstream
+    must still surface as ordinary conflicts (exit 2), not a crash.
+
+    sync must ignore the mounts via the repo-local .git/info/exclude, NOT by editing the
+    committed agent/.gitignore: a one-sided edit to a file upstream also tracks conflicts on
+    every no-shared-history first sync, so agent/.gitignore must merge cleanly."""
+    up = tmp_path / "up"
+    make_upstream(up, ["alpha"])
+    add_upstream_file(up, "agent/.gitignore", AGENT_GITIGNORE, "add agent gitignore")
+    home = tmp_path / "agent"
+    make_first_start_agent(home, up, installed=["alpha"], memory="# MY MEMORY\n")
+
+    r = _run(SYNC, home, extra_env=MAIN)
+    assert r.returncode == 2, r.stdout + r.stderr  # real conflicts, not an exit-1 crash
+    assert "outside of your sparse-checkout" not in (r.stdout + r.stderr)
+    assert "agent/.gitignore" not in r.stdout  # untouched file merges clean, no conflict
+    assert (home / "agent" / "core" / "x.py").read_text() == "MOUNTED CORE\n"  # mount untouched
+    assert "agent/core" not in _git(["ls-files"], home)  # never tracked
+    assert "agent/core" not in _git(["status", "--short"], home)  # ignored, no noise
+    assert (home / "agent" / ".gitignore").read_text() == AGENT_GITIGNORE  # committed file unchanged
+    assert "agent/core" in (home / ".git" / "info" / "exclude").read_text()  # ignored locally instead
 
 
 def test_sync_untracks_vestad_managed_core(tmp_path):
