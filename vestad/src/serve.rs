@@ -2155,7 +2155,8 @@ mod tests {
     // those fixtures against its TypeScript types, so a wire format change on
     // either side fails CI instead of breaking clients at runtime.
 
-    use super::{AuthFlowResponse, Personality, ServiceEntry, TreeEntry};
+    use super::{Personality, ServiceEntry, TreeEntry};
+    use crate::providers::claude::OAuthStartResponse;
     use crate::docker::{AgentStatus, ListEntry, StatusJson};
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
@@ -2218,11 +2219,11 @@ mod tests {
         })
         .expect("serialize StatusJson");
 
-        let auth_start = serde_json::to_value(AuthFlowResponse {
+        let auth_start = serde_json::to_value(OAuthStartResponse {
             auth_url: "https://claude.ai/oauth/authorize?code=true".into(),
             session_id: "0123456789abcdef".into(),
         })
-        .expect("serialize AuthFlowResponse");
+        .expect("serialize OAuthStartResponse");
 
         let personality = serde_json::to_value(Personality {
             name: "sage".into(),
