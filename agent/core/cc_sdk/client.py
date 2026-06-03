@@ -344,6 +344,7 @@ class ClaudeSDKClient:
             "DISABLE_AUTOUPDATER": "1",
         }
         env.update(_thinking_env(self._options))
+        env.update(self._options.env)
         env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         claude_cmd = " ".join(shlex.quote(a) for a in args)
         stderr = shlex.quote(str(self._stderr_path))

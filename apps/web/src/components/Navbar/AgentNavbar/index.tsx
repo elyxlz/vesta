@@ -96,7 +96,7 @@ export function AgentNavbar({
                   onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
-                  reauthenticate
+                  authenticate
                 </Button>
               </div>
             )}

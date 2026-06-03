@@ -2,8 +2,8 @@ import { create } from "zustand";
 
 export type OnboardingStep =
   | "name"
+  | "provider"
   | "creating"
-  | "auth"
   | "personality"
   | "done";
 

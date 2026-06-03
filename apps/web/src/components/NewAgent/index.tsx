@@ -1,20 +1,31 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { createAgent, authenticate, type AuthStartResult } from "@/api";
+import { createAgent } from "@/api";
+import {
+  setProvider,
+  waitUntilRunning,
+  waitUntilAlive,
+  type OpenRouterConfig,
+  type ProviderResult,
+} from "@/api/agents";
 import { fadeSlide } from "@/lib/motion";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
+import { ProviderPicker } from "@/components/ProviderPicker";
 import { CreatingStep } from "./Steps/CreatingStep";
-import { AuthStep } from "./Steps/AuthStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
 import { DoneStep } from "./Steps/DoneStep";
+
+// Generous timeout — first-time setup pulls + builds the agent image.
+const START_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function NewAgent() {
   const step = useOnboarding((s) => s.step);
   const setStep = useOnboarding((s) => s.setStep);
   const [agentName, setAgentName] = useState("");
-  const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [seedPersonality, setSeedPersonality] = useState<string | null>(null);
+  const [openrouter, setOpenrouter] = useState<OpenRouterConfig | null>(null);
+  const [credentials, setCredentials] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,25 +38,60 @@ export function NewAgent() {
     let cancelled = false;
     (async () => {
       try {
+        // Phase 1: create the empty agent container.
         await createAgent(agentName, seedPersonality);
-        const auth = await authenticate(agentName);
         if (cancelled) return;
-        setAuthStart(auth);
-        setStep("auth");
+
+        // Phase 2: wait for the agent's HTTP server to be reachable.
+        await waitUntilRunning(agentName, START_TIMEOUT_MS);
+        if (cancelled) return;
+
+        // Phase 3: provision the provider via POST /agents/{name}/provider.
+        const result: ProviderResult =
+          openrouter !== null
+            ? { kind: "openrouter", config: openrouter }
+            : { kind: "claude", credentials: credentials ?? "" };
+        await setProvider(agentName, result);
+        if (cancelled) return;
+
+        // Phase 4: wait for the provision-triggered restart to settle.
+        await waitUntilAlive(agentName, START_TIMEOUT_MS);
+        if (cancelled) return;
+
+        setStep("done");
       } catch (e) {
         if (cancelled) return;
         setCreateError(
           (e as { message?: string })?.message || "creation failed",
         );
+        setCredentials(null);
+        setOpenrouter(null);
         setStep("name");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [step, agentName, seedPersonality, setStep]);
+  }, [step, agentName, seedPersonality, openrouter, credentials, setStep]);
 
   const content = (() => {
+    if (step === "provider")
+      return (
+        <ProviderPicker
+          onDone={(result) => {
+            // Single result type now — ProviderPicker handles OAuth internally.
+            if (result.kind === "openrouter") {
+              setOpenrouter(result.config);
+              setCredentials(null);
+            } else {
+              setCredentials(result.credentials);
+              setOpenrouter(null);
+            }
+            setStep("personality");
+          }}
+          onBack={() => setStep("name")}
+        />
+      );
     if (step === "personality")
       return (
         <PersonalityStep
@@ -56,14 +102,6 @@ export function NewAgent() {
         />
       );
     if (step === "creating") return <CreatingStep />;
-    if (step === "auth" && authStart)
-      return (
-        <AuthStep
-          agentName={agentName}
-          authStart={authStart}
-          onDone={() => setStep("done")}
-        />
-      );
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
       <NameStep
@@ -71,7 +109,7 @@ export function NewAgent() {
         onNamed={(name) => {
           setAgentName(name);
           setCreateError(null);
-          setStep("personality");
+          setStep("provider");
         }}
       />
     );

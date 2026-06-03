@@ -3,6 +3,7 @@ import { Orb } from "@/components/Orb";
 import { CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { OrbVisualState } from "@/components/Orb/styles";
+import { useProvider } from "@/hooks/use-provider";
 import { agentIslandContentTransition } from "./transitions";
 
 type AgentIslandExpandedProps = {
@@ -18,6 +19,8 @@ export function AgentIslandExpanded({
   statusLabel,
   error,
 }: AgentIslandExpandedProps) {
+  const { provider } = useProvider(name);
+  const model = provider && provider.kind !== "none" ? provider.model : null;
   return (
     <div className="flex h-[168px] w-[168px] flex-col items-center justify-center gap-2 will-change-transform">
       <motion.div
@@ -52,6 +55,16 @@ export function AgentIslandExpanded({
             {statusLabel}
           </CardDescription>
         </motion.div>
+        {model && (
+          <motion.span
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ ...agentIslandContentTransition, delay: 0.1 }}
+            className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground"
+          >
+            {model}
+          </motion.span>
+        )}
       </div>
     </div>
   );

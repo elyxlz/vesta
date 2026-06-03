@@ -23,7 +23,7 @@ export function AgentMenu() {
   const navigate = useNavigate();
   const { name, agent, isBusy, start, stop, restart, rebuild, backup } =
     useSelectedAgent();
-  const { setDeleteDialogOpen } = useModals();
+  const { setDeleteDialogOpen, handleOpenAuth } = useModals();
   const { showToolCalls, setShowToolCalls } = useChatContext();
   const gateway = useGateway();
   const appMode = useAppMode((s) => s.mode);
@@ -51,6 +51,8 @@ export function AgentMenu() {
     onRestart: () => void restart(),
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
+    onAuthenticate: () => handleOpenAuth(),
+    isAuthenticated: Boolean(agent && agent.status !== "not_authenticated"),
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };

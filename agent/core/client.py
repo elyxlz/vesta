@@ -6,13 +6,15 @@ import os
 import signal
 import typing as tp
 
+import aiohttp
+
 from core.cc_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
     ThinkingBlock,
 )
-from core.cc_sdk.types import PermissionResultAllow, ToolPermissionContext
+from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import logger
 from . import models as vm
@@ -21,6 +23,39 @@ from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_memory_path
 from .tools import build_vesta_tools_server
+
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+
+async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
+    """Look up the OpenRouter model's real context window. claude-code assumes a
+    200k window for non-Anthropic models (claude-code#46416), so the value passed
+    via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
+    The caller caps this at config.max_context_tokens before passing it to the SDK
+    (cache-read cost scales with context size). Returns None on any failure, so
+    claude-code falls back to its default — same behavior as before."""
+    if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                OPENROUTER_MODELS_URL,
+                headers={"Authorization": f"Bearer {os.environ['ANTHROPIC_AUTH_TOKEN']}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                body = await resp.json()
+    except (TimeoutError, aiohttp.ClientError, ValueError) as e:
+        logger.warning(f"OpenRouter context-window lookup failed: {e}")
+        return None
+    models = body["data"] if isinstance(body, dict) and "data" in body else []
+    for entry in models:
+        if "id" in entry and entry["id"] == config.agent_model and "context_length" in entry:
+            ctx = entry["context_length"]
+            if isinstance(ctx, int) and ctx > 0:
+                return ctx
+    return None
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -141,6 +176,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
+            # Terminal upstream auth/billing errors (401/402) are detected in the
+            # OpenRouter cache proxy now: the tmux-driven cc_sdk reconstructs messages
+            # from the transcript and never surfaces the SDK's old `api_retry`/error
+            # stream events, so the proxy (which sees every upstream status) is the only
+            # place the signal exists. See openrouter_cache._handle.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
@@ -210,10 +250,28 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
+    # 1M-context beta and thinking are Anthropic-only; drop them on OpenRouter.
+    is_openrouter = config.agent_provider == "openrouter"
+
+    # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
+    # os.environ here would leak the OpenRouter URL into every other subprocess
+    # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
+    sdk_env: dict[str, str] = {}
+    if is_openrouter:
+        # The SDK always routes through the local caching proxy, never OpenRouter
+        # directly. start_cache_proxy runs first in message_processor, so the URL is set.
+        if not state.openrouter_proxy_url:
+            raise RuntimeError("OpenRouter cache proxy not started before building client options")
+        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
+        # Tell claude-code the model's real window so autocompact uses the right
+        # threshold instead of its 200k default for non-Anthropic models.
+        if state.openrouter_max_tokens:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
+
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
-        betas=["context-1m-2025-08-07"],
+        betas=[] if is_openrouter else ["context-1m-2025-08-07"],
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
@@ -225,9 +283,10 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         setting_sources=["user", "project"],
         skills="all",
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
-        thinking=config.thinking,
+        thinking=ThinkingConfigDisabled(type="disabled") if is_openrouter else config.thinking,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},
         resume=state.persisted.session_id,
+        env=sdk_env,
     )
