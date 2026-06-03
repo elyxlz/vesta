@@ -32,7 +32,8 @@ RUN uv sync --frozen --no-install-project
 # (so first-start pays no download) and symlink it onto PATH for any direct `claude` calls.
 RUN CLAUDE_BIN="$(uv run python -m core.cc_sdk._claude_bin)" && \
     ln -sf "$CLAUDE_BIN" /usr/local/bin/claude && \
-    claude --version
+    claude --version && \
+    mkdir -p /root/.claude
 WORKDIR /root
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall

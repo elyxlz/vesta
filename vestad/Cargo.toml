@@ -53,6 +53,36 @@ base64 = "0.22"
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+# Integration/live e2e tests live here (in vestad's own tests/) so `cargo test -p vestad
+# --test <name>` builds the vestad binary and exposes its path via CARGO_BIN_EXE_vestad —
+# no separate build step, no stale-binary risk. They reuse the shared harness from vesta-tests.
+vesta-tests = { path = "tests-integration" }
+ctor = "0.2"
+# Used directly by the integration suites (vestad's own deps cover tokio/rustls/ring/serde_json).
+ureq = { version = "3", features = ["json", "rustls"] }
+
+# Integration suites need a real Docker daemon; live also needs Claude credentials. Bare
+# `cargo test -p vestad` would run them too, so the unit-test path uses `--bins`; select a
+# suite with `--test <name>` (see check.sh).
+[[test]]
+name = "server"
+path = "tests/server/mod.rs"
+
+[[test]]
+name = "multi_user"
+path = "tests/multi_user/mod.rs"
+
+[[test]]
+name = "live"
+path = "tests/live/mod.rs"
+
+[[test]]
+name = "oauth"
+path = "tests/oauth/mod.rs"
+
+[[test]]
+name = "migrations"
+path = "tests/migrations/mod.rs"
 
 [profile.release]
 strip = true

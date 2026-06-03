@@ -1,16 +1,20 @@
 # Vesta Tests
 
-Integration test harness for `vestad` and related end-to-end flows.
+Shared harness (`vesta-tests` crate) for `vestad`'s integration and live e2e tests.
+
+The harness lives here; the **test suites live in `vestad/tests/`** so `cargo test -p vestad
+--test <name>` builds the vestad binary first and passes its path via `CARGO_BIN_EXE_vestad`
+(no separate build, no stale-binary risk). `vestad` dev-depends on this crate for the harness.
 
 ## Layout
 
 ```
-src/
+vestad/tests-integration/src/   (this crate: harness only)
   lib.rs          shared harness (TestServer, TestAgent, docker helpers, unique_user)
   client.rs       HTTP client for the vestad API
   types.rs        response/request types
 
-tests/
+vestad/tests/                   (the actual suites — run via `cargo test -p vestad --test <name>`)
   server/         single-vestad API and lifecycle (49 tests)
     health.rs       health endpoints, port/api-key files, duplicate server rejection
     lifecycle.rs    create/start/stop/restart/destroy, creation flow, start_all
@@ -48,14 +52,14 @@ tests/
 ## Running
 
 ```bash
-./check.sh integration                       # what CI runs: server + multi_user + oauth + migrations
-./check.sh live                              # live e2e (needs credentials)
-cargo test -p vesta-tests                    # all tests
-cargo test -p vesta-tests --test server      # server tests only
-cargo test -p vesta-tests --test multi_user  # multi-user tests only
-cargo test -p vesta-tests --test live        # live e2e (needs credentials)
-cargo test -p vesta-tests --test oauth       # oauth endpoint checks
-cargo test -p vesta-tests --test migrations  # layout migration tests
+./check.sh integration                    # what CI runs: server + multi_user + oauth + migrations
+./check.sh live                           # live e2e (needs credentials)
+cargo test -p vestad --test server        # server tests only (builds vestad first)
+cargo test -p vestad --test multi_user    # multi-user tests only
+cargo test -p vestad --test live          # live e2e (needs credentials)
+cargo test -p vestad --test oauth         # oauth endpoint checks
+cargo test -p vestad --test migrations    # layout migration tests
+cargo test -p vestad --bins               # vestad unit tests only (NOT these suites)
 ```
 
 ## Notes

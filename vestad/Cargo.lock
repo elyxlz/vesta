@@ -533,6 +533,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "dary_heap"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2644,6 +2654,7 @@ dependencies = [
  "bollard",
  "bytes",
  "clap",
+ "ctor",
  "dotenvy",
  "flate2",
  "futures-core",
@@ -2672,6 +2683,8 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "ureq",
+ "vesta-tests",
 ]
 
 [[package]]

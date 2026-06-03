@@ -56,14 +56,16 @@ check_vestad() {
   (
     cd vestad
     cargo clippy -p vestad ${TARGET:+--target "$TARGET"} -- -D warnings
-    cargo test -p vestad ${TARGET:+--target "$TARGET"}
+    # --bins: unit tests only. The Docker/live integration suites also live in this package
+    # now (vestad/tests/), so a bare `cargo test -p vestad` would try to run them.
+    cargo test -p vestad --bins ${TARGET:+--target "$TARGET"}
   )
 }
 
 check_vestad_docker() {
   (
     cd vestad
-    cargo test -p vestad -- --ignored
+    cargo test -p vestad --bins -- --ignored
   )
 }
 
@@ -83,18 +85,16 @@ check_web() {
 check_integration() {
   (
     cd vestad
-    # The harness launches the vestad BINARY (target/debug/vestad), which embeds agent/core;
-    # build it first so the tests never run against a stale binary.
-    cargo build -p vestad
-    cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
+    # `cargo test -p vestad --test ...` builds the vestad binary first and passes its path to
+    # the tests via CARGO_BIN_EXE_vestad — always fresh, never a stale binary.
+    cargo test -p vestad --test server --test multi_user --test oauth --test migrations -- --test-threads=8
   )
 }
 
 check_live() {
   (
     cd vestad
-    cargo build -p vestad
-    cargo test -p vesta-tests --test live -- --test-threads=2
+    cargo test -p vestad --test live -- --test-threads=2
   )
 }
 
