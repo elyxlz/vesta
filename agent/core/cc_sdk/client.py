@@ -16,7 +16,6 @@ session_id / async context manager) matches what core/ already calls.
 """
 
 import asyncio
-import dataclasses as dc
 import json
 import os
 import pathlib as pl
@@ -45,16 +44,6 @@ _POST_STOP_DRAIN_S = 2.5
 _ALWAYS_EVENTS = ("SessionStart", "Stop")
 _DEFAULT_MAX_TOKENS = 200_000
 _BETA_1M = "context-1m-2025-08-07"
-
-
-@dc.dataclass
-class _Proc:
-    returncode: int | None = None
-
-
-@dc.dataclass
-class _Transport:
-    _process: _Proc
 
 
 def _preseed_config(cwd: str) -> None:
@@ -148,13 +137,16 @@ class ClaudeSDKClient:
         self._stderr_read = 0
         self._ready = asyncio.Event()
         self._monitor_task: asyncio.Task[None] | None = None
-        self._transport = _Transport(_process=_Proc(returncode=None))
 
     # --- public API ---
 
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def returncode(self) -> int | None:
+        return self._exit_code
 
     async def __aenter__(self) -> "ClaudeSDKClient":
         try:
@@ -417,7 +409,6 @@ class ClaudeSDKClient:
                     self._exit_code = int(line[len(_EXIT_MARKER) :].strip())
                 except ValueError:
                     self._exit_code = -1
-                self._transport._process.returncode = self._exit_code
                 continue
             if self._options.stderr is not None:
                 self._options.stderr(line)

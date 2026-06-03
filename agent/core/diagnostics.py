@@ -63,12 +63,10 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
 
 def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
     """Returns None if we can't determine."""
+    if state.client is None:
+        return None
     try:
-        transport = state.client._transport  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-        process = transport._process  # type: ignore[union-attr]
-        if process is None:
-            return False
-        return process.returncode is None
+        return state.client.returncode is None
     except (AttributeError, TypeError):
         return None
 

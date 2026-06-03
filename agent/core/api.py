@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import pathlib as pl
+import sqlite3
 import weakref
 
 import aiohttp as _aiohttp
@@ -148,7 +149,8 @@ async def _search_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid limit"}, status=400)
     try:
         results = event_bus.search(query, limit=limit)
-    except Exception:
+    except sqlite3.OperationalError as e:
+        logger.warning(f"search query rejected: {e}")
         return web.json_response({"error": "invalid search query"}, status=400)
     return web.json_response({"results": results})
 

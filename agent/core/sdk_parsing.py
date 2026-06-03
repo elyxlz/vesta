@@ -96,10 +96,10 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
             duration_s = msg.duration_ms / 1000 if msg.duration_ms is not None else None
             parts = []
             if usage_data:
-                input_tok = usage_data.get("input_tokens", 0)
-                output_tok = usage_data.get("output_tokens", 0)
-                cache_read = usage_data.get("cache_read_input_tokens", 0)
-                cache_create = usage_data.get("cache_creation_input_tokens", 0)
+                input_tok = usage_data["input_tokens"] if "input_tokens" in usage_data else 0
+                output_tok = usage_data["output_tokens"] if "output_tokens" in usage_data else 0
+                cache_read = usage_data["cache_read_input_tokens"] if "cache_read_input_tokens" in usage_data else 0
+                cache_create = usage_data["cache_creation_input_tokens"] if "cache_creation_input_tokens" in usage_data else 0
                 parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
             if cost is not None:
                 parts.append(f"cost=${cost:.4f}")
