@@ -300,6 +300,13 @@ class ClaudeSDKClient:
                         "command": sys.executable,
                         "args": [str(_MCP_STDIO), self._sock_path],
                         "env": {"PYTHONSAFEPATH": "1"},
+                        # Exempt this server from tool-search deferral: with many tools (skills="all"),
+                        # Claude Code defers MCP tools behind ToolSearch by default, and connected
+                        # servers' tools are not reliably indexed — the model then cannot find or call
+                        # the agent's control tools (mark_setup_done, restart_vesta, ...) even though the
+                        # server connected. alwaysLoad makes these few, essential tools load upfront into
+                        # the model's context at session start, never deferred. (Claude Code >= 2.1.121.)
+                        "alwaysLoad": True,
                     }
                     for name, server in self._options.mcp_servers.items()
                     if isinstance(server, McpServer)

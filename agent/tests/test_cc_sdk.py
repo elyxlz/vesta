@@ -70,6 +70,10 @@ def test_mcp_config_carries_safepath_env(tmp_path):
     client._write_config_files()
     mcp = json.loads((client._workdir / "mcp.json").read_text())
     assert mcp["mcpServers"]["vesta"]["env"]["PYTHONSAFEPATH"] == "1"
+    # alwaysLoad exempts the server from tool-search deferral: with skills="all" Claude Code
+    # defers MCP tools behind ToolSearch and the model then can't find the agent's control
+    # tools (the charbel first-start regression). Upfront loading keeps them callable.
+    assert mcp["mcpServers"]["vesta"]["alwaysLoad"] is True
 
 
 # --- Turn/Stop counting: a late Stop from a prior turn must not end the next turn early ---

@@ -50,7 +50,13 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
   forwards `tools/list` / `tools/call` to the bridge, so handlers run in the agent
   process and can mutate live `State`. `claude` lists the server's tools as soon as it
   connects at startup, so the bridge sees that `tools/list` within seconds of session
-  start — the client uses that as a **registration health check** (see below).
+  start — the client uses that as a **registration health check** (see below). The
+  server is configured with **`alwaysLoad: true`**: with `skills="all"` there are enough
+  tools that Claude Code defers MCP tools behind ToolSearch by default, and the model
+  then cannot find or call the agent's control tools (`mark_setup_done`, `restart_vesta`,
+  …) even though the server connected — observed as an agent flailing through `ToolSearch`
+  during first-start. `alwaysLoad` loads this server's (few, essential) tools upfront into
+  the model's context, exempt from deferral. (Requires Claude Code >= 2.1.121.)
 - **Startup** pre-seeds `~/.claude.json` (onboarding + per-project trust) so a fresh
   container goes straight to the input box, launches `claude` with
   `--permission-mode bypassPermissions`, waits for the `SessionStart` hook (which also
