@@ -6,13 +6,13 @@ import os
 import signal
 import typing as tp
 
-from cc_sdk import (
+from core.cc_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
     ThinkingBlock,
 )
-from cc_sdk.types import PermissionResultAllow, ToolPermissionContext
+from core.cc_sdk.types import PermissionResultAllow, ToolPermissionContext
 
 from . import logger
 from . import models as vm

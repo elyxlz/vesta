@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
-from cc_sdk.types import SubagentStartHookInput
+from core.cc_sdk.types import SubagentStartHookInput
 from core.sdk_parsing import _subagent_hook
 from core.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from wait_util import wait_for_condition
@@ -21,7 +21,7 @@ from wait_util import wait_for_condition
     [("started", "subagent_start", "test-123", "research"), ("stopped", "subagent_stop", "test-456", "browser")],
 )
 async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type):
-    from cc_sdk import HookContext
+    from core.cc_sdk import HookContext
 
     state = vm.State()
     hook = _subagent_hook(state, verb=verb, event_type=event_type)
@@ -37,7 +37,7 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
 
 
 def _assistant_msg(content):
-    from cc_sdk import AssistantMessage
+    from core.cc_sdk import AssistantMessage
 
     msg = MagicMock(spec=AssistantMessage)
     msg.content = content
@@ -45,7 +45,7 @@ def _assistant_msg(content):
 
 
 def _result_msg():
-    from cc_sdk import ResultMessage
+    from core.cc_sdk import ResultMessage
 
     msg = MagicMock(spec=ResultMessage)
     msg.content = []
@@ -86,7 +86,7 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
         message_queue = asyncio.Queue()
 
         async def _receive_response():
-            from cc_sdk import ResultMessage
+            from core.cc_sdk import ResultMessage
 
             while True:
                 msg = await message_queue.get()
@@ -413,7 +413,7 @@ async def test_converse_works_normally_without_interrupt():
 @pytest.mark.anyio
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
-    from cc_sdk import TextBlock, ToolUseBlock
+    from core.cc_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, _, _ = _make_converse_harness()
@@ -433,7 +433,7 @@ async def test_converse_emits_text_immediately_with_tool_use():
 
 @pytest.mark.anyio
 async def test_converse_emits_thinking_events():
-    from cc_sdk import TextBlock, ThinkingBlock
+    from core.cc_sdk import TextBlock, ThinkingBlock
     from core.client import converse
 
     state, config, mock_client, emitted, _, _ = _make_converse_harness()
@@ -465,7 +465,7 @@ async def test_interrupt_drains_stream_and_emits_leftovers():
     and must NOT leak into the next converse() call."""
     import time
 
-    from cc_sdk import TextBlock, ToolUseBlock
+    from core.cc_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
@@ -517,7 +517,7 @@ async def test_interrupt_then_response_arrives_without_user_input():
     must arrive on its own without the user sending another message."""
     import time
 
-    from cc_sdk import TextBlock, ToolUseBlock
+    from core.cc_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
@@ -567,7 +567,7 @@ async def test_interrupt_then_response_arrives_without_user_input():
 async def test_drain_timeout_does_not_block_forever():
     """If the SDK is slow to send ResultMessage after interrupt, the drain must
     time out and not block the next conversation forever."""
-    from cc_sdk import ToolUseBlock
+    from core.cc_sdk import ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, _, _, _ = _make_converse_harness()

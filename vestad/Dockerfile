@@ -26,11 +26,11 @@ RUN for d in agent/skills/*/; do \
 WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project
 
-# Claude Code is pinned and owned by cc_sdk (CLAUDE_VERSION in cc_sdk/_claude_bin.py): it
-# downloads+verifies the matching native binary on demand, so the version never depends on
+# Claude Code is pinned and owned by cc_sdk (CLAUDE_VERSION in core/cc_sdk/_claude_bin.py):
+# it downloads+verifies the matching native binary on demand, so the version never depends on
 # what's installed on the host or drifts via auto-update. Pre-fetch it into the image here
 # (so first-start pays no download) and symlink it onto PATH for any direct `claude` calls.
-RUN CLAUDE_BIN="$(uv run python -m cc_sdk._claude_bin)" && \
+RUN CLAUDE_BIN="$(uv run python -m core.cc_sdk._claude_bin)" && \
     ln -sf "$CLAUDE_BIN" /usr/local/bin/claude && \
     claude --version
 WORKDIR /root

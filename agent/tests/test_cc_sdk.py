@@ -6,10 +6,10 @@ import sys
 
 import pytest
 
-import cc_sdk
-from cc_sdk.client import ClaudeSDKClient, _FORWARD, _MCP_STDIO
-from cc_sdk.messages import ClaudeAgentOptions
-from cc_sdk.transcript import assistant_message_from, read_new_objects
+from core import cc_sdk
+from core.cc_sdk.client import ClaudeSDKClient, _FORWARD, _MCP_STDIO
+from core.cc_sdk.messages import ClaudeAgentOptions
+from core.cc_sdk.transcript import assistant_message_from, read_new_objects
 
 
 # --- Helper scripts import cleanly when run by path (regression for the stdlib `types` shadow) ---
@@ -133,7 +133,7 @@ async def test_interrupt_credits_missing_stop_and_double_escapes(tmp_path, monke
     async def record_send_keys(socket: str, name: str, *keys: str) -> None:
         sent.append(keys)
 
-    monkeypatch.setattr("cc_sdk.client.tmux.send_keys", record_send_keys)
+    monkeypatch.setattr("core.cc_sdk.client.tmux.send_keys", record_send_keys)
     client = _new_client(tmp_path)
     client._turn_index = 3
     client._stops_received = 2  # turns 1-2 completed, turn 3 in flight
@@ -153,7 +153,7 @@ async def test_interrupt_at_idle_is_noop(tmp_path, monkeypatch):
     async def record_send_keys(socket: str, name: str, *keys: str) -> None:
         sent.append(keys)
 
-    monkeypatch.setattr("cc_sdk.client.tmux.send_keys", record_send_keys)
+    monkeypatch.setattr("core.cc_sdk.client.tmux.send_keys", record_send_keys)
     client = _new_client(tmp_path)
     client._turn_index = 3
     client._stops_received = 3  # turn 3 already completed
@@ -230,7 +230,7 @@ def test_every_core_hook_event_is_wired(tmp_path):
 
 
 def test_claude_bin_override_skips_download(monkeypatch):
-    from cc_sdk import _claude_bin
+    from core.cc_sdk import _claude_bin
 
     monkeypatch.setenv("CC_SDK_CLAUDE_BIN", "/some/pinned/claude")
     # Must return the override verbatim without touching the network/platform detection.
@@ -239,7 +239,7 @@ def test_claude_bin_override_skips_download(monkeypatch):
 
 
 def test_claude_bin_platform_string(monkeypatch):
-    from cc_sdk import _claude_bin
+    from core.cc_sdk import _claude_bin
 
     cases = {("Linux", "x86_64"): "linux-x64", ("Linux", "aarch64"): "linux-arm64", ("Darwin", "arm64"): "darwin-arm64"}
     for (system, machine), expected in cases.items():
@@ -258,7 +258,7 @@ async def test_launch_env_carries_sandbox_and_autoupdater_guards(tmp_path, monke
     async def fake_start_session(socket, name, *, cwd, command, **kwargs):
         captured["command"] = command
 
-    monkeypatch.setattr("cc_sdk.client.tmux.start_session", fake_start_session)
+    monkeypatch.setattr("core.cc_sdk.client.tmux.start_session", fake_start_session)
     monkeypatch.setenv("CC_SDK_CLAUDE_BIN", "/usr/bin/true")  # skip the pinned-binary download
     client = _new_client(tmp_path)
     client._write_config_files()
@@ -274,7 +274,7 @@ async def test_launch_env_carries_sandbox_and_autoupdater_guards(tmp_path, monke
 
 
 def test_thinking_env_mapping():
-    from cc_sdk.client import _thinking_env
+    from core.cc_sdk.client import _thinking_env
 
     assert _thinking_env(ClaudeAgentOptions(thinking={"type": "enabled", "budget_tokens": 12345})) == {"MAX_THINKING_TOKENS": "12345"}
     assert _thinking_env(ClaudeAgentOptions(thinking={"type": "disabled"})) == {"CLAUDE_CODE_DISABLE_THINKING": "1"}
@@ -288,7 +288,7 @@ def test_thinking_env_mapping():
 
 @pytest.mark.anyio
 async def test_bridge_tool_exception_returns_error(tmp_path):
-    from cc_sdk.bridge import Bridge
+    from core.cc_sdk.bridge import Bridge
 
     async def _boom(args):
         raise RuntimeError("handler blew up")
@@ -304,8 +304,8 @@ async def test_bridge_tool_exception_returns_error(tmp_path):
 
 @pytest.mark.anyio
 async def test_bridge_hook_exception_is_swallowed(tmp_path):
-    from cc_sdk.bridge import Bridge
-    from cc_sdk.messages import HookMatcher
+    from core.cc_sdk.bridge import Bridge
+    from core.cc_sdk.messages import HookMatcher
 
     async def _boom(payload, tool_use_id, context):
         raise RuntimeError("hook blew up")

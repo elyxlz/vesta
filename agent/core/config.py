@@ -3,7 +3,7 @@ import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
-from cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+from core.cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"

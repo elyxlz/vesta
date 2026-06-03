@@ -236,8 +236,8 @@ async def test_watchdog_stops_cleanly():
 @pytest.mark.anyio
 async def test_tool_hooks_track_active_tools():
     """PreToolUse adds to active_tools, PostToolUse removes and logs duration."""
-    from cc_sdk import HookContext
-    from cc_sdk.types import PostToolUseHookInput, PreToolUseHookInput
+    from core.cc_sdk import HookContext
+    from core.cc_sdk.types import PostToolUseHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 
@@ -263,8 +263,8 @@ async def test_tool_hooks_track_active_tools():
 
 @pytest.mark.anyio
 async def test_tool_failure_hook_cleans_up():
-    from cc_sdk import HookContext
-    from cc_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
+    from core.cc_sdk import HookContext
+    from core.cc_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 

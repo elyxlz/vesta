@@ -8,7 +8,7 @@ import pathlib as pl
 import time
 
 import pydantic
-from cc_sdk import ClaudeSDKClient, ClaudeSDKError
+from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
 from . import models as vm

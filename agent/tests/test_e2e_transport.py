@@ -22,10 +22,10 @@ import typing as tp
 
 import pytest
 
-import cc_sdk
-from cc_sdk import tmux as cc_tmux
-from cc_sdk.client import ClaudeSDKClient
-from cc_sdk.messages import (
+from core import cc_sdk
+from core.cc_sdk import tmux as cc_tmux
+from core.cc_sdk.client import ClaudeSDKClient
+from core.cc_sdk.messages import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKError,
