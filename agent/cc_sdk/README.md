@@ -45,25 +45,19 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
   `_forward.py`, which relays the event JSON to the in-process **bridge** over a unix
   socket. The bridge dispatches to the registered `HookMatcher` callbacks, so
   `core.sdk_parsing.make_hooks` works unchanged.
-- **MCP tools** registered via `create_sdk_mcp_server` are exposed to `claude` as a
-  real stdio MCP server (`_mcp_stdio.py`, wired with `--mcp-config`). **`tools/list` is
-  served by the proxy from a static defs file** that the client writes at config time;
-  **`tools/call` is forwarded to the bridge**, so handlers run in the agent process and
-  can mutate live `State`. The split is the fix for a first-start failure: claude lists a
-  server's tools as it spawns the server, and serving that list from the **live in-process
-  bridge** does not reliably register the tools at first-start (observed: the model then
-  cannot call `mark_setup_done` at all and reverse-engineers the bridge socket to limp
-  along). The defs are static and known upfront, so serving them locally makes registration
-  deterministic regardless of bridge/loop/timing; only handler execution needs the bridge.
-  Two further deferral guards: **`alwaysLoad: true`** in `mcp.json` (>= 2.1.121) and
-  **`ENABLE_TOOL_SEARCH=false`** in the launch env both keep the server's tools out of
-  Claude Code's ToolSearch deferral (with `skills="all"` there are otherwise enough tools
-  that MCP tools get hidden behind ToolSearch and the model can't find them).
+- **MCP tools** registered via `create_sdk_mcp_server` are exposed to `claude` as a real
+  stdio MCP server (`_mcp_stdio.py`, wired with `--mcp-config`). The proxy forwards
+  `tools/list` / `tools/call` to the bridge, so handlers run in the agent process and can
+  mutate live `State`. Every tool's `inputSchema` **must be a valid JSON Schema object**:
+  Claude Code validates them and rejects the *entire* server if any is malformed, which
+  silently makes all of the agent's control tools (`mark_setup_done`, ...) unavailable to
+  the model. `ToolDef` normalizes a missing/`{}` schema to `{"type": "object"}` so a
+  no-argument tool can't poison the server. The server is also marked **`alwaysLoad: true`**
+  (>= 2.1.121) so its few control tools load upfront rather than behind ToolSearch.
 - **Startup** pre-seeds `~/.claude.json` (onboarding + per-project trust) so a fresh
   container goes straight to the input box, launches `claude` with
   `--permission-mode bypassPermissions`, and waits for the `SessionStart` hook (which also
-  hands us the transcript path). `_mcp_stdio.py` and `_forward.py` retry the bridge connect,
-  since a single refused connect makes `claude` drop a tool call or hook.
+  hands us the transcript path).
 
 ## Notes
 

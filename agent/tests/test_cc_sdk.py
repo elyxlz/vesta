@@ -1,7 +1,6 @@
 """Tests for the cc_sdk transport: helper scripts, config generation, parsing, usage."""
 
 import json
-import pathlib as pl
 import subprocess
 import sys
 
@@ -42,25 +41,23 @@ def test_mcp_stdio_helper_initializes_by_path():
     assert reply["result"]["protocolVersion"] == "2025-06-18"
 
 
-def test_mcp_stdio_lists_tools_from_file_without_bridge(tmp_path):
-    """tools/list must be served from the static defs file with NO bridge connection: that
-    is the fix for first-start, where the live in-process bridge doesn't reliably answer
-    claude's startup tools/list. The socket path here is deliberately nonexistent."""
-    tools_file = tmp_path / "tools.json"
-    tools_file.write_text(json.dumps([{"name": "mark_setup_done", "description": "marks done", "inputSchema": {"type": "object"}}]))
-    request = json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {}})
-    proc = subprocess.run(
-        [sys.executable, str(_MCP_STDIO), "/tmp/cc_sdk_definitely_missing.sock", str(tools_file)],
-        input=request + "\n",
-        env={"PYTHONSAFEPATH": "1"},
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
-    assert proc.returncode == 0, proc.stderr
-    reply = json.loads(proc.stdout.splitlines()[0])
-    names = [t["name"] for t in reply["result"]["tools"]]
-    assert names == ["mark_setup_done"]
+# --- Tool schemas exposed to claude must be valid (an invalid one kills the whole server) ---
+
+
+def test_tooldef_normalizes_empty_schema():
+    """A tool declared with `{}` (no "type") is invalid JSON Schema; Claude Code rejects the
+    entire MCP server when any tool schema is malformed, so the agent's control tools silently
+    vanish. ToolDef must normalize it to a valid object schema. This was THE first-start bug."""
+
+    async def _noop(args):
+        return {}
+
+    empty = cc_sdk.tool("mark_setup_done", "marks done", {})(_noop)
+    assert empty.input_schema == {"type": "object", "properties": {}}
+
+    # A schema that is already valid is left untouched.
+    valid = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+    assert cc_sdk.tool("named", "x", valid)(_noop).input_schema == valid
 
 
 # --- Generated config always carries the PYTHONSAFEPATH guard ---
@@ -93,14 +90,8 @@ def test_mcp_config_carries_safepath_env(tmp_path):
     mcp = json.loads((client._workdir / "mcp.json").read_text())
     server = mcp["mcpServers"]["vesta"]
     assert server["env"]["PYTHONSAFEPATH"] == "1"
-    # alwaysLoad exempts the server from tool-search deferral: with skills="all" Claude Code
-    # defers MCP tools behind ToolSearch and the model then can't find the agent's control
-    # tools (the charbel first-start regression). Upfront loading keeps them callable.
+    # Load the server's tools upfront so the agent's control tools aren't behind ToolSearch.
     assert server["alwaysLoad"] is True
-    # The proxy gets a static tools file so tools/list never depends on the live bridge.
-    tools_path = pl.Path(server["args"][2])
-    assert tools_path.exists()
-    assert [t["name"] for t in json.loads(tools_path.read_text())] == ["noop"]
 
 
 # --- Turn/Stop counting: a late Stop from a prior turn must not end the next turn early ---
@@ -262,11 +253,11 @@ def test_claude_bin_platform_string(monkeypatch):
     assert _claude_bin._detect_platform() == "linux-x64-musl"
 
 
-# --- launch env disables MCP tool-search deferral (so control tools stay callable) ---
+# --- launch env: sandbox + pinned-version guards ---
 
 
 @pytest.mark.anyio
-async def test_launch_env_disables_tool_search(tmp_path, monkeypatch):
+async def test_launch_env_carries_sandbox_and_autoupdater_guards(tmp_path, monkeypatch):
     captured: dict[str, str] = {}
 
     async def fake_start_session(socket, name, *, cwd, command, **kwargs):
@@ -277,8 +268,11 @@ async def test_launch_env_disables_tool_search(tmp_path, monkeypatch):
     client = _new_client(tmp_path)
     client._write_config_files()
     await client._launch()
-    assert "ENABLE_TOOL_SEARCH=false" in captured["command"]
+    # bypassPermissions-as-root needs IS_SANDBOX; the pinned binary must not auto-update away.
     assert "IS_SANDBOX=1" in captured["command"]
+    assert "DISABLE_AUTOUPDATER=1" in captured["command"]
+    # And it launches the cc_sdk-resolved binary, not a bare `claude` from PATH.
+    assert "/usr/bin/true" in captured["command"]
 
 
 # --- thinking config maps to the env vars claude reads ---

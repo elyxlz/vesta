@@ -39,13 +39,14 @@ fn agent_uses_mcp_tool_in_conversation() {
         .expect("wait for mcp result file");
     assert!(content.contains("MCP_TOOL_OK"));
 
-    // The file write alone could be done without the tool; require evidence of the actual
-    // MCP tool_use in the claude session transcript.
+    // The file write alone could be done without the tool, and the bare name appears in the
+    // prompt text — so require the fully-qualified MCP name, which only shows up on a real
+    // tool_use/tool_result, in the transcript.
     exec_in_container(
         &container,
-        "grep -q 'search_conversation_history' /root/.claude/projects/*/*.jsonl",
+        "grep -q 'mcp__vesta__search_conversation_history' /root/.claude/projects/*/*.jsonl",
     )
-    .expect("expected a search_conversation_history tool_use in the claude transcript");
+    .expect("expected a real mcp__vesta__search_conversation_history tool_use in the claude transcript");
 }
 
 /// First-start regression: the agent must call `mark_setup_done` as the REAL MCP tool, not

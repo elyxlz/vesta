@@ -299,23 +299,16 @@ class ClaudeSDKClient:
         settings = {"skipDangerousModePermissionPrompt": True, "hooks": hooks}
         (self._workdir / "settings.json").write_text(json.dumps(settings))
         if self._bridge.tools:
-            # Write the tool definitions to a file the stdio proxy serves directly for
-            # tools/list, so claude registers the tools at startup without depending on the
-            # live in-process bridge (which, at first-start, does not reliably answer claude's
-            # startup tools/list — the model then can't call the agent's control tools).
-            tools_file = self._workdir / "mcp_tools.json"
-            tools_file.write_text(
-                json.dumps([{"name": d.name, "description": d.description, "inputSchema": d.input_schema} for d in self._bridge.tools.values()])
-            )
             mcp = {
                 "mcpServers": {
                     name: {
                         "type": "stdio",
                         "command": sys.executable,
-                        "args": [str(_MCP_STDIO), self._sock_path, str(tools_file)],
+                        "args": [str(_MCP_STDIO), self._sock_path],
                         "env": {"PYTHONSAFEPATH": "1"},
-                        # alwaysLoad also exempts the server from tool-search deferral (>= 2.1.121):
-                        # belt and suspenders alongside the static tools/list and ENABLE_TOOL_SEARCH=false.
+                        # Load this server's tools upfront instead of behind ToolSearch (>= 2.1.121),
+                        # so the agent's few control tools (mark_setup_done, ...) are always present
+                        # during first-start rather than something the model has to go search for.
                         "alwaysLoad": True,
                     }
                     for name, server in self._options.mcp_servers.items()
@@ -343,20 +336,11 @@ class ClaudeSDKClient:
         # IS_SANDBOX=1 is required for bypassPermissions to work when the agent runs as root
         # (the default in the container) — Claude Code otherwise refuses skip/bypass permissions
         # under root for safety. The agent's container is exactly that isolated sandbox.
-        #
-        # ENABLE_TOOL_SEARCH=false disables MCP tool-search deferral. By default Claude Code
-        # hides MCP tools behind a ToolSearch index when a session has many tools (we run
-        # skills="all"); the model then cannot find or call the agent's own control tools
-        # (mark_setup_done, restart_vesta, ...) and flails through ToolSearch during first-start.
-        # We expose a single small MCP server, so loading its handful of tools upfront is free
-        # and makes them reliably callable. (alwaysLoad in mcp.json is the per-server equivalent;
-        # both are set for belt and suspenders across Claude Code versions.)
         # DISABLE_AUTOUPDATER keeps the pinned binary fixed: the launcher would otherwise
         # update itself at runtime and drift away from the version cc_sdk vendored.
         env = {
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "IS_SANDBOX": "1",
-            "ENABLE_TOOL_SEARCH": "false",
             "DISABLE_AUTOUPDATER": "1",
         }
         env.update(_thinking_env(self._options))
