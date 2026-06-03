@@ -11,11 +11,11 @@ src/
   types.rs        response/request types
 
 tests/
-  server/         single-vestad API and lifecycle (43 tests)
+  server/         single-vestad API and lifecycle (49 tests)
     health.rs       health endpoints, port/api-key files, duplicate server rejection
     lifecycle.rs    create/start/stop/restart/destroy, creation flow, start_all
     auth.rs         OAuth flow, token injection
-    names.rs        normalization, empty/special chars
+    rename.rs       agent rename flow, container renaming, rename notifications
     backup.rs       create/list/restore/delete, safety snapshots
     websocket.rs    WS connect, auth rejection
     ports.rs        port uniqueness, env files, agent tokens
@@ -40,20 +40,22 @@ tests/
     endpoints.rs    authorize, token, callback endpoints
     token_exchange.rs  token exchange format validation
 
-  migrations/     upgrade path from latest release (1 test)
-    common.rs       container lookup by label, wait helpers
-    upgrade.rs      create agent under released vestad, upgrade to current, verify git state
+  migrations/     filesystem/skill layout migrations (3 tests)
+    normalize.rs        legacy ~/vesta/ layout normalization (mirrors LEGACY_LAYOUT_NORMALIZE_SCRIPT)
+    sparse_checkout.rs  installed-skills sparse-checkout pattern (mirrors upstream-sync SETUP.md)
 ```
 
 ## Running
 
 ```bash
+./check.sh integration                       # what CI runs: server + multi_user + oauth + migrations
+./check.sh live                              # live e2e (needs credentials)
 cargo test -p vesta-tests                    # all tests
 cargo test -p vesta-tests --test server      # server tests only
 cargo test -p vesta-tests --test multi_user  # multi-user tests only
 cargo test -p vesta-tests --test live        # live e2e (needs credentials)
 cargo test -p vesta-tests --test oauth       # oauth endpoint checks
-cargo test -p vesta-tests --test migrations  # upgrade path test
+cargo test -p vesta-tests --test migrations  # layout migration tests
 ```
 
 ## Notes
@@ -61,6 +63,6 @@ cargo test -p vesta-tests --test migrations  # upgrade path test
 - Live tests skip when `~/.claude/.credentials.json` is missing. Locally they use your own Claude session; agents run with `AGENT_MODEL=sonnet` (the harness restarts each agent after credential injection so the override applies to the whole run).
 - In CI, the `test-live` job runs **only on the release event** (not on PRs — live tests are slow and spend API tokens) and **gates the release**: the `release` and `push-image` jobs depend on it, so a live-test failure blocks publishing artifacts and the `:latest` image. It injects the `CLAUDE_CREDENTIALS` secret, which must hold its **own dedicated OAuth lineage** (seeded once from a separate `claude.ai/oauth/authorize` login, never copied from a developer's `~/.claude` — refresh tokens can rotate on use, so a shared lineage dies as soon as the other party refreshes). The `refresh-credentials.yml` workflow is the only thing allowed to refresh it: every 6h it refreshes whenever <8h of validity remain, so the secret always carries >=2h. A **missing** secret (forks) skips the live tests; a **present-but-stale/malformed** secret **fails** the release, since shipping without live coverage having run means the credential pipeline is broken.
 - The live migration test (`tree.rs`) seeds an old-style `~/vesta/` layout before auth, then verifies the agent's first-start prompt (`migration.md` + `first_start_setup.md`) migrates it correctly. `wait_until_alive` returns only after first-start setup has been processed; the agent binds its WS port as its readiness signal.
-- The upgrade test downloads the latest released `vestad` binary from GitHub at runtime.
 - All tests require a working local Docker daemon.
+- The agent image: vestad builds `vesta:local` from the checkout automatically (it finds `vestad/Dockerfile`). Set `VESTAD_AGENT_IMAGE` to pin a specific image instead — CI does this to test the image built from the PR.
 - Multi-user and live tests use `unique_user()` for Docker container isolation across concurrent and repeated runs.
