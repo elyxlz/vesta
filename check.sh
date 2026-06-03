@@ -18,6 +18,7 @@ Suites:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest
   integration    vestad integration tests (needs Docker)
+  live           live agent e2e tests (needs Docker + ~/.claude/.credentials.json; real Claude)
   all            agent + cli + vestad + web
 
 Environment:
@@ -86,6 +87,13 @@ check_integration() {
   )
 }
 
+check_live() {
+  (
+    cd vestad
+    cargo test -p vesta-tests --test live -- --test-threads=2
+  )
+}
+
 if [ $# -lt 1 ]; then
   usage
 fi
@@ -98,6 +106,7 @@ for suite in "$@"; do
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
     integration) check_integration ;;
+    live) check_live ;;
     all) check_agent && check_cli && check_vestad && check_web ;;
     *)
       echo "error: unknown suite '$suite'" >&2
