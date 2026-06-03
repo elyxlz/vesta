@@ -8,6 +8,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { authenticate, type AuthStartResult } from "@/api";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { errorMessage } from "@/lib/utils";
 
 interface ModalsContextValue {
   showAuth: boolean;
@@ -60,9 +61,7 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
       setAuthStart(result);
     } catch (e: unknown) {
       if (authAttemptRef.current !== attemptId) return;
-      setAuthError(
-        (e as { message?: string })?.message || "authentication failed",
-      );
+      setAuthError(errorMessage(e, "authentication failed"));
     } finally {
       if (authAttemptRef.current === attemptId) {
         setAuthStarting(false);

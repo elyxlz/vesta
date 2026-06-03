@@ -30,7 +30,10 @@ await Promise.all([
   document.fonts.load("normal 400 16px 'Outfit Variable'"),
 ]);
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("missing #root element");
+
+createRoot(rootElement).render(
   <ThemeProvider defaultTheme={isTauri ? "light" : "system"}>
     <KeybindProvider>
       <App />

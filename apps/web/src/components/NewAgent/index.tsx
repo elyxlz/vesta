@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { createAgent, authenticate, type AuthStartResult } from "@/api";
 import { fadeSlide } from "@/lib/motion";
+import { errorMessage } from "@/lib/utils";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
 import { CreatingStep } from "./Steps/CreatingStep";
@@ -34,9 +35,7 @@ export function NewAgent() {
         setStep("auth");
       } catch (e) {
         if (cancelled) return;
-        setCreateError(
-          (e as { message?: string })?.message || "creation failed",
-        );
+        setCreateError(errorMessage(e, "creation failed"));
         setStep("name");
       }
     })();

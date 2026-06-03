@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ProgressBar } from "@/components/ProgressBar";
 import { submitAuthCode } from "@/api";
 import { fadeSlide } from "@/lib/motion";
+import { errorMessage } from "@/lib/utils";
 
 interface AuthFlowProps {
   agentName: string;
@@ -55,7 +56,7 @@ export function AuthFlow({
       await submitAuthCode(agentName, sessionId, code.trim());
       onComplete?.();
     } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "verification failed");
+      setError(errorMessage(e, "verification failed"));
       setAuthState("error");
       setCode("");
     }

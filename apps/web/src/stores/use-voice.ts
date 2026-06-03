@@ -111,6 +111,7 @@ export const useVoice = create<VoiceState>((set, get) => {
       } catch (err) {
         if (!controller.signal.aborted) {
           console.warn("[tts] playback failed:", err);
+          set({ voiceError: "Voice playback failed" });
         }
       }
       if (ttsAbort === controller) ttsAbort = null;
