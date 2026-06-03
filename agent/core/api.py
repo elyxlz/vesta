@@ -14,6 +14,7 @@ Routes:
 import asyncio
 import json
 import logging
+import sqlite3
 import weakref
 
 import aiohttp as _aiohttp
@@ -152,8 +153,13 @@ async def _search_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid limit"}, status=400)
     try:
         results = event_bus.search(query, limit=limit)
-    except Exception:
+    except sqlite3.OperationalError:
+        # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
         return web.json_response({"error": "invalid search query"}, status=400)
+    except sqlite3.Error as e:
+        # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
+        logger.error(f"search failed for query={query!r}: {e}")
+        return web.json_response({"error": "search failed"}, status=500)
     return web.json_response({"results": results})
 
 
@@ -297,7 +303,7 @@ async def _memory_put_handler(request: web.Request) -> web.Response:
 
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
-    expected = request.app.get("agent_token")
+    expected = request.app["agent_token"]
     if expected is None:
         return await handler(request)
     token = request.headers.get("X-Agent-Token") or request.query.get("agent_token")

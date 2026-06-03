@@ -87,6 +87,8 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
 
 _STOP = object()
 
+_INTERRUPT_DRAIN_TIMEOUT_S = 5.0  # cap the post-interrupt drain so a stalled stream can't block forever
+
 
 async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
     task.cancel()
@@ -156,7 +158,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 # Emit any text so it's not lost.
                 try:
                     drain = client.receive_response().__aiter__()
-                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
+                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
                         texts, thinking_blocks, _, _, _ = sdk_parsing.parse_sdk_message(leftover, sub_agent_context=sub_agent_context)
                         if show_output:
                             for block in thinking_blocks:
