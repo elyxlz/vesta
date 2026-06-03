@@ -76,14 +76,14 @@ def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
 
     @tool(
         "mark_setup_done",
-        "Call once the silent setup steps are complete and you're ready to start talking to the user. This records first-start completion AND brings the WebSocket server online (the readiness signal vestad polls). Without this call, no clients can reach you and first-start re-runs on every reboot.",
+        "Call once the silent setup steps are complete and you're ready to start talking to the user. This records first-start completion so it doesn't re-run on every reboot. The WebSocket server is already online from boot.",
         {},
     )
     async def mark_setup_done(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.first_start_done = True
         state_store.save_state(state.persisted, config)
         if state.ws_runner is None:
-            state.ws_runner = await start_ws_server(state.event_bus, config)
+            state.ws_runner = await start_ws_server(state.event_bus, config, state)
             logger.init(f"WebSocket server started on port {config.ws_port}")
         logger.startup("setup_done marked by agent — WS online")
         return {"content": [{"type": "text", "text": "setup_done; WS online"}]}

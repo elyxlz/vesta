@@ -14,9 +14,11 @@ from watchfiles import awatch, Change
 from . import models as vm
 from . import logger
 from . import state_store
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
+from .openrouter_cache import start_cache_proxy
+from .provider import CREDENTIALS_PATH
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -132,12 +134,9 @@ async def process_batch(
     await delete_notification_files(notifications)
 
 
-CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
-
-
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if not CREDENTIALS_PATH.exists():
+    if config.agent_provider == "claude" and not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
 
@@ -258,6 +257,18 @@ async def _run_messages_with_interrupts(
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
+    if config.agent_provider == "openrouter":
+        if state.openrouter_max_tokens is None:
+            real_window = await resolve_openrouter_max_tokens(config)
+            if real_window:
+                # Cap at MAX_CONTEXT_TOKENS: cache-read cost scales with how large the
+                # cached prefix grows before autocompact, so big-window models default
+                # to a 200k working window unless the user raises the cap.
+                state.openrouter_max_tokens = min(real_window, config.max_context_tokens)
+                capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
+                logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
+        if state.openrouter_proxy_url is None:
+            await start_cache_proxy(config, state)
     options = build_client_options(config, state)
     retried = False
     while True:

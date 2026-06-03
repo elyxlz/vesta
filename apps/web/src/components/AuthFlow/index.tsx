@@ -4,13 +4,11 @@ import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProgressBar } from "@/components/ProgressBar";
-import { submitAuthCode } from "@/api";
 import { fadeSlide } from "@/lib/motion";
 
 interface AuthFlowProps {
-  agentName: string;
   authUrl: string;
-  sessionId: string;
+  onSubmitCode: (code: string) => Promise<void>;
   onCancel?: () => void;
   onComplete?: () => void;
 }
@@ -18,9 +16,8 @@ interface AuthFlowProps {
 type AuthState = "waiting" | "submitting" | "error";
 
 export function AuthFlow({
-  agentName,
   authUrl,
-  sessionId,
+  onSubmitCode,
   onCancel,
   onComplete,
 }: AuthFlowProps) {
@@ -52,7 +49,7 @@ export function AuthFlow({
     setError("");
 
     try {
-      await submitAuthCode(agentName, sessionId, code.trim());
+      await onSubmitCode(code.trim());
       onComplete?.();
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || "verification failed");

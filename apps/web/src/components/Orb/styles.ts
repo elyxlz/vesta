@@ -57,6 +57,8 @@ function resolveStatus(
       return { label: "alive", orbState: "alive" };
     case "starting":
       return { label: "waking up...", orbState: "booting" };
+    case "setting_up":
+      return { label: "setting up...", orbState: "booting" };
     case "not_authenticated":
       return { label: "not signed in", orbState: "authenticating" };
     case "restarting":

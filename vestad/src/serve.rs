@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -408,7 +408,7 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents = docker::list_agents(&state.docker, &state.env_config.agents_dir).await;
+    let agents = docker::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
     Json(agents)
 }
 
@@ -431,6 +431,7 @@ async fn create_agent_handler(
     }
     let manage_core_code = body.manage_agent_code.unwrap_or(true);
     tracing::info!(name = %name, manage_core_code, "creating agent");
+
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -440,6 +441,9 @@ async fn create_agent_handler(
         save_settings(&settings);
     }
 
+    // Create + start an empty agent. Provider config arrives via a separate
+    // POST /agents/{name}/provider once the agent is up — the agent owns its
+    // own credential files now, vestad only orchestrates.
     let name =
         docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
             .await
@@ -456,7 +460,7 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = docker::get_status(&state.docker, &name, &state.env_config.agents_dir)
+    let status = docker::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
     Ok(Json(status))
@@ -651,109 +655,57 @@ async fn drop_rename_notification(
         .map_err(|e| e.to_string())
 }
 
-// --- Auth endpoints ---
-
-#[derive(Serialize)]
-struct AuthFlowResponse {
-    auth_url: String,
-    session_id: String,
-}
-
-async fn start_auth_handler(
+/// GET an existing agent's provider status (state/kind/model/setup_complete),
+/// proxied from the agent's `/provider/status`. Lets the web show the current
+/// provider and model (e.g. to offer a model switch) without owning that state.
+async fn get_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-) -> Result<Json<AuthFlowResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<agent_provider::ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let (auth_url, code_verifier, auth_state) = docker::start_auth_flow();
-    let session_id: String = (0..16)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
-
-    state.clean_expired_sessions().await;
-
-    let mut sessions = state.auth_sessions.lock().await;
-    let now = std::time::Instant::now();
-    sessions.insert(
-        session_id.clone(),
-        auth::AuthSession {
-            code_verifier,
-            state: auth_state,
-            created: now,
-        },
-    );
-
-    Ok(Json(AuthFlowResponse {
-        auth_url,
-        session_id,
-    }))
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .status()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-#[derive(Deserialize)]
-struct AuthCodeBody {
-    session_id: String,
-    code: String,
-}
-
-async fn complete_auth_handler(
+/// Set or refresh an existing agent's provider config. Body is forwarded
+/// verbatim to the agent's `POST /provider` (the agent owns file writes and
+/// format knowledge). After the write succeeds, vestad restarts the container
+/// so env-var changes (OpenRouter mode) take effect on next boot, then bumps
+/// the status cache so the web sees the change without waiting for next poll.
+async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(body): Json<AuthCodeBody>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
-    state.clean_expired_sessions().await;
-
-    let session = {
-        let mut sessions = state.auth_sessions.lock().await;
-        sessions
-            .remove(&body.session_id)
-            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /agents/{name}/auth"))?
-    };
-
-    let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
-
-    docker::inject_credentials(&state.docker, &cname, &credentials)
-        .await
-        .map_err(map_docker_err)?;
-
-    // Restart the agent so it picks up the new credentials.
-    // Clients poll /status to detect when the agent becomes alive.
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
+
+    // Agent must be running to receive the proxy call; auto-start stopped agents.
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name)
+            .await
+            .map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.set(&body)
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
 
     docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
-    Ok(ok_json())
-}
-
-#[derive(Deserialize)]
-struct AuthTokenBody {
-    token: serde_json::Value,
-}
-
-async fn inject_token_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<AuthTokenBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let credentials = body.token.to_string();
-    docker::inject_credentials(&state.docker, &cname, &credentials)
-        .await
-        .map_err(map_docker_err)?;
-
+    // TODO: poke agent_status_cache so the web sees the change inside ~50ms
+    // instead of waiting for the next 3s poll.
     Ok(ok_json())
 }
 
@@ -1779,6 +1731,9 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
         use std::io::Write;
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
+        // SAFETY: fd comes from file.as_raw_fd() and file is kept alive past this call, so the
+        // descriptor is valid for the duration of flock. flock with these flags has no other
+        // preconditions.
         let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
         if ret != 0 {
             return Err("vestad already running".into());
@@ -1807,6 +1762,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/personalities", get(list_personalities_handler))
+        .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
+        .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
+        .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
+        .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
@@ -1817,9 +1776,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/auth", post(start_auth_handler))
-        .route("/agents/{name}/auth/code", post(complete_auth_handler))
-        .route("/agents/{name}/auth/token", post(inject_token_handler))
+        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
@@ -1915,7 +1872,10 @@ pub fn build_router(state: SharedState) -> Router {
 
 fn local_hour() -> u8 {
     let epoch = crate::time_utils::now_epoch_secs() as libc::time_t;
+    // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
+    // duration of the call.
     unsafe { libc::localtime_r(&epoch, &mut tm) };
     tm.tm_hour as u8
 }
@@ -2118,6 +2078,7 @@ pub async fn run_server(cfg: ServerConfig) {
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
+        state.http_client.clone(),
         state.env_config.agents_dir.clone(),
     );
     let app = build_router(state.clone());
@@ -2200,7 +2161,8 @@ mod tests {
     // those fixtures against its TypeScript types, so a wire format change on
     // either side fails CI instead of breaking clients at runtime.
 
-    use super::{AuthFlowResponse, Personality, ServiceEntry, TreeEntry};
+    use super::{Personality, ServiceEntry, TreeEntry};
+    use crate::providers::claude::OAuthStartResponse;
     use crate::docker::{AgentStatus, ListEntry, StatusJson};
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
@@ -2263,11 +2225,11 @@ mod tests {
         })
         .expect("serialize StatusJson");
 
-        let auth_start = serde_json::to_value(AuthFlowResponse {
+        let auth_start = serde_json::to_value(OAuthStartResponse {
             auth_url: "https://claude.ai/oauth/authorize?code=true".into(),
             session_id: "0123456789abcdef".into(),
         })
-        .expect("serialize AuthFlowResponse");
+        .expect("serialize OAuthStartResponse");
 
         let personality = serde_json::to_value(Personality {
             name: "sage".into(),
