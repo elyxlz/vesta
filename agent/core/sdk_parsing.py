@@ -6,7 +6,7 @@ import time
 import typing as tp
 from collections.abc import Mapping
 
-from claude_agent_sdk import (
+from core.cc_sdk import (
     AssistantMessage,
     HookContext,
     HookMatcher,
@@ -18,7 +18,7 @@ from claude_agent_sdk import (
     ThinkingBlock,
     ToolUseBlock,
 )
-from claude_agent_sdk.types import (
+from core.cc_sdk.types import (
     HookCallback,
     HookEvent,
     HookJSONOutput,
@@ -161,8 +161,8 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
 
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
     async def hook(input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        agent_id = input_data["agent_id"]
-        agent_type = input_data["agent_type"]
+        agent_id = input_data["agent_id"] if "agent_id" in input_data else "?"
+        agent_type = input_data["agent_type"] if "agent_type" in input_data else "unknown"
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
         event: StreamEvent
         if event_type == "subagent_start":
@@ -186,8 +186,8 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
 
 def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        name = input_data["tool_name"]
-        summary = _tool_summary(name, input_data["tool_input"])
+        name = input_data["tool_name"] if "tool_name" in input_data else "?"
+        summary = _tool_summary(name, input_data["tool_input"] if "tool_input" in input_data else {})
         prefix, is_sub = _subagent_prefix(input_data)
         logger.tool(f"{prefix}{summary}")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
@@ -197,7 +197,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        name = input_data["tool_name"]
+        name = input_data["tool_name"] if "tool_name" in input_data else "?"
         prefix, is_sub = _subagent_prefix(input_data)
         tool_id = tool_use_id or name
         elapsed = ""
@@ -211,8 +211,8 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        name = input_data["tool_name"]
-        error = input_data["error"]
+        name = input_data["tool_name"] if "tool_name" in input_data else "?"
+        error = input_data["error"] if "error" in input_data else "(unknown error)"
         prefix, _ = _subagent_prefix(input_data)
         logger.warning(f"{prefix}Tool failed: {name}: {error}")
         tool_id = tool_use_id or name
@@ -229,7 +229,9 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_notification(input_data: NotificationHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         title = input_data["title"] if "title" in input_data else None
         prefix = f"{title}: " if title else ""
-        logger.system(f"[{input_data['notification_type']}] {prefix}{input_data['message']}")
+        kind = input_data["notification_type"] if "notification_type" in input_data else "notification"
+        message = input_data["message"] if "message" in input_data else ""
+        logger.system(f"[{kind}] {prefix}{message}")
         return tp.cast(HookJSONOutput, {})
 
     async def log_stop(input_data: StopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:

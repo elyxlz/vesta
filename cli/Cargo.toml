@@ -24,6 +24,9 @@ self-replace = "1"
 url = "2"
 percent-encoding = "2"
 
+[dev-dependencies]
+proptest = "1"
+
 [profile.release]
 strip = true
 lto = true

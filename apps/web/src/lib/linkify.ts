@@ -21,8 +21,10 @@ export function linkify(text: string): string {
   let out = escapeHtml(stripped);
 
   // eslint-disable-next-line no-control-regex
-  out = out.replace(/\x00URL(\d+)\x00/g, (_, i) => {
+  out = out.replace(/\x00URL(\d+)\x00/g, (match, i) => {
     const url = urls[Number(i)];
+    // Input text can itself contain "\x00URL<n>\x00"; only replace our own placeholders.
+    if (url === undefined) return match;
     const display = escapeHtml(url);
     return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${display}</a>`;
   });

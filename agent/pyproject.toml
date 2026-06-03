@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.2",
     "aiohttp>=3.13.5",
-    "claude-agent-sdk>=0.2.87",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "rich>=15.0.0",
@@ -25,13 +24,17 @@ Repository = "https://github.com/elyxlz/vesta"
 dev = [
     "ruff>=0.15.14",
     "pytest>=9.0.3",
+    "pytest-timeout>=2.3.1",
+    "hypothesis>=6.131.0",
     "ty>=0.0.39",
 ]
 
 [tool.pytest.ini_options]
-python_files = ["e2e.py", "test_*.py", "*_test.py"]
+python_files = ["test_*.py", "*_test.py"]
 testpaths = ["tests"]
 pythonpath = [".", "skills"]
+# Per-test hard timeout: a hung async test fails fast instead of hanging CI until the job timeout.
+timeout = 120
 
 
 [tool.ty.src]

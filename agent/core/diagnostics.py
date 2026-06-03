@@ -65,7 +65,7 @@ def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
     """Returns None if we can't determine."""
     try:
         transport = state.client._transport  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-        process = transport._process  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        process = transport._process  # type: ignore[union-attr]
         if process is None:
             return False
         return process.returncode is None
