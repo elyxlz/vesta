@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.154",
+  "version": "0.1.155",
   "identifier": "com.vestarun.mobile",
   "build": {
     "beforeDevCommand": "npm --workspace @vesta/web run dev",

@@ -32,10 +32,12 @@ jobs:
   detect-changes:
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       cli: ${{ steps.filter.outputs.cli }}
       app: ${{ steps.filter.outputs.app }}
       agent: ${{ steps.filter.outputs.agent }}
+      go: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -46,20 +48,28 @@ jobs:
               - 'cli/**'
               - 'vestad/**'
               - '.github/workflows/ci.yml'
+              - 'check.sh'
             app:
               - 'apps/**'
               - '.github/workflows/ci.yml'
+              - 'check.sh'
             agent:
               - 'agent/**'
               - '.github/workflows/ci.yml'
+              - 'check.sh'
+            go:
+              - 'agent/skills/whatsapp/cli/**'
 
   # ── Version check ──────────────────────────────────────────────────────
   # Same skip as detect-changes; version-check has no `needs:` so the gate
-  # has to be explicit here. All build-* and check-* jobs `needs:` either
-  # detect-changes or version-check, so the skip cascades to them.
+  # has to be explicit here. Jobs with a plain `if:` skip automatically when
+  # their needs are skipped. Jobs using `!failure() && !cancelled()` opt out
+  # of that cascade, so they must also gate on
+  # `needs.detect-changes.result == 'success'` explicitly.
   version-check:
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
 
@@ -123,6 +133,7 @@ jobs:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -134,11 +145,156 @@ jobs:
           uv run python agent/skills/generate-index.py
           git diff --exit-code agent/skills/index.json || (echo "skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" && exit 1)
 
+  # ── Agent checks (lint, types, unit + transport tests) ────────────────
+  agent-tests:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      # The cc_sdk e2e transport tests (tests/test_e2e_transport.py) drive a fake
+      # claude TUI inside a real tmux server.
+      - name: Install tmux
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+
+      - name: Run agent checks
+        run: ./check.sh agent
+
+  # ── uv.lock freshness ─────────────────────────────────────────────────
+  lockfile:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Check lockfile is up to date
+        working-directory: agent
+        run: |
+          cp uv.lock uv.lock.before
+          uv lock
+
+          if ! diff -q uv.lock.before uv.lock > /dev/null; then
+            echo "❌ uv.lock is out of date"
+            echo "Please run 'cd agent && uv lock' locally and commit the changes"
+            exit 1
+          fi
+
+          echo "✓ uv.lock is up to date"
+
+  # ── Go checks (whatsapp CLI) ──────────────────────────────────────────
+  go-checks:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: Format check
+        working-directory: agent/skills/whatsapp/cli
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "❌ These files are not formatted:"
+            echo "$UNFORMATTED"
+            echo "Run 'gofmt -w .' and commit the result"
+            exit 1
+          fi
+          echo "✓ All Go files are formatted"
+
+      # go vet is skipped — requires whisper.cpp CGO headers that are only
+      # available in the Docker build environment. Compilation is verified
+      # by the container image build in CI.
+
+  # ── Web deployment guards ─────────────────────────────────────────────
+  vite-base-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Ensure vite base is "/" (required for Cloudflare Pages)
+        run: |
+          if grep -q 'base:\s*"\.\/"' apps/web/vite.config.ts; then
+            echo '❌ apps/web/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
+            exit 1
+          fi
+          echo '✅ vite base path is correct'
+
+  install-script-check:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax-check install.ps1 (PowerShell 5.1)
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ install.ps1 has no syntax errors"
+
+      - name: Check for PowerShell 5.1 incompatibilities
+        shell: powershell
+        run: |
+          $content = Get-Content install.ps1 -Raw
+          $issues = @()
+          # Join-Path with 3+ args requires PowerShell 6+
+          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
+            $issues += "Join-Path with 3+ arguments is not supported in PowerShell 5.1"
+          }
+          if ($issues.Count -gt 0) {
+            $issues | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ No PowerShell 5.1 compatibility issues found"
+
+  dashboard-sync-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check dashboard shared files are in sync
+        run: |
+          bash scripts/sync-dashboard.sh
+          if ! git diff --quiet agent/skills/dashboard/app/; then
+            echo "❌ Dashboard shared files are out of sync with apps/web/"
+            echo "Run 'bash scripts/sync-dashboard.sh' and commit the changes"
+            git diff --stat agent/skills/dashboard/app/
+            exit 1
+          fi
+          echo "✅ Dashboard shared files are in sync"
+
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -151,28 +307,15 @@ jobs:
         working-directory: apps
         run: npm ci
 
-      - name: Lint
-        working-directory: apps
-        run: npm -w @vesta/web run lint
-
-      - name: Format check
-        working-directory: apps
-        run: npm -w @vesta/web run format:check
-
-      - name: Type check
-        working-directory: apps
-        run: npm -w @vesta/web run check
-
-      - name: Run tests
-        working-directory: apps
-        run: npm -w @vesta/web run test
+      - name: Run web checks
+        run: ./check.sh web
 
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -181,15 +324,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Login to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Hermetic: the agent image is built from THIS checkout (GHA layer cache keeps it
+      # fast), so integration tests exercise the PR's agent code and Dockerfile — never
+      # the previously released ghcr.io :latest image.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - name: Pull agent image
-        run: docker pull ghcr.io/elyxlz/vesta:latest
+      - name: Build agent image from checkout
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          load: true
+          tags: vesta:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build vestad
         working-directory: vestad
@@ -199,17 +348,109 @@ jobs:
       # transient container/image operations. Retry once so a single flaky op
       # doesn't fail the whole job (the build above is already cached).
       - name: Run integration tests (excludes live tests)
+        id: integration
         uses: nick-fields/retry@v4
         with:
           timeout_minutes: 18
           max_attempts: 2
           retry_wait_seconds: 15
           shell: bash
-          command: |
-            cd vestad
-            cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
+          command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh integration
 
-  # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
+      # Flakiness must be visible, not silently absorbed by the retry: surface every
+      # multi-attempt run as a warning annotation + job summary. The nightly workflow
+      # runs this suite with NO retry, so genuine flakes fail there.
+      - name: Report flaky test retries
+        if: always() && steps.integration.outputs.total_attempts > 1
+        run: |
+          echo "::warning title=Flaky integration tests::Integration suite needed ${{ steps.integration.outputs.total_attempts }} attempts to pass"
+          {
+            echo "## ⚠️ Integration test flakiness"
+            echo ""
+            echo "The integration suite needed **${{ steps.integration.outputs.total_attempts }} attempts** to pass."
+            echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────────────────
+  # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
+  # secret (kept fresh by refresh-credentials.yml). These are slow and spend real
+  # API tokens, so they do NOT run on PRs or master pushes — only on the release
+  # event, where they gate the release (the `release` and `push-image` jobs depend
+  # on this one, so a live-test failure blocks publishing artifacts and the image).
+  test-live:
+    needs: [version-check]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Live tests must exercise the image being released, not the PREVIOUS release's
+      # :latest — build it from this checkout (shares the GHA layer cache with
+      # test-integration and push-image).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build agent image from checkout
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          load: true
+          tags: vesta:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The token must outlive the whole test run (so agents never need to refresh it
+      # in-container — only refresh-credentials.yml may ever refresh this lineage).
+      # A MISSING secret (forks have no repo secrets) skips the live tests; a PRESENT
+      # but stale/malformed secret FAILS the release — it means the refresh-credentials
+      # pipeline is broken and we must not ship without live coverage having run.
+      - name: Write Claude credentials
+        env:
+          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
+        run: |
+          if [ -z "$CLAUDE_CREDENTIALS" ]; then
+            echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
+            exit 0
+          fi
+          remaining=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
+          import sys, json, time
+          creds = json.load(sys.stdin)
+          print(int(creds['claudeAiOauth']['expiresAt']/1000 - time.time()))
+          " 2>/dev/null || echo "invalid")
+          if [ "$remaining" = "invalid" ]; then
+            echo "::error::CLAUDE_CREDENTIALS is malformed — re-seed it (see vestad/tests-integration/README.md)"
+            exit 1
+          fi
+          if [ "$remaining" -lt 3600 ]; then
+            echo "::error::CLAUDE_CREDENTIALS expires in ${remaining}s (<1h). The refresh-credentials workflow should keep it >=2h valid; it is broken or its GH_PAT lost secret access. Fix the pipeline before releasing."
+            exit 1
+          fi
+          mkdir -p ~/.claude
+          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+          echo "credentials valid for another $((remaining / 60)) minutes"
+
+      - name: Build vestad
+        working-directory: vestad
+        run: cargo build
+
+      - name: Run live e2e tests
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 40
+          max_attempts: 2
+          retry_wait_seconds: 30
+          shell: bash
+          command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh live
+
+  # ── Check vesta (clippy + tests) ──────────────────────────────────────
   check-vesta:
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
@@ -219,13 +460,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            run-tests: true
             run-vestad: true
           - target: aarch64-apple-darwin
             os: macos-latest
-            run-tests: false
             run-vestad: false
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -242,33 +482,39 @@ jobs:
             vestad
           key: ${{ matrix.target }}
 
-      - name: Clippy (cli)
-        working-directory: cli
-        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+      # cli clippy + tests run on BOTH platforms: the CLI ships to macOS users, so its
+      # tests must run there too, not just be cross-compiled.
+      - name: Check cli (clippy + tests)
+        run: TARGET=${{ matrix.target }} ./check.sh cli
 
-      - name: Clippy (vestad, Linux only)
+      - name: Check vestad (clippy + tests, Linux only)
         if: matrix.run-vestad
-        working-directory: vestad
-        run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
+        run: TARGET=${{ matrix.target }} ./check.sh vestad
 
-      - name: Test (cli)
-        if: matrix.run-tests
-        working-directory: cli
-        run: cargo test --target ${{ matrix.target }}
-
-      - name: Test (vestad, Linux only)
+      # Hermetic: the #[ignore] Docker tests run against an image built from this
+      # checkout, not the released ghcr.io :latest.
+      - name: Set up Docker Buildx
         if: matrix.run-vestad
-        working-directory: vestad
-        run: cargo test -p vestad --target ${{ matrix.target }}
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build agent image from checkout
+        if: matrix.run-vestad
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          load: true
+          tags: vesta:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Docker integration tests (vestad, Linux only)
         if: matrix.run-vestad
-        working-directory: vestad
-        run: |
-          docker pull ghcr.io/elyxlz/vesta:latest
-          cargo test -p vestad --target ${{ matrix.target }} -- --ignored
+        run: VESTAD_AGENT_IMAGE=vesta:local ./check.sh vestad-docker
 
   # ── Build vesta client (all unix targets) ─────────────────────────────
+  # Pure build job: clippy + tests live in check-vesta (and check-windows), which also
+  # run on non-PR events — duplicating them here just slowed releases down.
   build-vesta:
     needs: [version-check]
     if: github.event_name != 'pull_request'
@@ -290,6 +536,7 @@ jobs:
             os: macos-latest
             artifact: vesta-x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -297,7 +544,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -314,26 +560,6 @@ jobs:
           mkdir -p cli/.cargo
           echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
-
-      - name: Clippy (cli)
-        if: "!matrix.cross"
-        working-directory: cli
-        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
-
-      - name: Clippy (vestad, Linux only)
-        if: "!matrix.cross && runner.os == 'Linux'"
-        working-directory: vestad
-        run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
-
-      - name: Test (cli)
-        if: "!matrix.cross"
-        working-directory: cli
-        run: cargo test --target ${{ matrix.target }}
-
-      - name: Test (vestad, Linux only)
-        if: "!matrix.cross && runner.os == 'Linux'"
-        working-directory: vestad
-        run: cargo test -p vestad --target ${{ matrix.target }}
 
       - name: Build vesta
         working-directory: cli
@@ -366,6 +592,7 @@ jobs:
             os: ubuntu-24.04-arm
             artifact: vestad-aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -407,6 +634,7 @@ jobs:
   test-linux:
     needs: [build-vestad, build-vesta]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -421,14 +649,16 @@ jobs:
           ./vestad --version
           ./vesta --version
 
-  # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
-  clippy-windows:
+  # ── Windows checks (clippy + tests, runs on PRs too) ─────────────────
+  # The CLI ships to Windows users; its tests must actually run on Windows,
+  # not just be lint-checked there.
+  check-windows:
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.cli == 'true'
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -443,15 +673,16 @@ jobs:
           workspaces: cli
           key: x86_64-pc-windows-msvc
 
-      - name: Clippy
-        working-directory: cli
-        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+      - name: Check cli (clippy + tests)
+        shell: bash
+        run: TARGET=x86_64-pc-windows-msvc ./check.sh cli
 
   # ── Build Windows CLI (native MSVC) ──────────────────────────────────
   build-windows:
     needs: [version-check, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       needs.detect-changes.outputs.cli == 'true' ||
       github.event_name != 'pull_request'
       )
@@ -502,7 +733,8 @@ jobs:
   build-tauri-macos:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
@@ -518,6 +750,7 @@ jobs:
             os: macos-latest
             bundles: dmg
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v6
 
@@ -576,7 +809,8 @@ jobs:
   build-tauri-linux:
     needs: [test-frontend, detect-changes, build-vestad]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
@@ -592,6 +826,7 @@ jobs:
             os: ubuntu-24.04-arm
             bundles: deb,rpm
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v6
 
@@ -664,11 +899,13 @@ jobs:
   build-tauri-windows:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: windows-latest
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v6
 
@@ -742,11 +979,13 @@ jobs:
   build-tauri-android:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v6
 
@@ -864,11 +1103,13 @@ jobs:
   build-tauri-ios:
     needs: [test-frontend, detect-changes]
     if: >-
-      !failure() && !cancelled() && (
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: macos-latest
+    timeout-minutes: 150
     steps:
       - name: Check for Apple signing secrets
         env:
@@ -986,13 +1227,19 @@ jobs:
     needs:
       - version-check
       - skills-index-check
+      - agent-tests
+      - lockfile
+      - go-checks
+      - vite-base-check
+      - install-script-check
+      - dashboard-sync-check
       - test-frontend
       - test-integration
       - check-vesta
       - build-vesta
       - build-vestad
       - test-linux
-      - clippy-windows
+      - check-windows
       - build-windows
       - build-tauri-macos
       - build-tauri-linux
@@ -1000,19 +1247,23 @@ jobs:
       - build-tauri-android
       - build-tauri-ios
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check for failures
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more required jobs failed"
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled"
             exit 1
           fi
 
   # ── Push Docker image (release only) ─────────────────────────────────
+  # Gated on test-live: a live-test failure (via !failure() over needs) skips the
+  # image push, so a broken agent is never published to :latest.
   push-image:
-    needs: [test-linux]
+    needs: [test-linux, test-live]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -1041,9 +1292,10 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 

@@ -8,7 +8,7 @@ import pathlib as pl
 import time
 
 import pydantic
-from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
+from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
 from . import models as vm
@@ -198,7 +198,7 @@ async def _run_messages_with_interrupts(
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
                 try:
-                    sid = state.client.session_id  # ty: ignore[unresolved-attribute]
+                    sid = state.client.session_id
                     if sid:
                         persist_session_id(sid, state=state, config=config)
                 except (AttributeError, TypeError):

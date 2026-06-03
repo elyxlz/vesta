@@ -8,15 +8,13 @@ import typing as tp
 
 import aiohttp
 
-from claude_agent_sdk import (
+from core.cc_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
-    ResultMessage,
-    SystemMessage,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
+from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import logger
 from . import models as vm
@@ -24,7 +22,6 @@ from . import state_store
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_memory_path
-from .provider import observed_provider_failure
 from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -59,12 +56,6 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
             if isinstance(ctx, int) and ctx > 0:
                 return ctx
     return None
-
-
-# Terminal upstream statuses that mean the provider can't be used as configured:
-# 401 (invalid/expired auth) and 402 (insufficient credits). Both flip the agent
-# to not_authenticated and stop the retry storm rather than burning ~3min retrying.
-TERMINAL_PROVIDER_ERRORS = (401, 402)
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -185,22 +176,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
-            # Detect upstream 401s emitted by the SDK as structured stream events.
-            # `api_retry` fires once per backoff attempt; `ResultMessage` is the
-            # terminal verdict. On either, flip provider state and interrupt the
-            # SDK so the user doesn't sit through ~3min of retry storm.
-            if (
-                isinstance(msg, SystemMessage)
-                and msg.subtype == "api_retry"
-                and "error_status" in msg.data
-                and msg.data["error_status"] in TERMINAL_PROVIDER_ERRORS
-            ):
-                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
-                logger.error(f"Upstream {msg.data['error_status']} detected; interrupting SDK to skip retry storm")
-                await attempt_interrupt(state, config=config, reason="auth_failed")
-                break
-            if isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS:
-                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
+            # Terminal upstream auth/billing errors (401/402) are detected in the
+            # OpenRouter cache proxy now: the tmux-driven cc_sdk reconstructs messages
+            # from the transcript and never surfaces the SDK's old `api_retry`/error
+            # stream events, so the proxy (which sees every upstream status) is the only
+            # place the signal exists. See openrouter_cache._handle.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)

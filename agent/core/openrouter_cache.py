@@ -36,6 +36,13 @@ from aiohttp import web
 from . import logger
 from .config import VestaConfig
 from .models import State
+from .provider import observed_provider_failure
+
+# Terminal upstream statuses that mean the provider can't be used as configured:
+# 401 (invalid/expired auth) and 402 (insufficient credits). Either flips the agent
+# to not_authenticated so a broken key fails `vesta setup` in seconds instead of the
+# agent idling until the ready timeout.
+TERMINAL_PROVIDER_ERRORS = (401, 402)
 
 OPENROUTER_API = "https://openrouter.ai/api"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
@@ -222,6 +229,10 @@ async def _handle(request: web.Request) -> web.StreamResponse:
         # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the
         # SDK keeps its backoff signals. aiohttp already decompressed the body and the
         # StreamResponse re-frames length/encoding, so drop those hop-by-hop headers.
+        if upstream.status in TERMINAL_PROVIDER_ERRORS:
+            state: State = request.app["state"]
+            config: VestaConfig = request.app["config"]
+            state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
         resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)
@@ -302,6 +313,8 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
         app["providers"] = providers
         app["session_id"] = f"vesta-{config.agent_name}"
         app["client"] = client
+        app["state"] = state
+        app["config"] = config
         app["cache_stats"] = {"n": 0, "input": 0, "cache_read": 0}
         app.on_cleanup.append(_close_client)
         app.router.add_route("*", "/{tail:.*}", _handle)

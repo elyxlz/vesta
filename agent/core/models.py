@@ -5,9 +5,8 @@ import datetime as dt
 import time
 
 import pydantic as pyd
-from claude_agent_sdk import ClaudeSDKClient
-
 from aiohttp.web import AppRunner
+from core.cc_sdk import ClaudeSDKClient
 
 from .config import VestaConfig
 from .events import EventBus

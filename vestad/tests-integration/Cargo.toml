@@ -1,11 +1,11 @@
+# Shared test harness only (TestServer, TestAgent, docker helpers, client). The actual
+# integration/live test suites live in `vestad/tests/` so cargo builds the vestad binary for
+# them (CARGO_BIN_EXE_vestad); vestad dev-depends on this crate for the harness.
 [package]
 name = "vesta-tests"
-version = "0.1.154"
+version = "0.1.155"
 edition = "2021"
 publish = false
-
-[features]
-integration = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -16,23 +16,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tokio-tungstenite = { version = "0.29", features = ["__rustls-tls"] }
 rustls = "0.23"
 ring = "0.17"
-
-[[test]]
-name = "server"
-path = "tests/server/mod.rs"
-
-[[test]]
-name = "multi_user"
-path = "tests/multi_user/mod.rs"
-
-[[test]]
-name = "live"
-path = "tests/live/mod.rs"
-
-[[test]]
-name = "oauth"
-path = "tests/oauth/mod.rs"
-
-[[test]]
-name = "migrations"
-path = "tests/migrations/mod.rs"

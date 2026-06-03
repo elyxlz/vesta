@@ -1,6 +1,6 @@
 [package]
 name = "vesta"
-version = "0.1.154"
+version = "0.1.155"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
@@ -23,6 +23,9 @@ dirs = "6"
 self-replace = "1"
 url = "2"
 percent-encoding = "2"
+
+[dev-dependencies]
+proptest = "1"
 
 [profile.release]
 strip = true

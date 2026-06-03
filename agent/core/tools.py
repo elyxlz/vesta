@@ -5,7 +5,7 @@ import os
 import signal
 import typing as tp
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
+from core.cc_sdk import create_sdk_mcp_server, tool
 
 from . import logger
 from . import models as vm
