@@ -2191,4 +2191,151 @@ mod tests {
             "a port held by another listener must not be reported reusable",
         );
     }
+
+    // ── API contract fixtures ──────────────────────────────────────────────
+    //
+    // Serializes sample values of every wire type the web app consumes into
+    // apps/web/src/lib/vestad-api-fixtures.ts, using the real production
+    // serialization code. The web's api-contract.test.ts then `satisfies`-checks
+    // those fixtures against its TypeScript types, so a wire format change on
+    // either side fails CI instead of breaking clients at runtime.
+
+    use super::{AuthFlowResponse, Personality, ServiceEntry, TreeEntry};
+    use crate::docker::{AgentStatus, ListEntry, StatusJson};
+    use crate::types::{BackupInfo, BackupType};
+    use std::collections::HashMap;
+
+    fn contract_fixtures() -> serde_json::Value {
+        let agent_statuses: Vec<serde_json::Value> = [
+            AgentStatus::Alive,
+            AgentStatus::Starting,
+            AgentStatus::NotAuthenticated,
+            AgentStatus::Stopped,
+            AgentStatus::Dead,
+            AgentStatus::NotFound,
+        ]
+        .iter()
+        .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
+        .collect();
+
+        // The control WS "agents" message, built by the production code path.
+        let agents = vec![
+            ListEntry { name: "sample-agent".into(), status: AgentStatus::Alive, ws_port: 4200 },
+            ListEntry { name: "stopped-agent".into(), status: AgentStatus::Stopped, ws_port: 4201 },
+        ];
+        let mut activity = HashMap::new();
+        activity.insert("sample-agent".to_string(), "thinking".to_string());
+        let mut agent_services = HashMap::new();
+        agent_services.insert("dashboard".to_string(), ServiceEntry { port: 8080, public: true });
+        let mut services = HashMap::new();
+        services.insert("sample-agent".to_string(), agent_services);
+        let mut agent_revs = HashMap::new();
+        agent_revs.insert("dashboard".to_string(), 3u64);
+        let mut revs = HashMap::new();
+        revs.insert("sample-agent".to_string(), agent_revs);
+        let agents_ws_message = crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
+
+        let backups: Vec<serde_json::Value> = [
+            BackupType::Manual,
+            BackupType::Daily,
+            BackupType::Weekly,
+            BackupType::Monthly,
+            BackupType::PreRestore,
+        ]
+        .into_iter()
+        .map(|backup_type| {
+            serde_json::to_value(BackupInfo {
+                id: "1a2b3c4d".into(),
+                agent_name: "sample-agent".into(),
+                backup_type,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                size: 1234567890,
+            })
+            .expect("serialize BackupInfo")
+        })
+        .collect();
+
+        let agent_status_json = serde_json::to_value(StatusJson {
+            name: "sample-agent".into(),
+            status: AgentStatus::Alive,
+            id: Some("c0ffee".into()),
+            ws_port: 4200,
+        })
+        .expect("serialize StatusJson");
+
+        let auth_start = serde_json::to_value(AuthFlowResponse {
+            auth_url: "https://claude.ai/oauth/authorize?code=true".into(),
+            session_id: "0123456789abcdef".into(),
+        })
+        .expect("serialize AuthFlowResponse");
+
+        let personality = serde_json::to_value(Personality {
+            name: "sage".into(),
+            emoji: "\u{1f989}".into(),
+            title: "The Sage".into(),
+            description: "Calm and wise".into(),
+            sample: "Let me think about that.".into(),
+            order: 1,
+        })
+        .expect("serialize Personality");
+
+        let tree_entry = serde_json::to_value(TreeEntry {
+            path: "notes/todo.md".into(),
+            is_dir: false,
+            mode: 0o644,
+        })
+        .expect("serialize TreeEntry");
+
+        // Mirrors version_json() above; that response is an inline json! so it cannot be
+        // serialized from a struct here. Keep this in sync with version_json().
+        let version = serde_json::json!({
+            "version": "0.1.0",
+            "api_compat": "0.2",
+            "latest_version": "0.1.1",
+            "update_available": true,
+            "dev_mode": false,
+        });
+
+        serde_json::json!({
+            "agent_statuses": agent_statuses,
+            "agents_ws_message": agents_ws_message,
+            "agent_status_json": agent_status_json,
+            "backups": backups,
+            "auth_start": auth_start,
+            "personality": personality,
+            "tree_entry": tree_entry,
+            "version": version,
+        })
+    }
+
+    #[test]
+    fn api_contract_fixtures_up_to_date() {
+        let fixtures = contract_fixtures();
+        let json = serde_json::to_string_pretty(&fixtures).expect("serialize fixtures");
+        let content = format!(
+            "// AUTO-GENERATED by vestad's API contract test. Do not edit by hand.\n\
+             // Regenerate: cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\n\
+             // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.\n\
+             export const vestadApiFixtures = {json} as const;\n"
+        );
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/web/src/lib/vestad-api-fixtures.ts");
+        if !path.parent().is_some_and(|dir| dir.exists()) {
+            // Standalone vestad checkout without the web app (e.g. release tarball): nothing to check.
+            return;
+        }
+
+        if std::env::var("REGEN_API_FIXTURES").is_ok() {
+            std::fs::write(&path, &content).expect("write fixtures");
+            return;
+        }
+
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(
+            committed,
+            content,
+            "\n\nAPI contract fixtures are stale.\nRegenerate with:\n  cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\nthen commit {}\n",
+            path.display()
+        );
+    }
 }

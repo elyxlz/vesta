@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import core.models as vm
 from core.client import converse
+from wait_util import wait_for_condition
 from core.diagnostics import (
     _check_sdk_subprocess_alive,
     format_hang_diagnostics,
@@ -157,12 +158,12 @@ async def test_watchdog_warns_at_thresholds():
 
     try:
 
-        async def stop_after_tick():
-            await asyncio.sleep(0.05)
+        async def stop_after_warning():
+            await wait_for_condition(lambda: any("SDK silent for 60s" in w for w in warnings), message="watchdog never warned")
             stop.set()
 
         with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
-            await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_tick())
+            await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_warning())
     finally:
         diagnostics_mod.logger.warning = original_warning
 
@@ -188,18 +189,28 @@ async def test_watchdog_resets_after_activity_resumes():
     diagnostics_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
 
     original_wait_for = asyncio.wait_for
+    ticks = 0
 
     async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
+        # One call per watchdog loop iteration; the idle check runs right after each call returns.
+        nonlocal ticks
+        ticks += 1
         return await original_wait_for(coro, timeout=0.01)
+
+    def sixty_warning_count() -> int:
+        return len([w for w in warnings if "SDK silent for 60s" in w])
 
     try:
 
         async def resume_then_idle_again():
-            await asyncio.sleep(0.05)
+            await wait_for_condition(lambda: sixty_warning_count() >= 1, message="watchdog never warned the first time")
             touch_activity(state, "sdk_message")
-            await asyncio.sleep(0.05)
+            # Wait two full ticks so at least one idle check definitely ran with the fresh
+            # activity timestamp (clearing the watchdog's warned state), then go idle again.
+            ticks_at_resume = ticks
+            await wait_for_condition(lambda: ticks >= ticks_at_resume + 2, message="watchdog stopped ticking")
             state.last_sdk_activity = time.monotonic() - 65
-            await asyncio.sleep(0.05)
+            await wait_for_condition(lambda: sixty_warning_count() >= 2, message="watchdog never re-warned after reset")
             stop.set()
 
         with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
@@ -225,8 +236,8 @@ async def test_watchdog_stops_cleanly():
 @pytest.mark.anyio
 async def test_tool_hooks_track_active_tools():
     """PreToolUse adds to active_tools, PostToolUse removes and logs duration."""
-    from claude_agent_sdk import HookContext
-    from claude_agent_sdk.types import PostToolUseHookInput, PreToolUseHookInput
+    from core.cc_sdk import HookContext
+    from core.cc_sdk.types import PostToolUseHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 
@@ -252,8 +263,8 @@ async def test_tool_hooks_track_active_tools():
 
 @pytest.mark.anyio
 async def test_tool_failure_hook_cleans_up():
-    from claude_agent_sdk import HookContext
-    from claude_agent_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
+    from core.cc_sdk import HookContext
+    from core.cc_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 
