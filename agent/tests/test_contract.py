@@ -75,10 +75,14 @@ def test_python_history_event_matches_spec():
 
 
 def test_typescript_types_match_spec():
-    """Parse app/src/lib/types.ts and verify VestaEvent covers all event types with correct fields."""
-    ts_path = Path(__file__).resolve().parents[2] / "app" / "src" / "lib" / "types.ts"
-    if not ts_path.exists():
-        pytest.skip("TypeScript source not available")
+    """Parse apps/web/src/lib/types.ts and verify VestaEvent covers all event types with correct fields."""
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / "apps").exists():
+        pytest.skip("web app source not available (agent-only checkout, e.g. inside the container)")
+    ts_path = repo_root / "apps" / "web" / "src" / "lib" / "types.ts"
+    # Hard failure (not skip) when apps/ exists but types.ts is not where we expect:
+    # a silent skip here is how this contract check went dormant for months after app/ moved to apps/web/.
+    assert ts_path.exists(), f"types.ts not found at {ts_path} — did the web app move? Update this path."
 
     content = ts_path.read_text()
 

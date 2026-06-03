@@ -39,7 +39,9 @@ pub async fn control_ws_handler(
     ws.on_upgrade(move |socket| control_ws_session(state, socket))
 }
 
-fn build_agents_message(
+// pub(crate): also exercised by the API contract test in serve.rs, which captures this
+// message's wire format into fixtures checked against the web app's TypeScript types.
+pub(crate) fn build_agents_message(
     agents: &[docker::ListEntry],
     activity: &HashMap<String, String>,
     services: &HashMap<String, HashMap<String, ServiceEntry>>,

@@ -30,6 +30,10 @@ fn embed_fingerprint() -> &'static str {
     FINGERPRINT.get_or_init(|| {
         let mut hasher = DefaultHasher::new();
         hasher.write(env!("CARGO_PKG_VERSION").as_bytes());
+        // build.rs emits VESTAD_EMBED_HASH from the embedded inputs' content; reading it here
+        // via env!() makes this crate depend on it, so a change to agent/core forces a vestad
+        // RECOMPILE (and a fresh rust-embed snapshot), not just a build-script rerun.
+        hasher.write(env!("VESTAD_EMBED_HASH").as_bytes());
         for name in AgentSource::iter() {
             hasher.write(name.as_bytes());
             if let Some(file) = AgentSource::get(&name) {

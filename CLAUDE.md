@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by the Claude Agent SDK. It monitors notifications, responds to messages, and handles tasks autonomously.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. Instead of the official Claude Agent SDK, the agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface.
 
 ## Architecture
 
@@ -17,13 +17,13 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 - **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web` for macOS/Windows/Linux. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
 - **Mobile App** (`apps/mobile/`): Separate Tauri wrapper around `@vesta/web` for iOS/Android. Self-contained — independent Cargo crate (`vesta-mobile`), bundle id `com.vestarun.mobile`, no shared Rust code with desktop.
 - **Skills** (`agent/skills/` + `agent/core/skills/`): Each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-in skills shipped with the agent (e.g. `app-chat`); `agent/skills/` holds the rest. No MCP servers.
-- **Integration Tests** (`tests/`): Separate Rust crate with end-to-end tests (real vestad + client, requires Docker).
+- **Integration Tests** (`vestad/tests-integration/`): Rust crate (`vesta-tests`, workspace member of `vestad/`) with end-to-end tests (real vestad + client, requires Docker).
 
 ### Key Flows
 
 **Agent creation**: CLI/app -> `POST /agents` on vestad -> allocates unique WS port, generates agent token, writes `~/.config/vesta/vestad/agents/{agent}.env` -> builds/pulls Docker image -> creates container with host networking and bind-mounted env file (`/run/vestad-env`) -> container starts, sources env, runs `uv run python -m core.main` -> initializes EventBus (SQLite), starts WS server on allocated port, starts message processor and notification monitor tasks.
 
-**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls Claude Agent SDK (`client.query()`) -> streams response blocks (text, thinking, tool use) back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
+**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls the cc_sdk client (`client.query()`, which pastes the prompt into the tmux `claude` session) -> streams response blocks (text, thinking, tool use), reconstructed from the session transcript and native hooks, back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
 
 **Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
@@ -33,7 +33,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Auth**: vestad generates an API key at `~/.config/vesta/vestad/api-key` (clients use `Bearer` token or `?token=` query param). Each agent gets a unique `AGENT_TOKEN` for agent-to-vestad auth via `X-Agent-Token` header. TLS uses self-signed certs with fingerprint verification (no CA chain).
 
-**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are registered as tools via Claude Agent SDK. `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change.
+**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are loaded natively by Claude Code (via `setting_sources` + the skill directories). `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change.
 
 **Backup/restore**: each backup is a `restic` snapshot in a single deduplicated, compressed, encrypted repository at `~/.config/vesta/vestad/restic-repo` (passphrase at `~/.config/vesta/vestad/restic-password`). A snapshot is `docker export <container>` streamed into `restic backup --stdin`, tagged `agent:<name>` + `type:<backup_type>`; restore is `restic dump | docker import` into a fresh container. Because restic deduplicates, retaining many snapshots of a multi-GB agent costs roughly one full copy plus per-run diffs (the old `docker export|import` model wrote an independent full image per backup, which filled the host disk). `restic` is located on PATH or extracted from a copy embedded into the vestad binary at build time (`build.rs` vendors it into `vestad/vendored/`, `src/restic_embed.rs` bakes it in, `src/restic.rs` extracts it — same mechanism as cloudflared). Retention (3 daily, 2 weekly, 1 monthly default) is computed in `compute_backups_to_delete` and applied via `restic forget --prune`. The separate `vestad backup export/import` file path (`.tar.gz` via `docker export`) is unchanged and used for cross-machine transfer. All `~/agent/` state (events.db, session_id) survives backup/restore.
 
@@ -41,39 +41,39 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 > **Skills index**: When adding or modifying skills, run `uv run python agent/skills/generate-index.py` and commit `agent/skills/index.json`. CI fails if the index is stale.
 
-### Agent (run from `agent/`)
+### check.sh (single entry point, run from repo root)
+
+CI runs these exact subcommands, so passing locally means passing CI:
 
 ```bash
-uv run pytest tests/ --ignore=tests/test_e2e.py  # Unit tests
-uv run pytest tests/test_notifications.py         # Single module
-uv run pytest tests/ -k "test_batch"              # Single test by name
-uv run pytest skills/tasks/cli/tests/             # Skill CLI tests
-uv run ruff check                                 # Lint
-uv run ty check                                   # Type check
+./check.sh agent          # ruff check + ruff format --check + ty check + pytest (incl. cc_sdk transport tests; needs tmux)
+./check.sh cli            # cargo clippy -D warnings + cargo test
+./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad
+./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
+./check.sh web            # eslint + prettier --check + tsc + vitest
+./check.sh integration    # vestad integration tests (needs Docker)
+./check.sh live           # live agent e2e (Docker + ~/.claude/.credentials.json; real Claude)
+./check.sh all            # agent + cli + vestad + web
 ```
 
-### Rust (each crate is standalone)
+### Finer-grained commands
 
 ```bash
-# CLI (run from cli/)
+# Agent (run from agent/)
+uv run pytest tests/                                # All agent tests
+uv run pytest tests/test_notifications.py           # Single module
+uv run pytest tests/ -k "test_batch"                # Single test by name
+uv run pytest tests/test_e2e_transport.py           # cc_sdk e2e (fake claude TUI in real tmux; requires tmux)
+uv run pytest skills/tasks/cli/tests/               # Skill CLI tests
+
+# Rust (each crate is standalone)
 cd cli && cargo build                      # Debug build
-cd cli && cargo clippy                     # Lint
-cd cli && cargo test                       # Unit tests
-
-# Server (run from vestad/ — triggers `npm -w @vesta/web run build` via build.rs; set VESTAD_SKIP_APP_BUILD=1 to skip)
+# vestad builds trigger `npm -w @vesta/web run build` via build.rs; set VESTAD_SKIP_APP_BUILD=1 to skip
 cd vestad && cargo build                   # Debug build
-cd vestad && cargo clippy -p vestad        # Lint vestad only (not tests-integration)
-cd vestad && cargo test -p vestad          # Unit tests
-cd vestad && cargo test -p vesta-tests     # Integration tests (requires Docker)
-```
+cd vestad && cargo test -p vesta-tests --test server  # Single integration suite
 
-### Frontend (run from `apps/`)
-
-```bash
+# Frontend (run from apps/)
 npm install                                # Installs workspace deps (one-time / after package.json changes)
-npm -w @vesta/web run test                 # Web tests
-npm -w @vesta/web run lint                 # Web lint
-npm -w @vesta/web run check                # Web type check
 npm -w @vesta/desktop run tauri -- <args>  # Run the desktop Tauri CLI (dev, build, etc.)
 npm -w @vesta/mobile run ios:build         # Build signed iOS .ipa (also ios:dev, android:build, android:dev)
 ```
@@ -116,7 +116,13 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/package.json`, `apps/mobile/src-tauri/Cargo.toml`, `apps/mobile/src-tauri/tauri.conf.json`, `apps/mobile/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
+One workflow (`ci.yml`) runs on push to `master`, PRs, and releases; jobs are path-filtered on PRs. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/package.json`, `apps/mobile/src-tauri/Cargo.toml`, `apps/mobile/src-tauri/tauri.conf.json`, `apps/mobile/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest (incl. cc_sdk e2e transport tests under tmux), `uv.lock` freshness. The single required branch-protection check is `merge-gate-ci`.
+
+Docker-based jobs (integration tests, vestad Docker unit tests, live tests) build the agent image **from the checkout** (GHA layer cache) and run with `VESTAD_AGENT_IMAGE=vesta:local`, so PRs are validated against their own agent code and Dockerfile, never the previously released image.
+
+A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` secret **only on the release event** (not PRs — it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
+
+A nightly workflow (`nightly.yml`, 03:30 UTC) runs every suite plus the Docker tests with **no retry wrapper**, so flaky tests surface there; failures open or update an issue labeled `nightly-failure`.
 
 ## Karpathy Guidelines
 

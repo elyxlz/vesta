@@ -7,6 +7,28 @@ const CLOUDFLARED_DOWNLOAD_BASE: &str =
 const RESTIC_VERSION: &str = "0.18.1";
 const RESTIC_DOWNLOAD_BASE: &str = "https://github.com/restic/restic/releases/download";
 
+/// Recursively collect embeddable files under `path` (a dir or single file), skipping the
+/// __pycache__/*.pyc that rust-embed also excludes, so the hash tracks real source changes.
+fn collect_embed_inputs(path: &Path, out: &mut Vec<PathBuf>) {
+    if path.is_file() {
+        out.push(path.to_path_buf());
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = entry.file_name();
+        if name == "__pycache__" {
+            continue;
+        }
+        if p.is_dir() {
+            collect_embed_inputs(&p, out);
+        } else if p.extension().is_none_or(|ext| ext != "pyc") {
+            out.push(p);
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=VESTAD_SKIP_APP_BUILD");
@@ -43,13 +65,31 @@ fn main() {
     }
 
     // Agent source is embedded into the binary via rust-embed in src/agent_embed.rs.
-    // Rebuild when any embedded input changes so release binaries stay in sync.
+    // rust-embed snapshots files at COMPILE time, and `rerun-if-changed` alone only reruns
+    // this script — it does NOT force vestad to recompile, so the embedded snapshot can go
+    // stale when agent/core changes but vestad's own sources don't (this silently shipped an
+    // old core/ and crash-looped the agent). Hash every embedded input and emit it as a
+    // rustc-env that agent_code.rs reads via env!(): when the hash changes, vestad recompiles,
+    // rust-embed re-snapshots, and the runtime fingerprint changes so agent-code re-extracts.
+    let mut embed_files: Vec<PathBuf> = Vec::new();
     for rel in ["agent/core", "agent/pyproject.toml", "agent/uv.lock"] {
-        let p = repo_root.join(rel);
-        if p.exists() {
-            println!("cargo:rerun-if-changed={}", p.display());
+        collect_embed_inputs(&repo_root.join(rel), &mut embed_files);
+    }
+    embed_files.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for f in &embed_files {
+        println!("cargo:rerun-if-changed={}", f.display());
+        if let Ok(rel) = f.strip_prefix(repo_root) {
+            std::hash::Hasher::write(&mut hasher, rel.to_string_lossy().as_bytes());
+        }
+        if let Ok(bytes) = std::fs::read(f) {
+            std::hash::Hasher::write(&mut hasher, &bytes);
         }
     }
+    println!(
+        "cargo:rustc-env=VESTAD_EMBED_HASH={:016x}",
+        std::hash::Hasher::finish(&hasher)
+    );
 
     if std::env::var_os("VESTAD_SKIP_APP_BUILD").is_some() {
         std::fs::create_dir_all(web_dir.join("dist")).ok();

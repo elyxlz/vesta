@@ -12,6 +12,7 @@ from aiohttp import ClientSession, WSMsgType, web
 import core.models as vm
 from core.api import _ws_handler, start_ws_server
 from core.events import ChatEvent
+from wait_util import wait_for_condition
 
 
 def _pick_port() -> int:
@@ -102,7 +103,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
             await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
             await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
         ]
-        await asyncio.sleep(0.05)  # give handlers time to register in app["websockets"]
+        await wait_for_condition(lambda: len(runner.app["websockets"]) == 3, message="WS handlers never registered")
 
         start = time.monotonic()
         await runner.cleanup()
@@ -124,7 +125,7 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
 
     async with ClientSession() as session:
         ws = await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth)
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: len(runner.app["websockets"]) == 1, message="WS handler never registered")
 
         cleanup_task = asyncio.create_task(runner.cleanup())
         try:

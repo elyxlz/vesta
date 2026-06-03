@@ -227,4 +227,33 @@ mod tests {
         assert!(!version_less_than("1.0.0", "1.0.0"));
         assert!(!version_less_than("0.2.0", "0.1.0"));
     }
+
+    // Property-based tests: these functions handle raw user input (--host flags, release
+    // tags from the GitHub API), so their invariants must hold for ANY string.
+    proptest::proptest! {
+        #[test]
+        fn normalize_url_is_idempotent(host in proptest::prelude::any::<String>()) {
+            let once = normalize_url(&host);
+            let twice = normalize_url(&once);
+            proptest::prop_assert_eq!(&twice, &once);
+        }
+
+        #[test]
+        fn normalize_url_always_has_scheme(host in proptest::prelude::any::<String>()) {
+            let url = normalize_url(&host);
+            proptest::prop_assert!(url.starts_with("https://") || url.starts_with("http://"));
+        }
+
+        #[test]
+        fn version_less_than_is_irreflexive(version in proptest::prelude::any::<String>()) {
+            proptest::prop_assert!(!version_less_than(&version, &version));
+        }
+
+        #[test]
+        fn version_less_than_is_asymmetric(a in "[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}", b in "[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}") {
+            if version_less_than(&a, &b) {
+                proptest::prop_assert!(!version_less_than(&b, &a));
+            }
+        }
+    }
 }
