@@ -83,6 +83,9 @@ check_web() {
 check_integration() {
   (
     cd vestad
+    # The harness launches the vestad BINARY (target/debug/vestad), which embeds agent/core;
+    # build it first so the tests never run against a stale binary.
+    cargo build -p vestad
     cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
   )
 }
@@ -90,6 +93,7 @@ check_integration() {
 check_live() {
   (
     cd vestad
+    cargo build -p vestad
     cargo test -p vesta-tests --test live -- --test-threads=2
   )
 }
