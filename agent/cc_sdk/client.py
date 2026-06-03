@@ -29,6 +29,7 @@ import uuid
 
 from . import transcript
 from . import tmux
+from ._claude_bin import ensure_claude
 from .bridge import Bridge
 from .messages import ClaudeAgentOptions, ClaudeSDKError, ResultMessage
 from .mcp import McpServer
@@ -39,7 +40,6 @@ _MCP_STDIO = _PKG_DIR / "_mcp_stdio.py"
 
 _EXIT_MARKER = "__CC_EXIT__:"
 _STARTUP_TIMEOUT_S = 120.0
-_MCP_CONNECT_TIMEOUT_S = 30.0
 _POLL_S = 0.15
 _POST_STOP_DRAIN_S = 2.5
 _ALWAYS_EVENTS = ("SessionStart", "Stop")
@@ -92,9 +92,16 @@ def _thinking_env(options: ClaudeAgentOptions) -> dict[str, str]:
 
 
 def _claude_args(
-    options: ClaudeAgentOptions, *, session_id: str, resuming: bool, sysprompt_file: pl.Path, settings_file: pl.Path, mcp_file: pl.Path | None
+    options: ClaudeAgentOptions,
+    *,
+    claude_bin: str,
+    session_id: str,
+    resuming: bool,
+    sysprompt_file: pl.Path,
+    settings_file: pl.Path,
+    mcp_file: pl.Path | None,
 ) -> list[str]:
-    args = ["claude"]
+    args = [claude_bin]
     if resuming:
         args += ["--resume", session_id]
     else:
@@ -161,7 +168,6 @@ class ClaudeSDKClient:
             await self._launch()
             self._monitor_task = asyncio.create_task(self._monitor())
             await self._await_ready()
-            await self._verify_mcp_registered()
         except BaseException:
             # __aexit__ is NOT called when __aenter__ raises, so a failed startup
             # (e.g. resume failure) would otherwise leak the tmux server, the claude
@@ -293,19 +299,23 @@ class ClaudeSDKClient:
         settings = {"skipDangerousModePermissionPrompt": True, "hooks": hooks}
         (self._workdir / "settings.json").write_text(json.dumps(settings))
         if self._bridge.tools:
+            # Write the tool definitions to a file the stdio proxy serves directly for
+            # tools/list, so claude registers the tools at startup without depending on the
+            # live in-process bridge (which, at first-start, does not reliably answer claude's
+            # startup tools/list — the model then can't call the agent's control tools).
+            tools_file = self._workdir / "mcp_tools.json"
+            tools_file.write_text(
+                json.dumps([{"name": d.name, "description": d.description, "inputSchema": d.input_schema} for d in self._bridge.tools.values()])
+            )
             mcp = {
                 "mcpServers": {
                     name: {
                         "type": "stdio",
                         "command": sys.executable,
-                        "args": [str(_MCP_STDIO), self._sock_path],
+                        "args": [str(_MCP_STDIO), self._sock_path, str(tools_file)],
                         "env": {"PYTHONSAFEPATH": "1"},
-                        # Exempt this server from tool-search deferral: with many tools (skills="all"),
-                        # Claude Code defers MCP tools behind ToolSearch by default, and connected
-                        # servers' tools are not reliably indexed — the model then cannot find or call
-                        # the agent's control tools (mark_setup_done, restart_vesta, ...) even though the
-                        # server connected. alwaysLoad makes these few, essential tools load upfront into
-                        # the model's context at session start, never deferred. (Claude Code >= 2.1.121.)
+                        # alwaysLoad also exempts the server from tool-search deferral (>= 2.1.121):
+                        # belt and suspenders alongside the static tools/list and ENABLE_TOOL_SEARCH=false.
                         "alwaysLoad": True,
                     }
                     for name, server in self._options.mcp_servers.items()
@@ -318,8 +328,12 @@ class ClaudeSDKClient:
         sysprompt_file = self._workdir / "system_prompt.txt"
         settings_file = self._workdir / "settings.json"
         mcp_file = self._workdir / "mcp.json" if self._bridge.tools else None
+        # Resolve the pinned claude binary cc_sdk owns (downloads+verifies on first use).
+        # Off-loop: the first fetch does blocking network I/O.
+        claude_bin = await asyncio.get_running_loop().run_in_executor(None, ensure_claude)
         args = _claude_args(
             self._options,
+            claude_bin=claude_bin,
             session_id=self._session_id,
             resuming=self._resuming,
             sysprompt_file=sysprompt_file,
@@ -329,7 +343,22 @@ class ClaudeSDKClient:
         # IS_SANDBOX=1 is required for bypassPermissions to work when the agent runs as root
         # (the default in the container) — Claude Code otherwise refuses skip/bypass permissions
         # under root for safety. The agent's container is exactly that isolated sandbox.
-        env = {"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "IS_SANDBOX": "1"}
+        #
+        # ENABLE_TOOL_SEARCH=false disables MCP tool-search deferral. By default Claude Code
+        # hides MCP tools behind a ToolSearch index when a session has many tools (we run
+        # skills="all"); the model then cannot find or call the agent's own control tools
+        # (mark_setup_done, restart_vesta, ...) and flails through ToolSearch during first-start.
+        # We expose a single small MCP server, so loading its handful of tools upfront is free
+        # and makes them reliably callable. (alwaysLoad in mcp.json is the per-server equivalent;
+        # both are set for belt and suspenders across Claude Code versions.)
+        # DISABLE_AUTOUPDATER keeps the pinned binary fixed: the launcher would otherwise
+        # update itself at runtime and drift away from the version cc_sdk vendored.
+        env = {
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "IS_SANDBOX": "1",
+            "ENABLE_TOOL_SEARCH": "false",
+            "DISABLE_AUTOUPDATER": "1",
+        }
         env.update(_thinking_env(self._options))
         env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         claude_cmd = " ".join(shlex.quote(a) for a in args)
@@ -346,28 +375,6 @@ class ClaudeSDKClient:
                 raise ClaudeSDKError(f"claude exited during startup (code {self._exit_code})\n{self._stderr_tail()}")
             await asyncio.sleep(_POLL_S)
         raise ClaudeSDKError(f"timed out waiting for claude session start\n{self._stderr_tail()}")
-
-    async def _verify_mcp_registered(self) -> None:
-        """Fail fast if claude did not register the in-process MCP server.
-
-        claude lists an MCP server's tools as soon as it connects at startup, so the
-        bridge sees that tools/list within seconds of SessionStart. If tools are
-        configured but the bridge never hears from the MCP server, claude failed to
-        register it (a load/timing-sensitive startup race observed under first-start) and
-        every `mcp__<server>__*` tool — including the agent's control tools like
-        mark_setup_done — is silently absent for the whole session. Raising here exits the
-        process so the supervisor restarts with a clean attempt instead of running blind.
-        """
-        if not self._bridge.tools:
-            return
-        if await self._bridge.wait_mcp_connected(_MCP_CONNECT_TIMEOUT_S):
-            return
-        raise ClaudeSDKError(
-            "claude did not register the in-process MCP server within "
-            f"{_MCP_CONNECT_TIMEOUT_S:.0f}s of session start — its tools "
-            f"({', '.join(sorted(self._bridge.tools))}) would be unavailable. "
-            f"Aborting so the session is retried.\n{self._stderr_tail()}"
-        )
 
     def _drain(self) -> list[tp.Any]:
         if self._transcript_path is None:

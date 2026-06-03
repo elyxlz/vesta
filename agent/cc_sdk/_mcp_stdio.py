@@ -1,10 +1,11 @@
 """MCP stdio proxy: the server `claude` spawns for the in-process `vesta` tools.
 
-Stdlib only. Speaks newline-delimited JSON-RPC on stdin/stdout and forwards
-tools/list and tools/call to the bridge unix socket, where the real handlers run
-inside the agent process. Usage:
+Stdlib only. Speaks newline-delimited JSON-RPC on stdin/stdout. tools/call is
+forwarded to the bridge unix socket, where the real handlers run inside the agent
+process. tools/list is served from a static defs file (when given) so startup tool
+registration never depends on the live bridge. Usage:
 
-    python3 -m cc_sdk._mcp_stdio <unix-socket-path>
+    python3 -m cc_sdk._mcp_stdio <unix-socket-path> [<tools-json-path>]
 """
 
 import json
@@ -60,7 +61,23 @@ def _send(message: dict[str, tp.Any]) -> None:
     sys.stdout.flush()
 
 
-def _handle(sock_path: str, request: dict[str, tp.Any]) -> dict[str, tp.Any] | None:
+def _static_tools(tools_path: str | None) -> list[dict[str, tp.Any]] | None:
+    """Tool definitions claude lists at startup, served from a file cc_sdk wrote — NOT the
+    live bridge. The bridge runs in the agent's event loop and, at first-start, claude's
+    startup tools/list against it does not reliably register the tools (observed: the model
+    then can't call mark_setup_done at all). The defs are static and known at config time, so
+    serving them locally makes registration deterministic; only tools/call needs the bridge."""
+    if not tools_path:
+        return None
+    try:
+        with open(tools_path) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+def _handle(sock_path: str, request: dict[str, tp.Any], tools_path: str | None) -> dict[str, tp.Any] | None:
     method = request["method"] if "method" in request else ""
     has_id = "id" in request
     request_id = request["id"] if has_id else None
@@ -82,8 +99,10 @@ def _handle(sock_path: str, request: dict[str, tp.Any]) -> dict[str, tp.Any] | N
     if method == "ping":
         return {"jsonrpc": "2.0", "id": request_id, "result": {}}
     if method == "tools/list":
-        reply = _bridge(sock_path, {"kind": "mcp", "op": "list"})
-        tools = reply["tools"] if "tools" in reply else []
+        tools = _static_tools(tools_path)
+        if tools is None:
+            reply = _bridge(sock_path, {"kind": "mcp", "op": "list"})
+            tools = reply["tools"] if "tools" in reply else []
         return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": tools}}
     if method == "tools/call":
         name = params["name"] if "name" in params else ""
@@ -106,6 +125,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         return
     sock_path = sys.argv[1]
+    tools_path = sys.argv[2] if len(sys.argv) > 2 else None
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -117,7 +137,7 @@ def main() -> None:
         if not isinstance(request, dict):
             continue
         try:
-            response = _handle(sock_path, request)
+            response = _handle(sock_path, request, tools_path)
         except (OSError, ValueError) as exc:
             response = None
             if "id" in request:

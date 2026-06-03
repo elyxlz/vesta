@@ -1,6 +1,7 @@
 """Tests for the cc_sdk transport: helper scripts, config generation, parsing, usage."""
 
 import json
+import pathlib as pl
 import subprocess
 import sys
 
@@ -41,6 +42,27 @@ def test_mcp_stdio_helper_initializes_by_path():
     assert reply["result"]["protocolVersion"] == "2025-06-18"
 
 
+def test_mcp_stdio_lists_tools_from_file_without_bridge(tmp_path):
+    """tools/list must be served from the static defs file with NO bridge connection: that
+    is the fix for first-start, where the live in-process bridge doesn't reliably answer
+    claude's startup tools/list. The socket path here is deliberately nonexistent."""
+    tools_file = tmp_path / "tools.json"
+    tools_file.write_text(json.dumps([{"name": "mark_setup_done", "description": "marks done", "inputSchema": {"type": "object"}}]))
+    request = json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {}})
+    proc = subprocess.run(
+        [sys.executable, str(_MCP_STDIO), "/tmp/cc_sdk_definitely_missing.sock", str(tools_file)],
+        input=request + "\n",
+        env={"PYTHONSAFEPATH": "1"},
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    reply = json.loads(proc.stdout.splitlines()[0])
+    names = [t["name"] for t in reply["result"]["tools"]]
+    assert names == ["mark_setup_done"]
+
+
 # --- Generated config always carries the PYTHONSAFEPATH guard ---
 
 
@@ -69,11 +91,16 @@ def test_mcp_config_carries_safepath_env(tmp_path):
     client._bridge.register_tools(server.tools)
     client._write_config_files()
     mcp = json.loads((client._workdir / "mcp.json").read_text())
-    assert mcp["mcpServers"]["vesta"]["env"]["PYTHONSAFEPATH"] == "1"
+    server = mcp["mcpServers"]["vesta"]
+    assert server["env"]["PYTHONSAFEPATH"] == "1"
     # alwaysLoad exempts the server from tool-search deferral: with skills="all" Claude Code
     # defers MCP tools behind ToolSearch and the model then can't find the agent's control
     # tools (the charbel first-start regression). Upfront loading keeps them callable.
-    assert mcp["mcpServers"]["vesta"]["alwaysLoad"] is True
+    assert server["alwaysLoad"] is True
+    # The proxy gets a static tools file so tools/list never depends on the live bridge.
+    tools_path = pl.Path(server["args"][2])
+    assert tools_path.exists()
+    assert [t["name"] for t in json.loads(tools_path.read_text())] == ["noop"]
 
 
 # --- Turn/Stop counting: a late Stop from a prior turn must not end the next turn early ---
@@ -206,6 +233,52 @@ def test_every_core_hook_event_is_wired(tmp_path):
         assert event in settings["hooks"], f"hook event {event} not wired into settings.json"
         command = settings["hooks"][event][0]["hooks"][0]["command"]
         assert _FORWARD.name in command and event in command
+
+
+# --- pinned claude binary resolution (cc_sdk owns the version, not the host) ---
+
+
+def test_claude_bin_override_skips_download(monkeypatch):
+    from cc_sdk import _claude_bin
+
+    monkeypatch.setenv("CC_SDK_CLAUDE_BIN", "/some/pinned/claude")
+    # Must return the override verbatim without touching the network/platform detection.
+    monkeypatch.setattr(_claude_bin, "_detect_platform", lambda: (_ for _ in ()).throw(AssertionError("must not run")))
+    assert _claude_bin.ensure_claude() == "/some/pinned/claude"
+
+
+def test_claude_bin_platform_string(monkeypatch):
+    from cc_sdk import _claude_bin
+
+    monkeypatch.setattr(_claude_bin, "_is_musl", lambda: False)
+    cases = {("Linux", "x86_64"): "linux-x64", ("Linux", "aarch64"): "linux-arm64", ("Darwin", "arm64"): "darwin-arm64"}
+    for (system, machine), expected in cases.items():
+        monkeypatch.setattr(_claude_bin.platform, "system", lambda s=system: s)
+        monkeypatch.setattr(_claude_bin.platform, "machine", lambda m=machine: m)
+        assert _claude_bin._detect_platform() == expected
+    monkeypatch.setattr(_claude_bin, "_is_musl", lambda: True)
+    monkeypatch.setattr(_claude_bin.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(_claude_bin.platform, "machine", lambda: "x86_64")
+    assert _claude_bin._detect_platform() == "linux-x64-musl"
+
+
+# --- launch env disables MCP tool-search deferral (so control tools stay callable) ---
+
+
+@pytest.mark.anyio
+async def test_launch_env_disables_tool_search(tmp_path, monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def fake_start_session(socket, name, *, cwd, command, **kwargs):
+        captured["command"] = command
+
+    monkeypatch.setattr("cc_sdk.client.tmux.start_session", fake_start_session)
+    monkeypatch.setenv("CC_SDK_CLAUDE_BIN", "/usr/bin/true")  # skip the pinned-binary download
+    client = _new_client(tmp_path)
+    client._write_config_files()
+    await client._launch()
+    assert "ENABLE_TOOL_SEARCH=false" in captured["command"]
+    assert "IS_SANDBOX=1" in captured["command"]
 
 
 # --- thinking config maps to the env vars claude reads ---

@@ -27,10 +27,6 @@ class Bridge:
     internal: dict[str, list[InternalHook]] = dc.field(default_factory=dict)
     log: LogFn | None = None
     _server: asyncio.AbstractServer | None = None
-    # Set the first time claude's spawned MCP server actually reaches the bridge (its
-    # startup tools/list). If tools are registered but this never fires, claude failed to
-    # register the MCP server and the agent would silently run without its control tools.
-    _mcp_connected: asyncio.Event | None = None
 
     def on(self, event: str, handler: InternalHook) -> None:
         self.internal.setdefault(event, []).append(handler)
@@ -40,18 +36,7 @@ class Bridge:
             self.tools[d.name] = d
 
     async def start(self) -> None:
-        self._mcp_connected = asyncio.Event()
         self._server = await asyncio.start_unix_server(self._handle_conn, path=self.socket_path)
-
-    async def wait_mcp_connected(self, timeout: float) -> bool:
-        """Wait for claude's MCP server to reach the bridge. True if it did within timeout."""
-        if self._mcp_connected is None:
-            return False
-        try:
-            await asyncio.wait_for(self._mcp_connected.wait(), timeout=timeout)
-            return True
-        except TimeoutError:
-            return False
 
     async def stop(self) -> None:
         if self._server is not None:
@@ -88,8 +73,6 @@ class Bridge:
             await self._run_hooks(event, payload)
             return {"output": {}}
         if kind == "mcp":
-            if self._mcp_connected is not None:
-                self._mcp_connected.set()
             return await self._run_mcp(request)
         return {}
 
