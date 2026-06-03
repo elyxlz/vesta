@@ -51,6 +51,9 @@ impl From<bollard::errors::Error> for DockerError {
 pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
+/// Env var that pins the agent image, skipping the local build / registry pull.
+/// Used by CI to test against an image built from the PR checkout.
+pub const AGENT_IMAGE_ENV: &str = "VESTAD_AGENT_IMAGE";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
@@ -689,7 +692,12 @@ async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
+pub async fn resolve_image(docker: &Docker) -> Result<String, DockerError> {
+    if let Ok(image) = std::env::var(AGENT_IMAGE_ENV) {
+        tracing::info!(image = %image, "using agent image from {AGENT_IMAGE_ENV}");
+        verify_image_runnable(&image).await?;
+        return Ok(image);
+    }
     if let Ok(context) = find_dockerfile() {
         let tar_body = build_context_tar(&context)?;
         let opts = BuildImageOptions {
@@ -711,7 +719,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
             }
         }
         verify_image_runnable(LOCAL_IMAGE_TAG).await?;
-        Ok(LOCAL_IMAGE_TAG)
+        Ok(LOCAL_IMAGE_TAG.to_string())
     } else {
         let opts = CreateImageOptions {
             from_image: Some(VESTA_IMAGE.to_string()),
@@ -724,7 +732,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
             }
         }
         verify_image_runnable(VESTA_IMAGE).await?;
-        Ok(VESTA_IMAGE)
+        Ok(VESTA_IMAGE.to_string())
     }
 }
 
@@ -1542,7 +1550,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     }
 
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
     Ok(name.to_string())
 }
 
@@ -2187,6 +2195,12 @@ mod tests {
         connect().expect("failed to connect to docker")
     }
 
+    /// Image for the #[ignore] Docker tests: honors VESTAD_AGENT_IMAGE (set by CI
+    /// to an image built from the checkout), falls back to the released image.
+    fn test_agent_image() -> String {
+        std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| VESTA_IMAGE.to_string())
+    }
+
     async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str) -> bool {
         let info = docker.inspect_container(cname, None).await.expect("inspect");
         needs_rebuild(cname, &info)
@@ -2272,7 +2286,7 @@ mod tests {
         };
 
         let config = ContainerCreateBody {
-            image: Some(VESTA_IMAGE.to_string()),
+            image: Some(test_agent_image()),
             tty: Some(true),
             labels: Some(labels),
             cmd: Some(cmd),
