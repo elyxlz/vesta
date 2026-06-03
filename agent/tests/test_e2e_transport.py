@@ -202,7 +202,12 @@ async def test_usage_flows_to_result_and_context_usage(sandbox: Sandbox) -> None
 
 @pytest.mark.anyio
 async def test_mcp_tool_roundtrip_runs_handler_in_process(sandbox: Sandbox) -> None:
-    """claude -> _mcp_stdio.py -> bridge -> in-process handler -> result back to claude."""
+    """claude -> _mcp_stdio.py -> bridge -> in-process handler -> result back to claude.
+
+    Scope: this exercises OUR half of the MCP path (stdio proxy, bridge, handler dispatch)
+    against the fake TUI. It does NOT model Claude Code's tool-search deferral, which is the
+    real-claude behavior that hid these tools in production (the charbel bug). Only the live
+    test (vestad/tests-integration/tests/live/mcp_tools.rs, real claude) covers that."""
     calls: list[dict[str, tp.Any]] = []
 
     @cc_sdk.tool("greet", "Greets a person", {"type": "object", "properties": {"name": {"type": "string"}}})
@@ -354,13 +359,23 @@ async def test_interrupt_unblocks_current_turn_and_next_turn_completes(sandbox: 
 
 @pytest.mark.anyio
 async def test_crash_surfaces_sdk_error_with_stderr(sandbox: Sandbox) -> None:
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd))
+    stderr_lines: list[str] = []
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), stderr=stderr_lines.append)
     async with ClaudeSDKClient(options=options) as client:
+        # While alive, the liveness signal diagnostics.subprocess_alive reads is "no exit code yet".
+        assert client._transport._process.returncode is None
+
         await client.query("crash:7")
         with pytest.raises(ClaudeSDKError) as exc_info:
             await collect_with_timeout(client)
         assert "code 7" in str(exc_info.value)
         assert "crashing on request" in str(exc_info.value), "stderr tail must be included for diagnosis"
+
+        # The crash exit code propagates to the transport that the watchdog inspects.
+        assert client._transport._process.returncode == 7
+        # Real stderr reaches the callback; the internal exit marker is consumed, not leaked.
+        assert any("crashing on request" in line for line in stderr_lines)
+        assert not any("__CC_EXIT__" in line for line in stderr_lines)
 
 
 @pytest.mark.anyio
@@ -425,3 +440,78 @@ async def test_cli_args_carry_options(sandbox: Sandbox) -> None:
         sysprompt_file = pathlib.Path(argv[argv.index("--system-prompt-file") + 1])
         assert sysprompt_file.read_text() == "THE SYSTEM PROMPT"
         assert argv[argv.index("--session-id") + 1] == client.session_id
+
+
+@pytest.mark.anyio
+async def test_cli_args_carry_add_dirs(sandbox: Sandbox) -> None:
+    extra = str(sandbox.home)
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), add_dirs=[str(sandbox.cwd), extra])
+    async with ClaudeSDKClient(options=options):
+        argv = recorded_argv(sandbox)[0]
+        add_dir_values = [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
+        assert str(sandbox.cwd) in add_dir_values and extra in add_dir_values
+
+
+# --- All hook events core registers are dispatched through the bridge ---
+
+
+@pytest.mark.anyio
+async def test_all_core_hook_events_reach_bridge(sandbox: Sandbox) -> None:
+    """core.sdk_parsing.make_hooks wires 9 events (PreToolUse, PostToolUse,
+    PostToolUseFailure, SubagentStart/Stop, PreCompact, Notification, Stop, SessionStart).
+    Only PreToolUse was covered before; this drives EVERY event core registers end to end
+    (native command hook -> _forward.py -> bridge -> HookMatcher) so dropping any one is caught."""
+    import core.sdk_parsing as sp
+    from unittest.mock import MagicMock
+
+    core_events = [e for e in sp.make_hooks(MagicMock()) if e != "Stop"]  # Stop fires on every turn end
+    received: dict[str, dict[str, tp.Any]] = {}
+
+    def matcher_for(event: str) -> HookMatcher:
+        async def cb(payload: dict[str, tp.Any], tool_use_id: tp.Any, context: tp.Any) -> dict[str, tp.Any]:
+            received[event] = payload
+            return {}
+
+        return HookMatcher(matcher="*", hooks=[cb])
+
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})
+    # Representative payloads for the fields core's callbacks actually read.
+    extras = {
+        "PostToolUseFailure": {"tool_name": "Bash", "error": "boom"},
+        "PreCompact": {"trigger": "auto"},
+        "Notification": {"notification_type": "info", "title": "t", "message": "m"},
+        "SubagentStart": {"agent_type": "explorer"},
+        "SubagentStop": {"agent_type": "explorer"},
+        "PostToolUse": {"tool_name": "Bash", "tool_response": "ok"},
+        "PreToolUse": {"tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "toolu_x"},
+    }
+    async with ClaudeSDKClient(options=options) as client:
+        for event in core_events:
+            extra = extras.get(event, {})
+            await client.query(f"hook:{event}:{json.dumps(extra)}")
+            await collect_with_timeout(client)
+
+    for event in core_events:
+        assert event in received, f"hook event {event} never reached its HookMatcher"
+        assert received[event]["hook_event_name"] == event
+    # Payload fidelity for the fields core reads off the heaviest events.
+    assert received["PostToolUseFailure"]["error"] == "boom"
+    assert received["PostToolUse"]["tool_response"] == "ok"
+    assert received["PreCompact"]["trigger"] == "auto"
+    assert received["Notification"]["message"] == "m"
+
+
+@pytest.mark.anyio
+async def test_stderr_callback_receives_output(sandbox: Sandbox) -> None:
+    """core wires options.stderr to surface agent-side diagnostics; lines on the claude
+    process's stderr must reach that callback."""
+    stderr_lines: list[str] = []
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), stderr=stderr_lines.append)
+    async with ClaudeSDKClient(options=options) as client:
+        await client.query("stderr:DIAGNOSTIC_MARKER_42")
+        await collect_with_timeout(client)
+        await wait_until(
+            lambda: any("DIAGNOSTIC_MARKER_42" in line for line in stderr_lines),
+            timeout=5,
+            message="stderr line never reached the options.stderr callback",
+        )

@@ -184,3 +184,71 @@ def test_read_new_objects_only_consumes_complete_lines(tmp_path):
     assert len(objs) == 1
     # Offset stops at the end of the last complete line, so the partial line is re-read later.
     assert offset < path.stat().st_size
+
+
+# --- Every hook event core registers is actually wired into claude's settings ---
+
+
+def test_every_core_hook_event_is_wired(tmp_path):
+    """Guards against the transport silently dropping an event core depends on: each event
+    core.sdk_parsing.make_hooks registers must get a forward command in settings.json, and
+    SessionStart/Stop are always wired even if core didn't ask for them."""
+    import core.sdk_parsing as sp
+    from unittest.mock import MagicMock
+
+    core_events = set(sp.make_hooks(MagicMock()))
+    assert "PreToolUse" in core_events and "Stop" in core_events  # sanity: make_hooks returned real events
+
+    client = _new_client(tmp_path, hooks={event: [] for event in core_events})
+    client._write_config_files()
+    settings = json.loads((client._workdir / "settings.json").read_text())
+    for event in core_events | {"SessionStart", "Stop"}:
+        assert event in settings["hooks"], f"hook event {event} not wired into settings.json"
+        command = settings["hooks"][event][0]["hooks"][0]["command"]
+        assert _FORWARD.name in command and event in command
+
+
+# --- thinking config maps to the env vars claude reads ---
+
+
+def test_thinking_env_mapping():
+    from cc_sdk.client import _thinking_env
+
+    assert _thinking_env(ClaudeAgentOptions(thinking={"type": "enabled", "budget_tokens": 12345})) == {"MAX_THINKING_TOKENS": "12345"}
+    assert _thinking_env(ClaudeAgentOptions(thinking={"type": "disabled"})) == {"CLAUDE_CODE_DISABLE_THINKING": "1"}
+    # adaptive and unset both add nothing (claude's default behavior).
+    assert _thinking_env(ClaudeAgentOptions(thinking={"type": "adaptive", "display": "x"})) == {}
+    assert _thinking_env(ClaudeAgentOptions(thinking=None)) == {}
+
+
+# --- bridge never lets a tool or hook failure break the turn ---
+
+
+@pytest.mark.anyio
+async def test_bridge_tool_exception_returns_error(tmp_path):
+    from cc_sdk.bridge import Bridge
+
+    async def _boom(args):
+        raise RuntimeError("handler blew up")
+
+    bridge = Bridge(socket_path=str(tmp_path / "b.sock"))
+    bridge.register_tools([cc_sdk.tool("boom", "x", {"type": "object"})(_boom)])
+    reply = await bridge._dispatch({"kind": "mcp", "op": "call", "name": "boom", "arguments": {}})
+    assert "error" in reply and "handler blew up" in reply["error"]
+
+    unknown = await bridge._dispatch({"kind": "mcp", "op": "call", "name": "missing", "arguments": {}})
+    assert "error" in unknown and "missing" in unknown["error"]
+
+
+@pytest.mark.anyio
+async def test_bridge_hook_exception_is_swallowed(tmp_path):
+    from cc_sdk.bridge import Bridge
+    from cc_sdk.messages import HookMatcher
+
+    async def _boom(payload, tool_use_id, context):
+        raise RuntimeError("hook blew up")
+
+    bridge = Bridge(socket_path=str(tmp_path / "b.sock"), hooks={"PreToolUse": [HookMatcher(hooks=[_boom])]})
+    # A throwing hook callback must not propagate — the turn must survive.
+    reply = await bridge._dispatch({"kind": "hook", "event": "PreToolUse", "payload": {"tool_name": "Bash"}})
+    assert reply == {"output": {}}

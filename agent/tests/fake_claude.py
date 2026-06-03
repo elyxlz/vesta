@@ -198,6 +198,25 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
         ctx["in_flight"] = True
         return
 
+    if prompt.startswith("hook:"):
+        # hook:<EventName>:<extra-json> — fire one native hook event with the given extra
+        # payload, then end the turn. Lets tests drive any event (PostToolUseFailure,
+        # PreCompact, Notification, Subagent*, ...) through the real _forward.py -> bridge path.
+        _, event, raw_extra = prompt.split(":", 2)
+        extra = json.loads(raw_extra) if raw_extra.strip() else {}
+        fire_hook(ctx, event, extra)
+        write_line(ctx, assistant_line(text_blocks(f"fired {event}")))
+        finish_turn(ctx, f"fired {event}")
+        return
+
+    if prompt.startswith("stderr:"):
+        # Emit a line on stderr (which cc_sdk tails and routes to options.stderr) and finish.
+        sys.stderr.write(prompt.split(":", 1)[1] + "\n")
+        sys.stderr.flush()
+        write_line(ctx, assistant_line(text_blocks("stderr written")))
+        finish_turn(ctx, "stderr written")
+        return
+
     if prompt.startswith("sidechain:"):
         write_line(ctx, assistant_line(text_blocks(prompt.split(":", 1)[1]), sidechain=True))
         write_line(ctx, assistant_line(text_blocks("done")))
