@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import core.models as vm
 from core.client import process_message
+from wait_util import wait_for_condition
 
 
 async def _run_processor_test(
@@ -49,8 +50,13 @@ async def _run_processor_test(
     mock_client.__aenter__ = mock_enter
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    async def shutdown_timer():
-        await asyncio.sleep(0.15)
+    expected_message_count = len(initial_queue or [])
+
+    async def shutdown_when_done():
+        # Done = the processor restarted itself (error paths) or finished every queued message.
+        await wait_for_condition(
+            lambda: state.graceful_shutdown.is_set() or (len(processed_messages) >= expected_message_count and not state.processor_busy)
+        )
         assert state.shutdown_event is not None
         state.shutdown_event.set()
 
@@ -68,7 +74,7 @@ async def _run_processor_test(
             stack.enter_context(cm)
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
-            shutdown_timer(),
+            shutdown_when_done(),
         )
 
     return state, session_count, processed_messages
@@ -136,8 +142,7 @@ async def test_client_cleared_on_cancellation(tmp_path):
         patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         task = asyncio.create_task(message_processor(queue, state=state, config=config))
-        await asyncio.sleep(0.05)
-        assert state.client is mock_client
+        await wait_for_condition(lambda: state.client is mock_client, message="processor never set state.client")
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

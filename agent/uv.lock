@@ -248,6 +248,18 @@ wheels = [
 ]
 
 [[package]]
+name = "hypothesis"
+version = "6.155.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sortedcontainers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/ef/4a94c12429986a90076057513e084bf32106a9bdc62c8e29f58673dd85a2/hypothesis-6.155.1.tar.gz", hash = "sha256:07c102031612b98d7c1be15ca3608c43e1234d9d07e3a190a53fa01536700196", size = 477300, upload-time = "2026-05-29T23:12:57.515Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/26/6e/8c9cf32201238617454303b1605dfa667d90cd1ef51226f92d9c2b3b8f7c/hypothesis-6.155.1-py3-none-any.whl", hash = "sha256:2753f469df3ba3c483b08e0c37dbcbc41d8316ebb921abcc07493ee9c8a7d187", size = 543715, upload-time = "2026-05-29T23:12:54.77Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.11"
 source = { registry = "https://pypi.org/simple" }
@@ -617,6 +629,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/82/4c9ecabab13363e72d880f2fb504c5f750433b2b6f16e99f4ec21ada284c/pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a", size = 17973, upload-time = "2025-05-05T19:44:34.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/b6/3127540ecdf1464a00e5a01ee60a1b09175f6913f0644ac748494d9c4b21/pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2", size = 14382, upload-time = "2025-05-05T19:44:33.502Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -661,6 +685,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/36/38/012bf76752e1f89ed50b77b99532d90f3a3e287bc7918e1fc0948ac866ac/ruff-0.15.14-py3-none-win32.whl", hash = "sha256:6d0c1ad2a0ab718d39b6d8fd2217981ce4d625cd96a720095f798fb47d8b13e6", size = 10805548, upload-time = "2026-05-21T14:34:33.453Z" },
     { url = "https://files.pythonhosted.org/packages/d1/b7/4ea2c170f10ad760fff2a5250beb18897719dc8b52b53a24cddbb9dd3f19/ruff-0.15.14-py3-none-win_amd64.whl", hash = "sha256:802342981e056db3851a7836e5b070f8f15f67d4a685ae2a6160939d364b2902", size = 11939523, upload-time = "2026-05-21T14:34:18.077Z" },
     { url = "https://files.pythonhosted.org/packages/62/d5/bc97ff895ec35cf3925d4bd60f3b39d822f377a446906ec9bcc87405e59b/ruff-0.15.14-py3-none-win_arm64.whl", hash = "sha256:ff47b90a9ef6a40c9e2f3b479c1fb78531adf055b94c1eba0a7ba04b31951826", size = 11208607, upload-time = "2026-05-21T14:34:26.525Z" },
+]
+
+[[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
 ]
 
 [[package]]
@@ -724,7 +757,9 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "hypothesis" },
     { name = "pytest" },
+    { name = "pytest-timeout" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -741,7 +776,9 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hypothesis", specifier = ">=6.131.0" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
     { name = "ruff", specifier = ">=0.15.14" },
     { name = "ty", specifier = ">=0.0.39" },
 ]

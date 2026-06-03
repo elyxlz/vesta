@@ -9,6 +9,7 @@ from cc_sdk import ClaudeSDKError
 
 import core.models as vm
 from core.diagnostics import format_crash_detail
+from wait_util import wait_for_condition
 
 
 # --- format_crash_detail ---
@@ -83,8 +84,8 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
     mock_client.__aenter__ = mock_enter
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    async def shutdown_soon():
-        await asyncio.sleep(0.1)
+    async def shutdown_after_retry():
+        await wait_for_condition(lambda: enter_count >= 2, message="client __aenter__ retry never happened")
         state.shutdown_event.set()
 
     with (
@@ -93,7 +94,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
-            shutdown_soon(),
+            shutdown_after_retry(),
         )
 
     assert enter_count == 2

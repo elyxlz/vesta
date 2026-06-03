@@ -24,13 +24,17 @@ Repository = "https://github.com/elyxlz/vesta"
 dev = [
     "ruff>=0.15.14",
     "pytest>=9.0.3",
+    "pytest-timeout>=2.3.1",
+    "hypothesis>=6.131.0",
     "ty>=0.0.39",
 ]
 
 [tool.pytest.ini_options]
-python_files = ["e2e.py", "test_*.py", "*_test.py"]
+python_files = ["test_*.py", "*_test.py"]
 testpaths = ["tests"]
 pythonpath = [".", "skills"]
+# Per-test hard timeout: a hung async test fails fast instead of hanging CI until the job timeout.
+timeout = 120
 
 
 [tool.ty.src]
