@@ -14,7 +14,7 @@ It inits the repo, sets the remote, pins the sparse-checkout cone, configures yo
 
 ## 2. Local ignores (bulky files only)
 
-`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) by writing them to `.git/info/exclude`, so you don't list those. Just add bulky machine-local globs. Append them to the repo's exclude file — resolve its path with git so it works no matter the cwd (the repo root is `~`, not `~/agent`):
+`sync.sh` already ignores the vestad-managed mounts (`agent/core/`, `pyproject.toml`, `uv.lock`) by writing them to `.git/info/exclude`, so you don't list those. Just add bulky machine-local globs. Append them to the repo's exclude file, resolving its path with git so it works no matter the cwd (the repo root is `~`, not `~/agent`):
 
 ```bash
 cat >> "$(git -C ~ rev-parse --absolute-git-dir)/info/exclude" <<'EOF'
