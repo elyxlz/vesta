@@ -2095,6 +2095,48 @@ mod tests {
         assert_eq!(name_from_cname(&container_name("my-agent")), "my-agent");
     }
 
+    // Property-based tests: normalize_name must uphold these invariants for ANY input,
+    // since it processes raw user-supplied agent names.
+    proptest::proptest! {
+        #[test]
+        fn normalize_output_is_valid_or_empty(raw in proptest::prelude::any::<String>()) {
+            let normalized = normalize_name(&raw);
+            proptest::prop_assert!(
+                normalized.is_empty() || validate_name(&normalized).is_ok(),
+                "normalize_name({:?}) produced invalid name {:?}", raw, normalized
+            );
+        }
+
+        #[test]
+        fn normalize_is_idempotent(raw in proptest::prelude::any::<String>()) {
+            let once = normalize_name(&raw);
+            let twice = normalize_name(&once);
+            proptest::prop_assert_eq!(&twice, &once, "not idempotent for input {:?}", raw);
+        }
+
+        #[test]
+        fn normalize_never_exceeds_max_len(raw in proptest::prelude::any::<String>()) {
+            proptest::prop_assert!(normalize_name(&raw).len() <= NAME_MAX_LEN);
+        }
+
+        #[test]
+        fn normalize_output_charset_is_safe(raw in proptest::prelude::any::<String>()) {
+            let normalized = normalize_name(&raw);
+            proptest::prop_assert!(
+                normalized.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "normalize_name({:?}) produced unsafe chars: {:?}", raw, normalized
+            );
+        }
+
+        #[test]
+        fn container_name_roundtrips_for_valid_names(raw in "[a-z0-9][a-z0-9-]{0,30}[a-z0-9]") {
+            // Only test names that pass validation (the precondition for container_name).
+            if validate_name(&raw).is_ok() {
+                proptest::prop_assert_eq!(name_from_cname(&container_name(&raw)), raw);
+            }
+        }
+    }
+
     #[test]
     fn name_from_cname_no_prefix() {
         assert_eq!(name_from_cname("random"), "random");
