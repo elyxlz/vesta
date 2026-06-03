@@ -196,6 +196,28 @@ pub struct Client {
     cert_fingerprint: Option<String>,
 }
 
+/// OpenRouter creation args, set when an agent runs on an OpenRouter API key instead of a Claude account.
+pub struct OpenRouterArgs {
+    pub key: String,
+    pub model: String,
+}
+
+/// A model entry from OpenRouter's top-weekly list, used to populate the
+/// interactive model picker in `vesta setup`.
+#[derive(serde::Deserialize)]
+pub struct OpenRouterModel {
+    pub slug: String,
+    pub label: String,
+    pub author: String,
+    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
+    #[serde(default)]
+    pub input_price: Option<f64>,
+    #[serde(default)]
+    pub output_price: Option<f64>,
+    #[serde(default)]
+    pub cache_read_price: Option<f64>,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Self {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -325,6 +347,9 @@ impl Client {
             .map_err(|e| format!("parse error: {e}"))
     }
 
+    /// Create an empty agent container. Provider config is sent separately via
+    /// `set_provider` once the agent is up (vestad no longer accepts credentials
+    /// at create time — see refactor for agent-owned auth state).
     pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
         let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
@@ -336,6 +361,25 @@ impl Client {
             .read_json()
             .map_err(|e| format!("parse error: {e}"))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
+    }
+
+    /// Provision an existing agent with provider credentials. Either Claude
+    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
+    pub fn set_provider_credentials(&self, name: &str, credentials: &str) -> Result<(), String> {
+        serde_json::from_str::<serde_json::Value>(credentials)
+            .map_err(|e| format!("invalid credentials JSON: {e}"))?;
+        let body = serde_json::json!({"credentials": credentials});
+        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
+    }
+
+    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
+        let body = serde_json::json!({
+            "openrouter_key": args.key,
+            "openrouter_model": args.model,
+        });
+        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
     }
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
@@ -387,14 +431,53 @@ impl Client {
         Ok(())
     }
 
-    /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
-    /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
-    /// surface as immediate errors; the agent cannot become ready from those.
-    pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
+    /// Poll until status is `alive` OR `not_authenticated`. Used right after
+    /// `create_agent` to know the agent's HTTP server is up and ready to accept
+    /// `POST /agents/{name}/provider` — a brand-new empty agent will report
+    /// `not_authenticated` until the provider is provisioned.
+    pub fn wait_until_running(&self, name: &str, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         let mut backoff = Duration::from_millis(200);
         loop {
             let status = self.agent_status(name)?;
+            match status.status.as_str() {
+                "alive" | "not_authenticated" => return Ok(()),
+                "not_found" | "dead" | "stopped" =>
+                    return Err(format!("{}: {}", name, status.status)),
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("{}: timeout waiting for HTTP server (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
+    }
+
+    /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
+    /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
+    /// surface as immediate errors; the agent cannot become ready from those.
+    pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
+        self.wait_until_alive_with_progress(name, timeout, |_| {})
+    }
+
+    /// Same as [`wait_until_alive`], but invokes `on_change` with the new status
+    /// each time it changes, so callers can surface progress (e.g. `setting_up`).
+    pub fn wait_until_alive_with_progress(
+        &self,
+        name: &str,
+        timeout: Duration,
+        mut on_change: impl FnMut(&str),
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        let mut last = String::new();
+        loop {
+            let status = self.agent_status(name)?;
+            if status.status != last {
+                on_change(&status.status);
+                last = status.status.clone();
+            }
             match status.status.as_str() {
                 "alive" => return Ok(()),
                 "not_found" | "dead" | "stopped" | "not_authenticated" =>
@@ -409,26 +492,40 @@ impl Client {
         }
     }
 
-    pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {
-        let resp = self.post(&format!("/agents/{name}/auth"))?;
+    // Agent-less OAuth — runs the PKCE dance independent of any agent. Used by
+    // `vesta setup` (pre-create) and `vesta auth <name>` (post-create reauth),
+    // followed by either POST /agents or POST /agents/{name}/provider.
+    pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
+        let resp = self.post("/providers/claude/oauth/start")?;
         resp.into_body()
             .read_json()
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    pub fn complete_auth(&self, name: &str, session_id: &str, code: &str) -> Result<(), String> {
+    pub fn complete_auth_standalone(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
-        self.post_json(&format!("/agents/{name}/auth/code"), &body)?;
+        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        v["credentials"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "no credentials in response".to_string())
+    }
+
+    pub fn validate_openrouter_key(&self, key: &str) -> Result<(), String> {
+        let body = serde_json::json!({"key": key});
+        self.post_json("/providers/openrouter/validate-key", &body)?;
         Ok(())
     }
 
-    pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
-        let token_value: serde_json::Value =
-            serde_json::from_str(token).map_err(|e| format!("invalid token JSON: {e}"))?;
-        let body = serde_json::json!({"token": token_value});
-        self.post_json(&format!("/agents/{name}/auth/token"), &body)?;
-        Ok(())
+    pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
+        let resp = self.get("/providers/openrouter/models/top")?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
     }
+
 
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
         let resp = self.post(&format!("/agents/{name}/backups"))?;

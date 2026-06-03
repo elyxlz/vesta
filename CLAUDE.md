@@ -101,18 +101,38 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 - Minimize comments — only for truly complex logic
 - Line length: 144 (ruff)
 
+### Async Python (agent/)
+- **No blocking calls in coroutines** — no `time.sleep`, `requests`, sync `subprocess`/`open`/`input`, or inline CPU heavy work inside an `async def`. Use `asyncio.sleep`, an async client, `create_subprocess_exec`, or `asyncio.to_thread`/`run_in_executor`.
+- **Own your tasks** — keep a strong reference to every `create_task` (e.g. a set with `add_done_callback(set.discard)`) and consume its exceptions (await, inspect `task.exception()`, or use a `TaskGroup`). Never fire `create_task` as a bare statement.
+- **Respect cancellation** — in `except asyncio.CancelledError` do cleanup then re-raise. Do not put unshielded `await` in `finally` cleanup. From a non loop thread use only `call_soon_threadsafe`/`run_coroutine_threadsafe`.
+- **No mutable default args** — default to `None`, build inside the body. Compare to `None` with `is`/`is not`.
+- Log with `%`-style placeholders (`logger.info("x=%s", value)`), not pre-formatted f-strings.
+
 ### Rust (cli/, vestad/)
 - **No panics in library/server code** — return `Result`, never `panic!()` or `.unwrap()` on fallible operations. `.expect()` only where failure is truly impossible.
 - **Named constants for magic numbers** — timeouts, buffer sizes, port numbers, retry counts go in `const` at the top of the file.
 - **Descriptive variable names** — no single-letter vars (`n`, `t`, `c`). Use `name`, `tag`, `client`.
 - **Minimize `.clone()`** — move values into closures when possible, only clone when the value is genuinely needed afterward.
 - **Extract repeated patterns** — if 3+ lines appear twice, extract a helper function.
+- **Error types**: public errors implement `std::error::Error` and are `Send + Sync + 'static`; never `()` or bare `String`. `Display` messages are lowercase, no trailing punctuation, source chained via `Error::source`.
+- **Private fields by default**, access via methods; public fields only for plain data structs with no invariants. Keep derivable bounds on the `derive`/`impl`, not the type definition.
+- **Eagerly derive** `Debug` (non empty) plus `Clone`/`Copy`/`PartialEq`/`Default` where correct; `Box` oversized enum variants.
+- **Typed args** over unlabeled `bool`/`Option` flags; group args into a struct/builder past ~5 to 7. No lossy `as` casts for fallible conversions (use `From`/`TryFrom`); avoid catch-all match arms when exhaustive handling is feasible. Every `unsafe` block carries a `// SAFETY:` justification.
 
 ### Frontend (apps/web/src/)
 - **"Agent" terminology everywhere** — never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`.
 - **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
 - **Hook placement** — hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`). `hooks/` is reserved for shared hooks used across multiple components/providers.
 - **Components in folders** — each component gets a folder with `index.tsx` and optionally `styles.ts`.
+- **Rules of Hooks**: call Hooks only at the top level of a component or custom Hook, only from React contexts. Keep render pure (no side effects, no mutating props/state/context).
+- **Effects are a last resort**: compute derived data during render (or `useMemo`), put interaction logic in event handlers. Every Effect has complete deps (`react-hooks/exhaustive-deps`), one concern, and cleanup for any subscription, timer, listener, or fetch (ignore/abort flag).
+- **Stable list keys** from data identity, never array index for reorderable lists; reset state with a `key` prop, not an Effect.
+- **Strict TS**: `strict: true`; no `any` (use `unknown` and narrow), avoid `as`/`!` assertions, annotate object literals rather than asserting, strict equality except `== null`, named exports.
+
+### General
+- **Conventional Commits** subjects (`feat`, `fix`, `refactor`, etc.), imperative mood, no trailing period, no closing keywords or @mentions in commit messages (those go in the PR body).
+- **One concern per PR**; isolate renames/moves and dependency bumps (manifest plus lockfile together) from logic changes. Add new dependencies conservatively and justify any new cross module edge.
+- **Tests ship with logic changes** in the same PR; no permanently skipped or panic only tests, assert concrete values.
 
 ## CI
 

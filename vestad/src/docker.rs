@@ -33,6 +33,8 @@ impl std::fmt::Display for DockerError {
     }
 }
 
+impl std::error::Error for DockerError {}
+
 impl From<bollard::errors::Error> for DockerError {
     fn from(e: bollard::errors::Error) -> Self {
         match &e {
@@ -55,8 +57,6 @@ pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 /// Used by CI to test against an image built from the PR checkout.
 pub const AGENT_IMAGE_ENV: &str = "VESTAD_AGENT_IMAGE";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
-pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
@@ -79,24 +79,27 @@ const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
-const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
-    "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",
-    ". /run/vestad-env",
-    ". ~/.bashrc || true",
-    "uv sync --frozen --project /root/agent",
-    // ~/.claude/skills is a real directory of per-skill symlinks. Both
-    // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
-    // core entries are linked last so they win any name collision. Reset
-    // every boot so uninstalled skills don't leave dangling symlinks.
-    "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills",
-    "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done",
-    "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json",
-    "cd /root/agent && exec uv run --frozen python -m core.main",
-];
-
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let script = AGENT_ENTRYPOINT_STEPS.join("; \\\n");
-    vec!["sh".into(), "-c".into(), script]
+    let steps: [String; 9] = [
+        "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
+        ". /run/vestad-env".into(),
+        ". ~/.bashrc || true".into(),
+        // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
+        // file; absent for Claude agents. Guard with `[ -f ]`: `.` is a POSIX special
+        // built-in, so sourcing a missing file makes dash exit the whole script (and
+        // `|| true` does NOT catch it), which would crash-loop every Claude agent.
+        "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
+        "uv sync --frozen --project /root/agent".into(),
+        // ~/.claude/skills is a real directory of per-skill symlinks. Both
+        // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
+        // core entries are linked last so they win any name collision. Reset
+        // every boot so uninstalled skills don't leave dangling symlinks.
+        "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
+        "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
+        "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
+        "cd /root/agent && exec uv run --frozen python -m core.main".into(),
+    ];
+    vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
 
 const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
@@ -122,6 +125,10 @@ pub enum ContainerStatus {
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Alive,
+    /// Authenticated and reachable, but first-start setup hasn't completed yet
+    /// (the agent hasn't called `mark_setup_done`). Transient on a fresh agent;
+    /// distinct from `Alive` so callers don't treat a half-provisioned agent as ready.
+    SettingUp,
     Starting,
     NotAuthenticated,
     Stopped,
@@ -347,16 +354,28 @@ pub struct ContainerInfo {
     pub id: Option<String>,
 }
 
-pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
+pub async fn combined_status(
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+    cname: &str,
+    info: &ContainerInfo,
+) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            if !is_authenticated(docker, cname).await {
-                return AgentStatus::NotAuthenticated;
+            // WS port not yet bound → agent still booting.
+            if !info.port.is_some_and(is_agent_ready) {
+                return AgentStatus::Starting;
             }
-            if info.port.is_some_and(is_agent_ready) {
-                AgentStatus::Alive
-            } else {
-                AgentStatus::Starting
+            // Agent's own /provider/status is the source of truth for provider auth.
+            // If the WS server is up but /provider isn't responding yet (transient
+            // mid-boot state), treat as Starting; the next ~3s poll will resolve.
+            let agent_name = name_from_cname(cname);
+            let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            match provider.status().await {
+                Ok(s) if s.state == "authenticated" && s.setup_complete => AgentStatus::Alive,
+                Ok(s) if s.state == "authenticated" => AgentStatus::SettingUp,
+                Ok(_) => AgentStatus::NotAuthenticated,
+                Err(_) => AgentStatus::Starting,
             }
         }
         ContainerStatus::Dead => AgentStatus::Dead,
@@ -417,23 +436,6 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
 
 pub async fn container_status(docker: &Docker, cname: &str) -> ContainerStatus {
     inspect_container(docker, cname, None).await.status
-}
-
-pub async fn read_container_file(docker: &Docker, cname: &str, container_path: &str) -> Option<String> {
-    download_from_container(docker, cname, container_path).await
-}
-
-pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
-    let Some(content) = read_container_file(docker, cname, CREDENTIALS_PATH).await else {
-        return false;
-    };
-    let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-    let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
-        return false;
-    };
-    expires_at > crate::time_utils::now_epoch_millis() as u64
 }
 
 /// Readiness check: the agent binds its WS port only once it's ready to serve requests.
@@ -1112,7 +1114,7 @@ pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Resu
     let file = tokio::fs::File::open(input).await
         .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
     let byte_stream = tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-        .filter_map(|r| async { r.ok().map(|b| Ok::<Bytes, std::io::Error>(b.freeze())) });
+        .map(|r| r.map(|b| b.freeze()));
 
     let opts = ImportImageOptions { ..Default::default() };
     let mut stream = docker.import_image_stream(opts, byte_stream, None);
@@ -1338,22 +1340,6 @@ pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content:
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
 }
 
-pub async fn inject_credentials(docker: &Docker, container: &str, credentials: &str) -> Result<(), DockerError> {
-    // Build a tar with .credentials.json and upload to /root/.claude/
-    let tar_data = tar_single_file(".credentials.json", credentials.as_bytes())?;
-    docker.upload_to_container(
-        container,
-        Some(UploadToContainerOptions {
-            path: "/root/.claude/".to_string(),
-            ..Default::default()
-        }),
-        bollard::body_full(Bytes::from(tar_data)),
-    ).await?;
-
-    docker_cp_content(docker, container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH).await?;
-    Ok(())
-}
-
 // --- Auth flow (split for HTTP API) ---
 
 pub(crate) fn percent_encode(s: &str) -> String {
@@ -1413,7 +1399,7 @@ fn generate_state() -> String {
     base64url_encode(&state_bytes)
 }
 
-/// Start the OAuth PKCE flow. Returns (auth_url, session_id, code_verifier, state).
+/// Start the OAuth PKCE flow. Returns (auth_url, code_verifier, state).
 pub fn start_auth_flow() -> (String, String, String) {
     let (code_verifier, code_challenge) = generate_pkce();
     let state = generate_state();
@@ -1502,27 +1488,36 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
 
 // --- High-level operations (used by serve.rs handlers) ---
 
-pub async fn get_status(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<StatusJson, DockerError> {
+pub async fn get_status(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    name: &str,
+    agents_dir: &std::path::Path,
+) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(docker, &cname, Some(agents_dir)).await;
 
     Ok(StatusJson {
         name: name.to_string(),
-        status: combined_status(docker, &cname, &info).await,
+        status: combined_status(http_client, agents_dir, &cname, &info).await,
         id: info.id,
         ws_port: info.port.unwrap_or(0),
     })
 }
 
-pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<ListEntry> {
+pub async fn list_agents(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+) -> Vec<ListEntry> {
     let agents = list_managed_agents(docker).await;
     let mut entries = Vec::new();
     for ManagedAgent { cname, agent_name } in &agents {
         let info = inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(docker, cname, &info).await,
+            status: combined_status(http_client, agents_dir, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
         });
     }

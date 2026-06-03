@@ -77,7 +77,7 @@ impl AgentStatusCache {
     /// Bump the monotonic revision for a service, signalling clients to refetch it.
     pub fn invalidate_service(&self, agent: &str, service: &str) {
         {
-            let mut revs = self.revs.lock().unwrap();
+            let mut revs = self.revs.lock().unwrap_or_else(|e| e.into_inner());
             *revs
                 .entry(agent.to_string())
                 .or_default()
@@ -90,13 +90,18 @@ impl AgentStatusCache {
 
     /// Current revision for each agent+service.
     pub fn service_revs(&self) -> HashMap<String, HashMap<String, u64>> {
-        self.revs.lock().unwrap().clone()
+        self.revs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to alive agents for activity state relay.
-pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, docker: Docker, agents_dir: PathBuf) {
+pub fn spawn_agent_status_task(
+    cache: Arc<AgentStatusCache>,
+    docker: Docker,
+    http_client: reqwest::Client,
+    agents_dir: PathBuf,
+) {
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let (activity_event_tx, mut activity_event_rx) =
@@ -104,7 +109,7 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, docker: Docker, age
 
         loop {
             // Poll agent list via async bollard
-            let agents = docker::list_agents(&docker, &agents_dir).await;
+            let agents = docker::list_agents(&docker, &http_client, &agents_dir).await;
 
             // Update the agents watch channel (only notifies if changed)
             cache.agents_tx.send_if_modified(|current| {

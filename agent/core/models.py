@@ -5,12 +5,12 @@ import datetime as dt
 import time
 
 import pydantic as pyd
-from core.cc_sdk import ClaudeSDKClient
-
 from aiohttp.web import AppRunner
+from core.cc_sdk import ClaudeSDKClient
 
 from .config import VestaConfig
 from .events import EventBus
+from .provider import ProviderStatus
 from .state_store import PersistedState
 
 __all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
@@ -46,8 +46,18 @@ class State:
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     persisted: PersistedState = dc.field(default_factory=PersistedState)
-    # Set by `mark_setup_done` (or by run_vesta on a non-first-start boot). Acts as the readiness signal vestad polls.
+    # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: AppRunner | None = None
+    provider_status: ProviderStatus | None = None
+    # Effective context window passed via CLAUDE_CODE_MAX_CONTEXT_TOKENS: the OpenRouter
+    # model's real window (claude-code wrongly assumes 200k for non-Anthropic models,
+    # claude-code#46416) capped at config.max_context_tokens to bound prompt-cache read
+    # cost. Resolved once at boot. None = unresolved.
+    openrouter_max_tokens: int | None = None
+    # Local OpenRouter caching proxy: the SDK subprocess routes ANTHROPIC_BASE_URL here
+    # so requests can be rewritten for prompt-cache hits. Both set once at boot.
+    openrouter_proxy_url: str | None = None
+    cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
     processor_busy: bool = False
