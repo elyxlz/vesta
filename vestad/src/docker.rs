@@ -33,6 +33,8 @@ impl std::fmt::Display for DockerError {
     }
 }
 
+impl std::error::Error for DockerError {}
+
 impl From<bollard::errors::Error> for DockerError {
     fn from(e: bollard::errors::Error) -> Self {
         match &e {
@@ -1112,7 +1114,7 @@ pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Resu
     let file = tokio::fs::File::open(input).await
         .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
     let byte_stream = tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-        .filter_map(|r| async { r.ok().map(|b| Ok::<Bytes, std::io::Error>(b.freeze())) });
+        .map(|r| r.map(|b| b.freeze()));
 
     let opts = ImportImageOptions { ..Default::default() };
     let mut stream = docker.import_image_stream(opts, byte_stream, None);
@@ -1413,7 +1415,7 @@ fn generate_state() -> String {
     base64url_encode(&state_bytes)
 }
 
-/// Start the OAuth PKCE flow. Returns (auth_url, session_id, code_verifier, state).
+/// Start the OAuth PKCE flow. Returns (auth_url, code_verifier, state).
 pub fn start_auth_flow() -> (String, String, String) {
     let (code_verifier, code_challenge) = generate_pkce();
     let state = generate_state();

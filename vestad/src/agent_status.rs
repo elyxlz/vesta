@@ -77,7 +77,7 @@ impl AgentStatusCache {
     /// Bump the monotonic revision for a service, signalling clients to refetch it.
     pub fn invalidate_service(&self, agent: &str, service: &str) {
         {
-            let mut revs = self.revs.lock().unwrap();
+            let mut revs = self.revs.lock().unwrap_or_else(|e| e.into_inner());
             *revs
                 .entry(agent.to_string())
                 .or_default()
@@ -90,7 +90,7 @@ impl AgentStatusCache {
 
     /// Current revision for each agent+service.
     pub fn service_revs(&self) -> HashMap<String, HashMap<String, u64>> {
-        self.revs.lock().unwrap().clone()
+        self.revs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

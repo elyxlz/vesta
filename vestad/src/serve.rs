@@ -1779,6 +1779,9 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
         use std::io::Write;
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
+        // SAFETY: fd comes from file.as_raw_fd() and file is kept alive past this call, so the
+        // descriptor is valid for the duration of flock. flock with these flags has no other
+        // preconditions.
         let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
         if ret != 0 {
             return Err("vestad already running".into());
@@ -1915,7 +1918,10 @@ pub fn build_router(state: SharedState) -> Router {
 
 fn local_hour() -> u8 {
     let epoch = crate::time_utils::now_epoch_secs() as libc::time_t;
+    // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
+    // duration of the call.
     unsafe { libc::localtime_r(&epoch, &mut tm) };
     tm.tm_hour as u8
 }
