@@ -44,22 +44,11 @@ def _detect_platform() -> str:
     else:
         raise RuntimeError(f"unsupported architecture for claude binary: {machine}")
 
-    if os_name == "linux" and _is_musl():
+    # musl libc (alpine) ships a differently-named loader; the agent image is glibc (debian),
+    # so this only matters if cc_sdk is ever run on alpine.
+    if os_name == "linux" and (pl.Path("/lib/libc.musl-x86_64.so.1").exists() or pl.Path("/lib/libc.musl-aarch64.so.1").exists()):
         return f"linux-{arch}-musl"
     return f"{os_name}-{arch}"
-
-
-def _is_musl() -> bool:
-    if pl.Path("/lib/libc.musl-x86_64.so.1").exists() or pl.Path("/lib/libc.musl-aarch64.so.1").exists():
-        return True
-    # Fall back to inspecting the dynamic loader of a known binary.
-    try:
-        import subprocess
-
-        out = subprocess.run(["ldd", "/bin/ls"], capture_output=True, text=True, timeout=5)
-        return "musl" in (out.stdout + out.stderr)
-    except (OSError, subprocess.SubprocessError):
-        return False
 
 
 def _cache_dir() -> pl.Path:

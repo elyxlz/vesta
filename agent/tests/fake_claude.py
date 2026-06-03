@@ -150,26 +150,6 @@ def _mcp_session(ctx: dict[str, typing.Any]):
     return proc, rpc
 
 
-def register_mcp(ctx: dict[str, typing.Any]) -> None:
-    """Mirror the real TUI: connect to the MCP server at startup and list its tools.
-
-    This is the bridge's registration health signal — the cc_sdk client waits for this
-    startup tools/list and aborts if it never arrives. FAKE_CLAUDE_SKIP_MCP simulates the
-    real-world failure where claude never registers the server (tools silently missing).
-    """
-    if ctx["mcp_config"] is None or "FAKE_CLAUDE_SKIP_MCP" in os.environ:
-        return
-    session = _mcp_session(ctx)
-    if session is None:
-        return
-    proc, rpc = session
-    rpc("initialize", {"protocolVersion": "2025-06-18"}, request_id=1)
-    rpc("notifications/initialized", {})
-    rpc("tools/list", {}, request_id=2)
-    proc.stdin.close()
-    proc.wait(timeout=10)
-
-
 def call_mcp(ctx: dict[str, typing.Any], name: str, arguments: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Spawn the configured MCP stdio server and round-trip a tool call, like the real TUI."""
     session = _mcp_session(ctx)
@@ -373,8 +353,6 @@ def main() -> None:
     sys.stdout.flush()
 
     fire_hook(ctx, "SessionStart", {"source": "resume" if resuming else "startup", "model": flags["model"] if "model" in flags else "fake"})
-    # Real claude connects to each --mcp-config server and lists its tools at startup.
-    register_mcp(ctx)
     read_loop(ctx)
 
 

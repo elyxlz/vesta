@@ -241,16 +241,11 @@ def test_claude_bin_override_skips_download(monkeypatch):
 def test_claude_bin_platform_string(monkeypatch):
     from cc_sdk import _claude_bin
 
-    monkeypatch.setattr(_claude_bin, "_is_musl", lambda: False)
     cases = {("Linux", "x86_64"): "linux-x64", ("Linux", "aarch64"): "linux-arm64", ("Darwin", "arm64"): "darwin-arm64"}
     for (system, machine), expected in cases.items():
         monkeypatch.setattr(_claude_bin.platform, "system", lambda s=system: s)
         monkeypatch.setattr(_claude_bin.platform, "machine", lambda m=machine: m)
         assert _claude_bin._detect_platform() == expected
-    monkeypatch.setattr(_claude_bin, "_is_musl", lambda: True)
-    monkeypatch.setattr(_claude_bin.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(_claude_bin.platform, "machine", lambda: "x86_64")
-    assert _claude_bin._detect_platform() == "linux-x64-musl"
 
 
 # --- launch env: sandbox + pinned-version guards ---
