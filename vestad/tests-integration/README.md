@@ -30,10 +30,10 @@ tests/
     lifecycle.rs    independent stop/destroy across users
 
   live/           live agent e2e — requires Claude credentials (4 tests)
-    common.rs       setup_live_agent, notifications, container helpers
+    common.rs       shared live agent setup, notifications, container helpers
     file_ops.rs     notification-driven file create/modify
+    interrupt.rs    interrupt mid-task: counting task aborted, redirect task completes
     mcp_tools.rs    in-conversation MCP tool use (cc_sdk stdio proxy + bridge with real claude)
-    tree.rs         first-start migration (seeds old ~/vesta/ layout, verifies agent migrates it)
 
   oauth/          Anthropic OAuth endpoint reachability (4 tests)
     common.rs       endpoint checker, constants
@@ -61,8 +61,8 @@ cargo test -p vesta-tests --test migrations  # layout migration tests
 ## Notes
 
 - Live tests skip when `~/.claude/.credentials.json` is missing. Locally they use your own Claude session; agents run with `AGENT_MODEL=sonnet` (the harness restarts each agent after credential injection so the override applies to the whole run).
+- All live tests share ONE agent (`lock_shared_live_agent` in common.rs): real first-start runs once for the whole suite, the harness then waits for the agent to settle (first-start keeps going after the agent reports alive, so tests must not start until the log goes quiet), and the tests serialize against it via a mutex (notifications, especially interrupts, are global to the agent's conversation).
 - In CI, the `test-live` job runs **only on the release event** (not on PRs — live tests are slow and spend API tokens) and **gates the release**: the `release` and `push-image` jobs depend on it, so a live-test failure blocks publishing artifacts and the `:latest` image. It injects the `CLAUDE_CREDENTIALS` secret, which must hold its **own dedicated OAuth lineage** (seeded once from a separate `claude.ai/oauth/authorize` login, never copied from a developer's `~/.claude` — refresh tokens can rotate on use, so a shared lineage dies as soon as the other party refreshes). The `refresh-credentials.yml` workflow is the only thing allowed to refresh it: every 6h it refreshes whenever <8h of validity remain, so the secret always carries >=2h. A **missing** secret (forks) skips the live tests; a **present-but-stale/malformed** secret **fails** the release, since shipping without live coverage having run means the credential pipeline is broken.
-- The live migration test (`tree.rs`) seeds an old-style `~/vesta/` layout before auth, then verifies the agent's first-start prompt (`migration.md` + `first_start_setup.md`) migrates it correctly. `wait_until_alive` returns only after first-start setup has been processed; the agent binds its WS port as its readiness signal.
 - All tests require a working local Docker daemon.
 - The agent image: vestad builds `vesta:local` from the checkout automatically (it finds `vestad/Dockerfile`). Set `VESTAD_AGENT_IMAGE` to pin a specific image instead — CI does this to test the image built from the PR.
 - Multi-user and live tests use `unique_user()` for Docker container isolation across concurrent and repeated runs.

@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vesta_tests::exec_in_container;
 
-use super::common::{setup_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// The agent must invoke one of its in-process MCP tools mid-conversation. This
 /// exercises the full cc_sdk MCP path against real claude: claude -> _mcp_stdio.py
@@ -11,7 +11,7 @@ use super::common::{setup_live_agent, wait_for_file_contains, write_notification
 /// but this verifies tools keep working in the middle of a normal conversation turn.
 #[test]
 fn agent_uses_mcp_tool_in_conversation() {
-    let Some((_agent, container)) = setup_live_agent("test-e2e-mcp", true, true, None) else {
+    let Some((_shared, container)) = lock_shared_live_agent() else {
         return;
     };
 

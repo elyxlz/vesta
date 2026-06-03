@@ -2,11 +2,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vesta_tests::exec_in_container;
 
-use super::common::{setup_live_agent, write_notification, wait_for_file_contains, E2E_FILES_DIR};
+use super::common::{lock_shared_live_agent, write_notification, wait_for_file_contains, E2E_FILES_DIR};
 
 #[test]
 fn agent_notification_e2e_creates_file_via_vestad() {
-    let Some((_agent, container)) = setup_live_agent("test-e2e-create", true, true, None) else {
+    let Some((_shared, container)) = lock_shared_live_agent() else {
         return;
     };
 
@@ -34,7 +34,7 @@ fn agent_notification_e2e_creates_file_via_vestad() {
 
 #[test]
 fn agent_notification_e2e_modifies_file_via_vestad() {
-    let Some((_agent, container)) = setup_live_agent("test-e2e-modify", true, true, None) else {
+    let Some((_shared, container)) = lock_shared_live_agent() else {
         return;
     };
 
