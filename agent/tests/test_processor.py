@@ -93,6 +93,36 @@ async def test_restarts_on_error(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
+    """The crash path must reach the observability surface: an {"type":"error"} event on the bus, state back to idle.
+
+    Pins the emit at loops.py error handler so a refactor that drops it (leaving clients blind to a crash)
+    fails CI, alongside the existing last_restart_reason assertion."""
+    state = vm.State()
+    subscriber = state.event_bus.subscribe()
+
+    async def side_effect(msg, *, state, config, is_user):
+        raise RuntimeError("kaboom in the SDK")
+
+    state, _, _ = await _run_processor_test(
+        tmp_path,
+        message_side_effect=side_effect,
+        pre_state=state,
+        initial_queue=[("will crash", True)],
+    )
+
+    assert state.persisted.last_restart_reason == "error — kaboom in the SDK"
+    assert state.event_bus.state == "idle", "bus state must reset to idle after the crash path"
+
+    drained = []
+    while not subscriber.empty():
+        drained.append(subscriber.get_nowait())
+    error_events = [e for e in drained if e["type"] == "error"]
+    assert len(error_events) == 1, f"exactly one error event expected, got {[e['type'] for e in drained]}"
+    assert error_events[0]["text"] == "kaboom in the SDK"
+
+
+@pytest.mark.anyio
 async def test_restarts_on_timeout(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
