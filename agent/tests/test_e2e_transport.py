@@ -305,6 +305,43 @@ async def test_interrupt_unblocks_current_turn_and_next_turn_completes(sandbox: 
         assert isinstance(messages[-1], ResultMessage)
 
 
+# --- Compaction (real-claude semantics: PreCompact fires, NO Stop, completion = isCompactSummary) ---
+
+
+@pytest.mark.anyio
+async def test_compact_waits_for_summary_marker_and_preserves_turn_accounting(sandbox: Sandbox) -> None:
+    """compact() must (a) submit /compact and return only after the isCompactSummary line is
+    written (going through PreCompact, never a Stop), and (b) leave the query()/Stop turn
+    accounting untouched so the next turn still completes on its own single Stop."""
+    precompact_seen = False
+
+    async def on_precompact(payload: dict[str, tp.Any], tool_use_id: tp.Any, context: tp.Any) -> dict[str, tp.Any]:
+        nonlocal precompact_seen
+        precompact_seen = True
+        return {}
+
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={"PreCompact": [HookMatcher(hooks=[on_precompact])]})
+    async with ClaudeSDKClient(options=options) as client:
+        await client.query("before compaction")
+        assert "echo: before compaction" in texts_of(await collect_with_timeout(client))
+
+        transcript = client._transcript_path
+        assert transcript is not None
+        assert "isCompactSummary" not in transcript.read_text()
+
+        await asyncio.wait_for(client.compact("keep it tight"), timeout=TURN_TIMEOUT_S)
+
+        # (a) It went through PreCompact and only returned once the completion marker landed.
+        assert precompact_seen, "compaction never started (PreCompact did not fire)"
+        assert "isCompactSummary" in transcript.read_text(), "compact() returned before the summary marker"
+
+        # (b) No phantom Stop was consumed: a normal turn still round-trips afterwards.
+        await client.query("after compaction")
+        messages = await collect_with_timeout(client)
+        assert "echo: after compaction" in texts_of(messages)
+        assert isinstance(messages[-1], ResultMessage)
+
+
 # --- Failure modes ---
 
 

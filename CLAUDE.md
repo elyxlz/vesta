@@ -27,7 +27,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
-**Session persistence**: Agent persists a Claude SDK `session_id` to `~/agent/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/agent/data/events.db` (SQLite with FTS5 for full-text search). The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, runs `/compact`, then restarts with a fresh session.
+**Session persistence**: Agent persists a Claude SDK `session_id` to `~/agent/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/agent/data/events.db` (SQLite with FTS5 for full-text search). The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, then (via `mark_dreamer_complete`) compacts the conversation in place with `/compact` and restarts, resuming the compacted session so context stays continuous rather than resetting to a blank slate.
 
 **Config injection**: vestad writes env vars to `agents/{agent}.env` on host, bind-mounted into container. Agent's `config.py` reads `VestaConfig` from env vars (`AGENT_NAME`, `AGENT_MODEL`, `WS_PORT`, `AGENT_TOKEN`, etc.). Custom prompts live in `~/agent/prompts/` (MEMORY.md, notification_suffix.md, nightly_dream.md, etc.).
 

@@ -41,6 +41,12 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
   ends on the native `Stop` hook, after which a synthetic `ResultMessage` (session id
   + usage) is yielded. Subagent (`isSidechain`) lines are skipped — they surface via
   SubagentStart/Stop hooks instead.
+- **Compaction** via `compact()` submits `/compact` and waits for it to finish. A manual
+  compaction fires `PreCompact` but **never a `Stop`** (verified against claude v2.1.16x),
+  and rewrites the *same* session transcript in place so `--resume` keeps working. The
+  summarization request can leave the transcript silent for tens of seconds, so completion
+  is the `isCompactSummary` transcript line, not quiescence; `compact()` deliberately leaves
+  the `query()`/`Stop` turn accounting untouched. Both waits are bounded.
 - **Hooks** are configured as native command hooks (`--settings`) that run
   `_forward.py`, which relays the event JSON to the in-process **bridge** over a unix
   socket. The bridge dispatches to the registered `HookMatcher` callbacks, so
