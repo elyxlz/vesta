@@ -32,6 +32,8 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
+Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
+
 ### 2. Review the conversation
 
 Review the conversation with fresh eyes. Note:
