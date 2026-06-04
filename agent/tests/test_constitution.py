@@ -13,10 +13,16 @@ def _config(tmp_path, **overrides):
     return config
 
 
+def _system_prompt(config, state) -> str:
+    prompt = build_client_options(config, state).system_prompt
+    assert isinstance(prompt, str)
+    return prompt
+
+
 def test_constitution_is_prepended_ahead_of_memory(tmp_path, state):
     config = _config(tmp_path)
     (config.agent_dir / "constitution.md").write_text("Always tell the truth.")
-    prompt = build_client_options(config, state).system_prompt
+    prompt = _system_prompt(config, state)
     assert "Always tell the truth." in prompt
     assert prompt.index("Always tell the truth.") < prompt.index("my memory body")
     assert "immutable" in prompt.lower()
@@ -24,7 +30,7 @@ def test_constitution_is_prepended_ahead_of_memory(tmp_path, state):
 
 def test_no_constitution_file_leaves_prompt_unchanged(tmp_path, state):
     config = _config(tmp_path)
-    prompt = build_client_options(config, state).system_prompt
+    prompt = _system_prompt(config, state)
     assert "Constitution" not in prompt
     assert "my memory body" in prompt
 
@@ -32,6 +38,6 @@ def test_no_constitution_file_leaves_prompt_unchanged(tmp_path, state):
 def test_empty_constitution_is_ignored(tmp_path, state):
     config = _config(tmp_path)
     (config.agent_dir / "constitution.md").write_text("   \n  \n")
-    prompt = build_client_options(config, state).system_prompt
+    prompt = _system_prompt(config, state)
     assert "Constitution" not in prompt
     assert "my memory body" in prompt
