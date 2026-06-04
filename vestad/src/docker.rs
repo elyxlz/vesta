@@ -915,6 +915,7 @@ pub fn write_agent_env_file(
     agent_token: &str,
     timezone: Option<&str>,
     seed_personality: Option<&str>,
+    seed_skills: Option<&str>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -936,6 +937,7 @@ pub fn write_agent_env_file(
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
     append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
+    append_optional("AGENT_SEED_SKILLS", seed_skills);
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -1315,9 +1317,9 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 // --- Container creation ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<(), DockerError> {
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality, seed_skills)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
 
     let constitution_path = ensure_constitution_file(&env_config.agents_dir, agent_name)?;
@@ -1638,7 +1640,8 @@ impl std::fmt::Debug for BuildProgress {
     }
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
+#[allow(clippy::too_many_arguments)]
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>, seed_context: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1661,7 +1664,19 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality, seed_skills).await?;
+
+    // Freeform creator-supplied context (e.g. what an onboarding vesta learned about the
+    // user). Delivered into the not-yet-started container's data dir so first-wake setup can
+    // fold it into MEMORY.md. Only at creation — it's consumed once, so no rebuild/rename
+    // persistence is needed. A failure here must not abort an otherwise-good agent: log and
+    // move on, the agent just starts without the head-start context.
+    if let Some(context) = seed_context.filter(|c| !c.trim().is_empty()) {
+        if let Err(e) = docker_cp_content(docker, &cname, context, "/root/agent/data/seed-context.md").await {
+            tracing::warn!(agent = %name, error = %e, "failed to write seed-context file; agent will start without it");
+        }
+    }
+
     Ok(name.to_string())
 }
 
@@ -1800,7 +1815,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None) {
+                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None, None) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -2025,7 +2040,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None, None).await?;
 
     Ok(())
 }
@@ -2103,7 +2118,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None, None).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
