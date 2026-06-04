@@ -11,6 +11,7 @@ mod agent_status;
 mod app_static;
 mod auth;
 mod backup;
+mod channel;
 mod cloudflared_embed;
 mod control_ws;
 mod docker;
@@ -548,7 +549,8 @@ fn main() {
         }
 
         Command::Update => {
-            let outcome = self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+            let outcome =
+                self_update::perform_update(channel::Channel::effective()).unwrap_or_else(|e| die(e.to_string()));
             if !outcome.updated {
                 println!("vestad already at latest version (v{})", outcome.current);
             }

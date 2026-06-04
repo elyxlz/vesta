@@ -2,7 +2,8 @@
 
 A drop-in replacement for the public surface of the official `claude_agent_sdk`,
 implemented by driving the **interactive `claude` CLI** inside tmux rather than the
-headless control protocol. The rest of the agent (`core/`) imports `cc_sdk` exactly
+headless control protocol, because driving the CLI directly turned out simpler than
+wiring up the official SDK. The rest of the agent (`core/`) imports `cc_sdk` exactly
 as it imported `claude_agent_sdk` before: same message/block types, same hook
 plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
 

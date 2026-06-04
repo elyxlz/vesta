@@ -155,6 +155,17 @@ class ClaudeSDKClient:
     def returncode(self) -> int | None:
         return self._exit_code
 
+    def is_alive(self) -> bool | None:
+        """Liveness of the underlying claude process, as a tri-state.
+
+        None  — unknown: the session has not been launched yet (no __aenter__).
+        True  — launched and still running (no exit code observed).
+        False — launched and exited (an exit code was observed).
+        """
+        if self._monitor_task is None:
+            return None
+        return self._exit_code is None
+
     async def __aenter__(self) -> "ClaudeSDKClient":
         try:
             _preseed_config(self._cwd)

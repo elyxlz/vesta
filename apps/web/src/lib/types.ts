@@ -64,6 +64,8 @@ export type LogEvent =
   | { kind: "End" }
   | { kind: "Error"; message: string };
 
+export type ReleaseChannel = "stable" | "beta";
+
 export interface GatewayVersionInfo {
   version: string;
   api_compat: string;
@@ -71,4 +73,5 @@ export interface GatewayVersionInfo {
   latest_version: string | null;
   update_available: boolean | null;
   branch?: string | null;
+  channel?: ReleaseChannel;
 }

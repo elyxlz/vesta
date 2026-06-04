@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. Instead of the official Claude Agent SDK, the agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. The agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface, because driving the CLI directly is simpler than wiring up the official Claude Agent SDK.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
-**Session persistence**: Agent persists a Claude SDK `session_id` to `~/agent/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/agent/data/events.db` (SQLite with FTS5 for full-text search). The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, then (via `mark_dreamer_complete`) compacts the conversation in place with `/compact` and restarts, resuming the compacted session so context stays continuous rather than resetting to a blank slate.
+**Session persistence**: Agent persists a Claude SDK `session_id` to `~/agent/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/agent/data/events.db` (SQLite with FTS5 for full-text search). The events.db schema is versioned via `PRAGMA user_version`: `events.py` owns an ordered, version-gated `_MIGRATIONS` list applied at `EventBus` construction. Version 1 is the baseline (the current `CREATE ... IF NOT EXISTS` schema), so a fresh db and a pre-versioned db both converge to v1 with no data loss. Future schema changes add v2+ steps; never edit a released step. The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, then (via `mark_dreamer_complete`) compacts the conversation in place with `/compact` and restarts, resuming the compacted session so context stays continuous rather than resetting to a blank slate.
 
 **Config injection**: vestad writes env vars to `agents/{agent}.env` on host, bind-mounted into container. Agent's `config.py` reads `VestaConfig` from env vars (`AGENT_NAME`, `AGENT_MODEL`, `WS_PORT`, `AGENT_TOKEN`, etc.). Custom prompts live in `~/agent/prompts/` (MEMORY.md, notification_suffix.md, nightly_dream.md, etc.).
 

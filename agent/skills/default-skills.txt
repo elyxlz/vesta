@@ -1,10 +1,10 @@
-banking
 browser
 claude-code
 dashboard
 dream
 email-client
-flights
+personality
+proactive-check
 restart
 skills-registry
 tasks

@@ -1284,8 +1284,10 @@ jobs:
           file: vestad/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          # Beta publish pushes only the version tag. `:latest` is moved onto this
+          # digest later by promote.yml, so stable agents (which pull `:vX.Y.Z`
+          # pinned to the vestad version) are unaffected until promotion.
           tags: |
-            ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -1377,14 +1379,15 @@ jobs:
           cd release
           sha256sum $(ls | grep -v '\.sig$\|\.json$') > checksums.txt
 
-      - name: Upload assets and publish
+      # Beta publish: upload assets to the release but leave it a prerelease. Only
+      # opted-in beta clients follow prereleases; stable stays put until promote.yml
+      # flips this release to latest. This is the canary window.
+      - name: Upload assets to prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for f in release/*; do
             gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
           done
-          gh release edit "${{ github.event.release.tag_name }}" --draft=false --prerelease=false
-
-      - name: Push to production
-        run: git push --force origin HEAD:production
+          echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
+          echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."

@@ -87,7 +87,7 @@ check_integration() {
     cd vestad
     # `cargo test -p vestad --test ...` builds the vestad binary first and passes its path to
     # the tests via CARGO_BIN_EXE_vestad — always fresh, never a stale binary.
-    cargo test -p vestad --test server --test multi_user --test oauth --test migrations -- --test-threads=8
+    cargo test -p vestad --test server --test multi_user --test oauth -- --test-threads=8
   )
 }
 

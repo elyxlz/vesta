@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { orbColors, type OrbVisualState } from "./styles";
 
 interface OrbProps {
@@ -287,6 +288,8 @@ export function Orb({
 }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const motionSuppressed = suppressMotion || prefersReducedMotion;
   const isLive = LIVE_STATES.has(state);
   const shouldTrack = enableTracking && isLive;
   const targetTrackRef = useRef({ x: 0, y: 0 });
@@ -311,13 +314,13 @@ export function Orb({
       return;
     }
 
-    const target = getVisualTarget(state, container, suppressMotion);
+    const target = getVisualTarget(state, container, motionSuppressed);
     targetVisualRef.current = target;
 
     if (!visualStateRef.current) {
       visualStateRef.current = createInitialVisualState(target);
     }
-  }, [state, suppressMotion]);
+  }, [state, motionSuppressed]);
 
   useEffect(() => {
     if (!shouldTrack) {
@@ -427,7 +430,7 @@ export function Orb({
 
     const initialTarget =
       targetVisualRef.current ??
-      getVisualTarget(state, container, suppressMotion);
+      getVisualTarget(state, container, motionSuppressed);
     targetVisualRef.current = initialTarget;
     visualStateRef.current ??= createInitialVisualState(initialTarget);
 

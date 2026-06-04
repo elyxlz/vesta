@@ -137,13 +137,13 @@ async def process_batch(
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
     if config.agent_provider == "claude" and not CREDENTIALS_PATH.exists():
-        logger.startup("No credentials yet — waiting for auth before starting")
+        logger.startup("No credentials yet, waiting for auth before starting")
         return False
 
     if reason == "first_start":
         setup_prompt = load_prompt("first_start_setup", config)
         if not setup_prompt:
-            # No prompt to run — flip the flag so we don't loop into first-start every reboot.
+            # No prompt to run, flip the flag so we don't loop into first-start every reboot.
             state.persisted.first_start_done = True
             state_store.save_state(state.persisted, config)
             return False
@@ -157,7 +157,7 @@ def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reaso
         state.persisted.show_dreamer_summary = False
         state_store.save_state(state.persisted, config)
         for path in sorted(config.dreamer_dir.glob("*.md"), reverse=True)[:3]:
-            extras.append(f"[Dreamer Summary — {path.stem}]\n{path.read_text().strip()}")
+            extras.append(f"[Dreamer Summary: {path.stem}]\n{path.read_text().strip()}")
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return False
@@ -188,9 +188,9 @@ async def _run_messages_with_interrupts(
         except asyncio.CancelledError:
             if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
                 raise
-            logger.error("Message processing cancelled unexpectedly — triggering restart")
+            logger.error("Message processing cancelled unexpectedly, triggering restart")
             state.event_bus.emit({"type": "error", "text": "processing cancelled"})
-            state.persisted.last_restart_reason = "error — processing cancelled"
+            state.persisted.last_restart_reason = "error: processing cancelled"
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
             raise
@@ -204,9 +204,9 @@ async def _run_messages_with_interrupts(
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
                 detail += f"\nRecent stderr:\n{stderr_tail}"
-            logger.error(f"{detail} — triggering restart")
+            logger.error(f"{detail}, triggering restart")
             state.event_bus.emit({"type": "error", "text": error_msg})
-            state.persisted.last_restart_reason = f"error — {error_msg}"
+            state.persisted.last_restart_reason = f"error: {error_msg}"
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
         finally:
@@ -324,7 +324,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
             logger.warning(
                 f"Session resume failed ({state.persisted.session_id[:16]}...): {type(exc).__name__}: {exc}"
                 f" | exit_code={exit_code}"
-                f" — starting fresh\nRecent stderr:\n{stderr_tail}"
+                f", starting fresh\nRecent stderr:\n{stderr_tail}"
             )
             state.persisted.session_id = None
             state_store.save_state(state.persisted, config)
@@ -418,7 +418,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
             if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
                 last_proactive = now
                 if state.processor_busy or not queue.empty():
-                    logger.debug("Proactive check skipped: agent is busy — waiting full interval")
+                    logger.debug("Proactive check skipped: agent is busy, waiting full interval")
                 else:
                     check_proactive_task(config=config)
 

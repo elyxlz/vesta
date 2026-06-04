@@ -8,7 +8,7 @@ import {
   type OpenRouterConfig,
   type ProviderResult,
 } from "@/api/agents";
-import { fadeSlide } from "@/lib/motion";
+import { stepTransition } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
@@ -100,7 +100,7 @@ export function NewAgent() {
           }}
         />
       );
-    if (step === "creating") return <CreatingStep />;
+    if (step === "creating") return <CreatingStep agentName={agentName} />;
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
       <NameStep
@@ -118,7 +118,7 @@ export function NewAgent() {
     <div className="flex flex-col h-full">
       <div className="flex-1 flex items-center justify-center">
         <AnimatePresence mode="wait">
-          <motion.div key={step} {...fadeSlide}>
+          <motion.div key={step} {...stepTransition}>
             {content}
           </motion.div>
         </AnimatePresence>

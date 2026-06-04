@@ -33,7 +33,7 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
     The caller caps this at config.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
-    claude-code falls back to its default — same behavior as before."""
+    claude-code falls back to its default, same behavior as before."""
     if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
         return None
     try:
@@ -69,7 +69,11 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return True
     except TimeoutError:
         diag = diagnostics.format_hang_diagnostics(state)
-        logger.error(f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}")
+        msg = f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}"
+        logger.error(msg)
+        # emit() is synchronous (queue put_nowait + sqlite commit), so the unresponsive-SDK
+        # condition is persisted and fanned out to subscribers before we SIGTERM/exit.
+        state.event_bus.emit({"type": "error", "text": msg})
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)
@@ -244,7 +248,7 @@ _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
-        raise FileNotFoundError(f"MEMORY.md not found at {memory_path} — cannot start agent without it")
+        raise FileNotFoundError(f"MEMORY.md not found at {memory_path}, cannot start agent without it")
     system_prompt = memory_path.read_text()
 
     name = config.agent_name

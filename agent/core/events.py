@@ -3,9 +3,19 @@
 import asyncio
 import datetime as dt
 import json
+import logging
 import pathlib as pl
 import sqlite3
 import typing as tp
+
+logger = logging.getLogger("vesta.events")
+
+# Upper bound on events buffered per subscriber. A slow-but-alive WS client (phone
+# on a weak link, wedged webview) whose send loop stalls would otherwise grow its
+# queue without limit. 1000 events covers a long burst of streamed text/tool blocks
+# while capping memory; on overflow we drop the oldest event (see emit) so the
+# stream stays current rather than replaying a stale backlog.
+SUBSCRIBER_QUEUE_MAXSIZE = 1000
 
 type AgentState = tp.Literal["idle", "thinking"]
 
@@ -131,6 +141,37 @@ END;
 
 _RECENCY_DECAY_RATE = 0.01
 
+# Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
+# version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
+# ordered, version-gated list of (target_version, step) pairs applied in sequence at
+# construction. Each step is idempotent: version 1 runs the baseline `_EVENTS_SCHEMA`
+# (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned db with the
+# tables already present both converge to version 1 with no data loss, the latter
+# simply being stamped. Add future schema changes as version 2+ steps here; never
+# edit a released step (existing dbs have already run it).
+_SCHEMA_VERSION = 1
+
+
+def _migrate_v1_baseline(conn: sqlite3.Connection) -> None:
+    conn.executescript(_EVENTS_SCHEMA)
+
+
+_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = ((1, _migrate_v1_baseline),)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    from . import logger
+
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    for version, step in _MIGRATIONS:
+        if current >= version:
+            continue
+        step(conn)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+        logger.startup(f"events.db migrated to schema version {version}")
+        current = version
+
 
 class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
@@ -141,10 +182,10 @@ class EventBus:
             data_dir.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(data_dir / "events.db"))
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(_EVENTS_SCHEMA)
+            _migrate(self._conn)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
-        q: asyncio.Queue[VestaEvent] = asyncio.Queue()
+        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
         self._subscribers.add(q)
         return q
 
@@ -160,6 +201,22 @@ class EventBus:
             )
             self._conn.commit()
         for q in self._subscribers:
+            self._offer(q, event)
+
+    def _offer(self, q: asyncio.Queue[VestaEvent], event: StreamEvent) -> None:
+        """Enqueue for one subscriber, dropping its oldest event on overflow.
+
+        A stalled send loop must not pin memory: when the queue is full we evict
+        the oldest buffered event to make room for the newest, keeping the live
+        stream current. History replay is delivered out-of-band on connect (api.py),
+        never through this queue, so it is unaffected."""
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            # emit runs on the loop thread, so no other coroutine drains between
+            # full and get_nowait: the queue is non-empty here by construction.
+            dropped = q.get_nowait()
+            logger.warning("subscriber queue full, dropped oldest event type=%s", dropped["type"])
             q.put_nowait(event)
 
     @property

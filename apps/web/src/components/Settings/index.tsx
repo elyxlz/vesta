@@ -23,6 +23,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
+import { apiJson } from "@/api/client";
 import { StatusPill } from "@/components/StatusPill";
 import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 import { Switch } from "@/components/ui/switch";
@@ -52,11 +53,32 @@ export function SettingsDialog({
     reachable,
     gatewayVersion,
     gatewayBranch,
+    gatewayChannel,
     updateAvailable,
     checkForUpdate,
   } = useGateway();
   const [checking, setChecking] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [channelSaving, setChannelSaving] = useState(false);
+
+  const onToggleBeta = async (enabled: boolean) => {
+    setChannelSaving(true);
+    try {
+      await apiJson("/settings/channel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
+      });
+      // Re-check so /version reflects the new channel (and surfaces the matching
+      // version to update to). Switching channel never downgrades, so leaving beta
+      // only stops future betas until stable catches up.
+      await checkForUpdate();
+    } catch (err) {
+      console.warn("[settings] failed to set release channel:", err);
+    } finally {
+      setChannelSaving(false);
+    }
+  };
 
   const onCheckForUpdate = async () => {
     setChecking(true);
@@ -218,6 +240,25 @@ export function SettingsDialog({
                 Disconnect
               </Button>
             </div>
+            {reachable && (
+              <Field
+                orientation="horizontal"
+                className="mt-3 items-center justify-between"
+              >
+                <FieldContent>
+                  <FieldLabel className="text-sm">beta releases</FieldLabel>
+                  <FieldDescription>
+                    receive prereleases first to test them before everyone else;
+                    switching off stops future betas (it never downgrades)
+                  </FieldDescription>
+                </FieldContent>
+                <Switch
+                  checked={gatewayChannel === "beta"}
+                  disabled={channelSaving}
+                  onCheckedChange={onToggleBeta}
+                />
+              </Field>
+            )}
           </MenuSection>
         </div>
       </DialogContent>

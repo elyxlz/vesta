@@ -69,6 +69,20 @@ def test_skills_index_valid():
         assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
 
 
+def test_default_skills_are_real_and_include_runtime_deps():
+    """Every default skill must have a matching directory under skills/, and the skills the core
+    runtime points at (proactive-check, personality) must ship by default. The Dockerfile rm -rf's
+    any skills/ dir not listed here, so a missing entry deletes a skill the runtime references."""
+    skills_dir = Path(__file__).parent.parent / "skills"
+    default_skills = [line for line in (skills_dir / "default-skills.txt").read_text().splitlines() if line.strip()]
+
+    for name in default_skills:
+        assert (skills_dir / name).is_dir(), f"default-skills.txt lists '{name}' but skills/{name}/ does not exist"
+
+    for required in ("proactive-check", "personality"):
+        assert required in default_skills, f"'{required}' must be in default-skills.txt: the core runtime points at it"
+
+
 def test_no_em_or_en_dashes_in_prompt_and_skill_files():
     """All prompt, skill, and memory markdown files must be free of em/en dashes."""
     agent_root = Path(__file__).resolve().parent.parent

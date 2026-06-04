@@ -1,12 +1,14 @@
 """Tests for SDK activity watchdog, tool duration tracking, and hang diagnostics."""
 
 import asyncio
+import tempfile
 import time
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
+from core.cc_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core.client import converse
 from wait_util import wait_for_condition
 from core.diagnostics import (
@@ -90,22 +92,10 @@ def test_format_hang_diagnostics_includes_stderr_tail():
 
 
 # --- _check_sdk_subprocess_alive ---
-
-
-def test_subprocess_alive_returns_true_when_running():
-    state = vm.State()
-    mock_client = MagicMock()
-    mock_client.returncode = None
-    state.client = mock_client
-    assert _check_sdk_subprocess_alive(state) is True
-
-
-def test_subprocess_alive_returns_false_when_exited():
-    state = vm.State()
-    mock_client = MagicMock()
-    mock_client.returncode = 1
-    state.client = mock_client
-    assert _check_sdk_subprocess_alive(state) is False
+# Liveness is read through the client's public is_alive() accessor. The alive/dead
+# distinction needs a launched claude process and lives in test_e2e_transport.py; the
+# reachable-without-tmux cases (no client, and a constructed-but-unlaunched real client)
+# are covered here.
 
 
 def test_subprocess_alive_returns_none_when_no_client():
@@ -114,10 +104,9 @@ def test_subprocess_alive_returns_none_when_no_client():
     assert _check_sdk_subprocess_alive(state) is None
 
 
-def test_subprocess_alive_returns_none_on_missing_attrs():
+def test_subprocess_alive_returns_none_before_launch():
     state = vm.State()
-    mock_client = MagicMock(spec=[])  # No attributes at all
-    state.client = mock_client
+    state.client = ClaudeSDKClient(options=ClaudeAgentOptions(cwd=tempfile.mkdtemp()))
     assert _check_sdk_subprocess_alive(state) is None
 
 
@@ -220,6 +209,43 @@ async def test_watchdog_stops_cleanly():
     stop = asyncio.Event()
     stop.set()  # Stop immediately
     await sdk_watchdog(state, stop=stop)  # Should not hang
+
+
+@pytest.mark.anyio
+async def test_watchdog_emits_error_event_once_per_threshold(tmp_path):
+    """Crossing a watchdog threshold emits exactly one error event to the bus, not one per poll."""
+    from unittest.mock import patch as _patch
+
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
+    stop = asyncio.Event()
+    seen: list[tp.Any] = []
+
+    def sixty_events() -> list[str]:
+        while not queue.empty():
+            seen.append(queue.get_nowait())
+        return [e["text"] for e in seen if e["type"] == "error" and "SDK silent for 60s" in e["text"]]
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
+        return await original_wait_for(coro, timeout=0.01)
+
+    async def stop_after_some_polls():
+        # Wait until the threshold has fired, then let several more polls run to prove
+        # the event is emitted once per crossing rather than once per poll.
+        await wait_for_condition(lambda: len(sixty_events()) >= 1, message="watchdog never emitted")
+        for _ in range(5):
+            await asyncio.sleep(0.02)
+        stop.set()
+
+    with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+        await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_some_polls())
+
+    assert len(sixty_events()) == 1, f"expected exactly one 60s error event, got {sixty_events()}"
+    state.event_bus.close()
 
 
 # --- Tool duration tracking via hooks ---

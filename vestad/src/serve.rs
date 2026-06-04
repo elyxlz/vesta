@@ -18,6 +18,12 @@ use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws,
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
+// Upper bound on a single control/JSON request (docker/restic handlers already carry their own
+// inner timeouts; this caps the HTTP layer so a stalled handler cannot hold a connection open
+// forever). Deliberately NOT applied to the WS-upgrade route or the long-lived SSE/proxy
+// streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
+const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
+
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -141,6 +147,11 @@ pub struct AppState {
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     pub(crate) https_port: u16,
+    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
+    /// by the create handler as `create_agent` progresses and read by the
+    /// build-phase endpoint so onboarding shows honest status. Entries exist only
+    /// for the duration of a create and are removed when it settles.
+    build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
 }
 
 impl AppState {
@@ -160,7 +171,33 @@ impl AppState {
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
             https_port,
+            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Record the current build phase for `name` (normalized). Lock poisoning is
+    /// recovered in place: a panic mid-build must not wedge later creates.
+    fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), phase);
+    }
+
+    /// Drop the build-phase entry for `name` once a create settles (success or error).
+    fn clear_build_phase(&self, name: &str) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(name);
+    }
+
+    fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .copied()
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
@@ -221,7 +258,8 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 // Force an immediate GitHub release check (instead of waiting for the periodic
 // background task) and return the refreshed version info.
 async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    match tokio::task::spawn_blocking(update_check::check_once).await {
+    let channel = effective_channel(&state).await;
+    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
         Ok(Ok(info)) => {
             let mut slot = state.update_info.lock().await;
             *slot = Some(info);
@@ -247,7 +285,14 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
+        "channel": effective_channel(state).await.as_str(),
     })
+}
+
+/// The channel vestad is currently following, honoring the `VESTA_CHANNEL` env
+/// override over the persisted setting.
+async fn effective_channel(state: &SharedState) -> crate::channel::Channel {
+    crate::channel::Channel::resolve(&state.settings.read().await.channel)
 }
 
 #[derive(Deserialize)]
@@ -319,8 +364,9 @@ async fn gateway_update_handler(
     if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
     }
-    tracing::info!("gateway update requested via API");
-    let result = tokio::task::spawn_blocking(self_update::perform_update)
+    let channel = effective_channel(&state).await;
+    tracing::info!(channel = channel.as_str(), "gateway update requested via API");
+    let result = tokio::task::spawn_blocking(move || self_update::perform_update(channel))
         .await
         .unwrap();
     state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -375,7 +421,7 @@ struct Personality {
 }
 
 async fn list_personalities_handler() -> Json<Vec<Personality>> {
-    const PREFIX: &str = "core/skills/personality/presets/";
+    const PREFIX: &str = "skills/personality/presets/";
     let mut results: Vec<Personality> = Vec::new();
 
     for path in crate::agent_embed::AgentSource::iter() {
@@ -424,7 +470,7 @@ async fn create_agent_handler(
     State(state): State<SharedState>,
     Json(body): Json<CreateBody>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let raw_name = body.name.unwrap_or_else(|| "default".to_string());
+    let raw_name = body.name.clone().unwrap_or_else(|| "default".to_string());
     let name = docker::normalize_name(&raw_name);
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
@@ -443,17 +489,49 @@ async fn create_agent_handler(
 
     // Create + start an empty agent. Provider config arrives via a separate
     // POST /agents/{name}/provider once the agent is up — the agent owns its
-    // own credential files now, vestad only orchestrates.
-    let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
-            .await
-            .map_err(map_docker_err)?;
+    // own credential files now, vestad only orchestrates. `create_agent` reports
+    // coarse phases into shared state so GET /agents/{name}/build-phase can drive
+    // honest onboarding status while this synchronous call is in flight.
+    let phases = state.clone();
+    let progress_name = name.clone();
+    let progress = docker::BuildProgress::new(Arc::new(move |phase| {
+        phases.set_build_phase(&progress_name, phase);
+    }));
 
+    let result = create_and_start(&state, &name, manage_core_code, &body, &progress).await;
+    state.clear_build_phase(&name);
+    let name = result?;
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+}
+
+/// Run the create then the start, reporting `Starting` between them. Split out so
+/// the caller can clear the build-phase entry on either outcome before returning.
+async fn create_and_start(
+    state: &SharedState,
+    name: &str,
+    manage_core_code: bool,
+    body: &CreateBody,
+    progress: &docker::BuildProgress,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), progress)
+        .await
+        .map_err(map_docker_err)?;
+
+    progress.set(docker::BuildPhase::Starting);
     docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+    Ok(name)
+}
+
+async fn build_phase_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let phase = state.build_phase(&docker::normalize_name(&name));
+    Json(serde_json::json!({ "phase": phase }))
 }
 
 async fn agent_status_handler(
@@ -1171,6 +1249,13 @@ pub(crate) struct Settings {
     backup: BackupGlobalSettings,
     #[serde(default)]
     agents: HashMap<String, AgentSettings>,
+    /// Release channel: "stable" or "beta". Empty/unknown is treated as stable.
+    #[serde(default = "default_channel")]
+    pub(crate) channel: String,
+}
+
+fn default_channel() -> String {
+    crate::channel::Channel::Stable.as_str().to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1619,6 +1704,39 @@ async fn set_auto_backup_handler(
     })))
 }
 
+// --- Release channel ---
+
+async fn get_channel_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() }))
+}
+
+#[derive(Deserialize)]
+struct SetChannelBody {
+    channel: String,
+}
+
+async fn set_channel_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SetChannelBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let channel = crate::channel::Channel::parse(&body.channel)
+        .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "channel must be 'stable' or 'beta'"))?;
+    {
+        let mut settings = state.settings.write().await;
+        settings.channel = channel.as_str().to_string();
+        save_settings(&settings);
+    }
+    tracing::info!(channel = channel.as_str(), "release channel updated");
+    // Refresh the cached update info against the new channel so /version reflects it
+    // without waiting for the next periodic poll.
+    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+        Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+        Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
+        Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
+    }
+    Ok(Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() })))
+}
+
 // --- Per-agent settings ---
 
 async fn get_agent_settings_handler(
@@ -1786,6 +1904,17 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 
 // --- Router ---
 
+// The request-timeout layer applied to the control/JSON sub-router only. Returns 408 Request
+// Timeout when a handler exceeds the deadline. Kept as one helper so the timed routes and the
+// tests that lock this behavior share a single 408-producing mechanism.
+fn request_timeout_layer(deadline: std::time::Duration) -> tower_http::timeout::TimeoutLayer {
+    tower_http::timeout::TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, deadline)
+}
+
+fn control_timeout_layer() -> tower_http::timeout::TimeoutLayer {
+    request_timeout_layer(std::time::Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS))
+}
+
 pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
@@ -1793,7 +1922,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/auth/session", post(auth::create_session_handler))
         .route("/auth/refresh", post(auth::refresh_session_handler));
 
-    let vestad_protected = Router::new()
+    // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
+    // request so a stalled docker/restic call cannot hold a connection open indefinitely.
+    let vestad_protected_timed = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
@@ -1808,6 +1939,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
         .route("/agents/{name}", get(agent_status_handler))
+        .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
@@ -1815,14 +1947,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
-        .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
         .route("/backups", get(list_all_backups_handler))
-        .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
-        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
         .route("/agents/{name}/constitution", get(get_constitution_handler))
         .route("/agents/{name}/constitution", axum::routing::put(set_constitution_handler))
@@ -1832,6 +1961,21 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
+        .route("/settings/channel", get(get_channel_handler))
+        .route("/settings/channel", axum::routing::put(set_channel_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ));
+
+    // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
+    // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
+    // so a finite deadline cannot truncate a legitimate live stream or break a WS upgrade.
+    let vestad_protected_streaming = Router::new()
+        .route("/agents/{name}/logs", get(logs_handler))
+        .route("/agents/{name}/backups", post(create_backup_handler))
+        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1875,7 +2019,8 @@ pub fn build_router(state: SharedState) -> Router {
 
     Router::new()
         .merge(vestad_public)
-        .merge(vestad_protected)
+        .merge(vestad_protected_timed)
+        .merge(vestad_protected_streaming)
         .merge(agents_services)
         .merge(agents_services_read)
         .merge(gateway_logs)
@@ -2052,7 +2197,8 @@ fn spawn_auto_backup_task(state: SharedState) {
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            match tokio::task::spawn_blocking(update_check::check_once).await {
+            let channel = effective_channel(&state).await;
+            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
                 Ok(Ok(info)) => {
                     let mut slot = state.update_info.lock().await;
                     *slot = Some(info);
@@ -2173,6 +2319,82 @@ pub async fn run_server(cfg: ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::is_cached_port_reusable;
+
+    // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---
+
+    // The same layering decision build_router makes: a TimeoutLayer on the control/JSON class and
+    // no timeout on the streaming/WS class. A short deadline keeps the test fast while exercising
+    // the real tower-http TimeoutLayer (the production 408-producing mechanism).
+    async fn serve_router(router: axum::Router) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn control_route_times_out_when_handler_exceeds_deadline() {
+        let deadline = std::time::Duration::from_millis(100);
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            "done"
+        };
+        let timed = axum::Router::new()
+            .route("/control", axum::routing::get(slow))
+            .layer(super::request_timeout_layer(deadline));
+        let (port, handle) = serve_router(timed).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/control", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn streaming_route_is_exempt_from_the_deadline() {
+        // The streaming class carries no timeout layer, so a handler that runs longer than the
+        // control deadline must still complete (mirrors logs `tail -f` / backup-progress SSE).
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            "stream"
+        };
+        let streaming = axum::Router::new().route("/stream", axum::routing::get(slow));
+        let (port, handle) = serve_router(streaming).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/stream", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "stream");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn control_route_under_deadline_succeeds() {
+        let fast = || async { "ok" };
+        let timed = axum::Router::new()
+            .route("/control", axum::routing::get(fast))
+            .layer(super::request_timeout_layer(std::time::Duration::from_secs(5)));
+        let (port, handle) = serve_router(timed).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/control", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        handle.abort();
+    }
 
     #[tokio::test]
     async fn cached_port_is_reusable_when_free() {
@@ -2296,6 +2518,7 @@ mod tests {
             "latest_version": "0.1.1",
             "update_available": true,
             "dev_mode": false,
+            "channel": "stable",
         });
 
         serde_json::json!({

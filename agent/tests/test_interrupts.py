@@ -342,6 +342,8 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
     state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
 
     mock_client = MagicMock()
 
@@ -378,6 +380,15 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
     assert kills == [(_os.getpid(), _signal.SIGTERM)], f"expected one SIGTERM to our own pid, got {kills}"
     assert exits == [1], f"expected os._exit(1), got {exits}"
     assert 10 in slept, "the 10s grace sleep before hard exit must be awaited (patched, not real)"
+
+    errors: list[str] = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if event["type"] == "error":
+            errors.append(event["text"])
+    assert len(errors) == 1, f"unresponsive SDK must emit exactly one error event before SIGTERM, got {errors}"
+    assert "SDK unresponsive" in errors[0]
+    state.event_bus.close()
 
 
 # --- Converse interrupt behavior ---

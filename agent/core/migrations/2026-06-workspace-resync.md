@@ -13,7 +13,7 @@ The `timezone` skill replaces the old `set_timezone` MCP tool.
 
 ### 2. Move the restart prompt and register the voice
 
-If `~/agent/skills/restart/SKILL.md` still has a `## Personality` heading (predates the `AGENT_SEED_PERSONALITY` refactor), remove that heading and everything under it up to the next `##`. Then follow `~/agent/core/skills/personality/SETUP.md` to register the voice.
+If `~/agent/skills/restart/SKILL.md` still has a `## Personality` heading (predates the `AGENT_SEED_PERSONALITY` refactor), remove that heading and everything under it up to the next `##`. Then follow `~/agent/skills/personality/SETUP.md` to register the voice (the `personality` skill moved out of core; if it is not installed yet, the `2026-06-personality-out-of-core` migration installs it).
 
 If `~/agent/prompts/restart.md` exists, replace the body of the restart SKILL (everything after the frontmatter) with it verbatim, then remove `~/agent/prompts/restart.md` and `rmdir ~/agent/prompts` if it's empty.
 

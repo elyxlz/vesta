@@ -26,18 +26,20 @@ async function updateApp(gatewayVersion: string) {
     return;
   }
 
+  // Both paths target the gateway's exact version so beta (prerelease) gateways
+  // update correctly: Linux installs that version's .deb/.rpm, macOS/Windows point
+  // the Tauri updater at that version's manifest (run_update), instead of the static
+  // releases/latest endpoint which never resolves a prerelease.
   const { detectPlatform } = await import("@/lib/platform");
-  if (detectPlatform() === "linux") {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("install_update", { version: gatewayVersion });
-    return;
+  const platform = detectPlatform();
+  // Mobile can't self-update (store-gated); the build comes from the App Store /
+  // TestFlight (or Play), so surface that instead of invoking a missing command.
+  if (platform === "ios" || platform === "android") {
+    throw new Error("update Vesta from the App Store or TestFlight");
   }
-
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check();
-  if (update) {
-    await update.downloadAndInstall();
-  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  const command = platform === "linux" ? "install_update" : "run_update";
+  await invoke(command, { version: gatewayVersion });
 }
 
 export function VersionMismatchDialog({

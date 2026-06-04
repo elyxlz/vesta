@@ -1,8 +1,9 @@
-"""Tests for EventBus: emit, persist, pagination, search, lifecycle."""
+"""Tests for EventBus: emit, persist, pagination, search, lifecycle, schema migration."""
 
+import sqlite3
 import typing as tp
 
-from core.events import ChatEvent, EventBus, SubagentStartEvent, UserEvent
+from core.events import _EVENTS_SCHEMA, _SCHEMA_VERSION, SUBSCRIBER_QUEUE_MAXSIZE, ChatEvent, EventBus, SubagentStartEvent, UserEvent
 
 
 # --- Emit & persist ---
@@ -68,6 +69,40 @@ def test_persists_across_instances(tmp_path):
     assert "before restart" in texts
     assert "reply" in texts
     bus2.close()
+
+
+# --- Backpressure ---
+
+
+def test_slow_subscriber_queue_is_bounded(event_bus):
+    """A subscriber that never drains stays bounded; the oldest events are dropped."""
+    q = event_bus.subscribe()
+    overflow = 50
+    total = SUBSCRIBER_QUEUE_MAXSIZE + overflow
+    for i in range(total):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+
+    assert q.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+
+    drained = [q.get_nowait() for _ in range(q.qsize())]
+    texts = [tp.cast(tp.Any, e)["text"] for e in drained]
+    # Oldest `overflow` events were evicted; the queue holds the most recent window.
+    assert texts[0] == f"msg {overflow}"
+    assert texts[-1] == f"msg {total - 1}"
+
+
+def test_drop_does_not_affect_other_subscribers(event_bus):
+    """Overflowing one subscriber must not drop events for a healthy one."""
+    slow = event_bus.subscribe()
+    fast = event_bus.subscribe()
+    total = SUBSCRIBER_QUEUE_MAXSIZE + 10
+    for i in range(total):
+        event = UserEvent(type="user", text=f"msg {i}")
+        event_bus.emit(event)
+        fast.get_nowait()  # fast subscriber keeps draining, never overflows
+
+    assert slow.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+    assert fast.qsize() == 0
 
 
 # --- Pagination ---
@@ -138,3 +173,39 @@ def test_search_limit(event_bus):
         event_bus.emit(UserEvent(type="user", text=f"message number {i} about python"))
     results = event_bus.search("python", limit=3)
     assert len(results) == 3
+
+
+# --- Schema migration ---
+
+
+def _db_user_version(tmp_path) -> int:
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_fresh_db_stamped_to_current_version(tmp_path):
+    """A fresh events.db ends at the current schema version."""
+    bus = EventBus(data_dir=tmp_path)
+    bus.close()
+    assert _db_user_version(tmp_path) == _SCHEMA_VERSION
+
+
+def test_pre_versioned_db_upgraded_in_place(tmp_path):
+    """A pre-versioned db (tables present, user_version=0) is stamped to v1 without data loss."""
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    conn.executescript(_EVENTS_SCHEMA)
+    conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("2026-01-01T00:00:00+00:00", '{"type": "user", "text": "legacy"}'))
+    conn.commit()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    conn.close()
+
+    bus = EventBus(data_dir=tmp_path)
+    events, _ = bus.recent()
+    bus.close()
+
+    assert _db_user_version(tmp_path) == _SCHEMA_VERSION
+    assert len(events) == 1
+    assert tp.cast(tp.Any, events[0])["text"] == "legacy"
