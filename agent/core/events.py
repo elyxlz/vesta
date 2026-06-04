@@ -141,6 +141,37 @@ END;
 
 _RECENCY_DECAY_RATE = 0.01
 
+# Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
+# version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
+# ordered, version-gated list of (target_version, step) pairs applied in sequence at
+# construction. Each step is idempotent: version 1 runs the baseline `_EVENTS_SCHEMA`
+# (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned db with the
+# tables already present both converge to version 1 with no data loss, the latter
+# simply being stamped. Add future schema changes as version 2+ steps here; never
+# edit a released step (existing dbs have already run it).
+_SCHEMA_VERSION = 1
+
+
+def _migrate_v1_baseline(conn: sqlite3.Connection) -> None:
+    conn.executescript(_EVENTS_SCHEMA)
+
+
+_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = ((1, _migrate_v1_baseline),)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    from . import logger
+
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    for version, step in _MIGRATIONS:
+        if current >= version:
+            continue
+        step(conn)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+        logger.startup(f"events.db migrated to schema version {version}")
+        current = version
+
 
 class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
@@ -151,7 +182,7 @@ class EventBus:
             data_dir.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(data_dir / "events.db"))
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(_EVENTS_SCHEMA)
+            _migrate(self._conn)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
         q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
