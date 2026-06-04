@@ -102,6 +102,6 @@ async def log_context_usage(state: vm.State) -> None:
         log_fn = logger.warning if pct > 80 else logger.usage
         log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
     except TimeoutError:
-        logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s — skipping")
+        logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s, skipping")
     except (OSError, RuntimeError, KeyError, TypeError):
         pass

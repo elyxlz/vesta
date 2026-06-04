@@ -89,7 +89,7 @@ async def test_restarts_on_error(tmp_path):
         tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
     )
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error — Simulated SDK buffer overflow"
+    assert state.persisted.last_restart_reason == "error: Simulated SDK buffer overflow"
 
 
 @pytest.mark.anyio
@@ -111,7 +111,7 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
         initial_queue=[("will crash", True)],
     )
 
-    assert state.persisted.last_restart_reason == "error — kaboom in the SDK"
+    assert state.persisted.last_restart_reason == "error: kaboom in the SDK"
     assert state.event_bus.state == "idle", "bus state must reset to idle after the crash path"
 
     drained = []
@@ -131,7 +131,7 @@ async def test_restarts_on_timeout(tmp_path):
         tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True)]
     )
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error — Response timed out"
+    assert state.persisted.last_restart_reason == "error: Response timed out"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -143,11 +143,11 @@ def test_restart_reason_round_trip(tmp_path):
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     state = vm.State()
-    state.persisted.last_restart_reason = "nightly — conversation history reset, dreamer ran"
+    state.persisted.last_restart_reason = "nightly: conversation history reset, dreamer ran"
     state_store.save_state(state.persisted, config)
 
     reloaded = vm.State(persisted=state_store.load_state(config))
-    assert _consume_restart_reason(reloaded, config, first_start=False) == "nightly — conversation history reset, dreamer ran"
+    assert _consume_restart_reason(reloaded, config, first_start=False) == "nightly: conversation history reset, dreamer ran"
 
     # Consumed: a fresh load now reports CRASH_RESTART.
     again = vm.State(persisted=state_store.load_state(config))
@@ -261,7 +261,7 @@ async def test_cancellation_triggers_restart(tmp_path):
             await _run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error — processing cancelled"
+    assert state.persisted.last_restart_reason == "error: processing cancelled"
 
 
 @pytest.mark.anyio
@@ -320,7 +320,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash — processor cancelled unexpectedly"
+    assert state.persisted.last_restart_reason == "crash: processor cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -364,7 +364,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash — processor exited silently"
+    assert state.persisted.last_restart_reason == "crash: processor exited silently"
 
 
 @pytest.mark.anyio
@@ -376,7 +376,7 @@ async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.graceful_shutdown.set()
-    state.persisted.last_restart_reason = "nightly — dreamer ran, session cleared for fresh context"
+    state.persisted.last_restart_reason = "nightly: dreamer ran, session cleared for fresh context"
 
     async def silent():
         return None
@@ -386,7 +386,7 @@ async def test_handle_processor_done_noop_during_shutdown(tmp_path):
 
     handle_processor_done(task, state=state, config=config)
 
-    assert state.persisted.last_restart_reason == "nightly — dreamer ran, session cleared for fresh context"
+    assert state.persisted.last_restart_reason == "nightly: dreamer ran, session cleared for fresh context"
 
 
 @pytest.mark.anyio
