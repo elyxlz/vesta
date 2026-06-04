@@ -489,7 +489,7 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
-    client::Client::new(&config)
+    client::Client::new(&config).unwrap_or_else(|e| platform::die(&e))
 }
 
 // Ask the configured vestad for the latest release tag so the CLI does not hit
@@ -498,7 +498,7 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
 // fails, letting callers fall back to a direct GitHub check.
 fn fetch_latest_via_gateway(force: bool) -> Option<String> {
     let config = common::load_server_config()?;
-    let client = client::Client::new(&config);
+    let client = client::Client::new(&config).ok()?;
     let result = if force {
         client.check_latest_release_tag()
     } else {
@@ -867,7 +867,7 @@ fn run(cli: Cli) {
         Command::Status { name, json } => {
             let c = get_client(host_ref, token_ref);
             let status = c.agent_status(&name).unwrap_or_else(|e| {
-                if json {
+                if json && e.contains("not found") {
                     println!(
                         "{}",
                         serde_json::json!({
@@ -1057,7 +1057,7 @@ fn run(cli: Cli) {
                 cert_pem: None,
             };
 
-            let client = client::Client::new(&config);
+            let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
             client
                 .health()
                 .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {e}")));

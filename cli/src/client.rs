@@ -141,6 +141,10 @@ fn status_error_message(status: u16, error_msg: Option<String>) -> String {
     }
 }
 
+fn read_json<T: serde::de::DeserializeOwned>(resp: Response<Body>) -> Result<T, String> {
+    resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+}
+
 fn map_error(host: &str, e: ureq::Error) -> String {
     match e {
         ureq::Error::ConnectionFailed | ureq::Error::Io(_) => {
@@ -164,8 +168,8 @@ fn extract_latest_version(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn urlencod(s: &str) -> String {
-    percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
+fn url_encode(value: &str) -> String {
+    percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
 /// Read an SSE stream, returning the data from the "done" event or an error.
@@ -237,10 +241,10 @@ pub struct OpenRouterModel {
 }
 
 impl Client {
-    pub fn new(config: &ServerConfig) -> Self {
+    pub fn new(config: &ServerConfig) -> Result<Self, String> {
         let tls_config = if let Some(ref pem) = config.cert_pem {
             let cert = ureq::tls::Certificate::from_pem(pem.as_bytes())
-                .expect("invalid cert PEM in server config");
+                .map_err(|e| format!("invalid cert PEM in server config: {e}"))?;
             ureq::tls::TlsConfig::builder()
                 .root_certs(ureq::tls::RootCerts::Specific(Arc::new(vec![cert])))
                 .build()
@@ -252,12 +256,12 @@ impl Client {
             .tls_config(tls_config)
             .build()
             .new_agent();
-        Self {
+        Ok(Self {
             agent,
             base_url: config.url.clone(),
             api_key: config.api_key.clone(),
             cert_fingerprint: config.cert_fingerprint.clone(),
-        }
+        })
     }
 
     pub fn api_key(&self) -> &str {
@@ -333,10 +337,7 @@ impl Client {
     // every client on one machine from hitting the GitHub API independently.
     pub fn latest_release_tag(&self) -> Result<Option<String>, String> {
         let resp = self.get("/version")?;
-        let value: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
+        let value: serde_json::Value = read_json(resp)?;
         Ok(extract_latest_version(&value))
     }
 
@@ -344,25 +345,18 @@ impl Client {
     // the explicit `vesta update` so it does not act on a stale cached value.
     pub fn check_latest_release_tag(&self) -> Result<Option<String>, String> {
         let resp = self.post("/version/check")?;
-        let value: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
+        let value: serde_json::Value = read_json(resp)?;
         Ok(extract_latest_version(&value))
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {
         let resp = self.get(&format!("/agents/{name}"))?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     /// Create an empty agent container. Provider config is sent separately via
@@ -374,10 +368,7 @@ impl Client {
             body["timezone"] = serde_json::json!(tz);
         }
         let resp = self.post_json("/agents", &body)?;
-        let v: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
+        let v: serde_json::Value = read_json(resp)?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
@@ -402,7 +393,7 @@ impl Client {
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         let resp = self.get(&format!("/agents/{name}/settings"))?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
@@ -412,11 +403,8 @@ impl Client {
 
     pub fn start_all(&self) -> Result<Vec<StartAllResult>, String> {
         let resp = self.post("/agents/start")?;
-        let v: StartAllResponse = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
-        Ok(v.results)
+        let response: StartAllResponse = read_json(resp)?;
+        Ok(response.results)
     }
 
     pub fn stop_agent(&self, name: &str) -> Result<(), String> {
@@ -515,18 +503,13 @@ impl Client {
     // followed by either POST /agents or POST /agents/{name}/provider.
     pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
         let resp = self.post("/providers/claude/oauth/start")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn complete_auth_standalone(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
         let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
-        let v: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))?;
+        let v: serde_json::Value = read_json(resp)?;
         v["credentials"]
             .as_str()
             .map(String::from)
@@ -541,7 +524,7 @@ impl Client {
 
     pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
         let resp = self.get("/providers/openrouter/models/top")?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
 
@@ -553,66 +536,52 @@ impl Client {
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
         let resp = self.get(&format!("/agents/{name}/backups"))?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
         let resp = self.post(&format!(
             "/agents/{}/backups/{}/restore",
             name,
-            urlencod(backup_id)
+            url_encode(backup_id)
         ))?;
         read_sse_result(resp)?;
         Ok(())
     }
 
     pub fn delete_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
-        self.delete_req(&format!("/agents/{}/backups/{}", name, urlencod(backup_id)))?;
+        self.delete_req(&format!("/agents/{}/backups/{}", name, url_encode(backup_id)))?;
         Ok(())
     }
 
     pub fn get_auto_backup_settings(&self) -> Result<serde_json::Value, String> {
         let resp = self.get("/settings/auto-backup")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
         let resp = self.put_json("/settings/auto-backup", body)?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn list_all_backups(&self) -> Result<Vec<BackupInfo>, String> {
         let resp = self.get("/backups")?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         let resp = self.get(&format!("/agents/{name}/settings/backup"))?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn set_agent_backup_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
         let resp = self.put_json(&format!("/agents/{name}/settings/backup"), body)?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn delete_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         let resp = self.delete_req(&format!("/agents/{name}/settings/backup"))?;
-        resp.into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+        read_json(resp)
     }
 
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
@@ -723,6 +692,8 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         }
     });
 
+    let mut loop_error: Option<String> = None;
+
     loop {
         if let Ok(input) = rx.try_recv() {
             if !input.is_empty() {
@@ -732,11 +703,12 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
                 render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
                 std::io::stdout().flush().ok();
                 let msg = serde_json::json!({"type": "message", "text": input});
-                if socket
-                    .send(tungstenite::Message::Text(msg.to_string().into()))
-                    .is_err()
-                {
-                    break;
+                match socket.send(tungstenite::Message::Text(msg.to_string().into())) {
+                    Ok(_) => {}
+                    Err(send_err) => {
+                        loop_error = Some(format!("connection lost while sending: {send_err}"));
+                        break;
+                    }
                 }
             }
         }
@@ -779,11 +751,17 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
             Err(tungstenite::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(_) => break,
+            Err(read_err) => {
+                loop_error = Some(format!("connection lost: {read_err}"));
+                break;
+            }
         }
     }
 
-    Ok(())
+    match loop_error {
+        Some(message) => Err(message),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
