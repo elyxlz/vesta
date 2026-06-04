@@ -59,6 +59,48 @@ func extractSkipSenders() map[string]bool {
 	return result
 }
 
+// extractInterruptSenders parses --interrupt-senders into an allowlist of phones
+// that should interrupt the agent. The returned `explicit` flag is true whenever
+// the flag was provided, so callers can distinguish "no flag → leave interrupt
+// field absent and let the agent's default apply" from "flag present → write an
+// explicit interrupt boolean per notification". A literal value of "none"
+// (case-insensitive) yields an empty allowlist with noInterrupt=true, meaning
+// no sender should interrupt.
+func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInterrupt bool) {
+	allowlist = make(map[string]bool)
+	val := ""
+	found := false
+	flagName := "--interrupt-senders"
+	prefix := flagName + "="
+	for i, arg := range os.Args {
+		if arg == flagName && i+1 < len(os.Args) {
+			val = os.Args[i+1]
+			found = true
+			break
+		}
+		if strings.HasPrefix(arg, prefix) {
+			val = strings.TrimPrefix(arg, prefix)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return allowlist, false, false
+	}
+	explicit = true
+	if strings.EqualFold(strings.TrimSpace(val), "none") {
+		noInterrupt = true
+		return allowlist, explicit, noInterrupt
+	}
+	for _, phone := range strings.Split(val, ",") {
+		phone = strings.TrimSpace(phone)
+		if phone != "" {
+			allowlist[phone] = true
+		}
+	}
+	return allowlist, explicit, noInterrupt
+}
+
 func parseStateDir() (dataDir, logDir string) {
 	instance := extractInstance()
 	if instance != "" {
@@ -156,7 +198,8 @@ func runServe(logger waLog.Logger) {
 		os.Exit(1)
 	}
 
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders(), logger)
+	interruptAllow, interruptExplicit, noInterrupt := extractInterruptSenders()
+	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders(), interruptAllow, interruptExplicit, noInterrupt, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -221,11 +264,11 @@ func stripGlobalFlags(args []string) []string {
 			skip = false
 			continue
 		}
-		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" {
+		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" || arg == "--interrupt-senders" {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") {
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") || strings.HasPrefix(arg, "--interrupt-senders=") {
 			continue
 		}
 		filtered = append(filtered, arg)
