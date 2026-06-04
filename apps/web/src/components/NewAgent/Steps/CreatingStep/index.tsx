@@ -1,28 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ProgressBar } from "@/components/ProgressBar";
+import {
+  buildPhaseMessage,
+  getBuildPhase,
+  type BuildPhase,
+} from "@/api/agents";
 
-const MESSAGES = [
-  "setting things up...",
-  "preparing email &\ncalendar access...",
-  "loading browser &\nresearch tools...",
-  "setting up reminders & tasks...",
-  "still setting things up...",
-];
+const BUILD_PHASE_POLL_MS = 1000;
 
-export function CreatingStep() {
-  const [msgIdx, setMsgIdx] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+export function CreatingStep({ agentName }: { agentName: string }) {
+  // Track the latest reported phase so the status line follows the real build
+  // and never walks backwards once a phase has been seen. The indeterminate bar
+  // stays honest about not knowing the remaining time.
+  const [phase, setPhase] = useState<BuildPhase | null>(null);
 
   useEffect(() => {
-    let idx = 0;
-    timerRef.current = setInterval(() => {
-      idx = Math.min(idx + 1, MESSAGES.length - 1);
-      setMsgIdx(idx);
-    }, 3000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await getBuildPhase(agentName);
+        if (active && next !== null) setPhase(next);
+      } catch {
+        // best-effort status only; the create flow owns success and failure.
+      }
     };
-  }, []);
+    void poll();
+    const id = setInterval(() => void poll(), BUILD_PHASE_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [agentName]);
 
   return (
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
@@ -30,7 +38,7 @@ export function CreatingStep() {
       <p className="text-xs text-muted-foreground">
         first setup can take several minutes.
       </p>
-      <ProgressBar message={MESSAGES[msgIdx]} />
+      <ProgressBar message={buildPhaseMessage(phase)} />
     </div>
   );
 }

@@ -68,6 +68,40 @@ export async function createAgent(
   });
 }
 
+/// Coarse, ordered stages of first-time agent creation reported by vestad while
+/// the create POST is in flight. The image step (`pulling` on a release build,
+/// `building` from a local checkout) is the dominant wait.
+export type BuildPhase =
+  | "pulling"
+  | "building"
+  | "preparing"
+  | "creating"
+  | "starting";
+
+const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
+  pulling: "downloading the agent image...",
+  building: "building the agent image...",
+  preparing: "preparing agent code...",
+  creating: "creating the container...",
+  starting: "starting up...",
+};
+
+/// Map a build phase to an honest, lowercase status line. A null phase (the
+/// create has not reported yet, or has already settled) falls back to a neutral
+/// line rather than a fabricated near-done claim.
+export function buildPhaseMessage(phase: BuildPhase | null): string {
+  return phase === null ? "setting things up..." : BUILD_PHASE_MESSAGES[phase];
+}
+
+/// Read the current in-flight build phase for an agent, or null when none is
+/// recorded. Best-effort status only; the create flow owns success and failure.
+export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
+  const resp = await apiJson<{ phase: BuildPhase | null }>(
+    `/agents/${encodeURIComponent(name)}/build-phase`,
+  );
+  return resp.phase;
+}
+
 /// Poll /agents/{name} until it reports "alive" or "not_authenticated".
 /// A brand-new empty agent boots into not_authenticated until provisioned.
 export async function waitUntilRunning(

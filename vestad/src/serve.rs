@@ -147,6 +147,11 @@ pub struct AppState {
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     pub(crate) https_port: u16,
+    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
+    /// by the create handler as `create_agent` progresses and read by the
+    /// build-phase endpoint so onboarding shows honest status. Entries exist only
+    /// for the duration of a create and are removed when it settles.
+    build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
 }
 
 impl AppState {
@@ -166,7 +171,33 @@ impl AppState {
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
             https_port,
+            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Record the current build phase for `name` (normalized). Lock poisoning is
+    /// recovered in place: a panic mid-build must not wedge later creates.
+    fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), phase);
+    }
+
+    /// Drop the build-phase entry for `name` once a create settles (success or error).
+    fn clear_build_phase(&self, name: &str) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(name);
+    }
+
+    fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .copied()
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
@@ -430,7 +461,7 @@ async fn create_agent_handler(
     State(state): State<SharedState>,
     Json(body): Json<CreateBody>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let raw_name = body.name.unwrap_or_else(|| "default".to_string());
+    let raw_name = body.name.clone().unwrap_or_else(|| "default".to_string());
     let name = docker::normalize_name(&raw_name);
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
@@ -449,17 +480,49 @@ async fn create_agent_handler(
 
     // Create + start an empty agent. Provider config arrives via a separate
     // POST /agents/{name}/provider once the agent is up — the agent owns its
-    // own credential files now, vestad only orchestrates.
-    let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
-            .await
-            .map_err(map_docker_err)?;
+    // own credential files now, vestad only orchestrates. `create_agent` reports
+    // coarse phases into shared state so GET /agents/{name}/build-phase can drive
+    // honest onboarding status while this synchronous call is in flight.
+    let phases = state.clone();
+    let progress_name = name.clone();
+    let progress = docker::BuildProgress::new(Arc::new(move |phase| {
+        phases.set_build_phase(&progress_name, phase);
+    }));
 
+    let result = create_and_start(&state, &name, manage_core_code, &body, &progress).await;
+    state.clear_build_phase(&name);
+    let name = result?;
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+}
+
+/// Run the create then the start, reporting `Starting` between them. Split out so
+/// the caller can clear the build-phase entry on either outcome before returning.
+async fn create_and_start(
+    state: &SharedState,
+    name: &str,
+    manage_core_code: bool,
+    body: &CreateBody,
+    progress: &docker::BuildProgress,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), progress)
+        .await
+        .map_err(map_docker_err)?;
+
+    progress.set(docker::BuildPhase::Starting);
     docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+    Ok(name)
+}
+
+async fn build_phase_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let phase = state.build_phase(&docker::normalize_name(&name));
+    Json(serde_json::json!({ "phase": phase }))
 }
 
 async fn agent_status_handler(
@@ -1827,6 +1890,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
         .route("/agents/{name}", get(agent_status_handler))
+        .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
