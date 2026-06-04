@@ -162,6 +162,86 @@ fn config_dir() -> std::path::PathBuf {
     paths::config_dir().unwrap_or_else(|| die("HOME not set"))
 }
 
+const RESTART_LOCAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const RESTART_TUNNEL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+const RESTART_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const HEALTH_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// After `vestad restart`, systemd marks the unit "active" the instant the process is
+/// spawned — but the HTTP server is still binding and the Cloudflare tunnel needs several
+/// seconds to re-establish its edge connections. In that window the tunnel returns 502
+/// (no healthy origin yet), which reads like an error but is just startup. Poll `/health`
+/// locally and through the tunnel so the message reflects what is actually reachable.
+fn report_restart_readiness(config: &std::path::Path) {
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("vestad restarted (could not probe readiness: {e}).");
+            return;
+        }
+    };
+    runtime.block_on(async {
+        let client = match reqwest::Client::builder().timeout(HEALTH_PROBE_TIMEOUT).build() {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("vestad restarted (could not probe readiness: {e}).");
+                return;
+            }
+        };
+
+        let local_ready = match local_health_url(config) {
+            Some(url) => wait_for_health(&client, &url, RESTART_LOCAL_READY_TIMEOUT).await,
+            None => false,
+        };
+        if !local_ready {
+            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            return;
+        }
+
+        match tunnel::get_tunnel_config(config) {
+            None => eprintln!("vestad restarted and serving (no tunnel configured)."),
+            Some(tc) => {
+                let tunnel_health = format!("https://{}/health", tc.hostname);
+                if wait_for_health(&client, &tunnel_health, RESTART_TUNNEL_READY_TIMEOUT).await {
+                    eprintln!("vestad restarted and reachable at https://{}", tc.hostname);
+                } else {
+                    eprintln!(
+                        "vestad restarted and serving locally; the tunnel (https://{}) is still \
+                         reconnecting — a 502 for a few seconds is expected, not an error.",
+                        tc.hostname
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// `http://127.0.0.1:<https_port + 1>/health` — the unauthenticated local HTTP API
+/// (serve.rs binds HTTPS on the stored port and plain HTTP on port + 1).
+fn local_health_url(config: &std::path::Path) -> Option<String> {
+    let https_port = std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|stored| stored.trim().parse::<u16>().ok())?;
+    let http_port = https_port.checked_add(1)?;
+    Some(format!("http://127.0.0.1:{http_port}/health"))
+}
+
+/// Poll `url` until it answers 2xx or `timeout` elapses. A connection refused / 5xx
+/// just means "not ready yet", so keep retrying until the deadline.
+async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(resp) = client.get(url).send().await {
+            if resp.status().is_success() {
+                return true;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(RESTART_READY_POLL_INTERVAL).await;
+    }
+}
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
@@ -416,7 +496,7 @@ fn main() {
 
         Command::Restart => {
             systemd::restart().unwrap_or_else(|e| die(&e));
-            eprintln!("vestad restarted.");
+            report_restart_readiness(&config_dir());
         }
 
         Command::Shell { name } => {
@@ -612,5 +692,26 @@ fn main() {
             eprintln!("Note: Docker containers and images for agents are still intact.");
             eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_health_url_targets_http_port_plus_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("port"), "39565").expect("write port");
+        assert_eq!(
+            local_health_url(dir.path()).as_deref(),
+            Some("http://127.0.0.1:39566/health"),
+        );
+    }
+
+    #[test]
+    fn local_health_url_none_without_port_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(local_health_url(dir.path()), None);
     }
 }
