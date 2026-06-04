@@ -11,7 +11,11 @@ import { getConnection } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
-import type { AgentInfo, GatewayVersionInfo } from "@/lib/types";
+import type {
+  AgentInfo,
+  GatewayVersionInfo,
+  ReleaseChannel,
+} from "@/lib/types";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
 // A manual check fetches from GitHub server-side, so allow longer than the
@@ -37,6 +41,7 @@ interface GatewayContextValue {
   reachable: boolean;
   gatewayVersion: string;
   gatewayBranch: string | null;
+  gatewayChannel: ReleaseChannel;
   gatewayPort: number;
   versionChecked: boolean;
   updateAvailable: boolean;
@@ -54,6 +59,7 @@ const disconnectedValue: GatewayContextValue = {
   reachable: false,
   gatewayVersion: "",
   gatewayBranch: null,
+  gatewayChannel: "stable",
   gatewayPort: 0,
   versionChecked: true,
   updateAvailable: false,
@@ -77,6 +83,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [reachable, setReachable] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
   const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
+  const [gatewayChannel, setGatewayChannel] =
+    useState<ReleaseChannel>("stable");
   const [gatewayPort, setGatewayPort] = useState(0);
 
   const [versionChecked, setVersionChecked] = useState(false);
@@ -109,6 +117,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       });
       setUpdateAvailable(!!data.update_available);
       setLatestVersion(data.latest_version ?? null);
+      setGatewayChannel(data.channel ?? "stable");
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
@@ -139,6 +148,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       if (!cancelled && data?.version) {
         setGatewayVersion(data.version);
         setGatewayBranch(data.branch ?? null);
+        setGatewayChannel(data.channel ?? "stable");
         setUpdateAvailable(!!data.update_available);
         setLatestVersion(data.latest_version ?? null);
         setVersionChecked(true);
@@ -216,6 +226,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       if (cancelled || !data) return;
       setUpdateAvailable(!!data.update_available);
       setLatestVersion(data.latest_version ?? null);
+      setGatewayChannel(data.channel ?? "stable");
     };
 
     const timer = setInterval(pollVersion, VERSION_POLL_MS);
@@ -241,6 +252,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         reachable,
         gatewayVersion,
         gatewayBranch,
+        gatewayChannel,
         gatewayPort,
         versionChecked,
         updateAvailable,

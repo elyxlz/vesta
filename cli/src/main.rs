@@ -208,6 +208,11 @@ enum Command {
     },
     /// Update vesta to the latest version
     Update,
+    /// Show or set the release channel (stable or beta) on the connected vestad
+    Channel {
+        /// Channel to switch to: stable or beta. Omit to show the current channel.
+        channel: Option<String>,
+    },
     /// Uninstall vesta CLI and remove config
     Uninstall,
     /// Print version information
@@ -1210,6 +1215,21 @@ fn run(cli: Cli) {
                     cli_self_update("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
                 {
                     let _ = std::fs::remove_dir_all(&tmp_dir);
+                }
+            }
+        }
+
+        Command::Channel { channel } => {
+            let c = get_client(host_ref, token_ref);
+            match channel {
+                Some(channel) => {
+                    let set = c.set_channel(&channel).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("release channel set to '{set}' on vestad");
+                    eprintln!("run 'vesta update' to move the daemon onto the {set} channel");
+                }
+                None => {
+                    let current = c.get_channel().unwrap_or_else(|e| platform::die(&e));
+                    println!("{current}");
                 }
             }
         }

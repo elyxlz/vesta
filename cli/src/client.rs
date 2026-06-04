@@ -349,6 +349,24 @@ impl Client {
         Ok(extract_latest_version(&value))
     }
 
+    pub fn get_channel(&self) -> Result<String, String> {
+        let resp = self.get("/settings/channel")?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value.get("channel").and_then(|c| c.as_str()) {
+            Some(channel) => Ok(channel.to_string()),
+            None => Err("response missing channel".into()),
+        }
+    }
+
+    pub fn set_channel(&self, channel: &str) -> Result<String, String> {
+        let resp = self.put_json("/settings/channel", &serde_json::json!({ "channel": channel }))?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value.get("channel").and_then(|c| c.as_str()) {
+            Some(channel) => Ok(channel.to_string()),
+            None => Err("response missing channel".into()),
+        }
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         read_json(resp)

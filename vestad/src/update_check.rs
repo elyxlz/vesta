@@ -6,8 +6,14 @@ const ERROR_SNIPPET_MAX_LEN: usize = 300;
 const HTTP_STATUS_SENTINEL: &str = "\n__VESTA_HTTP_STATUS__:";
 const CACHE_FILE_NAME: &str = "update-check-cache.json";
 
+use crate::channel::Channel;
+
+// Stable follows the GitHub "latest" alias (excludes prereleases). Beta lists all
+// releases (newest first, prereleases included) and takes the newest one.
 const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases/latest";
+const GITHUB_RELEASES_LIST_URL: &str =
+    "https://api.github.com/repos/elyxlz/vesta/releases?per_page=10";
 
 #[derive(Clone, Debug)]
 pub struct UpdateInfo {
@@ -15,8 +21,8 @@ pub struct UpdateInfo {
     pub update_available: bool,
 }
 
-pub fn check_once() -> Result<UpdateInfo, String> {
-    let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS))?;
+pub fn check_once(channel: Channel) -> Result<UpdateInfo, String> {
+    let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel)?;
     let update_available = version_less_than(env!("CARGO_PKG_VERSION"), &latest);
 
     Ok(UpdateInfo {
@@ -32,8 +38,8 @@ pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
-pub fn fetch_latest_tag() -> Option<String> {
-    fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS)).ok()
+pub fn fetch_latest_tag(channel: Channel) -> Option<String> {
+    fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS), channel).ok()
 }
 
 // Persisted across restarts so the conditional request below keeps working
@@ -45,18 +51,24 @@ struct CacheEntry {
     tag: String,
 }
 
-fn cache_path() -> Option<std::path::PathBuf> {
-    crate::paths::config_dir().map(|dir| dir.join(CACHE_FILE_NAME))
+fn cache_path(channel: Channel) -> Option<std::path::PathBuf> {
+    // Per-channel cache file: stable and beta query different URLs with different
+    // ETags, so they must not share a conditional-request cache.
+    let file = match channel {
+        Channel::Stable => CACHE_FILE_NAME.to_string(),
+        Channel::Beta => format!("{}.beta", CACHE_FILE_NAME),
+    };
+    crate::paths::config_dir().map(|dir| dir.join(file))
 }
 
-fn read_cache() -> Option<CacheEntry> {
-    let path = cache_path()?;
+fn read_cache(channel: Channel) -> Option<CacheEntry> {
+    let path = cache_path(channel)?;
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }
 
-fn write_cache(etag: &str, tag: &str) {
-    let Some(path) = cache_path() else { return };
+fn write_cache(channel: Channel, etag: &str, tag: &str) {
+    let Some(path) = cache_path(channel) else { return };
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
             return;
@@ -71,8 +83,8 @@ fn write_cache(etag: &str, tag: &str) {
     }
 }
 
-fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Result<String, String> {
-    let cache = read_cache();
+fn fetch_latest_release_tag(timeout_secs: Option<u64>, channel: Channel) -> Result<String, String> {
+    let cache = read_cache(channel);
 
     // Dump response headers to a temp file (portable across curl versions,
     // unlike `-w %header{etag}`) so we can read the ETag without parsing it out
@@ -106,7 +118,11 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Result<String, String>
         args.push("--max-time".into());
         args.push(t.to_string());
     }
-    args.push(GITHUB_RELEASES_LATEST_URL.into());
+    let url = match channel {
+        Channel::Stable => GITHUB_RELEASES_LATEST_URL,
+        Channel::Beta => GITHUB_RELEASES_LIST_URL,
+    };
+    args.push(url.into());
 
     let output = std::process::Command::new("curl")
         .args(&args)
@@ -155,24 +171,38 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Result<String, String>
         ));
     }
 
-    let data: serde_json::Value = serde_json::from_str(body)
-        .map_err(|e| format!("failed to parse response JSON: {e}"))?;
-    let tag_value = data
+    let tag = extract_tag(body, channel)?;
+
+    if let Some(etag) = parse_etag(&headers) {
+        write_cache(channel, &etag, &tag);
+    }
+
+    Ok(tag)
+}
+
+/// Pull the version tag out of a GitHub releases response. Stable parses the single
+/// release object returned by the `/latest` alias; beta parses the releases array
+/// and takes the first (newest) entry, prereleases included.
+fn extract_tag(body: &str, channel: Channel) -> Result<String, String> {
+    let data: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("failed to parse response JSON: {e}"))?;
+    let release = match channel {
+        Channel::Stable => &data,
+        Channel::Beta => data
+            .as_array()
+            .and_then(|releases| releases.first())
+            .ok_or_else(|| format!("no releases in list response: {}", snippet(body.trim())))?,
+    };
+    let tag = release
         .get("tag_name")
-        .ok_or_else(|| format!("response missing tag_name: {}", snippet(body.trim())))?;
-    let tag = tag_value
+        .ok_or_else(|| format!("response missing tag_name: {}", snippet(body.trim())))?
         .as_str()
-        .ok_or_else(|| format!("tag_name is not a string: {tag_value}"))?
+        .ok_or_else(|| "tag_name is not a string".to_string())?
         .trim()
         .trim_start_matches('v');
     if tag.is_empty() {
         return Err("tag_name is empty".into());
     }
-
-    if let Some(etag) = parse_etag(&headers) {
-        write_cache(&etag, tag);
-    }
-
     Ok(tag.to_string())
 }
 
@@ -245,5 +275,36 @@ mod tests {
     #[test]
     fn parse_etag_returns_none_when_absent() {
         assert_eq!(parse_etag("HTTP/2 200\r\ndate: now\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn extract_tag_stable_reads_single_object() {
+        let body = r#"{"tag_name": "v0.5.4", "prerelease": false}"#;
+        assert_eq!(extract_tag(body, Channel::Stable).unwrap(), "0.5.4");
+    }
+
+    #[test]
+    fn extract_tag_beta_reads_newest_of_list() {
+        // GitHub returns the list newest-first; beta takes the first entry even
+        // when it is a prerelease ahead of the latest promoted release.
+        let body = r#"[
+            {"tag_name": "v0.6.0", "prerelease": true},
+            {"tag_name": "v0.5.4", "prerelease": false}
+        ]"#;
+        assert_eq!(extract_tag(body, Channel::Beta).unwrap(), "0.6.0");
+    }
+
+    #[test]
+    fn extract_tag_beta_errors_on_empty_list() {
+        assert!(extract_tag("[]", Channel::Beta).is_err());
+    }
+
+    #[test]
+    fn cache_path_differs_per_channel() {
+        let stable = cache_path(Channel::Stable);
+        let beta = cache_path(Channel::Beta);
+        if let (Some(stable), Some(beta)) = (stable, beta) {
+            assert_ne!(stable, beta);
+        }
     }
 }

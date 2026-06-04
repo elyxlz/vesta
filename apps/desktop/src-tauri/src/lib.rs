@@ -97,6 +97,35 @@ async fn install_update(version: String) -> Result<(), String> {
     Ok(())
 }
 
+// Update to a specific version by pointing the updater at that release's manifest,
+// rather than the static `releases/latest` endpoint in tauri.conf.json. The app
+// always matches the gateway's exact version, and the gateway may be on a beta
+// (prerelease) that `releases/latest` never points at. Targeting the version's own
+// manifest works identically for stable and beta, so the channel stays a
+// vestad-owned concept and the app just follows.
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+async fn run_update(app: tauri::AppHandle, version: String) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let url = format!("https://github.com/elyxlz/vesta/releases/download/v{version}/latest.json");
+    let endpoint = tauri::Url::parse(&url).map_err(|e| format!("invalid updater url: {e}"))?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
+        update
+            .download_and_install(|_, _| {}, || {})
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn run() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -166,7 +195,7 @@ pub fn run() {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                tauri::generate_handler![set_theme, focus_window]
+                tauri::generate_handler![set_theme, focus_window, run_update]
             }
         })
         .build(tauri::generate_context!())

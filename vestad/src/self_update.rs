@@ -29,10 +29,12 @@ pub struct UpdateOutcome {
 /// Downloads the latest vestad binary from GitHub, replaces the current binary,
 /// and restarts the systemd service. Agent code and container restarts are
 /// handled on the next vestad startup.
-/// No-op when the running version is already at or above the latest release.
-pub fn perform_update() -> Result<UpdateOutcome, UpdateError> {
+/// No-op when the running version is already at or above the latest release on the
+/// given channel. Channel switching never downgrades: a stable channel whose latest
+/// is older than the running (beta) version is simply a no-op.
+pub fn perform_update(channel: crate::channel::Channel) -> Result<UpdateOutcome, UpdateError> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let latest = crate::update_check::fetch_latest_tag()
+    let latest = crate::update_check::fetch_latest_tag(channel)
         .ok_or_else(|| UpdateError::Download("cannot determine latest version".into()))?;
 
     if !crate::update_check::version_less_than(&current, &latest) {
@@ -82,9 +84,12 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     };
 
     let archive = format!("vestad-{}.tar.gz", target);
+    // Download from the resolved tag's release, not the `/latest/` alias: beta tags
+    // are prereleases that `/latest/` never points at, and a pinned tag also avoids
+    // racing a concurrent release that moves `latest`.
     let url = format!(
-        "https://github.com/elyxlz/vesta/releases/latest/download/{}",
-        archive
+        "https://github.com/elyxlz/vesta/releases/download/v{}/{}",
+        tag, archive
     );
     let tmp = format!("/tmp/vestad-update-{}", std::process::id());
     std::fs::create_dir_all(&tmp).ok();

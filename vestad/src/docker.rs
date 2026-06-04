@@ -50,7 +50,19 @@ impl From<bollard::errors::Error> for DockerError {
     }
 }
 
-pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
+/// The agent image registry repository. The tag is vestad's own version (see
+/// [`vesta_image`]), not a floating `:latest`, so the running agent image always
+/// matches the vestad binary and its embedded agent core. This keeps the channel a
+/// single knob (which version vestad targets) and removes the skew where `:latest`
+/// could advance ahead of the running vestad.
+pub const VESTA_IMAGE_REPO: &str = "ghcr.io/elyxlz/vesta";
+
+/// The agent image this vestad pulls: `ghcr.io/elyxlz/vesta:vX.Y.Z` pinned to the
+/// running vestad version. CI publishes this exact tag for every release (stable or
+/// prerelease), so it exists on both channels.
+pub fn vesta_image() -> String {
+    format!("{}:v{}", VESTA_IMAGE_REPO, env!("CARGO_PKG_VERSION"))
+}
 pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 /// Env var that pins the agent image, skipping the local build / registry pull.
@@ -729,8 +741,9 @@ pub async fn resolve_image(docker: &Docker) -> Result<String, DockerError> {
         verify_image_runnable(LOCAL_IMAGE_TAG).await?;
         Ok(LOCAL_IMAGE_TAG.to_string())
     } else {
+        let image = vesta_image();
         let opts = CreateImageOptions {
-            from_image: Some(VESTA_IMAGE.to_string()),
+            from_image: Some(image.clone()),
             ..Default::default()
         };
         let mut stream = docker.create_image(Some(opts), None, None);
@@ -739,8 +752,8 @@ pub async fn resolve_image(docker: &Docker) -> Result<String, DockerError> {
                 return Err(DockerError::Failed(format!("failed to pull image: {e}")));
             }
         }
-        verify_image_runnable(VESTA_IMAGE).await?;
-        Ok(VESTA_IMAGE.to_string())
+        verify_image_runnable(&image).await?;
+        Ok(image)
     }
 }
 
@@ -2342,7 +2355,7 @@ mod tests {
     /// Image for the #[ignore] Docker tests: honors VESTAD_AGENT_IMAGE (set by CI
     /// to an image built from the checkout), falls back to the released image.
     fn test_agent_image() -> String {
-        std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| VESTA_IMAGE.to_string())
+        std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| vesta_image())
     }
 
     async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str) -> bool {
