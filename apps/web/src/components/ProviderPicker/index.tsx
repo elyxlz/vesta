@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeftIcon } from "lucide-react";
-import { fadeSlide } from "@/lib/motion";
+import { stepTransition } from "@/lib/motion";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
@@ -96,7 +96,7 @@ export function ProviderPicker({
       )}
 
       <AnimatePresence mode="wait">
-        <motion.div key={step} {...fadeSlide} className="w-full">
+        <motion.div key={step} {...stepTransition} className="w-full">
           {step === "choice" && <ChoiceStep onPick={handleChoice} />}
           {step === "auth" && (
             <AuthStep

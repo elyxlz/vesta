@@ -9,7 +9,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
-import { fadeSlide } from "@/lib/motion";
+import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -122,7 +122,7 @@ export function Connect() {
           <AnimatePresence>
             {error && (
               <motion.div
-                {...fadeSlide}
+                {...fade}
                 className="flex flex-col items-center gap-1 text-center"
               >
                 <p className="text-xs">

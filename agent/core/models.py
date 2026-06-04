@@ -25,9 +25,9 @@ TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
 
-CLEAN_RESTART = "restart — clean restart"
-NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
-CRASH_RESTART = "crash — restarted after unexpected exit"
+CLEAN_RESTART = "restart: clean restart"
+NIGHTLY_RESTART = "nightly: dreamer ran, session cleared for fresh context"
+CRASH_RESTART = "crash: restarted after unexpected exit"
 FIRST_START_REASON = "first start"
 
 
@@ -68,6 +68,9 @@ class State:
     last_sdk_activity: float = dc.field(default_factory=time.monotonic)
     last_sdk_activity_label: str = "init"
     active_tools: dict[str, ActiveTool] = dc.field(default_factory=dict)
+    # True while context usage is above the warning threshold, so log_context_usage emits
+    # the warning event once on crossing rather than on every per-message check.
+    context_warning_active: bool = False
 
 
 class Notification(pyd.BaseModel):
