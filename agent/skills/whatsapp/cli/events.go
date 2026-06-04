@@ -132,11 +132,13 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	shouldNotify := wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
 	if shouldNotify {
+		interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
 		notifCtx = NotifContext{
 			NotifDir: wac.notificationsDir, ChatName: chatName,
 			ContactName: contactName, ContactPhone: contactPhone,
 			Instance: wac.instance, ContactSaved: contactSaved,
 			IsDirectChat: isDirectChat, Sender: senderDisplay,
+			Interrupt: interrupt, InterruptExplicit: interruptExplicit,
 		}
 	}
 
@@ -206,11 +208,13 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	if wac.notificationsDir != "" {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+		interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
 		ctx := NotifContext{
 			NotifDir: wac.notificationsDir, ChatName: chatName,
 			ContactName: contactName, ContactPhone: contactPhone,
 			Instance: wac.instance, ContactSaved: contactSaved,
 			IsDirectChat: isDirectChat, Sender: senderDisplay,
+			Interrupt: interrupt, InterruptExplicit: interruptExplicit,
 		}
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
