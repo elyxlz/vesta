@@ -1637,7 +1637,7 @@ impl std::fmt::Debug for BuildProgress {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>, seed_context: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1661,6 +1661,18 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
     create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality, seed_skills).await?;
+
+    // Freeform creator-supplied context (e.g. what an onboarding vesta learned about the
+    // user). Delivered into the not-yet-started container's data dir so first-wake setup can
+    // fold it into MEMORY.md. Only at creation — it's consumed once, so no rebuild/rename
+    // persistence is needed. A failure here must not abort an otherwise-good agent: log and
+    // move on, the agent just starts without the head-start context.
+    if let Some(context) = seed_context.filter(|c| !c.trim().is_empty()) {
+        if let Err(e) = docker_cp_content(docker, &cname, context, "/root/agent/data/seed-context.md").await {
+            tracing::warn!(agent = %name, error = %e, "failed to write seed-context file; agent will start without it");
+        }
+    }
+
     Ok(name.to_string())
 }
 

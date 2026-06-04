@@ -468,6 +468,12 @@ struct CreateBody {
     /// default skill set). Exported as AGENT_SEED_SKILLS; consumed by the agent's
     /// first-wake setup. Unset means "default skills only".
     seed_skills: Option<String>,
+    /// Freeform, unstructured context the creator wants the new agent to start
+    /// with (e.g. what it learned about the user during an onboarding chat).
+    /// Written to ~/agent/data/seed-context.md in the container; the agent folds
+    /// the useful parts into its memory at first wake. Treated as untrusted data,
+    /// never as instructions.
+    seed_context: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -518,7 +524,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), body.seed_skills.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), body.seed_skills.as_deref(), body.seed_context.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 
