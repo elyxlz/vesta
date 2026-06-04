@@ -28,4 +28,4 @@ If there's nothing worth saying, stay quiet. Background action beats a message t
 
 ## Every tick
 
-If a goal has been blocked on the user for more than one wake window, it is a candidate to nudge the user about, not a candidate to hold silently, provided the user has asked to be pushed on his own tasks.
+A goal blocked on the user for more than one wake window is one to nudge them about, not to hold silently — provided they've asked to be pushed on their own tasks.
