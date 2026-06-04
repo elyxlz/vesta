@@ -4,14 +4,12 @@ import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProgressBar } from "@/components/ProgressBar";
-import { submitAuthCode } from "@/api";
 import { fadeSlide } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 
 interface AuthFlowProps {
-  agentName: string;
   authUrl: string;
-  sessionId: string;
+  onSubmitCode: (code: string) => Promise<void>;
   onCancel?: () => void;
   onComplete?: () => void;
 }
@@ -19,9 +17,8 @@ interface AuthFlowProps {
 type AuthState = "waiting" | "submitting" | "error";
 
 export function AuthFlow({
-  agentName,
   authUrl,
-  sessionId,
+  onSubmitCode,
   onCancel,
   onComplete,
 }: AuthFlowProps) {
@@ -53,7 +50,7 @@ export function AuthFlow({
     setError("");
 
     try {
-      await submitAuthCode(agentName, sessionId, code.trim());
+      await onSubmitCode(code.trim());
       onComplete?.();
     } catch (e: unknown) {
       setError(errorMessage(e, "verification failed"));
@@ -102,10 +99,14 @@ export function AuthFlow({
               variant="ghost"
               size="icon-xs"
               className="shrink-0"
+              aria-label={copied ? "copied" : "copy auth link"}
               onClick={copyAuthUrl}
             >
               {copied ? <Check /> : <Copy />}
             </Button>
+            <span className="sr-only" role="status" aria-live="polite">
+              {copied ? "copied" : ""}
+            </span>
           </div>
         )}
         <p className="text-xs text-muted-foreground text-center">
@@ -117,7 +118,7 @@ export function AuthFlow({
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="w-full text-center text-sm"
+          className="w-full text-center"
         />
         <Button
           onClick={handleSubmit}

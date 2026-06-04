@@ -33,10 +33,10 @@ fn stop_start_independent() {
     alice_client.start_agent(&name).unwrap();
     bob_client.start_agent(&name).unwrap();
 
-    let alice_running = alice_client.agent_status(&name).unwrap();
-    let bob_running = bob_client.agent_status(&name).unwrap();
-    assert_eq!(alice_running.status, "not_authenticated");
-    assert_eq!(bob_running.status, "not_authenticated");
+    let alice_running = alice_client.wait_until_running(&name, 180).unwrap();
+    let bob_running = bob_client.wait_until_running(&name, 180).unwrap();
+    assert_eq!(alice_running, "not_authenticated");
+    assert_eq!(bob_running, "not_authenticated");
 
     alice_client.stop_agent(&name).unwrap();
 

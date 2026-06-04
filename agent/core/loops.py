@@ -14,9 +14,11 @@ from watchfiles import awatch, Change
 from . import models as vm
 from . import logger
 from . import state_store
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
+from .openrouter_cache import start_cache_proxy
+from .provider import CREDENTIALS_PATH
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -132,12 +134,9 @@ async def process_batch(
     await delete_notification_files(notifications)
 
 
-CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
-
-
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if not CREDENTIALS_PATH.exists():
+    if config.agent_provider == "claude" and not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
 
@@ -198,12 +197,9 @@ async def _run_messages_with_interrupts(
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
-                try:
-                    sid = state.client.session_id
-                    if sid:
-                        persist_session_id(sid, state=state, config=config)
-                except (AttributeError, TypeError):
-                    pass
+                sid = state.client.session_id
+                if sid:
+                    persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
@@ -258,6 +254,18 @@ async def _run_messages_with_interrupts(
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
+    if config.agent_provider == "openrouter":
+        if state.openrouter_max_tokens is None:
+            real_window = await resolve_openrouter_max_tokens(config)
+            if real_window:
+                # Cap at MAX_CONTEXT_TOKENS: cache-read cost scales with how large the
+                # cached prefix grows before autocompact, so big-window models default
+                # to a 200k working window unless the user raises the cap.
+                state.openrouter_max_tokens = min(real_window, config.max_context_tokens)
+                capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
+                logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
+        if state.openrouter_proxy_url is None:
+            await start_cache_proxy(config, state)
     options = build_client_options(config, state)
     retried = False
     while True:
@@ -371,44 +379,41 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
 
     try:
         while state.shutdown_event and not state.shutdown_event.is_set():
+            # Wait for either a file change or the periodic tick
             try:
-                # Wait for either a file change or the periodic tick
-                try:
-                    await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
-                except TimeoutError:
-                    pass
-                notify.clear()
+                await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
+            except TimeoutError:
+                pass
+            notify.clear()
 
-                if state.shutdown_event and state.shutdown_event.is_set():
-                    break
-
-                now = _now()
-
-                if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                    last_proactive = now
-                    if state.processor_busy or not queue.empty():
-                        logger.debug("Proactive check skipped: agent is busy — waiting full interval")
-                    else:
-                        check_proactive_task(config=config)
-
-                if (now - last_dreamer_check).total_seconds() >= 3600:
-                    process_nightly_memory(state=state, config=config)
-                    last_dreamer_check = now
-
-                notifications = await load_new_notifications(state=state, config=config)
-                interrupt_notifs = [n for n in notifications if n.interrupt]
-                # Passive files stay on disk until the batch flushes, so reloads would duplicate.
-                queued_paths = {n.file_path for n in pending_passive if n.file_path}
-                pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
-
-                if interrupt_notifs:
-                    await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
-
-                if pending_passive and state.event_bus.state == "idle":
-                    await process_batch(pending_passive, queue=queue, state=state, config=config)
-                    pending_passive = []
-            except asyncio.CancelledError:
+            if state.shutdown_event and state.shutdown_event.is_set():
                 break
+
+            now = _now()
+
+            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+                last_proactive = now
+                if state.processor_busy or not queue.empty():
+                    logger.debug("Proactive check skipped: agent is busy — waiting full interval")
+                else:
+                    check_proactive_task(config=config)
+
+            if (now - last_dreamer_check).total_seconds() >= 3600:
+                process_nightly_memory(state=state, config=config)
+                last_dreamer_check = now
+
+            notifications = await load_new_notifications(state=state, config=config)
+            interrupt_notifs = [n for n in notifications if n.interrupt]
+            # Passive files stay on disk until the batch flushes, so reloads would duplicate.
+            queued_paths = {n.file_path for n in pending_passive if n.file_path}
+            pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
+
+            if interrupt_notifs:
+                await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
+
+            if pending_passive and state.event_bus.state == "idle":
+                await process_batch(pending_passive, queue=queue, state=state, config=config)
+                pending_passive = []
     finally:
         watcher_task.cancel()
         try:

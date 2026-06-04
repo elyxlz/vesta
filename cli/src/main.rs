@@ -60,11 +60,22 @@ struct Cli {
     command: Option<Command>,
 }
 
+/// Flags shared by `setup` and `create` for running an agent on OpenRouter instead of a Claude account.
+#[derive(clap::Args)]
+struct OpenRouterFlags {
+    /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
+    #[arg(long)]
+    openrouter_key: Option<String>,
+    /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
+    #[arg(long)]
+    openrouter_model: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Command {
-    /// Create agent, start it, and authenticate Claude
+    /// Create agent, start it, and authenticate (prompts for Claude vs OpenRouter)
     Setup {
-        /// Skip confirmation prompts
+        /// Skip prompts: assume yes, and default to a Claude account unless --openrouter-key is given
         #[arg(long, short)]
         yes: bool,
         /// Agent name (prompted interactively if omitted)
@@ -73,6 +84,13 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
+        /// Claude OAuth credentials JSON, to provision Claude without the interactive
+        /// login (the non-interactive counterpart to the OpenRouter flags). Get it
+        /// from `vesta auth` or an existing agent.
+        #[arg(long)]
+        claude_token: Option<String>,
+        #[command(flatten)]
+        openrouter: OpenRouterFlags,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -82,6 +100,8 @@ enum Command {
         /// Use the Docker image's baked-in code instead of vestad-managed core code
         #[arg(long)]
         no_manage_core_code: bool,
+        #[command(flatten)]
+        openrouter: OpenRouterFlags,
     },
     /// Start an agent (or all agents if no name given)
     Start {
@@ -141,6 +161,21 @@ enum Command {
     Settings {
         /// Agent name
         name: String,
+    },
+    /// View or edit an agent's constitution (a charter prepended to its memory; the agent
+    /// cannot edit it). With no flags, prints the current constitution.
+    Constitution {
+        /// Agent name
+        name: String,
+        /// Open the current constitution in $EDITOR and save on exit
+        #[arg(long)]
+        edit: bool,
+        /// Set the constitution from a file ('-' reads stdin)
+        #[arg(long, conflicts_with_all = ["edit", "clear"])]
+        file: Option<PathBuf>,
+        /// Clear the constitution
+        #[arg(long, conflicts_with_all = ["edit", "file"])]
+        clear: bool,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -287,14 +322,52 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
     );
 }
 
-fn prompt(label: &str) -> String {
+fn read_file_or_stdin(path: &std::path::Path) -> String {
+    if path == std::path::Path::new("-") {
+        let mut buf = String::new();
+        io::Read::read_to_string(&mut io::stdin(), &mut buf)
+            .unwrap_or_else(|e| platform::die(&format!("failed to read stdin: {e}")));
+        return buf;
+    }
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| platform::die(&format!("failed to read {}: {e}", path.display())))
+}
+
+/// Open `initial` in $EDITOR (falling back to vi) and return the edited contents.
+fn edit_in_editor(initial: &str) -> String {
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("vesta-constitution-{}.md", process::id()));
+    std::fs::write(&tmp, initial)
+        .unwrap_or_else(|e| platform::die(&format!("failed to write temp file: {e}")));
+    let status = process::Command::new(&editor)
+        .arg(&tmp)
+        .status()
+        .unwrap_or_else(|e| platform::die(&format!("failed to launch editor '{editor}': {e}")));
+    if !status.success() {
+        std::fs::remove_file(&tmp).ok();
+        platform::die("editor exited with an error, aborting");
+    }
+    let edited = std::fs::read_to_string(&tmp)
+        .unwrap_or_else(|e| platform::die(&format!("failed to read temp file: {e}")));
+    std::fs::remove_file(&tmp).ok();
+    edited
+}
+
+fn prompt_raw(label: &str) -> String {
     eprint!("{label}: ");
     io::stderr().flush().ok();
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
         .unwrap_or_else(|_| platform::die(&format!("failed to read {label}")));
-    let value = input.trim().to_string();
+    input.trim().to_string()
+}
+
+fn prompt(label: &str) -> String {
+    let value = prompt_raw(label);
     if value.is_empty() {
         platform::die(&format!("{label} is required"));
     }
@@ -305,15 +378,159 @@ fn prompt_name() -> String {
     prompt("agent name")
 }
 
-fn authenticate_agent(client: &client::Client, name: &str) {
-    let auth = client.start_auth(name).unwrap_or_else(|e| platform::die(&e));
+fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArgs> {
+    let key = flags.openrouter_key?;
+    let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
+    Some(client::OpenRouterArgs { key, model })
+}
+
+/// How `vesta setup` will provision the agent once it's created.
+enum ProvisionPlan {
+    /// Run on OpenRouter (key already validated).
+    OpenRouter(client::OpenRouterArgs),
+    /// Provision Claude from credentials supplied up front (non-interactive).
+    ClaudeCredentials(String),
+    /// Provision Claude via the interactive OAuth dance after create.
+    ClaudeOAuth,
+}
+
+/// Resolve how `vesta setup` should provision the agent. Every interactive prompt
+/// has a non-interactive flag equivalent:
+/// - `--openrouter-key` (+ `--openrouter-model`) -> OpenRouter, no prompts
+/// - `--claude-token` -> Claude from supplied credentials, no prompts
+/// - `--yes` with neither -> defaults to Claude (OAuth dance still runs)
+/// - otherwise -> prompt for the provider (and key/model, or OAuth)
+fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, yes: bool) -> ProvisionPlan {
+    if flags.openrouter_key.is_some() && claude_token.is_some() {
+        platform::die("--openrouter-key and --claude-token are mutually exclusive");
+    }
+    if flags.openrouter_key.is_some() {
+        let args = build_openrouter_args(flags).unwrap_or_else(|| platform::die("internal: openrouter key vanished"));
+        eprintln!("checking OpenRouter key...");
+        c.validate_openrouter_key(&args.key).unwrap_or_else(|e| platform::die(&e));
+        return ProvisionPlan::OpenRouter(args);
+    }
+    if let Some(credentials) = claude_token {
+        return ProvisionPlan::ClaudeCredentials(credentials);
+    }
+    if yes || !prompt_use_openrouter() {
+        return ProvisionPlan::ClaudeOAuth;
+    }
+    ProvisionPlan::OpenRouter(prompt_openrouter_interactive(c, flags.openrouter_model))
+}
+
+/// Ask the user which provider to run the agent on. Defaults to a Claude
+/// account (empty input or "1"). Returns true if the user picked OpenRouter.
+fn prompt_use_openrouter() -> bool {
+    eprintln!("how should this agent authenticate?");
+    eprintln!("  1) Claude account  — log in with your Claude subscription (default)");
+    eprintln!("  2) OpenRouter      — run on an OpenRouter API key");
+    loop {
+        match prompt_raw("choice [1]").as_str() {
+            "" | "1" => return false,
+            "2" => return true,
+            _ => eprintln!("  please enter 1 or 2"),
+        }
+    }
+}
+
+/// Interactively collect an OpenRouter key (validated, with retry) and a model
+/// slug. A model passed via `--openrouter-model` is reused without prompting.
+fn prompt_openrouter_interactive(c: &client::Client, preset_model: Option<String>) -> client::OpenRouterArgs {
+    let key = loop {
+        let key = prompt("OpenRouter API key (from openrouter.ai/keys)");
+        eprintln!("checking key...");
+        match c.validate_openrouter_key(&key) {
+            Ok(()) => break key,
+            Err(e) => eprintln!("  {e}. try again."),
+        }
+    };
+    let model = preset_model.unwrap_or_else(|| prompt_openrouter_model(c));
+    client::OpenRouterArgs { key, model }
+}
+
+/// Format a model's input/output/cache-read price (USD per million tokens) for the
+/// picker list, or None when OpenRouter doesn't report pricing. Cache read is shown
+/// only when present and non-zero.
+fn fmt_model_price(input: Option<f64>, output: Option<f64>, cache_read: Option<f64>) -> Option<String> {
+    let (input, output) = (input?, output?);
+    if input == 0.0 && output == 0.0 && cache_read.unwrap_or(0.0) == 0.0 {
+        return Some("free".to_string());
+    }
+    let mut price = format!("{} in / {} out", fmt_usd(input), fmt_usd(output));
+    if let Some(cache) = cache_read.filter(|c| *c > 0.0) {
+        price.push_str(&format!(" / {} cache read", fmt_usd(cache)));
+    }
+    price.push_str(" per Mtok");
+    Some(price)
+}
+
+/// `$15`, `$1.25`, `$0.10`, `$0.0028` — two decimals in the cents range, trailing
+/// zeros trimmed at/above a dollar, and widened precision below a cent so tiny
+/// cache-read prices don't round away to `$0.00`.
+fn fmt_usd(price: f64) -> String {
+    if price == 0.0 {
+        "$0".to_string()
+    } else if price >= 1.0 {
+        format!("${price:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
+    } else if price >= 0.01 {
+        format!("${price:.2}")
+    } else {
+        format!("${price:.4}").trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Prompt for an OpenRouter model. Shows the top-weekly models as a numbered
+/// list (pick by number) and always accepts a custom `provider/model` slug.
+/// Falls back to a free-text prompt if the model list can't be fetched.
+fn prompt_openrouter_model(c: &client::Client) -> String {
+    let models = match c.fetch_top_openrouter_models() {
+        Ok(models) if !models.is_empty() => models,
+        _ => return prompt("model slug (e.g. anthropic/claude-sonnet-4-6)"),
+    };
+    eprintln!("top models on OpenRouter this week:");
+    for (idx, model) in models.iter().enumerate() {
+        match fmt_model_price(model.input_price, model.output_price, model.cache_read_price) {
+            Some(price) => eprintln!("  {:>2}) {} ({}) — {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
+            None => eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug),
+        }
+    }
+    eprintln!("  or type a custom provider/model slug");
+    loop {
+        let input = prompt("model (number or slug)");
+        if let Ok(choice) = input.parse::<usize>() {
+            match models.get(choice.wrapping_sub(1)) {
+                Some(model) => return model.slug.clone(),
+                None => {
+                    eprintln!("  pick a number between 1 and {}", models.len());
+                    continue;
+                }
+            }
+        }
+        return input;
+    }
+}
+
+// Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
+// returns the credentials JSON. Caller passes it to set_provider_credentials.
+fn oauth_dance(client: &client::Client) -> String {
+    let auth = client
+        .start_auth_standalone()
+        .unwrap_or_else(|e| platform::die(&e));
     eprintln!("open this URL to authenticate:");
     eprintln!("  {}", auth.auth_url);
     try_open_browser(&auth.auth_url);
 
     let code = prompt("paste the auth code");
     client
-        .complete_auth(name, &auth.session_id, &code)
+        .complete_auth_standalone(&auth.session_id, &code)
+        .unwrap_or_else(|e| platform::die(&e))
+}
+
+fn authenticate_agent(client: &client::Client, name: &str) {
+    let credentials = oauth_dance(client);
+    client
+        .set_provider_credentials(name, &credentials)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -321,7 +538,7 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
-    client::Client::new(&config)
+    client::Client::new(&config).unwrap_or_else(|e| platform::die(&e))
 }
 
 // Ask the configured vestad for the latest release tag so the CLI does not hit
@@ -330,7 +547,7 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
 // fails, letting callers fall back to a direct GitHub check.
 fn fetch_latest_via_gateway(force: bool) -> Option<String> {
     let config = common::load_server_config()?;
-    let client = client::Client::new(&config);
+    let client = client::Client::new(&config).ok()?;
     let result = if force {
         client.check_latest_release_tag()
     } else {
@@ -481,11 +698,11 @@ fn detect_timezone() -> Option<String> {
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
-    println!("Quick start:");
-    println!("  vesta setup        Create an agent, authenticate, and start");
-    println!("  vesta list         List all agents");
+    println!("quick start:");
+    println!("  vesta setup        create an agent, authenticate, and start");
+    println!("  vesta list         list all agents");
     println!();
-    println!("Run 'vesta --help' for all commands.");
+    println!("run 'vesta --help' for all commands.");
 }
 
 fn run(cli: Cli) {
@@ -505,42 +722,110 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code } => {
+        Command::Setup { yes, name, no_manage_core_code, claude_token, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
+            // Choose the provider before creating anything: with no flags this
+            // prompts interactively (Claude vs OpenRouter). The OpenRouter key
+            // is validated client-side here so a bad key fails fast, before we
+            // create an agent we'd immediately fail to provision. Claude needs
+            // no pre-validation; OAuth happens after create.
+            let plan = resolve_setup_provider(&c, openrouter, claude_token, yes);
             let timezone = detect_timezone();
-            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
-                Ok(name) => eprintln!("created agent '{name}'"),
+
+            // 1. Create an empty agent. Vestad no longer accepts credentials at
+            //    create time — the agent owns its own auth state.
+            let created_name = match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
+                Ok(n) => { eprintln!("created agent '{n}'"); n }
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
+                    name.clone()
                 }
                 Err(e) if e.contains("already exists") => {
                     platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
                 }
                 Err(e) => platform::die(&e),
+            };
+
+            // 2. Wait for the agent's HTTP server to be up so it can receive POST /provider.
+            eprintln!("waiting for agent to start...");
+            c.wait_until_running(&created_name, START_READY_TIMEOUT)
+                .unwrap_or_else(|e| platform::die(&e));
+
+            // 3. Provision the provider. OpenRouter and supplied Claude credentials
+            //    are a single API call; an interactive Claude setup runs the OAuth
+            //    dance first.
+            match plan {
+                ProvisionPlan::OpenRouter(or) => {
+                    c.set_provider_openrouter(&created_name, &or)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("running on OpenRouter (no Claude login needed)");
+                }
+                ProvisionPlan::ClaudeCredentials(credentials) => {
+                    c.set_provider_credentials(&created_name, &credentials)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("authenticated (claude)");
+                }
+                ProvisionPlan::ClaudeOAuth => {
+                    eprintln!("authenticating claude...");
+                    let credentials = oauth_dance(&c);
+                    c.set_provider_credentials(&created_name, &credentials)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("authenticated!");
+                }
             }
 
-            eprintln!("authenticating claude...");
-            authenticate_agent(&c, &name);
-            eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
-            c.wait_until_alive(&name, START_READY_TIMEOUT)
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("agent '{name}' is ready.");
+            // 4. Wait for the agent to come fully alive after the provision-triggered
+            //    restart. "alive" now means first-start setup actually completed — a
+            //    bad provider (e.g. an OpenRouter key with no credits) flips the agent
+            //    to not_authenticated here instead of falsely reporting ready. The
+            //    agent passes through `setting_up` while it runs its first-start tasks.
+            c.wait_until_alive_with_progress(&created_name, START_READY_TIMEOUT, |status| match status {
+                "setting_up" => eprintln!("agent is setting itself up (first-start tasks)... this can take several minutes"),
+                "starting" => eprintln!("waiting for the agent to boot..."),
+                _ => {}
+            })
+            .unwrap_or_else(|e| platform::die(&format!(
+                "{e}\nfirst-start setup did not complete. check the agent's logs: vesta logs {created_name}"
+            )));
+            eprintln!("agent '{created_name}' is ready.");
 
         }
 
-        Command::Create { name, no_manage_core_code } => {
+        Command::Create { name, no_manage_core_code, openrouter } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
+            let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("created (run 'vesta auth {name}' to authenticate)");
+
+            if let Some(or) = &openrouter {
+                eprintln!("checking OpenRouter key...");
+                c.validate_openrouter_key(&or.key)
+                    .unwrap_or_else(|e| platform::die(&e));
+            }
+
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref())
+                .unwrap_or_else(|e| platform::die(&e));
+
+            // If --openrouter-key was provided, finish provisioning the agent
+            // immediately. Otherwise leave it unprovisioned for the user to run
+            // `vesta auth` later.
+            if let Some(or) = &openrouter {
+                eprintln!("waiting for agent to start...");
+                c.wait_until_running(&name, START_READY_TIMEOUT)
+                    .unwrap_or_else(|e| platform::die(&e));
+                c.set_provider_openrouter(&name, or)
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("created (running on OpenRouter)");
+            } else {
+                eprintln!("created (run 'vesta auth {name}' to authenticate)");
+            }
         }
 
         Command::Settings { name } => {
@@ -548,6 +833,36 @@ fn run(cli: Cli) {
             let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
             let val = result["manage_agent_code"].as_bool().unwrap_or(true);
             eprintln!("manage_agent_code = {val}");
+        }
+
+        Command::Constitution { name, edit, file, clear } => {
+            let c = get_client(host_ref, token_ref);
+            let new_content: Option<String> = if clear {
+                Some(String::new())
+            } else if let Some(path) = file {
+                Some(read_file_or_stdin(&path))
+            } else if edit {
+                let current = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                Some(edit_in_editor(&current))
+            } else {
+                None
+            };
+
+            match new_content {
+                None => {
+                    let content = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                    print!("{content}");
+                    if !content.ends_with('\n') {
+                        println!();
+                    }
+                }
+                Some(content) => {
+                    c.set_agent_constitution(&name, &content).unwrap_or_else(|e| platform::die(&e));
+                    // Restart so the new constitution is loaded into the system prompt.
+                    c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{name}: constitution updated, agent restarting");
+                }
+            }
         }
 
         Command::Start { name } => {
@@ -610,7 +925,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.inject_token(&name, &token_str)
+                c.set_provider_credentials(&name, &token_str)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {
@@ -631,7 +946,7 @@ fn run(cli: Cli) {
         Command::Status { name, json } => {
             let c = get_client(host_ref, token_ref);
             let status = c.agent_status(&name).unwrap_or_else(|e| {
-                if json {
+                if json && e.contains("not found") {
                     println!(
                         "{}",
                         serde_json::json!({
@@ -821,7 +1136,7 @@ fn run(cli: Cli) {
                 cert_pem: None,
             };
 
-            let client = client::Client::new(&config);
+            let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
             client
                 .health()
                 .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {e}")));

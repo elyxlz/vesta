@@ -1,21 +1,10 @@
-import {
-  createContext,
-  useContext,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { authenticate, type AuthStartResult } from "@/api";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { errorMessage } from "@/lib/utils";
 
 interface ModalsContextValue {
   showAuth: boolean;
-  authStarting: boolean;
-  authStart: AuthStartResult | null;
-  authError: string;
-  handleOpenAuth: () => Promise<void>;
+  handleOpenAuth: () => void;
   clearAuthState: () => void;
 
   deleteDialogOpen: boolean;
@@ -27,47 +16,15 @@ const ModalsContext = createContext<ModalsContextValue | null>(null);
 
 export function ModalsProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const { name, remove } = useSelectedAgent();
+  const { remove } = useSelectedAgent();
 
+  // ProviderPicker (rendered inside AgentIslandModals) owns the auth lifecycle now.
+  // This provider only controls whether the dialog is open.
   const [showAuth, setShowAuth] = useState(false);
-  const [authStarting, setAuthStarting] = useState(false);
-  const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
-  const [authError, setAuthError] = useState("");
-  const authAttemptRef = useRef(0);
-
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const clearAuthState = () => {
-    authAttemptRef.current += 1;
-    setShowAuth(false);
-    setAuthStarting(false);
-    setAuthStart(null);
-    setAuthError("");
-  };
-
-  const handleOpenAuth = async () => {
-    if (!name || authStarting) return;
-
-    const attemptId = authAttemptRef.current + 1;
-    authAttemptRef.current = attemptId;
-    setShowAuth(true);
-    setAuthStarting(true);
-    setAuthStart(null);
-    setAuthError("");
-
-    try {
-      const result = await authenticate(name);
-      if (authAttemptRef.current !== attemptId) return;
-      setAuthStart(result);
-    } catch (e: unknown) {
-      if (authAttemptRef.current !== attemptId) return;
-      setAuthError(errorMessage(e, "authentication failed"));
-    } finally {
-      if (authAttemptRef.current === attemptId) {
-        setAuthStarting(false);
-      }
-    }
-  };
+  const handleOpenAuth = () => setShowAuth(true);
+  const clearAuthState = () => setShowAuth(false);
 
   const handleDelete = async () => {
     navigate("/");
@@ -76,9 +33,6 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
 
   const value: ModalsContextValue = {
     showAuth,
-    authStarting,
-    authStart,
-    authError,
     handleOpenAuth,
     clearAuthState,
     deleteDialogOpen,

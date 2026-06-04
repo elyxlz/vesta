@@ -11,6 +11,8 @@ export interface MenuState {
   onRestart: () => void;
   onRebuild: () => void;
   onBackup: () => void;
+  onAuthenticate?: () => void;
+  isAuthenticated?: boolean;
   onDelete: () => void;
   onDebugInfo?: () => void;
 }

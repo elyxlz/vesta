@@ -101,18 +101,38 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 - Minimize comments — only for truly complex logic
 - Line length: 144 (ruff)
 
+### Async Python (agent/)
+- **No blocking calls in coroutines** — no `time.sleep`, `requests`, sync `subprocess`/`open`/`input`, or inline CPU heavy work inside an `async def`. Use `asyncio.sleep`, an async client, `create_subprocess_exec`, or `asyncio.to_thread`/`run_in_executor`.
+- **Own your tasks** — keep a strong reference to every `create_task` (e.g. a set with `add_done_callback(set.discard)`) and consume its exceptions (await, inspect `task.exception()`, or use a `TaskGroup`). Never fire `create_task` as a bare statement.
+- **Respect cancellation** — in `except asyncio.CancelledError` do cleanup then re-raise. Do not put unshielded `await` in `finally` cleanup. From a non loop thread use only `call_soon_threadsafe`/`run_coroutine_threadsafe`.
+- **No mutable default args** — default to `None`, build inside the body. Compare to `None` with `is`/`is not`.
+- Log with `%`-style placeholders (`logger.info("x=%s", value)`), not pre-formatted f-strings.
+
 ### Rust (cli/, vestad/)
 - **No panics in library/server code** — return `Result`, never `panic!()` or `.unwrap()` on fallible operations. `.expect()` only where failure is truly impossible.
 - **Named constants for magic numbers** — timeouts, buffer sizes, port numbers, retry counts go in `const` at the top of the file.
 - **Descriptive variable names** — no single-letter vars (`n`, `t`, `c`). Use `name`, `tag`, `client`.
 - **Minimize `.clone()`** — move values into closures when possible, only clone when the value is genuinely needed afterward.
 - **Extract repeated patterns** — if 3+ lines appear twice, extract a helper function.
+- **Error types**: public errors implement `std::error::Error` and are `Send + Sync + 'static`; never `()` or bare `String`. `Display` messages are lowercase, no trailing punctuation, source chained via `Error::source`.
+- **Private fields by default**, access via methods; public fields only for plain data structs with no invariants. Keep derivable bounds on the `derive`/`impl`, not the type definition.
+- **Eagerly derive** `Debug` (non empty) plus `Clone`/`Copy`/`PartialEq`/`Default` where correct; `Box` oversized enum variants.
+- **Typed args** over unlabeled `bool`/`Option` flags; group args into a struct/builder past ~5 to 7. No lossy `as` casts for fallible conversions (use `From`/`TryFrom`); avoid catch-all match arms when exhaustive handling is feasible. Every `unsafe` block carries a `// SAFETY:` justification.
 
 ### Frontend (apps/web/src/)
 - **"Agent" terminology everywhere** — never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`.
 - **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
 - **Hook placement** — hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`). `hooks/` is reserved for shared hooks used across multiple components/providers.
 - **Components in folders** — each component gets a folder with `index.tsx` and optionally `styles.ts`.
+- **Rules of Hooks**: call Hooks only at the top level of a component or custom Hook, only from React contexts. Keep render pure (no side effects, no mutating props/state/context).
+- **Effects are a last resort**: compute derived data during render (or `useMemo`), put interaction logic in event handlers. Every Effect has complete deps (`react-hooks/exhaustive-deps`), one concern, and cleanup for any subscription, timer, listener, or fetch (ignore/abort flag).
+- **Stable list keys** from data identity, never array index for reorderable lists; reset state with a `key` prop, not an Effect.
+- **Strict TS**: `strict: true`; no `any` (use `unknown` and narrow), avoid `as`/`!` assertions, annotate object literals rather than asserting, strict equality except `== null`, named exports.
+
+### General
+- **Conventional Commits** subjects (`feat`, `fix`, `refactor`, etc.), imperative mood, no trailing period, no closing keywords or @mentions in commit messages (those go in the PR body).
+- **One concern per PR**; isolate renames/moves and dependency bumps (manifest plus lockfile together) from logic changes. Add new dependencies conservatively and justify any new cross module edge.
+- **Tests ship with logic changes** in the same PR; no permanently skipped or panic only tests, assert concrete values.
 
 ## CI
 
@@ -186,3 +206,36 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## Architecture Principles
+
+Reconciled rubric for this system. Where canonical architecture advice fights Vesta's intentional design, the design wins (see resolved conflicts at the end of this section).
+
+- **Deep modules, hidden decisions.** cc_sdk (`agent/core/cc_sdk/`) is the model: a small `ClaudeSDKClient` surface hiding all tmux paste, transcript tailing, hook bridging, and MCP stdio. Consume that surface, do not reach into `tmux.py`, `transcript.py`, or `_forward.py`.
+- **Confine IO to edge modules.** Docker in `vestad/src/docker.rs`, restic in `restic.rs`, the claude driver in cc_sdk, SQLite + FTS5 in `agent/core/events.py`. No raw shellouts, HTTP calls, or SQL strings scattered into `loops.py`, `client.py`, or request handlers.
+- **One owner per decision.** Notification format, the `agents/{name}.env` config contract, the cc_sdk interrupt protocol (double Escape, Stop-hook crediting): each lives in exactly one module. A constant or format appearing in two modules moves to its owner.
+- **No shared crate between `cli` and `vestad`.** The JSON/WS wire contract, Tauri `invoke()` command strings, and the `X-Agent-Token` header are the only coupling. Duplicate small DTO shapes per crate rather than sharing a library.
+- **Python stays functional.** Pure functions plus dataclasses/TypedDicts/pydantic models, no classes-with-methods. Pass `State` and `VestaConfig` as explicit keyword arguments (the functional stand-in for dependency injection).
+- **Banned accessors.** No `getattr`, dict `.get()` fallback, or `hasattr` in Python. No `panic!`/`unwrap`/`expect` on fallible paths in `vestad/`/`cli/` (`expect` only where failure is impossible); return `Result`.
+- **Named consts, descriptive names, minimal clone (Rust).** Follow `DOCKER_TIMEOUT_SECS`, `IMPORT_PIPELINE_MAX_ATTEMPTS`, `UPSTREAM_READY_POLL_MAX`.
+- **Simple data across boundaries.** JSON events on the bus, env vars across the container boundary, serde DTOs across the HTTP API. No request objects, rows, or tmux internals crossing boundaries.
+- **High cohesion, no grab-bags.** `helpers.py` and `lib/` stay narrowly scoped; a module whose name needs "and" gets split.
+- **Design errors out of existence.** Prefer idempotent no-ops (`unlink(missing_ok=True)`, `mkdir(exist_ok=True)`, restic dedup) over special-case error branches.
+- **Simplicity and surgical changes (Karpathy).** Solve only today's problem, no speculative flexibility for a single caller; match surrounding style, do not refactor adjacent working code, remove only the orphans your change created.
+- **Comments explain why.** Reserve them for non-obvious mechanics (cc_sdk double-Escape, the watchfiles local-stop bridge, the circular dreamer window).
+
+**Conflicts resolved (our design wins):** circuit breakers, per-dependency bulkhead pools, load-shed 429s, and golden-signal dashboards are skipped: Vesta is a single-tenant personal daemon where timeout + capped-retry + supervised-restart already bound blast radius. Formal ADR/C4 docs and SCA/SLSA supply-chain ceremony are replaced by CLAUDE.md plus the memory feedback files as the in-repo decision record. Port/adapter interface objects are replaced by explicit-config-passing because Python is intentionally class-free.
+
+## Testing Strategy
+
+- **`check.sh` is the only entry point.** Every suite (`agent`, `cli`, `vestad`, `vestad-docker`, `web`, `integration`, `live`) runs through it; CI calls the same subcommands so local equals CI. Do not add a CI step that bypasses it.
+- **Keep the pyramid.** Fast in-process pytest and Rust `--bins` unit tests are the default loop; Docker-gated suites are the middle tier; `live` (real Claude) is the tiny apex run only on release. Do not push Docker- or Claude-dependent assertions into the fast tiers.
+- **Prefer the high-fidelity fake over mocks.** Drive cc_sdk tests through `tests/fake_claude.py` (a real fake claude TUI in real tmux) and exercise the real EventBus/SQLite. Reserve patching for true edges (file times, credentials presence). Keep `fake_claude.py` faithful to the real claude protocol; the e2e transport tests hold it to that contract.
+- **Hermetic and deterministic.** Each test builds its own tmpdir db / notifications dir and passes in isolation and any order. No shared `events.db`, no wall-clock ordering, no dependence on a running agent.
+- **Never `sleep()` to await a condition.** Poll with a timeout (`tests/wait_util.py`) or drive the event-driven loops via their `asyncio.Event` signals.
+- **Test observable behavior through public surfaces.** Emit a `UserEvent` and assert the resulting event stream / persisted state, not which internal function fired. Behavior names read as sentences.
+- **DAMP over DRY; no logic in example tests.** No computed expected values or conditionals. The sanctioned exception is hypothesis property tests (`test_property.py`).
+- **Beyonce rule, mapped to suites.** Crash recovery / resume -> `test_crash_recovery.py`; interrupts / compaction deferral -> `test_interrupts.py`; notification batching -> `test_notifications.py`; backup/restore and ports -> vestad tests; skill-index freshness -> CI. If you do not want it to break, it has a test.
+- **Coverage is a diagnostic, never a gate.** Do not add a coverage threshold. A line is tested only when a behavioral assertion exercises it.
+- **Red is stop-the-line.** A failing main branch or `check.sh` suite is reverted or fixed forward immediately. Flaky tests surface in `nightly.yml` (no retry); quarantine or fix, do not blanket-rerun.
+- **Reliability is tested, not assumed.** Every finite timeout, capped retry (`retry_import_pipeline`), single-shot session-resume guard, cancellation path, and `finally`-block resource release has behavioral coverage.

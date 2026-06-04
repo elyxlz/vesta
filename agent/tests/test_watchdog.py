@@ -95,11 +95,7 @@ def test_format_hang_diagnostics_includes_stderr_tail():
 def test_subprocess_alive_returns_true_when_running():
     state = vm.State()
     mock_client = MagicMock()
-    mock_transport = MagicMock()
-    mock_process = MagicMock()
-    mock_process.returncode = None
-    mock_transport._process = mock_process
-    mock_client._transport = mock_transport
+    mock_client.returncode = None
     state.client = mock_client
     assert _check_sdk_subprocess_alive(state) is True
 
@@ -107,11 +103,7 @@ def test_subprocess_alive_returns_true_when_running():
 def test_subprocess_alive_returns_false_when_exited():
     state = vm.State()
     mock_client = MagicMock()
-    mock_transport = MagicMock()
-    mock_process = MagicMock()
-    mock_process.returncode = 1
-    mock_transport._process = mock_process
-    mock_client._transport = mock_transport
+    mock_client.returncode = 1
     state.client = mock_client
     assert _check_sdk_subprocess_alive(state) is False
 

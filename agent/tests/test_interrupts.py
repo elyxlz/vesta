@@ -329,6 +329,57 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
     assert force_exit_called_with == [1], f"os._exit(1) should have been called, got {force_exit_called_with}"
 
 
+# --- attempt_interrupt escalation ---
+
+
+@pytest.mark.anyio
+async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
+    """When client.interrupt() times out, attempt_interrupt SIGTERMs the process, then force-exits.
+
+    Mirrors the os._exit-patching style of test_run_vesta_force_exits_on_hung_cleanup: the
+    supervised-restart model depends on the container actually exiting when the SDK is wedged."""
+    from core.client import attempt_interrupt
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
+    state = vm.State()
+
+    mock_client = MagicMock()
+
+    async def interrupt_times_out():
+        # asyncio.TimeoutError is the builtin TimeoutError in 3.11+; attempt_interrupt catches it.
+        raise TimeoutError
+
+    mock_client.interrupt = interrupt_times_out
+    state.client = mock_client
+
+    kills: list[tuple[int, int]] = []
+    exits: list[int] = []
+    slept: list[float] = []
+
+    def fake_kill(pid, sig):
+        kills.append((pid, sig))
+
+    def fake_exit(code):
+        exits.append(code)
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    with (
+        patch("core.client.os.kill", fake_kill),
+        patch("core.client.os._exit", fake_exit),
+        patch("core.client.asyncio.sleep", fake_sleep),
+    ):
+        await attempt_interrupt(state, config=config, reason="hung SDK")
+
+    import os as _os
+    import signal as _signal
+
+    assert kills == [(_os.getpid(), _signal.SIGTERM)], f"expected one SIGTERM to our own pid, got {kills}"
+    assert exits == [1], f"expected os._exit(1), got {exits}"
+    assert 10 in slept, "the 10s grace sleep before hard exit must be awaited (patched, not real)"
+
+
 # --- Converse interrupt behavior ---
 
 
