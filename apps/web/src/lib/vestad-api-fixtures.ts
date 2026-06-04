@@ -97,6 +97,7 @@ export const vestadApiFixtures = {
   },
   "version": {
     "api_compat": "0.2",
+    "channel": "stable",
     "dev_mode": false,
     "latest_version": "0.1.1",
     "update_available": true,

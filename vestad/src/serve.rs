@@ -258,7 +258,8 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 // Force an immediate GitHub release check (instead of waiting for the periodic
 // background task) and return the refreshed version info.
 async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    match tokio::task::spawn_blocking(update_check::check_once).await {
+    let channel = effective_channel(&state).await;
+    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
         Ok(Ok(info)) => {
             let mut slot = state.update_info.lock().await;
             *slot = Some(info);
@@ -284,7 +285,14 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
+        "channel": effective_channel(state).await.as_str(),
     })
+}
+
+/// The channel vestad is currently following, honoring the `VESTA_CHANNEL` env
+/// override over the persisted setting.
+async fn effective_channel(state: &SharedState) -> crate::channel::Channel {
+    crate::channel::Channel::resolve(&state.settings.read().await.channel)
 }
 
 #[derive(Deserialize)]
@@ -356,8 +364,9 @@ async fn gateway_update_handler(
     if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
     }
-    tracing::info!("gateway update requested via API");
-    let result = tokio::task::spawn_blocking(self_update::perform_update)
+    let channel = effective_channel(&state).await;
+    tracing::info!(channel = channel.as_str(), "gateway update requested via API");
+    let result = tokio::task::spawn_blocking(move || self_update::perform_update(channel))
         .await
         .unwrap();
     state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1240,6 +1249,13 @@ pub(crate) struct Settings {
     backup: BackupGlobalSettings,
     #[serde(default)]
     agents: HashMap<String, AgentSettings>,
+    /// Release channel: "stable" or "beta". Empty/unknown is treated as stable.
+    #[serde(default = "default_channel")]
+    pub(crate) channel: String,
+}
+
+fn default_channel() -> String {
+    crate::channel::Channel::Stable.as_str().to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1688,6 +1704,39 @@ async fn set_auto_backup_handler(
     })))
 }
 
+// --- Release channel ---
+
+async fn get_channel_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() }))
+}
+
+#[derive(Deserialize)]
+struct SetChannelBody {
+    channel: String,
+}
+
+async fn set_channel_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SetChannelBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let channel = crate::channel::Channel::parse(&body.channel)
+        .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "channel must be 'stable' or 'beta'"))?;
+    {
+        let mut settings = state.settings.write().await;
+        settings.channel = channel.as_str().to_string();
+        save_settings(&settings);
+    }
+    tracing::info!(channel = channel.as_str(), "release channel updated");
+    // Refresh the cached update info against the new channel so /version reflects it
+    // without waiting for the next periodic poll.
+    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+        Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+        Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
+        Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
+    }
+    Ok(Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() })))
+}
+
 // --- Per-agent settings ---
 
 async fn get_agent_settings_handler(
@@ -1912,6 +1961,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
+        .route("/settings/channel", get(get_channel_handler))
+        .route("/settings/channel", axum::routing::put(set_channel_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2146,7 +2197,8 @@ fn spawn_auto_backup_task(state: SharedState) {
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            match tokio::task::spawn_blocking(update_check::check_once).await {
+            let channel = effective_channel(&state).await;
+            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
                 Ok(Ok(info)) => {
                     let mut slot = state.update_info.lock().await;
                     *slot = Some(info);
@@ -2466,6 +2518,7 @@ mod tests {
             "latest_version": "0.1.1",
             "update_available": true,
             "dev_mode": false,
+            "channel": "stable",
         });
 
         serde_json::json!({

@@ -1,0 +1,37 @@
+# Submit an already-uploaded TestFlight build for App Store review. The binary was
+# uploaded during the beta CI run (ci.yml "Upload to TestFlight"); this lane is the
+# stable-promotion half, run by promote.yml only when the Apple ASC API secrets exist.
+#
+# It uploads no binary (skip_binary_upload) and changes no listing (skip_metadata /
+# skip_screenshots), so the App Store listing must have been set up once by hand before
+# the first promotion. Subsequent promotions just submit the new build for review.
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Submit the already-uploaded TestFlight build for the given version to App Store review"
+  lane :promote do |options|
+    version = options[:version] or UI.user_error!("missing version: (e.g. fastlane promote version:0.1.156)")
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APPLE_API_KEY_ID"),
+      issuer_id: ENV.fetch("APPLE_API_ISSUER_ID"),
+      key_content: ENV.fetch("APPLE_API_KEY"),
+      is_key_content_base64: true,
+    )
+
+    upload_to_app_store(
+      api_key: api_key,
+      app_identifier: "com.vestarun.mobile",
+      app_version: version,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      skip_metadata: true,
+      submit_for_review: true,
+      automatic_release: true,
+      precheck_include_in_app_purchases: false,
+      force: true,
+      submission_information: { add_id_info_uses_idfa: false },
+    )
+  end
+end
