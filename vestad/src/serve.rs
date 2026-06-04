@@ -464,6 +464,10 @@ struct CreateBody {
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
     seed_personality: Option<String>,
+    /// Comma-separated skill names to install at first boot (in addition to the
+    /// default skill set). Exported as AGENT_SEED_SKILLS; consumed by the agent's
+    /// first-wake setup. Unset means "default skills only".
+    seed_skills: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -514,7 +518,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), body.seed_skills.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 
