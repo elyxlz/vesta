@@ -17,6 +17,8 @@ const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
+let lineId = 0;
+
 const LOG_LEVEL_TAGS = new Set([
   "DEBUG",
   "INFO",
@@ -118,7 +120,7 @@ interface ConsoleProps {
 
 export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const [lines, setLines] = useState<string[]>([]);
+  const [lines, setLines] = useState<{ id: number; text: string }[]>([]);
   const [ended, setEnded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { check, scroll } = useAutoScroll();
@@ -141,7 +143,7 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
             reconnectDelayRef.current = RECONNECT_BASE;
             const stripped = stripAnsi(event.text);
             setLines((prev) => {
-              const next = [...prev, stripped];
+              const next = [...prev, { id: lineId++, text: stripped }];
               return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
             });
             break;
@@ -248,14 +250,14 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
               </div>
             )}
 
-            {lines.map((line, i) => (
+            {lines.map((line) => (
               <div
-                key={i}
+                key={line.id}
                 className={cn(
                   "break-words whitespace-pre-wrap",
-                  lineColorClass(line),
+                  lineColorClass(line.text),
                 )}
-                dangerouslySetInnerHTML={{ __html: linkify(line) }}
+                dangerouslySetInnerHTML={{ __html: linkify(line.text) }}
               />
             ))}
 

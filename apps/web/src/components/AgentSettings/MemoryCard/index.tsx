@@ -6,6 +6,7 @@ import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { fetchMemory, saveMemory } from "@/api/memory";
+import { errorMessage } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 type Status =
@@ -46,7 +47,7 @@ export function MemoryCard() {
       setStatus({ kind: "saved" });
       restart();
     } catch (e) {
-      setStatus({ kind: "error", message: (e as Error).message });
+      setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
   };
 

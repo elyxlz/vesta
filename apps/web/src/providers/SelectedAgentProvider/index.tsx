@@ -132,7 +132,16 @@ export function SelectedAgentProvider({
   };
 
   useEffect(() => {
-    refreshBackups();
+    if (!name) return;
+    let ignore = false;
+    listBackups(name)
+      .then((b) => {
+        if (!ignore) setBackups(b);
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
   }, [name]);
 
   const backup = () => {

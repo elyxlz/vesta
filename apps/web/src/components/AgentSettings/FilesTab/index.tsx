@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 import {
   fetchFileTree,
   readFile,
@@ -209,7 +209,7 @@ export function FilesTab() {
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
     } catch (e) {
-      setStatus({ kind: "error", message: (e as Error).message });
+      setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
   };
 

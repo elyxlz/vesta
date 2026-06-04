@@ -10,6 +10,7 @@ import {
   FieldDescription,
 } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
+import { errorMessage } from "@/lib/utils";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -46,7 +47,7 @@ export function Connect() {
       const url = needHostInput ? normalizeHost(host) : window.location.origin;
       await connect(url, apiKey.trim());
     } catch (e: unknown) {
-      const msg = (e as { message?: string })?.message || "connection failed";
+      const msg = errorMessage(e, "connection failed");
       setError("could not reach server");
       if (msg !== "could not reach server") setDetails(msg);
       setBusy(false);

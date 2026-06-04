@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { errorMessage } from "@/lib/utils";
 
 export type AgentOperation =
   | "idle"
@@ -70,7 +71,7 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       await fn();
       get().clearOp(name);
     } catch (e: unknown) {
-      const msg = (e as { message?: string })?.message || fallback;
+      const msg = errorMessage(e, fallback);
       set((s) => ({
         states: { ...s.states, [name]: { operation: "idle", error: msg } },
       }));

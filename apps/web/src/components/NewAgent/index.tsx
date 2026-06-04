@@ -9,6 +9,7 @@ import {
   type ProviderResult,
 } from "@/api/agents";
 import { fadeSlide } from "@/lib/motion";
+import { errorMessage } from "@/lib/utils";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
 import { ProviderPicker } from "@/components/ProviderPicker";
@@ -61,9 +62,7 @@ export function NewAgent() {
         setStep("done");
       } catch (e) {
         if (cancelled) return;
-        setCreateError(
-          (e as { message?: string })?.message || "creation failed",
-        );
+        setCreateError(errorMessage(e, "creation failed"));
         setCredentials(null);
         setOpenrouter(null);
         setStep("name");

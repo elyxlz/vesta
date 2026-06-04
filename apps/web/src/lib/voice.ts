@@ -201,7 +201,6 @@ async function playStreamedAudio(
           URL.revokeObjectURL(audio.src);
           const reader = body.getReader();
           const chunks: Uint8Array[] = [];
-          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -258,7 +257,6 @@ async function playStreamedAudio(
         };
         audio.play().catch(reject);
 
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
           if (signal?.aborted) break;
