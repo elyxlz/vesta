@@ -197,12 +197,9 @@ async def _run_messages_with_interrupts(
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
-                try:
-                    sid = state.client.session_id
-                    if sid:
-                        persist_session_id(sid, state=state, config=config)
-                except (AttributeError, TypeError):
-                    pass
+                sid = state.client.session_id
+                if sid:
+                    persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
@@ -382,44 +379,41 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
 
     try:
         while state.shutdown_event and not state.shutdown_event.is_set():
+            # Wait for either a file change or the periodic tick
             try:
-                # Wait for either a file change or the periodic tick
-                try:
-                    await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
-                except TimeoutError:
-                    pass
-                notify.clear()
+                await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
+            except TimeoutError:
+                pass
+            notify.clear()
 
-                if state.shutdown_event and state.shutdown_event.is_set():
-                    break
-
-                now = _now()
-
-                if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                    last_proactive = now
-                    if state.processor_busy or not queue.empty():
-                        logger.debug("Proactive check skipped: agent is busy — waiting full interval")
-                    else:
-                        check_proactive_task(config=config)
-
-                if (now - last_dreamer_check).total_seconds() >= 3600:
-                    process_nightly_memory(state=state, config=config)
-                    last_dreamer_check = now
-
-                notifications = await load_new_notifications(state=state, config=config)
-                interrupt_notifs = [n for n in notifications if n.interrupt]
-                # Passive files stay on disk until the batch flushes, so reloads would duplicate.
-                queued_paths = {n.file_path for n in pending_passive if n.file_path}
-                pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
-
-                if interrupt_notifs:
-                    await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
-
-                if pending_passive and state.event_bus.state == "idle":
-                    await process_batch(pending_passive, queue=queue, state=state, config=config)
-                    pending_passive = []
-            except asyncio.CancelledError:
+            if state.shutdown_event and state.shutdown_event.is_set():
                 break
+
+            now = _now()
+
+            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+                last_proactive = now
+                if state.processor_busy or not queue.empty():
+                    logger.debug("Proactive check skipped: agent is busy — waiting full interval")
+                else:
+                    check_proactive_task(config=config)
+
+            if (now - last_dreamer_check).total_seconds() >= 3600:
+                process_nightly_memory(state=state, config=config)
+                last_dreamer_check = now
+
+            notifications = await load_new_notifications(state=state, config=config)
+            interrupt_notifs = [n for n in notifications if n.interrupt]
+            # Passive files stay on disk until the batch flushes, so reloads would duplicate.
+            queued_paths = {n.file_path for n in pending_passive if n.file_path}
+            pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
+
+            if interrupt_notifs:
+                await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
+
+            if pending_passive and state.event_bus.state == "idle":
+                await process_batch(pending_passive, queue=queue, state=state, config=config)
+                pending_passive = []
     finally:
         watcher_task.cancel()
         try:
