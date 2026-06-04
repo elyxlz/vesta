@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. Instead of the official Claude Agent SDK, the agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. The agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface, because driving the CLI directly is simpler than wiring up the official Claude Agent SDK.
 
 ## Architecture
 

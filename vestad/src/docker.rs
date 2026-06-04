@@ -712,13 +712,15 @@ async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub async fn resolve_image(docker: &Docker) -> Result<String, DockerError> {
+pub async fn resolve_image(docker: &Docker, progress: &BuildProgress) -> Result<String, DockerError> {
     if let Ok(image) = std::env::var(AGENT_IMAGE_ENV) {
         tracing::info!(image = %image, "using agent image from {AGENT_IMAGE_ENV}");
+        progress.set(BuildPhase::Pulling);
         verify_image_runnable(&image).await?;
         return Ok(image);
     }
     if let Ok(context) = find_dockerfile() {
+        progress.set(BuildPhase::Building);
         let tar_body = build_context_tar(&context)?;
         let opts = BuildImageOptions {
             t: Some(LOCAL_IMAGE_TAG.to_string()),
@@ -741,6 +743,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<String, DockerError> {
         verify_image_runnable(LOCAL_IMAGE_TAG).await?;
         Ok(LOCAL_IMAGE_TAG.to_string())
     } else {
+        progress.set(BuildPhase::Pulling);
         let image = vesta_image();
         let opts = CreateImageOptions {
             from_image: Some(image.clone()),
@@ -1595,7 +1598,43 @@ pub async fn list_agents(
     entries
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<String, DockerError> {
+/// Coarse, user-facing stage of first-time agent creation, emitted in order so the
+/// onboarding UI can show honest status instead of a decorative loop. The dominant
+/// wait is the image step (`Pulling` on a release, `Building` from a local checkout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildPhase {
+    Pulling,
+    Building,
+    Preparing,
+    Creating,
+    Starting,
+}
+
+/// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one
+/// that records into shared state for the build-phase endpoint.
+#[derive(Clone)]
+pub struct BuildProgress {
+    sink: std::sync::Arc<dyn Fn(BuildPhase) + Send + Sync>,
+}
+
+impl BuildProgress {
+    pub fn new(sink: std::sync::Arc<dyn Fn(BuildPhase) + Send + Sync>) -> Self {
+        Self { sink }
+    }
+
+    pub fn set(&self, phase: BuildPhase) {
+        (self.sink)(phase);
+    }
+}
+
+impl std::fmt::Debug for BuildProgress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuildProgress").finish_non_exhaustive()
+    }
+}
+
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1607,14 +1646,16 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
         return Err(DockerError::AlreadyExists(format!("agent '{}' already exists", name)));
     }
 
-    let image = resolve_image(docker).await?;
+    let image = resolve_image(docker, progress).await?;
 
+    progress.set(BuildPhase::Preparing);
     if manage_core_code {
         tracing::info!(agent = %name, "ensuring agent code");
         crate::agent_code::ensure_agent_code(&env_config.config_dir)
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }
 
+    progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
     create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
     Ok(name.to_string())
@@ -2033,6 +2074,29 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_phase_serializes_to_snake_case() {
+        let to_str = |phase: BuildPhase| serde_json::to_value(phase).expect("serialize").as_str().expect("string").to_string();
+        assert_eq!(to_str(BuildPhase::Pulling), "pulling");
+        assert_eq!(to_str(BuildPhase::Building), "building");
+        assert_eq!(to_str(BuildPhase::Preparing), "preparing");
+        assert_eq!(to_str(BuildPhase::Creating), "creating");
+        assert_eq!(to_str(BuildPhase::Starting), "starting");
+    }
+
+    #[test]
+    fn build_progress_forwards_phases_to_sink() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        let progress = BuildProgress::new(std::sync::Arc::new(move |phase| {
+            recorder.lock().expect("lock").push(phase);
+        }));
+        progress.set(BuildPhase::Building);
+        progress.set(BuildPhase::Preparing);
+        progress.set(BuildPhase::Creating);
+        assert_eq!(*seen.lock().expect("lock"), vec![BuildPhase::Building, BuildPhase::Preparing, BuildPhase::Creating]);
+    }
 
     #[test]
     fn constitution_unset_reads_empty() {

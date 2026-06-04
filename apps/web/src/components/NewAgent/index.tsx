@@ -100,7 +100,7 @@ export function NewAgent() {
           }}
         />
       );
-    if (step === "creating") return <CreatingStep />;
+    if (step === "creating") return <CreatingStep agentName={agentName} />;
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
       <NameStep

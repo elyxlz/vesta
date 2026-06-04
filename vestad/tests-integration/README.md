@@ -52,13 +52,12 @@ vestad/tests/                   (the actual suites — run via `cargo test -p ve
 ## Running
 
 ```bash
-./check.sh integration                    # what CI runs: server + multi_user + oauth + migrations
+./check.sh integration                    # what CI runs: server + multi_user + oauth
 ./check.sh live                           # live e2e (needs credentials)
 cargo test -p vestad --test server        # server tests only (builds vestad first)
 cargo test -p vestad --test multi_user    # multi-user tests only
 cargo test -p vestad --test live          # live e2e (needs credentials)
 cargo test -p vestad --test oauth         # oauth endpoint checks
-cargo test -p vestad --test migrations    # layout migration tests
 cargo test -p vestad --bins               # vestad unit tests only (NOT these suites)
 ```
 
