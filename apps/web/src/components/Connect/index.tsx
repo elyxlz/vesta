@@ -112,18 +112,20 @@ export function Connect() {
                 {...fadeSlide}
                 className="flex flex-col items-center gap-1 text-center"
               >
-                <p
-                  className={`text-xs ${details ? "cursor-pointer" : ""}`}
-                  onClick={
-                    details ? () => setShowDetails(!showDetails) : undefined
-                  }
-                >
+                <p className="text-xs">
                   <span className="text-destructive">{error}</span>
                   {details && (
-                    <span className="text-foreground">
-                      {" "}
-                      · {showDetails ? "hide details" : "show details"}
-                    </span>
+                    <>
+                      <span className="text-foreground"> · </span>
+                      <button
+                        type="button"
+                        aria-expanded={showDetails}
+                        onClick={() => setShowDetails(!showDetails)}
+                        className="text-foreground underline-offset-4 hover:underline"
+                      >
+                        {showDetails ? "hide details" : "show details"}
+                      </button>
+                    </>
                   )}
                 </p>
                 {showDetails && details && (
