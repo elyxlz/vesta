@@ -3,9 +3,19 @@
 import asyncio
 import datetime as dt
 import json
+import logging
 import pathlib as pl
 import sqlite3
 import typing as tp
+
+logger = logging.getLogger("vesta.events")
+
+# Upper bound on events buffered per subscriber. A slow-but-alive WS client (phone
+# on a weak link, wedged webview) whose send loop stalls would otherwise grow its
+# queue without limit. 1000 events covers a long burst of streamed text/tool blocks
+# while capping memory; on overflow we drop the oldest event (see emit) so the
+# stream stays current rather than replaying a stale backlog.
+SUBSCRIBER_QUEUE_MAXSIZE = 1000
 
 type AgentState = tp.Literal["idle", "thinking"]
 
@@ -144,7 +154,7 @@ class EventBus:
             self._conn.executescript(_EVENTS_SCHEMA)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
-        q: asyncio.Queue[VestaEvent] = asyncio.Queue()
+        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
         self._subscribers.add(q)
         return q
 
@@ -160,6 +170,22 @@ class EventBus:
             )
             self._conn.commit()
         for q in self._subscribers:
+            self._offer(q, event)
+
+    def _offer(self, q: asyncio.Queue[VestaEvent], event: StreamEvent) -> None:
+        """Enqueue for one subscriber, dropping its oldest event on overflow.
+
+        A stalled send loop must not pin memory: when the queue is full we evict
+        the oldest buffered event to make room for the newest, keeping the live
+        stream current. History replay is delivered out-of-band on connect (api.py),
+        never through this queue, so it is unaffected."""
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            # emit runs on the loop thread, so no other coroutine drains between
+            # full and get_nowait: the queue is non-empty here by construction.
+            dropped = q.get_nowait()
+            logger.warning("subscriber queue full, dropped oldest event type=%s", dropped["type"])
             q.put_nowait(event)
 
     @property
