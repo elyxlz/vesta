@@ -79,7 +79,11 @@ const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
-pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
+/// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
+/// Lives in host config (keyed by agent name), separate from the core-code mount, so
+/// agent-code updates never touch it.
+const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     let steps: [String; 9] = [
@@ -930,6 +934,48 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(&env_path).ok();
 }
 
+/// Host path of an agent's constitution. Per-agent user data, separate from agent code,
+/// so it survives code updates, rebuilds, and container destroy/restore.
+pub fn constitution_host_path(agents_dir: &std::path::Path, agent_name: &str) -> std::path::PathBuf {
+    agents_dir.join(format!("{}.constitution.md", agent_name))
+}
+
+/// Ensure the constitution file exists (empty by default) so it can be bind-mounted as a
+/// file. Bind-mounting a missing host path would make Docker create a directory there.
+fn ensure_constitution_file(agents_dir: &std::path::Path, agent_name: &str) -> Result<std::path::PathBuf, DockerError> {
+    std::fs::create_dir_all(agents_dir)
+        .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
+    let path = constitution_host_path(agents_dir, agent_name);
+    if !path.exists() {
+        std::fs::write(&path, "")
+            .map_err(|e| DockerError::Failed(format!("failed to create constitution file: {e}")))?;
+    }
+    Ok(path)
+}
+
+/// Read an agent's constitution, returning an empty string when unset.
+pub fn read_constitution(agents_dir: &std::path::Path, agent_name: &str) -> Result<String, DockerError> {
+    let path = constitution_host_path(agents_dir, agent_name);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(DockerError::Failed(format!("failed to read constitution: {e}"))),
+    }
+}
+
+/// Overwrite an agent's constitution in place. Writing in place (rather than rename) keeps
+/// the inode stable so the read-only bind mount in a running container sees the new content;
+/// the agent only re-reads it into its system prompt on restart.
+pub fn write_constitution(agents_dir: &std::path::Path, agent_name: &str, content: &str) -> Result<(), DockerError> {
+    let path = ensure_constitution_file(agents_dir, agent_name)?;
+    std::fs::write(&path, content)
+        .map_err(|e| DockerError::Failed(format!("failed to write constitution: {e}")))
+}
+
+fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
+    std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
+}
+
 /// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
@@ -1252,7 +1298,10 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality)?;
-    let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
+    let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
+
+    let constitution_path = ensure_constitution_file(&env_config.agents_dir, agent_name)?;
+    let constitution_mount = format!("{}:{}:ro,z", constitution_path.display(), CONSTITUTION_MOUNT_DEST);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
     let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
@@ -1264,7 +1313,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     labels.insert(LABEL_USER.to_string(), current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let mut binds = vec![env_mount];
+    let mut binds = vec![env_mount, constitution_mount];
     if manage_core_code {
         binds.extend([core_mount, pyproject_mount, lock_mount]);
     }
@@ -1755,6 +1804,7 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
+    delete_constitution_file(agents_dir, name);
     crate::restic::remove_repo(name);
     Ok(())
 }
@@ -1949,7 +1999,14 @@ pub async fn rename_agent(
 
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
     remove_container_force(docker, &old_cname).await.ok();
+    // Carry the constitution across the rename before the new container is created, so its
+    // bind mount resolves to the existing content rather than a fresh empty file.
+    let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
+    if !old_constitution.is_empty() {
+        write_constitution(&env_config.agents_dir, new_name, &old_constitution).ok();
+    }
     delete_agent_env_file(&env_config.agents_dir, old_name);
+    delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
     create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None).await?;
@@ -1963,6 +2020,47 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constitution_unset_reads_empty() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        assert_eq!(read_constitution(dir.path(), "vesta").expect("read"), "");
+    }
+
+    #[test]
+    fn constitution_write_then_read_round_trips() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        write_constitution(dir.path(), "vesta", "Always tell the truth.").expect("write");
+        assert_eq!(read_constitution(dir.path(), "vesta").expect("read"), "Always tell the truth.");
+    }
+
+    #[test]
+    fn constitution_write_preserves_inode() {
+        // The bind mount in a running container points at this inode; in-place writes keep
+        // it stable so the container sees updates without a mount refresh.
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        write_constitution(dir.path(), "vesta", "first").expect("write");
+        let ino_before = std::fs::metadata(constitution_host_path(dir.path(), "vesta")).expect("stat").ino();
+        write_constitution(dir.path(), "vesta", "second").expect("write");
+        let ino_after = std::fs::metadata(constitution_host_path(dir.path(), "vesta")).expect("stat").ino();
+        assert_eq!(ino_before, ino_after);
+        assert_eq!(read_constitution(dir.path(), "vesta").expect("read"), "second");
+    }
+
+    #[test]
+    fn constitution_delete_removes_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        write_constitution(dir.path(), "vesta", "x").expect("write");
+        delete_constitution_file(dir.path(), "vesta");
+        assert!(!constitution_host_path(dir.path(), "vesta").exists());
+    }
+
+    #[test]
+    fn constitution_mount_dest_is_read_only_path() {
+        // Ensures the file API refuses to write the constitution from inside the container.
+        assert!(MOUNT_DESTS.contains(&CONSTITUTION_MOUNT_DEST));
+    }
 
     #[test]
     fn normalize_simple() {
