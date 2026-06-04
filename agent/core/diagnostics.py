@@ -62,13 +62,10 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
 
 
 def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
-    """Returns None if we can't determine."""
+    """Returns None if we can't determine (no client, or session not yet launched)."""
     if state.client is None:
         return None
-    try:
-        return state.client.returncode is None
-    except (AttributeError, TypeError):
-        return None
+    return state.client.is_alive()
 
 
 async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:

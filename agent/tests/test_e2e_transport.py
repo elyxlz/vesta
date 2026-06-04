@@ -313,8 +313,9 @@ async def test_crash_surfaces_sdk_error_with_stderr(sandbox: Sandbox) -> None:
     stderr_lines: list[str] = []
     options = ClaudeAgentOptions(cwd=str(sandbox.cwd), stderr=stderr_lines.append)
     async with ClaudeSDKClient(options=options) as client:
-        # While alive, the liveness signal diagnostics.subprocess_alive reads is "no exit code yet".
+        # While alive, the liveness signal diagnostics reads through is_alive() is "running".
         assert client.returncode is None
+        assert client.is_alive() is True
 
         await client.query("crash:7")
         with pytest.raises(ClaudeSDKError) as exc_info:
@@ -322,8 +323,9 @@ async def test_crash_surfaces_sdk_error_with_stderr(sandbox: Sandbox) -> None:
         assert "code 7" in str(exc_info.value)
         assert "crashing on request" in str(exc_info.value), "stderr tail must be included for diagnosis"
 
-        # The crash exit code propagates to the returncode that the watchdog inspects.
+        # The crash exit code propagates to the returncode and is_alive() the watchdog inspects.
         assert client.returncode == 7
+        assert client.is_alive() is False
         # Real stderr reaches the callback; the internal exit marker is consumed, not leaked.
         assert any("crashing on request" in line for line in stderr_lines)
         assert not any("__CC_EXIT__" in line for line in stderr_lines)

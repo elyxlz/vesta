@@ -1,12 +1,14 @@
 """Tests for SDK activity watchdog, tool duration tracking, and hang diagnostics."""
 
 import asyncio
+import tempfile
 import time
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
+from core.cc_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core.client import converse
 from wait_util import wait_for_condition
 from core.diagnostics import (
@@ -90,22 +92,10 @@ def test_format_hang_diagnostics_includes_stderr_tail():
 
 
 # --- _check_sdk_subprocess_alive ---
-
-
-def test_subprocess_alive_returns_true_when_running():
-    state = vm.State()
-    mock_client = MagicMock()
-    mock_client.returncode = None
-    state.client = mock_client
-    assert _check_sdk_subprocess_alive(state) is True
-
-
-def test_subprocess_alive_returns_false_when_exited():
-    state = vm.State()
-    mock_client = MagicMock()
-    mock_client.returncode = 1
-    state.client = mock_client
-    assert _check_sdk_subprocess_alive(state) is False
+# Liveness is read through the client's public is_alive() accessor. The alive/dead
+# distinction needs a launched claude process and lives in test_e2e_transport.py; the
+# reachable-without-tmux cases (no client, and a constructed-but-unlaunched real client)
+# are covered here.
 
 
 def test_subprocess_alive_returns_none_when_no_client():
@@ -114,10 +104,9 @@ def test_subprocess_alive_returns_none_when_no_client():
     assert _check_sdk_subprocess_alive(state) is None
 
 
-def test_subprocess_alive_returns_none_on_missing_attrs():
+def test_subprocess_alive_returns_none_before_launch():
     state = vm.State()
-    mock_client = MagicMock(spec=[])  # No attributes at all
-    state.client = mock_client
+    state.client = ClaudeSDKClient(options=ClaudeAgentOptions(cwd=tempfile.mkdtemp()))
     assert _check_sdk_subprocess_alive(state) is None
 
 
