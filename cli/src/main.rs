@@ -649,11 +649,11 @@ fn detect_timezone() -> Option<String> {
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
-    println!("Quick start:");
-    println!("  vesta setup        Create an agent, authenticate, and start");
-    println!("  vesta list         List all agents");
+    println!("quick start:");
+    println!("  vesta setup        create an agent, authenticate, and start");
+    println!("  vesta list         list all agents");
     println!();
-    println!("Run 'vesta --help' for all commands.");
+    println!("run 'vesta --help' for all commands.");
 }
 
 fn run(cli: Cli) {
