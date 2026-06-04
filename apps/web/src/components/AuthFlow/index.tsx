@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProgressBar } from "@/components/ProgressBar";
-import { fadeSlide } from "@/lib/motion";
+import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 
 interface AuthFlowProps {
@@ -152,7 +152,7 @@ export function AuthFlow({
     <AnimatePresence mode="wait">
       <motion.div
         key={authState}
-        {...fadeSlide}
+        {...fade}
         className="min-w-0 w-full max-w-full"
       >
         {content}
