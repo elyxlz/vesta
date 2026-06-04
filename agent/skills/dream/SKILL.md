@@ -109,6 +109,9 @@ MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every sy
 - If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
 - When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md"). MEMORY.md is for things needed at all times, not the full archive.
 
+**Lessons (never zero-sum):**
+- Lessons are durable, never delete a hard-won lesson to free space. When the Mistakes and Corrections or Rules sections grow past their budget, move the older still-true lessons into `~/agent/LESSONS.md` (a permanent, un-injected archive) and keep only a one-line pointer plus the lessons that must fire on every message. The nightly retrospective greps LESSONS.md too. MEMORY.md is the always-loaded hot set; LESSONS.md is the cold, searchable record so growth is additive, not zero-sum.
+
 **Keep:**
 - Core identity, preferences, relationships, security rules
 - Active user context, open threads
