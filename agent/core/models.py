@@ -25,9 +25,9 @@ TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
 
-CLEAN_RESTART = "restart — clean restart"
-NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
-CRASH_RESTART = "crash — restarted after unexpected exit"
+CLEAN_RESTART = "restart: clean restart"
+NIGHTLY_RESTART = "nightly: dreamer ran, session cleared for fresh context"
+CRASH_RESTART = "crash: restarted after unexpected exit"
 FIRST_START_REASON = "first start"
 
 

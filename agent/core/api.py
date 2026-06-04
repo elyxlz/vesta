@@ -109,8 +109,8 @@ async def _history_handler(request: web.Request) -> web.Response:
     """Paginated event history.
 
     Query params:
-      cursor (int, optional) — fetch events before this id. Omit for most recent.
-      limit  (int, optional) — max events to return (default: EventBus.PAGE_SIZE).
+      cursor (int, optional): fetch events before this id. Omit for most recent.
+      limit  (int, optional): max events to return (default: EventBus.PAGE_SIZE).
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -139,8 +139,8 @@ async def _search_handler(request: web.Request) -> web.Response:
     """Full-text search over events.
 
     Query params:
-      q     (str, required)  — FTS5 search query.
-      limit (int, optional)  — max results (default: 20).
+      q     (str, required): FTS5 search query.
+      limit (int, optional): max results (default: 20).
     """
     event_bus: EventBus = request.app["event_bus"]
     query = request.query.get("q", "").strip()
@@ -210,7 +210,7 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
     """Report the agent's LLM-provider authentication state.
 
     Read by vestad on every status poll to surface 'alive' vs 'not_authenticated'
-    to the web UI. Agent is the source of truth — vestad knows nothing about
+    to the web UI. Agent is the source of truth: vestad knows nothing about
     credential file formats."""
     state = request.app["state"]
     if state.provider_status is None:

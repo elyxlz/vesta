@@ -79,17 +79,17 @@ def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: 
     if state.graceful_shutdown.is_set():
         return
     if task.cancelled():
-        logger.error("message_processor cancelled unexpectedly — restarting")
-        state.persisted.last_restart_reason = "crash — processor cancelled unexpectedly"
+        logger.error("message_processor cancelled unexpectedly, restarting")
+        state.persisted.last_restart_reason = "crash: processor cancelled unexpectedly"
     else:
         exc = task.exception()
         if exc is not None:
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
-            state.persisted.last_restart_reason = f"crash — {type(exc).__name__}: {exc}"
+            state.persisted.last_restart_reason = f"crash: {type(exc).__name__}: {exc}"
         else:
-            logger.error("message_processor exited without error — restarting")
-            state.persisted.last_restart_reason = "crash — processor exited silently"
+            logger.error("message_processor exited without error, restarting")
+            state.persisted.last_restart_reason = "crash: processor exited silently"
     state_store.save_state(state.persisted, config)
     state.graceful_shutdown.set()
 
