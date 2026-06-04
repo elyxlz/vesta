@@ -25,3 +25,7 @@ If there's nothing worth saying, stay quiet. Background action beats a message t
 
 - Read MEMORY.md's user state and the recent conversation before acting
 - Check the `tasks` skill for anything overdue or upcoming
+
+## Every tick
+
+If a goal has been blocked on the user for more than one wake window, it is a candidate to nudge the user about, not a candidate to hold silently, provided the user has asked to be pushed on his own tasks.
