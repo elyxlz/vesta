@@ -138,6 +138,9 @@ The dreamer updates this nightly as a rolling snapshot, not a log.
 **Open threads**: [Unfinished conversations, unmade decisions]
 **Psych sketch**: [What drives them. What they avoid. Blind spots. How they handle stress, conflict, praise. Evolves slowly]
 
+### Self (who [agent_name] is becoming)
+A few lines, updated slowly by the dreamer. Standing opinions and taste formed over time. Curiosity threads worth returning to. What changed in how she sees things. This is hers, not about the user. Keep it to six lines or fewer. The Charter is the invariant spine; this is the slowly evolving self.
+
 ## 5. LEARNED PATTERNS
 
 ### Notification Preferences
