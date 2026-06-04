@@ -3,7 +3,12 @@ import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
+import {
+  FieldGroup,
+  Field,
+  FieldLabel,
+  FieldDescription,
+} from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -79,6 +84,10 @@ export function Connect() {
                   onChange={(e) => setHost(e.target.value)}
                   className="text-center text-sm"
                 />
+                <FieldDescription className="text-center">
+                  the tunnel url vestad printed on first run, e.g.
+                  https://name.trycloudflare.com
+                </FieldDescription>
               </Field>
             )}
             <Field>
@@ -95,6 +104,9 @@ export function Connect() {
                 onChange={(e) => setApiKey(e.target.value)}
                 className="text-center text-sm"
               />
+              <FieldDescription className="text-center">
+                the api key from ~/.config/vesta/vestad/api-key
+              </FieldDescription>
             </Field>
           </FieldGroup>
 
