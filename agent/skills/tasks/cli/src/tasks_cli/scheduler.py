@@ -10,7 +10,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 
 def create_scheduler() -> BackgroundScheduler:
+    # Pin scheduler timezone to UTC so cron triggers fire at the UTC hour/minute
+    # extracted from user input in commands.remind_set. Without this, APScheduler
+    # defaults to the container's local timezone (tzlocal.get_localzone()), and
+    # cron hour/minute set as UTC fire one offset off (e.g. a 07:45 BST schedule
+    # fires at 06:45 BST on a London-TZ container).
     return BackgroundScheduler(
+        timezone=UTC,
         job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
     )
 

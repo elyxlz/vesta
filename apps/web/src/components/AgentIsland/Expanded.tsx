@@ -42,6 +42,7 @@ export function AgentIslandExpanded({
           </CardTitle>
         </motion.div>
         <motion.div
+          aria-live="polite"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ ...agentIslandContentTransition, delay: 0.1 }}

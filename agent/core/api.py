@@ -153,8 +153,9 @@ async def _search_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid limit"}, status=400)
     try:
         results = event_bus.search(query, limit=limit)
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as e:
         # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
+        logger.warning(f"search query rejected: {e}")
         return web.json_response({"error": "invalid search query"}, status=400)
     except sqlite3.Error as e:
         # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.

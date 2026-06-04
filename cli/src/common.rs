@@ -124,7 +124,7 @@ pub fn save_config(config: &VestaConfig) -> Result<(), String> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create config dir: {e}"))?;
     let path = config_path();
-    let json = serde_json::to_string_pretty(config).unwrap();
+    let json = serde_json::to_string_pretty(config).map_err(|e| format!("failed to serialize config: {e}"))?;
     std::fs::write(&path, json).map_err(|e| format!("failed to write config.json: {e}"))?;
     #[cfg(unix)]
     {

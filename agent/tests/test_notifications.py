@@ -10,12 +10,15 @@ import core.models as vm
 from core.loops import (
     _is_new_json,
     _load_notification_files,
+    _notification_watcher,
     delete_notification_files,
     format_notification_batch,
     load_notifications,
     load_new_notifications,
+    monitor_loop,
     process_batch,
 )
+from wait_util import wait_for_condition
 
 
 # --- _load_notification_files ---
@@ -375,3 +378,157 @@ def test_is_new_json(change_val, path, expected):
 
     change = Change(change_val)
     assert _is_new_json(change, path) is expected
+
+
+# --- monitor_loop routing ---
+
+
+def _passive_config(tmp_path):
+    """Config that disables proactive/dreamer side effects so monitor_loop only does notification routing."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    config.ephemeral = True  # no dreamer drops
+    return config
+
+
+def _write_notif(directory, stem, *, interrupt, source="test", type_="message"):
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type=type_, interrupt=interrupt, body="hi")
+    path = directory / f"{stem}.json"
+    path.write_text(notif.model_dump_json())
+    return path
+
+
+async def _run_monitor(queue, *, state, config):
+    """Start monitor_loop as a task with load_prompt stubbed so external batches do not read disk prompts."""
+    with patch("core.loops.load_prompt", return_value=""):
+        task = asyncio.create_task(monitor_loop(queue, state=state, config=config))
+        try:
+            yield task
+        finally:
+            state.shutdown_event.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
+    """An interrupt:true notification is queued immediately even when the bus is not idle."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("thinking")  # explicitly NOT idle
+    queue: asyncio.Queue = asyncio.Queue()
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        _write_notif(config.notifications_dir, "urgent", interrupt=True)
+        await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
+
+        prompt, is_user = await queue.get()
+        assert '<notification source="test" type="message">' in prompt
+        assert is_user is False
+        assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
+    finally:
+        await runner.aclose()
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
+    """A passive notification is held while the bus is not idle, then flushed exactly once on idle."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("thinking")  # held while busy
+    queue: asyncio.Queue = asyncio.Queue()
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        path = _write_notif(config.notifications_dir, "passive", interrupt=False)
+
+        # While not idle, the passive notification must stay on disk and not be queued.
+        await wait_for_condition(lambda: not path.exists() or queue.qsize() == 0)
+        assert queue.empty(), "passive notification must not be queued while bus is not idle"
+        assert path.exists(), "passive file stays on disk until the batch flushes"
+
+        # Flip to idle; the held batch flushes on the next tick.
+        state.event_bus.set_state("idle")
+        await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
+
+        prompt, is_user = await queue.get()
+        assert '<notification source="test" type="message">' in prompt
+        assert is_user is False
+
+        # Exactly once: the file is deleted and nothing else lands in the queue.
+        await wait_for_condition(lambda: not path.exists(), message="flushed passive file should be deleted")
+        await asyncio.sleep(0.05)
+        assert queue.empty(), "passive batch must flush exactly once"
+    finally:
+        await runner.aclose()
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
+    """A passive file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("thinking")  # keep passive batch pending across ticks
+    queue: asyncio.Queue = asyncio.Queue()
+
+    notify_taps: list[None] = []
+    real_load = load_new_notifications
+
+    async def counting_load(*, state, config):
+        notify_taps.append(None)
+        return await real_load(state=state, config=config)
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        with patch("core.loops.load_new_notifications", counting_load):
+            path = _write_notif(config.notifications_dir, "dup", interrupt=False)
+            # Wait for the loader to observe the file across at least two ticks while held (not idle).
+            await wait_for_condition(lambda: len(notify_taps) >= 2, message="monitor_loop did not tick twice")
+            assert queue.empty(), "held passive file must not be queued while not idle"
+
+            state.event_bus.set_state("idle")
+            await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed")
+            await wait_for_condition(lambda: not path.exists(), message="flushed file should be deleted")
+            await asyncio.sleep(0.05)
+
+            # Despite being observed on multiple ticks, the file produces a single queued batch.
+            assert queue.qsize() == 1, f"passive file must be queued once, got {queue.qsize()}"
+    finally:
+        await runner.aclose()
+
+
+# --- _notification_watcher local-stop bridge ---
+
+
+@pytest.mark.anyio
+async def test_notification_watcher_signals_then_stops_on_shutdown(tmp_path):
+    """The watcher fires `notify` on a new .json file and returns promptly when the shared shutdown event is set."""
+    notifications_dir = tmp_path / "notifications"
+    notifications_dir.mkdir(parents=True, exist_ok=True)
+    notify = asyncio.Event()
+    shutdown = asyncio.Event()
+
+    task = asyncio.create_task(_notification_watcher(notify, notifications_dir=notifications_dir, shutdown=shutdown))
+    try:
+        # awatch needs a moment to install its filesystem watch before changes register.
+        await asyncio.sleep(0.2)
+        (notifications_dir / "new.json").write_text('{"x": 1}')
+        await wait_for_condition(notify.is_set, message="watcher never signalled notify on a new .json file")
+
+        # Setting the SHARED shutdown event must bridge into the watcher's local stop and end the coroutine.
+        shutdown.set()
+        await wait_for_condition(task.done, message="watcher did not stop after shutdown_event was set")
+        await task  # must not raise
+        # The bridge means awatch only ever touched its own local stop event; the shared one stays exactly as we set it.
+        assert shutdown.is_set(), "watcher teardown must not clear the shared shutdown event"
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
