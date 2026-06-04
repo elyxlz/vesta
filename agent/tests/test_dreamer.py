@@ -2,9 +2,13 @@
 
 import datetime as dt
 import json
-from unittest.mock import patch
+import typing as tp
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 import core.models as vm
+from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
@@ -148,3 +152,84 @@ def test_drop_does_not_persist_last_dreamer_run(tmp_path):
         process_nightly_memory(state=state, config=config)
 
     assert state.persisted.last_dreamer_run is None
+
+
+# --- mark_dreamer_complete: keep the session, then compact + restart (not a hard reset) ---
+
+
+def _mark_dreamer_complete_handler(state, config):
+    from core.tools import build_vesta_tools_server
+
+    server = build_vesta_tools_server(state, config)
+    return next(t.handler for t in server.tools if t.name == "mark_dreamer_complete")
+
+
+@pytest.mark.anyio
+async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tmp_path):
+    """The session is kept (so the restart resumes the compacted conversation) and the restart
+    is deferred to the idle drain via compact_then_restart — not triggered inline mid-turn."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.persisted.session_id = "sess-abc"
+
+    await _mark_dreamer_complete_handler(state, config)({})
+
+    assert state.persisted.session_id == "sess-abc", "session must be kept for a resuming restart"
+    assert state.compact_then_restart is True
+    assert state.persisted.show_dreamer_summary is True
+    assert state.persisted.last_dreamer_run is not None
+    assert state.persisted.last_restart_reason == vm.NIGHTLY_RESTART
+    # The restart happens after compaction in the drain, so the tool itself must NOT shut down.
+    assert not state.graceful_shutdown.is_set()
+
+
+# --- compact_then_restart_if_requested drain ---
+
+
+@pytest.mark.anyio
+async def test_drain_compacts_then_triggers_restart():
+    from core.loops import compact_then_restart_if_requested
+
+    state = vm.State()
+    client = AsyncMock()
+    state.client = tp.cast(ClaudeSDKClient, client)
+    state.compact_then_restart = True
+
+    await compact_then_restart_if_requested(state=state)
+
+    client.compact.assert_awaited_once()
+    assert state.compact_then_restart is False
+    assert state.compacting is False
+    assert state.graceful_shutdown.is_set()
+
+
+@pytest.mark.anyio
+async def test_drain_is_noop_when_not_requested():
+    from core.loops import compact_then_restart_if_requested
+
+    state = vm.State()
+    client = AsyncMock()
+    state.client = tp.cast(ClaudeSDKClient, client)
+
+    await compact_then_restart_if_requested(state=state)
+
+    client.compact.assert_not_awaited()
+    assert not state.graceful_shutdown.is_set()
+
+
+@pytest.mark.anyio
+async def test_drain_restarts_even_when_compaction_fails():
+    """A failed compaction must not strand the agent: it logs and restarts anyway (resume still
+    works on the un-compacted session)."""
+    from core.loops import compact_then_restart_if_requested
+
+    state = vm.State()
+    client = AsyncMock()
+    client.compact.side_effect = ClaudeSDKError("boom")
+    state.client = tp.cast(ClaudeSDKClient, client)
+    state.compact_then_restart = True
+
+    await compact_then_restart_if_requested(state=state)
+
+    assert state.compacting is False
+    assert state.graceful_shutdown.is_set()

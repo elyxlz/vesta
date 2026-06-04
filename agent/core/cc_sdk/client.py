@@ -41,7 +41,15 @@ _EXIT_MARKER = "__CC_EXIT__:"
 _STARTUP_TIMEOUT_S = 120.0
 _POLL_S = 0.15
 _POST_STOP_DRAIN_S = 2.5
-_ALWAYS_EVENTS = ("SessionStart", "Stop")
+# Manual /compact fires PreCompact but never a Stop hook, and the summarization request
+# between them can run for tens of seconds with no transcript writes — so completion is the
+# isCompactSummary transcript line, not quiescence. Both waits are deliberately generous: the
+# nightly restart that drives compact() is not latency sensitive, and a full day-sized context
+# summarizes slowly. Erring long only costs a wait before restarting if compaction truly hangs;
+# erring short would abandon a still-running compaction and restart on the un-compacted session.
+_COMPACT_START_TIMEOUT_S = 60.0
+_COMPACT_TIMEOUT_S = 900.0
+_ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
 _DEFAULT_MAX_TOKENS = 200_000
 _BETA_1M = "context-1m-2025-08-07"
 
@@ -136,6 +144,7 @@ class ClaudeSDKClient:
         self._exit_code: int | None = None
         self._stderr_read = 0
         self._ready = asyncio.Event()
+        self._compaction_started = asyncio.Event()
         self._monitor_task: asyncio.Task[None] | None = None
 
     # --- public API ---
@@ -263,6 +272,42 @@ class ClaudeSDKClient:
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
+    async def compact(self, instructions: str = "") -> None:
+        """Compact the conversation in place via `/compact` and wait for it to finish.
+
+        Manual /compact rewrites the SAME session transcript (resume keeps working) and never
+        fires a Stop hook, so this does NOT touch the turn/Stop accounting query() relies on.
+        It waits for PreCompact (compaction began), then for the isCompactSummary transcript
+        line (compaction finished) — not for quiescence, since the summarization request can
+        leave the transcript silent for tens of seconds mid-compaction. Both waits are bounded;
+        on timeout it logs and returns so a caller that compacts-then-restarts still proceeds."""
+        if self._transcript_path is None:
+            self._transcript_path = self._find_transcript()
+        cursor = self._transcript_path.stat().st_size if self._transcript_path and self._transcript_path.exists() else 0
+        command = f"/compact {instructions}".strip()
+        self._compaction_started.clear()
+        await tmux.paste_text(self._tmux_socket, self._tmux_session, command)
+        await asyncio.sleep(0.1)
+        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Enter")
+        try:
+            await asyncio.wait_for(self._compaction_started.wait(), _COMPACT_START_TIMEOUT_S)
+        except TimeoutError:
+            self._log("compact: PreCompact never fired — nothing to compact")
+            return
+        if self._transcript_path is None:
+            self._log("compact: no transcript to watch for the summary")
+            return
+        deadline = time.monotonic() + _COMPACT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if self._exit_code is not None:
+                raise ClaudeSDKError(f"claude exited during compaction (code {self._exit_code})\n{self._stderr_tail()}")
+            objects, cursor = transcript.read_new_objects(self._transcript_path, cursor)
+            if any(transcript.is_compact_summary(obj) for obj in objects):
+                self._log("compact: summary written")
+                return
+            await asyncio.sleep(_POLL_S)
+        self._log("compact: timed out waiting for the compaction summary")
+
     # --- internals ---
 
     def _register_internal_hooks(self) -> None:
@@ -274,8 +319,12 @@ class ClaudeSDKClient:
         async def on_stop(payload: dict[str, tp.Any]) -> None:
             self._stops_received += 1
 
+        async def on_precompact(payload: dict[str, tp.Any]) -> None:
+            self._compaction_started.set()
+
         self._bridge.on("SessionStart", on_session_start)
         self._bridge.on("Stop", on_stop)
+        self._bridge.on("PreCompact", on_precompact)
 
     def _hook_events(self) -> list[str]:
         events = {str(e) for e in self._options.hooks}

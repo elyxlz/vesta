@@ -7,6 +7,7 @@ fn _point_harness_at_built_vestad() {
 }
 
 mod common;
+mod dreamer;
 mod file_ops;
 mod interrupt;
 mod mcp_tools;

@@ -105,19 +105,21 @@ def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
 
     @tool(
         "mark_dreamer_complete",
-        "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, queues a session reset on the next restart, and triggers a graceful shutdown so the agent comes back with fresh context.",
+        "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, then (once this turn ends) compacts the conversation and restarts the agent, which resumes the compacted session — so you come back with a clean but continuous context rather than a blank slate.",
         {},
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
         state.persisted.show_dreamer_summary = True
-        state.persisted.session_id = None
         state.persisted.last_restart_reason = vm.NIGHTLY_RESTART
         state_store.save_state(state.persisted, config)
-        logger.dreamer("Dreamer marked complete by agent — clearing session and restarting")
-        if state.graceful_shutdown is not None:
-            state.graceful_shutdown.set()
-        return {"content": [{"type": "text", "text": "dreamer marked complete; restart imminent"}]}
+        # /compact only works while the session is idle, so we can't compact from inside this
+        # mid-turn tool call. Flag it; the message processor compacts at the next idle point and
+        # then triggers the restart. The session_id is intentionally kept so the restart resumes
+        # the compacted conversation instead of starting fresh.
+        state.compact_then_restart = True
+        logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
+        return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
     return create_sdk_mcp_server(
         "vesta-tools",
