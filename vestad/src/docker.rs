@@ -66,6 +66,8 @@ const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
+const OAUTH_HTTP_TIMEOUT_SECS: u64 = 30;
+
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
 pub const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
@@ -1440,10 +1442,17 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
 
     let response = client.post(OAUTH_TOKEN_URL)
         .header("User-Agent", "axios/1.13.6")
+        .timeout(std::time::Duration::from_secs(OAUTH_HTTP_TIMEOUT_SECS))
         .json(&body)
         .send()
         .await
-        .map_err(|e| DockerError::Failed(format!("token exchange request failed: {e}")))?;
+        .map_err(|e| {
+            if e.is_timeout() {
+                DockerError::Failed(format!("token exchange timed out after {OAUTH_HTTP_TIMEOUT_SECS}s"))
+            } else {
+                DockerError::Failed(format!("token exchange request failed: {e}"))
+            }
+        })?;
 
     let response_str = response.text().await
         .map_err(|e| DockerError::Failed(format!("failed to read token response: {e}")))?;
