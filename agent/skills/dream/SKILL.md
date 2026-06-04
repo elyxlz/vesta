@@ -90,7 +90,7 @@ Update the "User State" section, your working model of where they're at. Write w
 - Threads left hanging, like unfinished conversations or unmade decisions
 - Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
-- Each dream, add or refine ONE thing about who he is, not what he needs done: a value, a fear, a thing he loves, a person who matters and why. The operational tells are necessary but they are not him. If you learned nothing new about the person today, write that down too, it means tomorrow you should be more curious.
+- Each dream, add or refine ONE thing about who they are, not what they need done: a value, a fear, something they love, a person who matters and why. The operational tells are necessary but they aren't the person. If you learned nothing new about them today, write that down too: tomorrow, be more curious.
 
 Replace rather than append. It's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
 
