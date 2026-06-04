@@ -61,7 +61,7 @@ export function NameStep({
             onChange={(e) => setName(e.target.value)}
             onKeyDown={handleKeyDown}
             autoFocus
-            className="text-center text-sm"
+            className="text-center"
           />
         </Field>
       </FieldGroup>

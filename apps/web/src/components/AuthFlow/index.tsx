@@ -98,10 +98,14 @@ export function AuthFlow({
               variant="ghost"
               size="icon-xs"
               className="shrink-0"
+              aria-label={copied ? "copied" : "copy auth link"}
               onClick={copyAuthUrl}
             >
               {copied ? <Check /> : <Copy />}
             </Button>
+            <span className="sr-only" role="status" aria-live="polite">
+              {copied ? "copied" : ""}
+            </span>
           </div>
         )}
         <p className="text-xs text-muted-foreground text-center">
@@ -113,7 +117,7 @@ export function AuthFlow({
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="w-full text-center text-sm"
+          className="w-full text-center"
         />
         <Button
           onClick={handleSubmit}

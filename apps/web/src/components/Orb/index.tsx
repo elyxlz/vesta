@@ -574,6 +574,8 @@ export function Orb({
   return (
     <div
       ref={containerRef}
+      role="img"
+      aria-label={state}
       style={{ width: size, height: size, position: "relative" }}
     >
       <div

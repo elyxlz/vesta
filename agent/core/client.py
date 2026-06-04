@@ -21,7 +21,7 @@ from . import models as vm
 from . import state_store
 from . import diagnostics
 from . import sdk_parsing
-from .helpers import get_memory_path
+from .helpers import get_constitution_path, get_memory_path
 from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -247,6 +247,15 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
+
+    # Constitution: a user-authored charter set from vestad and bind-mounted read-only,
+    # so the agent cannot edit it. Prepend it ahead of MEMORY.md when non-empty.
+    constitution_path = get_constitution_path(config)
+    if constitution_path.exists():
+        constitution = constitution_path.read_text().strip()
+        if constitution:
+            header = "# Constitution\n\nThe following was set by your user and is immutable. You cannot edit it.\n\n"
+            system_prompt = f"{header}{constitution}\n\n{system_prompt}"
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 

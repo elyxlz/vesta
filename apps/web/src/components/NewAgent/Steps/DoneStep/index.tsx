@@ -20,7 +20,7 @@ export function DoneStep({ agentName }: { agentName: string }) {
         className="mt-2 w-full"
         onClick={() => navigate(`/agent/${agentName}`)}
       >
-        continue
+        say hi
       </Button>
     </div>
   );

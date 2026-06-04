@@ -208,6 +208,7 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
                 variant="ghost"
                 size="icon-sm"
                 className="size-9"
+                aria-label="close logs"
                 onClick={onClose}
               >
                 <X className="size-5" />
