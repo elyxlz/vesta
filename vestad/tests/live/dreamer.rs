@@ -20,7 +20,19 @@ fn wait_for_exec_contains(container: &str, script: &str, needle: &str, timeout: 
     }
 }
 
-const SESSION_ID_PATH: &str = "/root/agent/data/session_id";
+const STATE_JSON_PATH: &str = "/root/agent/data/state.json";
+
+/// Read the persisted Claude session id. It lives as a field inside `state.json` (the standalone
+/// `session_id` file is legacy), so pull it out with the container's python rather than `cat`.
+fn read_session_id(container: &str) -> String {
+    exec_in_container(
+        container,
+        &format!("python3 -c \"import json; print(json.load(open('{STATE_JSON_PATH}'))['session_id'])\""),
+    )
+    .expect("read session_id from state.json")
+    .trim()
+    .to_string()
+}
 
 /// End-to-end of the nightly dreamer's finalize step against real claude: the agent calls
 /// `mark_dreamer_complete`, which must (1) compact the live conversation in place via a real
@@ -33,10 +45,8 @@ fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
         return;
     };
 
-    let session_id_before = exec_in_container(&container, &format!("cat {SESSION_ID_PATH}"))
-        .expect("read session_id before dreamer-complete");
-    let session_id_before = session_id_before.trim().to_string();
-    assert!(!session_id_before.is_empty(), "agent should have a persisted session id before the dream finalizes");
+    let session_id_before = read_session_id(&container);
+    assert!(!session_id_before.is_empty() && session_id_before != "None", "agent should have a persisted session id before the dream finalizes");
 
     // Drive only the finalize step (not a full multi-minute dream): tell the agent to call its
     // mark_dreamer_complete control tool now. That flags compact-then-restart; the message
@@ -69,11 +79,9 @@ fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
         .expect("agent did not come back alive after the dreamer restart");
 
     // The restart kept the session id: it resumed the compacted conversation, it did not reset.
-    let session_id_after = exec_in_container(&container, &format!("cat {SESSION_ID_PATH}"))
-        .expect("read session_id after restart");
+    let session_id_after = read_session_id(&container);
     assert_eq!(
-        session_id_before,
-        session_id_after.trim(),
+        session_id_before, session_id_after,
         "nightly restart must RESUME the compacted session (same session id), not hard-reset it"
     );
 }
