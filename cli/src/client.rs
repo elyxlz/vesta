@@ -42,12 +42,9 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
 
         let actual = cert_fingerprint(end_entity.as_ref());
 
-        if actual == *expected {
-            Ok(rustls::client::danger::ServerCertVerified::assertion())
-        } else {
-            Err(rustls::Error::General(format!(
-                "certificate fingerprint mismatch: expected {expected}, got {actual}"
-            )))
+        match fingerprint_match(expected, &actual) {
+            Ok(()) => Ok(rustls::client::danger::ServerCertVerified::assertion()),
+            Err(msg) => Err(rustls::Error::General(msg)),
         }
     }
     fn verify_tls12_signature(
@@ -70,6 +67,20 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
         rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+/// Compare a pinned (expected) certificate fingerprint against the actual one
+/// computed from the presented cert. Returns the mismatch error message on
+/// rejection. Kept pure (string-only) so the pin comparison is unit-testable
+/// without opening a TLS connection.
+fn fingerprint_match(expected: &str, actual: &str) -> Result<(), String> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "certificate fingerprint mismatch: expected {expected}, got {actual}"
+        ))
     }
 }
 
@@ -114,12 +125,19 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
         .ok()
         .and_then(|body| extract_server_error(&body));
 
+    Err(status_error_message(status, error_msg))
+}
+
+/// Map a non-2xx status code plus an optional server-supplied error message to
+/// the user-facing error string. Kept pure (no network I/O) so the mapping is
+/// directly unit-testable.
+fn status_error_message(status: u16, error_msg: Option<String>) -> String {
     match status {
-        401 => Err("invalid API key".into()),
-        404 => Err(error_msg.unwrap_or_else(|| "not found".into())),
-        409 => Err(error_msg.unwrap_or_else(|| "conflict".into())),
-        503 => Err(error_msg.unwrap_or_else(|| "vestad is not reachable — is it running?".into())),
-        _ => Err(error_msg.unwrap_or_else(|| format!("server error ({status})"))),
+        401 => "invalid API key".into(),
+        404 => error_msg.unwrap_or_else(|| "not found".into()),
+        409 => error_msg.unwrap_or_else(|| "conflict".into()),
+        503 => error_msg.unwrap_or_else(|| "vestad is not reachable — is it running?".into()),
+        _ => error_msg.unwrap_or_else(|| format!("server error ({status})")),
     }
 }
 
@@ -794,5 +812,103 @@ mod tests {
         assert!(url.contains("/ws?"), "chat URL must use /ws, got: {url}");
         assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {url}");
         assert_eq!(url, "ws://127.0.0.1:9001/agents/myagent/ws?token=mytoken");
+    }
+
+    #[test]
+    fn extract_server_error_reads_error_field() {
+        assert_eq!(
+            extract_server_error(r#"{"error":"agent already exists"}"#),
+            Some("agent already exists".to_string())
+        );
+        // Missing/non-string error field or non-JSON body yields None.
+        assert_eq!(extract_server_error(r#"{"detail":"nope"}"#), None);
+        assert_eq!(extract_server_error(r#"{"error":42}"#), None);
+        assert_eq!(extract_server_error("not json"), None);
+    }
+
+    #[test]
+    fn status_error_message_maps_status_and_body() {
+        struct Case {
+            status: u16,
+            body: Option<&'static str>,
+            expected: &'static str,
+        }
+        let cases = [
+            // 401 is fixed regardless of any server-supplied message.
+            Case { status: 401, body: Some("ignored"), expected: "invalid API key" },
+            Case { status: 401, body: None, expected: "invalid API key" },
+            // 404/409/503 prefer the server message, fall back to a default.
+            Case { status: 404, body: Some("no such agent"), expected: "no such agent" },
+            Case { status: 404, body: None, expected: "not found" },
+            Case { status: 409, body: Some("name taken"), expected: "name taken" },
+            Case { status: 409, body: None, expected: "conflict" },
+            Case { status: 503, body: Some("down for maintenance"), expected: "down for maintenance" },
+            Case { status: 503, body: None, expected: "vestad is not reachable — is it running?" },
+            // Other statuses fall through to the generic formatted default.
+            Case { status: 500, body: Some("boom"), expected: "boom" },
+            Case { status: 500, body: None, expected: "server error (500)" },
+            Case { status: 418, body: None, expected: "server error (418)" },
+        ];
+        for case in cases {
+            assert_eq!(
+                status_error_message(case.status, case.body.map(str::to_string)),
+                case.expected,
+                "status {} with body {:?}",
+                case.status,
+                case.body
+            );
+        }
+    }
+
+    #[test]
+    fn extract_latest_version_strips_v_prefix() {
+        assert_eq!(
+            extract_latest_version(&serde_json::json!({"latest_version": "v1.2.3"})),
+            Some("1.2.3".to_string())
+        );
+        assert_eq!(
+            extract_latest_version(&serde_json::json!({"latest_version": " 0.4.0 "})),
+            Some("0.4.0".to_string())
+        );
+        assert_eq!(extract_latest_version(&serde_json::json!({"latest_version": ""})), None);
+        assert_eq!(extract_latest_version(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn start_all_response_deserializes_results() {
+        let body = r#"{"results":[{"name":"alpha","ok":true,"error":null},{"name":"beta","ok":false,"error":"boom"}]}"#;
+        let parsed: StartAllResponse = serde_json::from_str(body).expect("valid StartAllResponse body");
+        assert_eq!(parsed.results.len(), 2);
+        assert_eq!(parsed.results[0].name, "alpha");
+        assert!(parsed.results[0].ok);
+        assert_eq!(parsed.results[1].error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn fingerprint_match_accepts_matching_pin() {
+        let pin = "sha256:AA:BB:CC";
+        assert!(fingerprint_match(pin, pin).is_ok());
+    }
+
+    #[test]
+    fn fingerprint_match_rejects_mismatched_pin() {
+        let expected = "sha256:AA:BB:CC";
+        let actual = "sha256:DD:EE:FF";
+        let err = fingerprint_match(expected, actual).expect_err("mismatched pin must be rejected");
+        assert!(err.contains("fingerprint mismatch"), "got: {err}");
+        assert!(err.contains(expected), "error must name expected pin, got: {err}");
+        assert!(err.contains(actual), "error must name actual pin, got: {err}");
+    }
+
+    #[test]
+    fn cert_fingerprint_is_stable_sha256_hex() {
+        // SHA-256 of the empty input, formatted as the pin string.
+        let fp = cert_fingerprint(&[]);
+        assert_eq!(
+            fp,
+            "sha256:E3:B0:C4:42:98:FC:1C:14:9A:FB:F4:C8:99:6F:B9:24:27:AE:41:E4:64:9B:93:4C:A4:95:99:1B:78:52:B8:55"
+        );
+        // A matching computed fingerprint is accepted by the pin comparison.
+        assert!(fingerprint_match(&fp, &cert_fingerprint(&[])).is_ok());
     }
 }
