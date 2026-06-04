@@ -43,10 +43,13 @@ jobs:
           fi
           echo "✓ $TAG is a prerelease, promoting to stable"
 
+      # Full history: the production push is a force-push of the tag's commit, and a
+      # shallow checkout can be rejected with "shallow update not allowed".
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
           token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

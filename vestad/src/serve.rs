@@ -2454,6 +2454,7 @@ mod tests {
             "latest_version": "0.1.1",
             "update_available": true,
             "dev_mode": false,
+            "channel": "stable",
         });
 
         serde_json::json!({
