@@ -1,15 +1,17 @@
 import { useNavigate } from "react-router-dom";
-import { Check } from "lucide-react";
+import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
+import { Orb } from "@/components/Orb";
+import { fade } from "@/lib/motion";
 
 export function DoneStep({ agentName }: { agentName: string }) {
   const navigate = useNavigate();
 
   return (
     <div className="flex flex-col items-center w-[260px] max-w-full px-4">
-      <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center">
-        <Check size={20} className="text-primary" />
-      </div>
+      <motion.div {...fade}>
+        <Orb state="alive" size={96} />
+      </motion.div>
       <div className="mt-3 flex flex-col items-center gap-1 text-center">
         <h2 className="text-base font-semibold leading-tight">
           {agentName} is ready
