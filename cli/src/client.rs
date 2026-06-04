@@ -630,6 +630,13 @@ fn consume_sse_log_stream(
 
 const CHAT_READ_TIMEOUT_MS: u64 = 100;
 
+/// How long to keep retrying the chat WebSocket after an unexpected drop before giving up.
+/// The agent bounces its in-container WS server on every self-restart (e.g. installing a
+/// skill), so a transient drop usually heals within a few seconds once it boots back up.
+const CHAT_RECONNECT_WINDOW_SECS: u64 = 90;
+/// Delay between reconnect attempts within the window.
+const CHAT_RECONNECT_DELAY_MS: u64 = 1500;
+
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_TS: &str = "\x1b[90m";
 const ANSI_YOU: &str = "\x1b[1;36m";
@@ -661,6 +668,117 @@ fn render_line(time: &str, nick: &str, nick_color: &str, text: &str, color: bool
     }
 }
 
+type ChatSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+
+/// How a single chat session ended.
+enum SessionEnd {
+    /// The server closed the stream cleanly (agent stopped) — exit without retrying.
+    Closed,
+    /// The connection dropped unexpectedly — the agent is likely restarting, so reconnect.
+    Lost(String),
+}
+
+/// Open one chat WebSocket. Shares the same TLS fingerprint verification as the HTTP client.
+fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String> {
+    let parsed: url::Url = url.parse().map_err(|e| format!("invalid ws url: {e}"))?;
+    let host = parsed.host_str().unwrap_or("localhost");
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let tcp = std::net::TcpStream::connect((host, port))
+        .map_err(|e| format!("ws tcp connect failed: {e}"))?;
+    tcp.set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
+        .map_err(|e| format!("failed to set read timeout: {e}"))?;
+    let connector =
+        tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
+    let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
+        .map_err(|e| format!("ws connect failed: {e}"))?;
+    Ok(socket)
+}
+
+/// Pump one connected socket until it ends. `render_history` is false on reconnect so the
+/// replayed backlog isn't printed twice. Input typed while disconnected stays buffered in `rx`
+/// and is flushed here once the socket is live again.
+fn run_chat_session(
+    socket: &mut ChatSocket,
+    rx: &std::sync::mpsc::Receiver<String>,
+    name: &str,
+    color: bool,
+    render_history: bool,
+) -> SessionEnd {
+    loop {
+        if let Ok(input) = rx.try_recv() {
+            if !input.is_empty() {
+                if color {
+                    print!("\x1b[1A\x1b[2K\r");
+                }
+                render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
+                std::io::stdout().flush().ok();
+                let msg = serde_json::json!({"type": "message", "text": input});
+                if let Err(send_err) = socket.send(tungstenite::Message::Text(msg.to_string().into())) {
+                    return SessionEnd::Lost(format!("connection lost while sending: {send_err}"));
+                }
+            }
+        }
+
+        match socket.read() {
+            Ok(tungstenite::Message::Text(text)) => {
+                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
+                    match msg["type"].as_str() {
+                        Some("chat") => {
+                            if let Some(content) = msg["text"].as_str() {
+                                let time = time_from_ts(msg["ts"].as_str().unwrap_or(""));
+                                render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
+                                std::io::stdout().flush().ok();
+                            }
+                        }
+                        Some("history") if render_history => {
+                            if let Some(events) = msg["events"].as_array() {
+                                for event in events {
+                                    let event_type = event["type"].as_str().unwrap_or("");
+                                    let time = time_from_ts(event["ts"].as_str().unwrap_or(""));
+                                    if event_type == "user" {
+                                        if let Some(content) = event["text"].as_str() {
+                                            render_line(&time, "you", ANSI_YOU, content.trim_end(), color);
+                                        }
+                                    } else if event_type == "chat" {
+                                        if let Some(content) = event["text"].as_str() {
+                                            render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
+                                        }
+                                    }
+                                }
+                                std::io::stdout().flush().ok();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
+                return SessionEnd::Closed;
+            }
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(read_err) => return SessionEnd::Lost(format!("connection lost: {read_err}")),
+        }
+    }
+}
+
+/// Retry connecting for up to `CHAT_RECONNECT_WINDOW_SECS` after a drop. Returns the fresh
+/// socket once the agent is reachable again, or `None` if the window elapses first.
+fn reconnect_chat_socket(client: &Client, url: &str, name: &str, reason: &str) -> Option<ChatSocket> {
+    eprintln!("{reason}; agent may be restarting, reconnecting to {name}...");
+    let deadline = Instant::now() + Duration::from_secs(CHAT_RECONNECT_WINDOW_SECS);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(CHAT_RECONNECT_DELAY_MS));
+        if let Ok(socket) = connect_chat_socket(client, url) {
+            eprintln!("reconnected to {name}.");
+            return Some(socket);
+        }
+    }
+    None
+}
+
 /// Connect to Chat WebSocket and run interactive chat (CLI-only).
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let url = format!(
@@ -670,19 +788,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         client.api_key()
     );
 
-    let parsed: url::Url =
-        url.parse().map_err(|e| format!("invalid ws url: {e}"))?;
-    let host = parsed.host_str().unwrap_or("localhost");
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let tcp = std::net::TcpStream::connect((host, port))
-        .map_err(|e| format!("ws tcp connect failed: {e}"))?;
-    tcp.set_read_timeout(Some(std::time::Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
-        .map_err(|e| format!("failed to set read timeout: {e}"))?;
-    let connector =
-        tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
-    let (mut socket, _) =
-        tungstenite::client_tls_with_config(url, tcp, None, Some(connector))
-            .map_err(|e| format!("ws connect failed: {e}"))?;
+    let mut socket = connect_chat_socket(client, &url)?;
 
     let color = std::io::stdout().is_terminal();
 
@@ -707,81 +813,51 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         }
     });
 
-    let mut loop_error: Option<String> = None;
-
+    // The agent bounces its WS server on every self-restart. Rather than crash on the drop,
+    // keep the session alive across restarts: run until the socket ends, then reconnect within
+    // a bounded window. Only a clean server close (agent stopped) or an exhausted window exits.
+    let mut render_history = true;
     loop {
-        if let Ok(input) = rx.try_recv() {
-            if !input.is_empty() {
-                if color {
-                    print!("\x1b[1A\x1b[2K\r");
+        match run_chat_session(&mut socket, &rx, name, color, render_history) {
+            SessionEnd::Closed => return Ok(()),
+            SessionEnd::Lost(reason) => match reconnect_chat_socket(client, &url, name, &reason) {
+                Some(fresh) => {
+                    socket = fresh;
+                    render_history = false;
                 }
-                render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
-                std::io::stdout().flush().ok();
-                let msg = serde_json::json!({"type": "message", "text": input});
-                match socket.send(tungstenite::Message::Text(msg.to_string().into())) {
-                    Ok(_) => {}
-                    Err(send_err) => {
-                        loop_error = Some(format!("connection lost while sending: {send_err}"));
-                        break;
-                    }
-                }
-            }
+                None => return Err(reason),
+            },
         }
-
-        match socket.read() {
-            Ok(tungstenite::Message::Text(text)) => {
-                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    match msg["type"].as_str() {
-                        Some("chat") => {
-                            if let Some(content) = msg["text"].as_str() {
-                                let time = time_from_ts(msg["ts"].as_str().unwrap_or(""));
-                                render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        Some("history") => {
-                            if let Some(events) = msg["events"].as_array() {
-                                for event in events {
-                                    let event_type = event["type"].as_str().unwrap_or("");
-                                    let time = time_from_ts(event["ts"].as_str().unwrap_or(""));
-                                    if event_type == "user" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, "you", ANSI_YOU, content.trim_end(), color);
-                                        }
-                                    } else if event_type == "chat" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                        }
-                                    }
-                                }
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => break,
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(ref e))
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(read_err) => {
-                loop_error = Some(format!("connection lost: {read_err}"));
-                break;
-            }
-        }
-    }
-
-    match loop_error {
-        Some(message) => Err(message),
-        None => Ok(()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_client() -> Client {
+        Client::new(&ServerConfig {
+            url: "https://127.0.0.1:1".to_string(),
+            api_key: "tok".to_string(),
+            cert_fingerprint: None,
+            cert_pem: None,
+        })
+        .expect("client builds")
+    }
+
+    #[test]
+    fn connect_chat_socket_rejects_invalid_url() {
+        let err = connect_chat_socket(&test_client(), "not a ws url").unwrap_err();
+        assert!(err.contains("invalid ws url"), "got: {err}");
+    }
+
+    #[test]
+    fn connect_chat_socket_errors_on_unreachable_port_without_panicking() {
+        // Port 1 on loopback refuses fast — the helper must surface an Err, never panic,
+        // so the reconnect loop can keep retrying.
+        let err = connect_chat_socket(&test_client(), "wss://127.0.0.1:1/agents/x/ws?token=tok").unwrap_err();
+        assert!(err.contains("ws tcp connect failed") || err.contains("ws connect failed"), "got: {err}");
+    }
 
     #[test]
     fn ws_base_url_converts_schemes() {
