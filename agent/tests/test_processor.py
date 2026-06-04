@@ -406,3 +406,42 @@ async def test_log_context_usage_timeout(tmp_path):
 
     with patch("core.diagnostics._CONTEXT_USAGE_TIMEOUT_S", 0.05):
         await asyncio.wait_for(log_context_usage(state), timeout=0.2)
+
+
+@pytest.mark.anyio
+async def test_log_context_usage_emits_warning_event_once_on_crossing(tmp_path):
+    """Crossing above the context warning threshold emits one error event; staying above does not re-emit."""
+    from core.diagnostics import log_context_usage
+
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    mock_client = MagicMock()
+    pct = 92.0
+
+    async def usage():
+        return {"percentage": pct, "totalTokens": 184_000, "maxTokens": 200_000}
+
+    mock_client.get_context_usage = usage
+    state.client = mock_client
+
+    def error_texts() -> list[str]:
+        out: list[str] = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if event["type"] == "error":
+                out.append(event["text"])
+        return out
+
+    await log_context_usage(state)  # crosses into the warning band
+    await log_context_usage(state)  # still above: must not re-emit
+
+    errors = error_texts()
+    assert len(errors) == 1, f"expected one context warning event, got {errors}"
+    assert "above 80%" in errors[0]
+
+    pct = 40.0
+    await log_context_usage(state)  # drops back below: clears the flag, still no new event
+    assert state.context_warning_active is False
+    assert error_texts() == [], "dropping below threshold must not emit"
+    state.event_bus.close()

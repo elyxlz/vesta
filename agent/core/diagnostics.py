@@ -10,6 +10,7 @@ from . import models as vm
 
 _WATCHDOG_THRESHOLDS_S = (60, 120, 300)
 _CONTEXT_USAGE_TIMEOUT_S = 10.0
+_CONTEXT_USAGE_WARN_PCT = 80.0
 
 
 def touch_activity(state: vm.State, label: str) -> None:
@@ -84,6 +85,9 @@ async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
                 alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
                 diag = format_hang_diagnostics(state)
                 logger.warning(f"SDK silent for {threshold}s | {alive_str} | {diag}")
+                # One event per threshold crossing (warned_at gates re-emit), so a multi-minute
+                # hang reaches the observability surface without spamming the stream every poll.
+                state.event_bus.emit({"type": "error", "text": f"SDK silent for {threshold}s | {alive_str} | {diag}"})
         if idle < _WATCHDOG_THRESHOLDS_S[0]:
             warned_at.clear()
 
@@ -96,8 +100,14 @@ async def log_context_usage(state: vm.State) -> None:
         pct = usage["percentage"]
         total = usage["totalTokens"]
         max_tok = usage["maxTokens"]
-        log_fn = logger.warning if pct > 80 else logger.usage
-        log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
+        over_threshold = pct > _CONTEXT_USAGE_WARN_PCT
+        log_fn = logger.warning if over_threshold else logger.usage
+        summary = f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)"
+        log_fn(summary)
+        # Emit once on crossing into the warning band, not on every per-message check.
+        if over_threshold and not state.context_warning_active:
+            state.event_bus.emit({"type": "error", "text": f"Context usage above {_CONTEXT_USAGE_WARN_PCT:.0f}% | {summary}"})
+        state.context_warning_active = over_threshold
     except TimeoutError:
         logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s, skipping")
     except (OSError, RuntimeError, KeyError, TypeError):
