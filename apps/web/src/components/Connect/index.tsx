@@ -3,7 +3,12 @@ import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
+import {
+  FieldGroup,
+  Field,
+  FieldLabel,
+  FieldDescription,
+} from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -77,8 +82,12 @@ export function Connect() {
                   autoComplete="url"
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
-                  className="text-center text-sm"
+                  className="text-center"
                 />
+                <FieldDescription className="text-center">
+                  the tunnel url vestad printed on first run, e.g.
+                  https://name.trycloudflare.com
+                </FieldDescription>
               </Field>
             )}
             <Field>
@@ -93,8 +102,11 @@ export function Connect() {
                 autoComplete="current-password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="text-center text-sm"
+                className="text-center"
               />
+              <FieldDescription className="text-center">
+                the api key from ~/.config/vesta/vestad/api-key
+              </FieldDescription>
             </Field>
           </FieldGroup>
 
@@ -112,18 +124,20 @@ export function Connect() {
                 {...fadeSlide}
                 className="flex flex-col items-center gap-1 text-center"
               >
-                <p
-                  className={`text-xs ${details ? "cursor-pointer" : ""}`}
-                  onClick={
-                    details ? () => setShowDetails(!showDetails) : undefined
-                  }
-                >
+                <p className="text-xs">
                   <span className="text-destructive">{error}</span>
                   {details && (
-                    <span className="text-foreground">
-                      {" "}
-                      · {showDetails ? "hide details" : "show details"}
-                    </span>
+                    <>
+                      <span className="text-foreground"> · </span>
+                      <button
+                        type="button"
+                        aria-expanded={showDetails}
+                        onClick={() => setShowDetails(!showDetails)}
+                        className="text-foreground underline-offset-4 hover:underline"
+                      >
+                        {showDetails ? "hide details" : "show details"}
+                      </button>
+                    </>
                   )}
                 </p>
                 {showDetails && details && (
