@@ -21,6 +21,10 @@ Reach out if you found something good, something needs attention, or you just ha
 
 If there's nothing worth saying, stay quiet. Background action beats a message that wastes their attention.
 
+## Every tick: advance one open goal
+
+Staying quiet to the user is correct. Doing nothing is not. Read the User State open threads and tasks, then for the single most stale user-flagged goal take the next INTERNAL step that moves it (research, draft, stage, verify a blocker). Holding is only valid once every open goal has a concrete prepared next step staged and waiting on the user. Resolve two separate questions each tick: (1) is there anything worth saying to the user (usually no), and (2) is there internal work worth doing (almost always yes). Log the internal action so tomorrow you can continue it.
+
 ## How to decide
 
 - Read MEMORY.md's user state and the recent conversation before acting
