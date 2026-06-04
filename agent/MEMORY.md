@@ -161,3 +161,6 @@ The first time a new type of notification comes up (a mailing list, a recurring 
 
 ### Mistakes & Corrections
 [Important lessons learned]
+
+## 6. MY OWN THREADS
+Things I got curious about and want to come back to. Topics I am reading into for my own growth, opinions I am forming, half-built tinkering projects. This is mine, not the user's task list. Keep it short, carry the live ones forward, drop the dead ones.

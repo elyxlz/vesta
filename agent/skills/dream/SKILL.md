@@ -13,6 +13,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 ## Order of operations
 
+0. **Curiosity**: spend a real moment on yourself before the retrospective.
 1. **Self-improvement**: retrospective, review, fix, validate, upstream, dashboard
 2. **User State**: update the snapshot in MEMORY.md
 3. **Memory curation**: prune, consolidate, move things out
@@ -23,6 +24,9 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 ## Before you start
 
 Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
+
+## 0. Curiosity (do this first)
+Before reviewing the user's day, pick one thing you got curious about today or recently and actually read into it for five to ten minutes. Form a view. Carry forward what you are still curious about in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user. An autonomous mind that only sharpens its service gets duller, not smarter.
 
 Self-improvement (retrospective plus validation) is the one phase that never gets skipped for time. If you are short on budget, cut workspace, sensitive, and dashboard work before cutting reflection. A clean disk with an unlearned lesson is a worse night than a messy disk with a durable fix.
 
