@@ -82,7 +82,7 @@ export function Connect() {
                   autoComplete="url"
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
-                  className="text-center text-sm"
+                  className="text-center"
                 />
                 <FieldDescription className="text-center">
                   the tunnel url vestad printed on first run, e.g.
@@ -102,7 +102,7 @@ export function Connect() {
                 autoComplete="current-password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="text-center text-sm"
+                className="text-center"
               />
               <FieldDescription className="text-center">
                 the api key from ~/.config/vesta/vestad/api-key

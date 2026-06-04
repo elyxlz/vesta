@@ -117,7 +117,7 @@ export function AuthFlow({
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="w-full text-center text-sm"
+          className="w-full text-center"
         />
         <Button
           onClick={handleSubmit}
