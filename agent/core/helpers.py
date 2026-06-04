@@ -7,6 +7,10 @@ def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return config.agent_dir / "MEMORY.md"
 
 
+def get_constitution_path(config: vm.VestaConfig) -> pl.Path:
+    return config.agent_dir / "constitution.md"
+
+
 def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
     path = config.core_prompts_dir / f"{name}.md"
     if path.exists():

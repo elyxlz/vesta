@@ -6,7 +6,7 @@ const MESSAGES = [
   "preparing email &\ncalendar access...",
   "loading browser &\nresearch tools...",
   "setting up reminders & tasks...",
-  "almost there...",
+  "still setting things up...",
 ];
 
 export function CreatingStep() {
@@ -28,7 +28,7 @@ export function CreatingStep() {
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
       <h2 className="text-base font-semibold">setting up</h2>
       <p className="text-xs text-muted-foreground">
-        this may take a couple of mins.
+        first setup can take several minutes.
       </p>
       <ProgressBar message={MESSAGES[msgIdx]} />
     </div>
