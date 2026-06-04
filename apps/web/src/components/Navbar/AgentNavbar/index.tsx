@@ -63,6 +63,7 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
+                  aria-label="dashboard"
                   onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
                 >
                   <LayoutDashboard />
@@ -76,6 +77,7 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
+                  aria-label="home"
                   onClick={() => navigate("/")}
                 >
                   <Home />
@@ -96,7 +98,7 @@ export function AgentNavbar({
                   onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
-                  authenticate
+                  sign in
                 </Button>
               </div>
             )}
@@ -113,7 +115,7 @@ export function AgentNavbar({
                   onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
-                  authenticate
+                  sign in
                 </Button>
               )}
               {showChatButton && (

@@ -1,5 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActionsCard } from "./ActionsCard";
+import { ConstitutionCard } from "./ConstitutionCard";
 import { FilesTab } from "./FilesTab";
 import { KeybindsCard } from "./KeybindsSection";
 import { PlanUsage } from "./PlanUsage";
@@ -28,6 +29,7 @@ export function AgentSettings() {
             </div>
             <div className="flex min-w-0 flex-col gap-4">
               <PlanUsage />
+              <ConstitutionCard />
               <SttCard />
               <TtsCard />
             </div>
