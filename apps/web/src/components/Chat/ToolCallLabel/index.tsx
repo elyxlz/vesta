@@ -3,6 +3,19 @@ import { ChevronRight, Wrench } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
+const TOOL_LABELS: Record<string, string> = {
+  Bash: "ran a command",
+  Read: "read a file",
+  Write: "wrote a file",
+  Edit: "edited a file",
+  Glob: "searched for files",
+  Grep: "searched the code",
+  WebFetch: "fetched a page",
+  WebSearch: "searched the web",
+  TodoWrite: "updated the todo list",
+  Task: "ran a subtask",
+};
+
 export function ToolCallLabel({
   tool,
   input,
@@ -22,7 +35,9 @@ export function ToolCallLabel({
         className="flex items-center gap-1.5 rounded-full border border-muted-foreground/15 bg-muted/50 px-2.5 py-1 cursor-pointer hover:bg-muted/80 transition-colors"
       >
         <Wrench className="size-3 text-muted-foreground/60" />
-        <span className="text-[11px] text-muted-foreground/70">{tool}</span>
+        <span className="text-[11px] text-muted-foreground/70">
+          {TOOL_LABELS[tool] ?? tool}
+        </span>
         <motion.span
           animate={{ rotate: expanded ? 90 : 0 }}
           transition={{ duration: 0.15 }}
