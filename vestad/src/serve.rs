@@ -1705,6 +1705,44 @@ async fn delete_agent_backup_settings_handler(
     }))
 }
 
+// --- Constitution ---
+//
+// A user-authored charter prepended to the agent's system prompt ahead of MEMORY.md.
+// It lives in host config and is bind-mounted read-only into the container, so the agent
+// reads it but cannot edit it. These endpoints sit behind the API-key middleware only
+// (never the agent token), so the agent itself cannot reach them. Like the memory editor,
+// PUT only persists; the client restarts the agent so the new system prompt loads.
+
+#[derive(Deserialize)]
+struct SetConstitutionBody {
+    content: String,
+}
+
+async fn get_constitution_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let content = docker::read_constitution(&state.env_config.agents_dir, &name)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    Ok(Json(serde_json::json!({ "content": content })))
+}
+
+async fn set_constitution_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetConstitutionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    docker::write_constitution(&state.env_config.agents_dir, &name, &body.content)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    tracing::info!(agent = %name, "constitution updated");
+    Ok(ok_json())
+}
+
 // --- Port file ---
 
 pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
@@ -1786,6 +1824,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/agents/{name}/constitution", get(get_constitution_handler))
+        .route("/agents/{name}/constitution", axum::routing::put(set_constitution_handler))
         .route("/agents/{name}/settings", get(get_agent_settings_handler))
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
