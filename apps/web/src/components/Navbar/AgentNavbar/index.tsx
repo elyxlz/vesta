@@ -98,7 +98,7 @@ export function AgentNavbar({
                   onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
-                  authenticate
+                  sign in
                 </Button>
               </div>
             )}
@@ -115,7 +115,7 @@ export function AgentNavbar({
                   onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
-                  authenticate
+                  sign in
                 </Button>
               )}
               {showChatButton && (
