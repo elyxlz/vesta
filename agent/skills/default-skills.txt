@@ -4,7 +4,6 @@ claude-code
 dashboard
 dream
 email-client
-flights
 restart
 skills-registry
 tasks
