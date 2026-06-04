@@ -421,7 +421,7 @@ struct Personality {
 }
 
 async fn list_personalities_handler() -> Json<Vec<Personality>> {
-    const PREFIX: &str = "core/skills/personality/presets/";
+    const PREFIX: &str = "skills/personality/presets/";
     let mut results: Vec<Personality> = Vec::new();
 
     for path in crate::agent_embed::AgentSource::iter() {
