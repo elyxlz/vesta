@@ -68,6 +68,9 @@ class State:
     last_sdk_activity: float = dc.field(default_factory=time.monotonic)
     last_sdk_activity_label: str = "init"
     active_tools: dict[str, ActiveTool] = dc.field(default_factory=dict)
+    # True while context usage is above the warning threshold, so log_context_usage emits
+    # the warning event once on crossing rather than on every per-message check.
+    context_warning_active: bool = False
 
 
 class Notification(pyd.BaseModel):

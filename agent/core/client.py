@@ -69,7 +69,11 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return True
     except TimeoutError:
         diag = diagnostics.format_hang_diagnostics(state)
-        logger.error(f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}")
+        msg = f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}"
+        logger.error(msg)
+        # emit() is synchronous (queue put_nowait + sqlite commit), so the unresponsive-SDK
+        # condition is persisted and fanned out to subscribers before we SIGTERM/exit.
+        state.event_bus.emit({"type": "error", "text": msg})
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)

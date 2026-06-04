@@ -222,6 +222,43 @@ async def test_watchdog_stops_cleanly():
     await sdk_watchdog(state, stop=stop)  # Should not hang
 
 
+@pytest.mark.anyio
+async def test_watchdog_emits_error_event_once_per_threshold(tmp_path):
+    """Crossing a watchdog threshold emits exactly one error event to the bus, not one per poll."""
+    from unittest.mock import patch as _patch
+
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
+    stop = asyncio.Event()
+    seen: list[tp.Any] = []
+
+    def sixty_events() -> list[str]:
+        while not queue.empty():
+            seen.append(queue.get_nowait())
+        return [e["text"] for e in seen if e["type"] == "error" and "SDK silent for 60s" in e["text"]]
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
+        return await original_wait_for(coro, timeout=0.01)
+
+    async def stop_after_some_polls():
+        # Wait until the threshold has fired, then let several more polls run to prove
+        # the event is emitted once per crossing rather than once per poll.
+        await wait_for_condition(lambda: len(sixty_events()) >= 1, message="watchdog never emitted")
+        for _ in range(5):
+            await asyncio.sleep(0.02)
+        stop.set()
+
+    with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+        await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_some_polls())
+
+    assert len(sixty_events()) == 1, f"expected exactly one 60s error event, got {sixty_events()}"
+    state.event_bus.close()
+
+
 # --- Tool duration tracking via hooks ---
 
 
