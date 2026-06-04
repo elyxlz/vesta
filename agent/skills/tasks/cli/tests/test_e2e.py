@@ -1,6 +1,7 @@
 import json
 import os
 import signal
+import socket
 import sqlite3
 import subprocess
 import time
@@ -11,6 +12,12 @@ import pytest
 
 CLI_DIR = Path(__file__).parent.parent
 TASKS_BIN = str(CLI_DIR / ".venv" / "bin" / "tasks")
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 def _env(home: Path) -> dict[str, str]:
@@ -28,8 +35,9 @@ def tasks_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.Complet
 
 
 def start_daemon(home: Path, notif_dir: Path, sync_interval: int = 1) -> subprocess.Popen:
+    port = _free_port()
     proc = subprocess.Popen(
-        [TASKS_BIN, "serve", "--notifications-dir", str(notif_dir)],
+        [TASKS_BIN, "serve", "--notifications-dir", str(notif_dir), "--port", str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -616,7 +624,9 @@ class TestDaemonNotifications:
             for f in notif_files:
                 data = json.loads(f.read_text())
                 if data.get("reminder_id") == rid:
-                    assert data["message"] == "fire soon"
+                    assert data["message"].startswith("fire soon")
+                    assert "rearm" in data["message"]
+                    assert f"tasks remind delete {rid}" in data["message"]
                     assert data["source"] == "tasks"
                     found = True
                     break
