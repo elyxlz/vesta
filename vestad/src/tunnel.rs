@@ -413,7 +413,7 @@ pub async fn start_tunnel(
     // devices aggressively time out idle UDP flows, which silently drops the
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
-    let child = tokio::process::Command::new(cloudflared)
+    let mut child = tokio::process::Command::new(cloudflared)
         .args([
             "tunnel", "--protocol", "http2", "--config", cf_config_path.to_str().unwrap(),
             "run", "--token", &tc.tunnel_token,
@@ -422,6 +422,23 @@ pub async fn start_tunnel(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to start cloudflared: {}", e))?;
+
+    // cloudflared logs its connection lifecycle (registering/registered/lost connections)
+    // to stderr. Forward it into vestad's tracing so `vestad logs` shows tunnel state —
+    // otherwise a reconnecting tunnel looks like silence and a transient 502 has no trail.
+    // This also drains the piped stderr, which would otherwise fill and stall cloudflared.
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let line = line.trim();
+                if !line.is_empty() {
+                    tracing::info!(target: "tunnel", "{line}");
+                }
+            }
+        });
+    }
 
     let url = format!("https://{}", tc.hostname);
     Ok((child, url))
