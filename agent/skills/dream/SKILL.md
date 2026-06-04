@@ -24,6 +24,8 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
 
+Self-improvement (retrospective plus validation) is the one phase that never gets skipped for time. If you are short on budget, cut workspace, sensitive, and dashboard work before cutting reflection. A clean disk with an unlearned lesson is a worse night than a messy disk with a durable fix.
+
 ## Self-Improvement
 
 ### 1. Retrospective
@@ -47,6 +49,8 @@ Prefer the simplest, most reliable change that addresses the root cause. A one-l
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
 
+If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. A rule the future agent must remember to apply is the weakest fix; a trigger that fires on its own is the strongest. Match intervention strength to recurrence: first occurrence, a memory rule or skill note is fine; second occurrence of the same failure, escalate to a runtime trigger; third, change the system so the failure is structurally impossible. Never answer a repeat failure with the same artifact class that already failed.
+
 You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
@@ -54,6 +58,8 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 ### 4. Validate each fix
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
+
+Self-simulation is the weakest validation and tends to approve your own fixes. For any fix addressing a failure that already recurred once, self-simulation is not enough: spawn a fresh subagent with no knowledge of the fix, hand it the original failing exchange plus the updated skill or prompt, and see if it independently produces the right behavior. If it does not, the fix is not durable: escalate it to a runtime trigger or flag it unresolved. Do not mark a twice-seen failure resolved on simulation alone.
 
 ### 5. Upstream
 
