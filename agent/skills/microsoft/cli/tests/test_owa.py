@@ -67,7 +67,7 @@ def test_norm_event_maps_to_graph_shape():
 
 def test_response_messages_raises_on_error_class():
     body = ET.fromstring(
-        f"""<Body xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+        """<Body xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
           <m:CreateItemResponseMessage ResponseClass="Error">
             <m:ResponseCode>ErrorAccessDenied</m:ResponseCode>
             <m:MessageText>Access is denied.</m:MessageText>

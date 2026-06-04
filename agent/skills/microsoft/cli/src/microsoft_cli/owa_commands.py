@@ -11,10 +11,8 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import pathlib as pl
-from typing import Any
 from zoneinfo import ZoneInfo
 
-import httpx
 
 from . import owa, auth, email as email_mod
 from .config import Config
