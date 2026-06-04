@@ -45,9 +45,10 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicClientApplication:
-    if not settings.microsoft_mcp_client_id:
-        raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
+def get_app(
+    cache_file: pl.Path, *, settings: MicrosoftSettings, client_id: str | None = None
+) -> msal.PublicClientApplication:
+    client_id = client_id or settings.graph_client_id
 
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"
 
@@ -56,13 +57,20 @@ def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicC
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
+    app = msal.PublicClientApplication(client_id, authority=authority, token_cache=cache)
 
     return app
 
 
-def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings, *, account_id: str | None = None) -> str:
-    app = get_app(cache_file, settings=settings)
+def get_token(
+    cache_file: pl.Path,
+    scopes: list[str],
+    settings: MicrosoftSettings,
+    *,
+    account_id: str | None = None,
+    client_id: str | None = None,
+) -> str:
+    app = get_app(cache_file, settings=settings, client_id=client_id)
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)

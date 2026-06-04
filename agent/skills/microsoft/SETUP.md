@@ -1,5 +1,22 @@
 # Microsoft Setup
 
+## No Azure app required (default)
+
+By default the skill uses the first-party "Microsoft Office" public client, so it
+works with **zero Azure setup** — just install, authenticate, and go. This is also
+what makes the reverse-engineered OWA fallback usable on locked-down company
+tenants (see "Two backends" in SKILL.md). Skip to step 4.
+
+Note for **personal** Microsoft accounts (outlook.com/hotmail/live): set
+`MICROSOFT_MCP_TENANT_ID=consumers` (the default `organizations` targets
+work/school tenants).
+
+## Optional: bring your own Azure app (least privilege)
+
+A custom Azure app registration is only worth it if you want least-privilege
+scopes, auditability (the app shows up as itself in tenant sign-in logs rather
+than as "Microsoft Office"), or durability. It is **not** required.
+
 1. Create an Azure App Registration at https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
    - Name: anything (e.g. "Vesta")
    - Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
@@ -11,12 +28,36 @@
    ```
    MICROSOFT_MCP_CLIENT_ID=<your-client-id>
    ```
+   The Graph path will use this app; the OWA fallback always uses the first-party
+   client (a custom app is rarely authorized for the `outlook.office.com` resource
+   EWS needs).
+
+## Install
+
 4. Install: `uv tool install ~/agent/skills/microsoft/cli`
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
 6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```
+
+## Choosing a backend per command
+
+`--backend {auto,graph,owa}` (default `auto`) selects the path: `auto` tries Graph
+and falls back to the OWA/EWS path on a permission failure; `graph` / `owa` force
+one path. See "Two backends" in SKILL.md.
+
+## Escape hatch if a tenant blocks even EWS
+
+The OWA fallback talks EWS over a first-party bearer token, which works as long as
+the tenant allows Exchange access at all. If a tenant disables EWS itself, the
+remaining option is to reproduce the browser exactly: drive a headless browser
+(the `browser` skill) to sign in to Outlook on the web, capture the live
+`/owa/service.svc` session (the session cookies plus the `X-OWA-CANARY` token),
+and replay the JSON `service.svc` actions with that session. This cannot be blocked
+without also blocking the user's own webmail, but the session is short-lived and
+must be re-captured through the interactive login, so it is intentionally not built
+in as a default.
 
 ## Authentication
 
