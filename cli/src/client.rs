@@ -349,6 +349,25 @@ impl Client {
         Ok(extract_latest_version(&value))
     }
 
+    // The version vestad itself is running (the `version` field of `/version`),
+    // used to gate the CLI against a mismatched gateway the same way the app does.
+    pub fn gateway_version(&self) -> Result<String, String> {
+        let resp = self.get("/version")?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value["version"].as_str() {
+            Some(version) => Ok(version.trim().trim_start_matches('v').to_string()),
+            None => Err("version response missing 'version'".into()),
+        }
+    }
+
+    // Ask vestad to self-update to the latest release on its channel. Mirrors the
+    // app's "update your gateway" button (POST /gateway/update). vestad restarts on
+    // success, so the caller should re-run its command once the daemon is back.
+    pub fn update_gateway(&self) -> Result<(), String> {
+        self.post("/gateway/update")?;
+        Ok(())
+    }
+
     pub fn get_channel(&self) -> Result<String, String> {
         let resp = self.get("/settings/channel")?;
         let value: serde_json::Value = read_json(resp)?;

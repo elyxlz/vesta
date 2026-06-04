@@ -543,7 +543,77 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
-    client::Client::new(&config).unwrap_or_else(|e| platform::die(&e))
+    let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
+    enforce_version_match(&client);
+    client
+}
+
+/// Which side is out of date when the CLI and gateway versions differ.
+#[derive(Debug, PartialEq)]
+enum VersionGate {
+    Match,
+    /// The CLI is older — it should self-update to the gateway's version.
+    CliOlder,
+    /// The gateway is older — it should self-update via POST /gateway/update.
+    GatewayOlder,
+}
+
+fn classify_version_gate(cli: &str, gateway: &str) -> VersionGate {
+    if cli == gateway {
+        VersionGate::Match
+    } else if version_less_than(cli, gateway) {
+        VersionGate::CliOlder
+    } else {
+        VersionGate::GatewayOlder
+    }
+}
+
+/// Refuse to drive a vestad whose version differs from this CLI, mirroring the
+/// app's version-mismatch gate. The CLI is a client just like the app, so it
+/// offers the matching fix: self-update the CLI to the gateway's version when the
+/// CLI is older, or update the gateway when the gateway is older. A definitive
+/// mismatch exits non-zero; an unreachable or pre-version gateway is left alone so
+/// the command can surface its own error.
+fn enforce_version_match(client: &client::Client) {
+    let gateway = match client.gateway_version() {
+        Ok(version) => version,
+        Err(_) => return,
+    };
+    let cli = env!("CARGO_PKG_VERSION");
+    match classify_version_gate(cli, &gateway) {
+        VersionGate::Match => return,
+        VersionGate::CliOlder => {
+            eprintln!("version mismatch: vesta CLI v{cli} is older than gateway v{gateway}");
+            if confirm("update the CLI now?") {
+                run_cli_self_update(Some(&gateway));
+                eprintln!("re-run your command now.");
+            } else {
+                eprintln!("run 'vesta update' to update the CLI, then retry.");
+            }
+        }
+        VersionGate::GatewayOlder => {
+            eprintln!("version mismatch: gateway v{gateway} is older than vesta CLI v{cli}");
+            if confirm("update the gateway now?") {
+                client.update_gateway().unwrap_or_else(|e| platform::die(&format!("gateway update failed: {e}")));
+                eprintln!("gateway update started; wait for it to restart, then re-run your command.");
+            } else {
+                eprintln!("update the gateway, then retry.");
+            }
+        }
+    }
+    process::exit(1);
+}
+
+/// Prompt for a yes/no confirmation, defaulting to no on empty input or a
+/// non-interactive stdin (so scripts get a clean non-zero exit, not a hang).
+fn confirm(question: &str) -> bool {
+    eprint!("{question} [y/N] ");
+    io::stderr().flush().ok();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    answer.trim().eq_ignore_ascii_case("y")
 }
 
 // Ask the configured vestad for the latest release tag so the CLI does not hit
@@ -577,8 +647,23 @@ fn check_latest_version() -> Option<String> {
     Some(latest)
 }
 
-fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Option<PathBuf> {
-    let latest = check_latest_version()?;
+// Download and self-replace the CLI binary. `target_version` pins a specific
+// version (the gateway's, when resolving a mismatch — like the app's "update your
+// app" which targets the gateway's exact version); `None` resolves the latest
+// release for the explicit `vesta update`.
+fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool, binary_subpath: &str) -> Option<PathBuf> {
+    let latest = match target_version {
+        Some(version) => {
+            eprintln!("current version: v{}", env!("CARGO_PKG_VERSION"));
+            if version == env!("CARGO_PKG_VERSION") {
+                eprintln!("already up to date");
+                return None;
+            }
+            eprintln!("updating to v{version}...");
+            version.to_string()
+        }
+        None => check_latest_version()?,
+    };
 
     let ext = if is_zip { "zip" } else { "tar.gz" };
     let archive_name = format!("vesta-{rust_target}.{ext}");
@@ -639,6 +724,41 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
 
     eprintln!("updated to v{latest}");
     Some(tmp_dir)
+}
+
+// Resolve the platform target/archive and run the self-update. `target_version`
+// pins a specific version (the gateway's) or is `None` for the latest release.
+fn run_cli_self_update(target_version: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    {
+        let target = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            other => platform::die(&format!("unsupported architecture: {other}")),
+        };
+        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let target = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-apple-darwin",
+            "aarch64" => "aarch64-apple-darwin",
+            other => platform::die(&format!("unsupported architecture: {other}")),
+        };
+        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(tmp_dir) =
+            cli_self_update(target_version, "x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
+        {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
 }
 
 fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
@@ -1187,36 +1307,7 @@ fn run(cli: Cli) {
         }
 
         Command::Update => {
-            #[cfg(target_os = "linux")]
-            {
-                let target = match std::env::consts::ARCH {
-                    "x86_64" => "x86_64-unknown-linux-gnu",
-                    "aarch64" => "aarch64-unknown-linux-gnu",
-                    other => platform::die(&format!("unsupported architecture: {}", other)),
-                };
-                if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let target = match std::env::consts::ARCH {
-                    "x86_64" => "x86_64-apple-darwin",
-                    "aarch64" => "aarch64-apple-darwin",
-                    other => platform::die(&format!("unsupported architecture: {other}")),
-                };
-                if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
-            #[cfg(target_os = "windows")]
-            {
-                if let Some(tmp_dir) =
-                    cli_self_update("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
-                {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
+            run_cli_self_update(None);
         }
 
         Command::Channel { channel } => {
@@ -1277,5 +1368,14 @@ mod tests {
         ] {
             assert_eq!(format_size(input), expected, "format_size({input})");
         }
+    }
+
+    #[test]
+    fn version_gate_classification() {
+        assert_eq!(classify_version_gate("1.2.3", "1.2.3"), VersionGate::Match);
+        assert_eq!(classify_version_gate("1.2.3", "1.2.4"), VersionGate::CliOlder);
+        assert_eq!(classify_version_gate("1.2.3", "2.0.0"), VersionGate::CliOlder);
+        assert_eq!(classify_version_gate("1.3.0", "1.2.9"), VersionGate::GatewayOlder);
+        assert_eq!(classify_version_gate("2.0.0", "1.9.9"), VersionGate::GatewayOlder);
     }
 }
