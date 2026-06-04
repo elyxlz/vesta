@@ -122,6 +122,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
 
 const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
+/// Free space the Docker storage filesystem must have before vestad will rebuild or
+/// restart agent containers at startup. Below this, reconcile is skipped entirely so a
+/// full disk can't corrupt a container's writable layer (events.db, session) mid-restart.
+const MIN_RECONCILE_DISK_BYTES: u64 = 500_000_000; // 500 MB
 const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 // Override bollard's 120s default to absorb slow image builds under CI contention.
@@ -1728,12 +1732,48 @@ pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerErro
     Ok(())
 }
 
+/// Free space (in bytes) on the filesystem backing `path`, or `None` if it can't be read.
+fn available_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    let stat = nix::sys::statvfs::statvfs(path).ok()?;
+    Some(stat.blocks_available() * stat.fragment_size())
+}
+
+/// Free space on Docker's storage filesystem (where container writable layers live), or
+/// `None` if Docker doesn't report a root dir or it can't be stat'd. We probe Docker's
+/// actual data-root rather than assuming `/` so the guard is accurate when Docker stores
+/// containers on a separate volume.
+async fn docker_storage_available_bytes(docker: &Docker) -> Option<u64> {
+    let root = docker.info().await.ok()?.docker_root_dir?;
+    available_disk_bytes(std::path::Path::new(&root))
+}
+
+/// Whether reconcile must be skipped given the free space probe. Unknown free space
+/// (`None`) proceeds, so a probe failure never locks out normal operation.
+fn reconcile_blocked_by_disk(available: Option<u64>) -> bool {
+    matches!(available, Some(bytes) if bytes < MIN_RECONCILE_DISK_BYTES)
+}
+
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
 /// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
 pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
+        return;
+    }
+
+    // Refuse to rebuild or restart containers when the disk is critically full: a write
+    // failure mid-restart can corrupt an agent's writable layer (events.db, session_id).
+    // Containers keep running under Docker's `unless-stopped` policy, so skipping here just
+    // defers reconcile to the next startup once space is freed. If Docker doesn't report
+    // free space, proceed rather than lock out normal operation.
+    let available = docker_storage_available_bytes(docker).await;
+    if reconcile_blocked_by_disk(available) {
+        tracing::error!(
+            available_mb = available.unwrap_or(0) / 1_000_000,
+            required_mb = MIN_RECONCILE_DISK_BYTES / 1_000_000,
+            "insufficient disk space, skipping container reconcile to avoid corruption; containers left as-is"
+        );
         return;
     }
 
@@ -2096,6 +2136,26 @@ mod tests {
         progress.set(BuildPhase::Preparing);
         progress.set(BuildPhase::Creating);
         assert_eq!(*seen.lock().expect("lock"), vec![BuildPhase::Building, BuildPhase::Preparing, BuildPhase::Creating]);
+    }
+
+    #[test]
+    fn reconcile_proceeds_when_free_space_unknown() {
+        // A failed probe must not lock out normal startup.
+        assert!(!reconcile_blocked_by_disk(None));
+    }
+
+    #[test]
+    fn reconcile_blocked_only_below_threshold() {
+        assert!(reconcile_blocked_by_disk(Some(MIN_RECONCILE_DISK_BYTES - 1)));
+        assert!(!reconcile_blocked_by_disk(Some(MIN_RECONCILE_DISK_BYTES)));
+        assert!(!reconcile_blocked_by_disk(Some(MIN_RECONCILE_DISK_BYTES + 1)));
+    }
+
+    #[test]
+    fn available_disk_bytes_reads_real_path_and_rejects_missing() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
+        assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
     }
 
     #[test]
