@@ -43,10 +43,12 @@ _POLL_S = 0.15
 _POST_STOP_DRAIN_S = 2.5
 # Manual /compact fires PreCompact but never a Stop hook, and the summarization request
 # between them can run for tens of seconds with no transcript writes — so completion is the
-# isCompactSummary transcript line, not quiescence. Both waits are generous: the nightly
-# restart that drives compact() is not latency sensitive, and a day-sized context summarizes slowly.
-_COMPACT_START_TIMEOUT_S = 30.0
-_COMPACT_TIMEOUT_S = 240.0
+# isCompactSummary transcript line, not quiescence. Both waits are deliberately generous: the
+# nightly restart that drives compact() is not latency sensitive, and a full day-sized context
+# summarizes slowly. Erring long only costs a wait before restarting if compaction truly hangs;
+# erring short would abandon a still-running compaction and restart on the un-compacted session.
+_COMPACT_START_TIMEOUT_S = 60.0
+_COMPACT_TIMEOUT_S = 900.0
 _ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
 _DEFAULT_MAX_TOKENS = 200_000
 _BETA_1M = "context-1m-2025-08-07"
