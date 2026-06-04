@@ -85,7 +85,7 @@ def _envelope(inner: str) -> str:
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"'
         ' xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"'
         ' xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">'
-        "<soap:Header><t:RequestServerVersion Version=\"Exchange2013\"/></soap:Header>"
+        '<soap:Header><t:RequestServerVersion Version="Exchange2013"/></soap:Header>'
         f"<soap:Body>{inner}</soap:Body></soap:Envelope>"
     )
 
@@ -292,13 +292,13 @@ def _message_xml(subject, body, to, cc, bcc, html, extra="") -> str:
 def list_messages(client, cache_file, settings, *, account_id, folder="inbox", limit=10):
     inner = (
         '<m:FindItem Traversal="Shallow">'
-        '<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>'
-        f'<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>'
+        "<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>"
+        f"<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>"
         '<m:SortOrder><t:FieldOrder Order="Descending">'
         '<t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder>'
-        f'<m:IndexedPageItemView MaxEntriesReturned="{min(limit,100)}" Offset="0" BasePoint="Beginning"/>'
-        f'<m:ParentFolderIds>{_distinguished(folder)}</m:ParentFolderIds>'
-        '</m:FindItem>'
+        f'<m:IndexedPageItemView MaxEntriesReturned="{min(limit, 100)}" Offset="0" BasePoint="Beginning"/>'
+        f"<m:ParentFolderIds>{_distinguished(folder)}</m:ParentFolderIds>"
+        "</m:FindItem>"
     )
     body = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(body)
@@ -309,12 +309,12 @@ def search_messages(client, cache_file, settings, *, account_id, query, folder=N
     # AQS via QueryString, the same mechanism the OWA search box uses.
     inner = (
         '<m:FindItem Traversal="Shallow">'
-        '<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>'
-        f'<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>'
-        f'<m:IndexedPageItemView MaxEntriesReturned="{min(limit,100)}" Offset="0" BasePoint="Beginning"/>'
-        f'<m:ParentFolderIds>{_distinguished(folder or "inbox")}</m:ParentFolderIds>'
-        f'<m:QueryString>{_esc(query)}</m:QueryString>'
-        '</m:FindItem>'
+        "<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>"
+        f"<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>"
+        f'<m:IndexedPageItemView MaxEntriesReturned="{min(limit, 100)}" Offset="0" BasePoint="Beginning"/>'
+        f"<m:ParentFolderIds>{_distinguished(folder or 'inbox')}</m:ParentFolderIds>"
+        f"<m:QueryString>{_esc(query)}</m:QueryString>"
+        "</m:FindItem>"
     )
     body = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(body)
@@ -324,8 +324,8 @@ def search_messages(client, cache_file, settings, *, account_id, query, folder=N
 def get_message(client, cache_file, settings, *, account_id, item_id, body_type="Text"):
     inner = (
         "<m:GetItem>"
-        f'<m:ItemShape><t:BaseShape>Default</t:BaseShape><t:BodyType>{body_type}</t:BodyType>'
-        f'<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>'
+        f"<m:ItemShape><t:BaseShape>Default</t:BaseShape><t:BodyType>{body_type}</t:BodyType>"
+        f"<t:AdditionalProperties>{_MESSAGE_PROPS}</t:AdditionalProperties></m:ItemShape>"
         f'<m:ItemIds><t:ItemId Id="{_esc(item_id)}"/></m:ItemIds>'
         "</m:GetItem>"
     )
@@ -342,9 +342,7 @@ def get_message(client, cache_file, settings, *, account_id, item_id, body_type=
 # ---------------------------------------------------------------------------
 def send_message(client, cache_file, settings, *, account_id, to, subject, body, cc=None, bcc=None, html=False):
     inner = (
-        '<m:CreateItem MessageDisposition="SendAndSaveCopy">'
-        f"<m:Items>{_message_xml(subject, body, to, cc, bcc, html)}</m:Items>"
-        "</m:CreateItem>"
+        f'<m:CreateItem MessageDisposition="SendAndSaveCopy"><m:Items>{_message_xml(subject, body, to, cc, bcc, html)}</m:Items></m:CreateItem>'
     )
     resp = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(resp)
@@ -400,10 +398,7 @@ def update_message(client, cache_file, settings, *, account_id, item_id, is_read
     if categories is not None:
         cat_xml = "".join(f"<t:String>{_esc(c)}</t:String>" for c in categories)
         sets += (
-            "<t:SetItemField>"
-            '<t:FieldURI FieldURI="item:Categories"/>'
-            f"<t:Item><t:Categories>{cat_xml}</t:Categories></t:Item>"
-            "</t:SetItemField>"
+            f'<t:SetItemField><t:FieldURI FieldURI="item:Categories"/><t:Item><t:Categories>{cat_xml}</t:Categories></t:Item></t:SetItemField>'
         )
     if not sets:
         raise OwaError("nothing to update")
@@ -422,11 +417,7 @@ def update_message(client, cache_file, settings, *, account_id, item_id, is_read
 
 def delete_message(client, cache_file, settings, *, account_id, item_id, permanent=False):
     delete_type = "HardDelete" if permanent else "MoveToDeletedItems"
-    inner = (
-        f'<m:DeleteItem DeleteType="{delete_type}">'
-        f'<m:ItemIds><t:ItemId Id="{_esc(item_id)}"/></m:ItemIds>'
-        "</m:DeleteItem>"
-    )
+    inner = f'<m:DeleteItem DeleteType="{delete_type}"><m:ItemIds><t:ItemId Id="{_esc(item_id)}"/></m:ItemIds></m:DeleteItem>'
     resp = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(resp)
     return {"status": "deleted", "mode": "permanent" if permanent else "soft", "email_id": item_id}
@@ -441,16 +432,17 @@ def delete_by_sender(client, cache_file, settings, *, account_id, sender, perman
         if frm == sender.lower():
             delete_message(client, cache_file, settings, account_id=account_id, item_id=m["id"], permanent=permanent)
             deleted.append(m["id"])
-    return {"status": "deleted", "mode": "permanent" if permanent else "soft", "sender": sender,
-            "deleted_count": len(deleted), "deleted_ids": deleted}
+    return {
+        "status": "deleted",
+        "mode": "permanent" if permanent else "soft",
+        "sender": sender,
+        "deleted_count": len(deleted),
+        "deleted_ids": deleted,
+    }
 
 
 def get_attachment(client, cache_file, settings, *, account_id, attachment_id):
-    inner = (
-        "<m:GetAttachment><m:AttachmentIds>"
-        f'<t:AttachmentId Id="{_esc(attachment_id)}"/>'
-        "</m:AttachmentIds></m:GetAttachment>"
-    )
+    inner = f'<m:GetAttachment><m:AttachmentIds><t:AttachmentId Id="{_esc(attachment_id)}"/></m:AttachmentIds></m:GetAttachment>'
     body = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(body)
     fa = next((a for a in body.iter() if a.tag.endswith("}FileAttachment")), None)
@@ -479,11 +471,11 @@ _EVENT_PROPS = (
 def list_events(client, cache_file, settings, *, account_id, start_utc, end_utc, limit=100):
     inner = (
         '<m:FindItem Traversal="Shallow">'
-        '<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>'
-        f'<t:AdditionalProperties>{_EVENT_PROPS}</t:AdditionalProperties></m:ItemShape>'
-        f'<m:CalendarView MaxEntriesReturned="{min(limit,1000)}" StartDate="{_esc(start_utc)}" EndDate="{_esc(end_utc)}"/>'
+        "<m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>"
+        f"<t:AdditionalProperties>{_EVENT_PROPS}</t:AdditionalProperties></m:ItemShape>"
+        f'<m:CalendarView MaxEntriesReturned="{min(limit, 1000)}" StartDate="{_esc(start_utc)}" EndDate="{_esc(end_utc)}"/>'
         '<m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>'
-        '</m:FindItem>'
+        "</m:FindItem>"
     )
     body = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(body)
@@ -493,13 +485,13 @@ def list_events(client, cache_file, settings, *, account_id, start_utc, end_utc,
 def list_calendars(client, cache_file, settings, *, account_id):
     inner = (
         '<m:FindFolder Traversal="Deep">'
-        '<m:FolderShape><t:BaseShape>Default</t:BaseShape></m:FolderShape>'
-        '<m:Restriction><t:IsEqualTo>'
+        "<m:FolderShape><t:BaseShape>Default</t:BaseShape></m:FolderShape>"
+        "<m:Restriction><t:IsEqualTo>"
         '<t:FieldURI FieldURI="folder:FolderClass"/>'
         '<t:FieldURIOrConstant><t:Constant Value="IPF.Appointment"/></t:FieldURIOrConstant>'
-        '</t:IsEqualTo></m:Restriction>'
+        "</t:IsEqualTo></m:Restriction>"
         '<m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds>'
-        '</m:FindFolder>'
+        "</m:FindFolder>"
     )
     body = call(client, cache_file, settings, inner, account_id)
     _check_response_messages(body)
@@ -516,8 +508,8 @@ def list_calendars(client, cache_file, settings, *, account_id):
 def get_event(client, cache_file, settings, *, account_id, event_id):
     inner = (
         "<m:GetItem>"
-        '<m:ItemShape><t:BaseShape>Default</t:BaseShape><t:BodyType>Text</t:BodyType>'
-        f'<t:AdditionalProperties>{_EVENT_PROPS}</t:AdditionalProperties></m:ItemShape>'
+        "<m:ItemShape><t:BaseShape>Default</t:BaseShape><t:BodyType>Text</t:BodyType>"
+        f"<t:AdditionalProperties>{_EVENT_PROPS}</t:AdditionalProperties></m:ItemShape>"
         f'<m:ItemIds><t:ItemId Id="{_esc(event_id)}"/></m:ItemIds>'
         "</m:GetItem>"
     )
@@ -529,8 +521,9 @@ def get_event(client, cache_file, settings, *, account_id, event_id):
     return norm_event(evs[0])
 
 
-def create_event(client, cache_file, settings, *, account_id, subject, start, end, timezone,
-                 location=None, body=None, attendees=None, is_all_day=False):
+def create_event(
+    client, cache_file, settings, *, account_id, subject, start, end, timezone, location=None, body=None, attendees=None, is_all_day=False
+):
     parts = [f"<t:Subject>{_esc(subject)}</t:Subject>"]
     if body:
         parts.append(f'<t:Body BodyType="Text">{_esc(body)}</t:Body>')
@@ -541,10 +534,7 @@ def create_event(client, cache_file, settings, *, account_id, subject, start, en
     if location:
         parts.append(f"<t:Location>{_esc(location)}</t:Location>")
     if attendees:
-        boxes = "".join(
-            f"<t:Attendee><t:Mailbox><t:EmailAddress>{_esc(a)}</t:EmailAddress></t:Mailbox></t:Attendee>"
-            for a in attendees
-        )
+        boxes = "".join(f"<t:Attendee><t:Mailbox><t:EmailAddress>{_esc(a)}</t:EmailAddress></t:Mailbox></t:Attendee>" for a in attendees)
         parts.append(f"<t:RequiredAttendees>{boxes}</t:RequiredAttendees>")
     # Start/End are passed as UTC ('...Z') by the adapter, so we declare the UTC
     # zone explicitly. StartTimeZone/EndTimeZone are the Exchange2013 elements;
@@ -563,8 +553,9 @@ def create_event(client, cache_file, settings, *, account_id, subject, start, en
     return {"status": "created", "id": iid.get("id")}
 
 
-def update_event(client, cache_file, settings, *, account_id, event_id, subject=None, start=None,
-                 end=None, location=None, body=None, timezone=None):
+def update_event(
+    client, cache_file, settings, *, account_id, event_id, subject=None, start=None, end=None, location=None, body=None, timezone=None
+):
     sets = ""
 
     def field(uri, holder_tag, inner_xml):
@@ -614,7 +605,7 @@ def respond_event(client, cache_file, settings, *, account_id, event_id, respons
     inner = (
         '<m:CreateItem MessageDisposition="SendAndSaveCopy">'
         "<m:Items>"
-        f"<t:{tag}>{body_xml}<t:ReferenceItemId Id=\"{_esc(event_id)}\"/></t:{tag}>"
+        f'<t:{tag}>{body_xml}<t:ReferenceItemId Id="{_esc(event_id)}"/></t:{tag}>'
         "</m:Items>"
         "</m:CreateItem>"
     )

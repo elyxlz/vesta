@@ -45,9 +45,7 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(
-    cache_file: pl.Path, *, settings: MicrosoftSettings, client_id: str | None = None
-) -> msal.PublicClientApplication:
+def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings, client_id: str | None = None) -> msal.PublicClientApplication:
     client_id = client_id or settings.graph_client_id
 
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"

@@ -202,8 +202,12 @@ def main():
     # fallback), or force a single backend for testing/preference.
     for sub in (email_sub, cal_sub):
         for sp in sub.choices.values():
-            sp.add_argument("--backend", choices=[backend.AUTO, backend.GRAPH, backend.OWA], default=backend.AUTO,
-                            help="Path to use: auto (Graph, fall back to OWA/EWS on a permission error), graph, or owa.")
+            sp.add_argument(
+                "--backend",
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA],
+                default=backend.AUTO,
+                help="Path to use: auto (Graph, fall back to OWA/EWS on a permission error), graph, or owa.",
+            )
 
     args = parser.parse_args()
     config = Config()
@@ -285,13 +289,31 @@ def _dispatch_email(args, config, client):
         kw = dict(account_email=args.account, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
         return dual(lambda: email.get_email(config, client, **kw), lambda: owa_commands.get_email(config, client, **kw))
     elif args.command == "send":
-        kw = dict(account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments, html=args.html)
+        kw = dict(
+            account_email=args.account,
+            to=args.to,
+            subject=args.subject,
+            body=args.body,
+            cc=args.cc,
+            bcc=args.bcc,
+            attachments=args.attachments,
+            html=args.html,
+        )
         return dual(lambda: email.send_email(config, client, **kw), lambda: owa_commands.send_email(config, client, **kw))
     elif args.command == "draft":
-        kw = dict(account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments)
+        kw = dict(
+            account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments
+        )
         return dual(lambda: email.create_email_draft(config, client, **kw), lambda: owa_commands.create_email_draft(config, client, **kw))
     elif args.command == "reply":
-        kw = dict(account_email=args.account, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all, html=args.html)
+        kw = dict(
+            account_email=args.account,
+            email_id=args.email_id,
+            body=args.body,
+            attachments=args.attachments,
+            reply_all=args.reply_all,
+            html=args.html,
+        )
         return dual(lambda: email.reply_to_email(config, client, **kw), lambda: owa_commands.reply_to_email(config, client, **kw))
     elif args.command == "attachment":
         kw = dict(account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
@@ -307,13 +329,19 @@ def _dispatch_email(args, config, client):
         return dual(lambda: email.delete_email(config, client, **kw), lambda: owa_commands.delete_email(config, client, **kw))
     elif args.command == "block":
         if args.list:
-            return dual(lambda: block.list_block_rules(config, client, account_email=args.account),
-                        lambda: owa_commands.list_block_rules(config, client, account_email=args.account))
-        return dual(lambda: block.block_sender(config, client, account_email=args.account, sender=args.sender),
-                    lambda: owa_commands.block_sender(config, client, account_email=args.account, sender=args.sender))
+            return dual(
+                lambda: block.list_block_rules(config, client, account_email=args.account),
+                lambda: owa_commands.list_block_rules(config, client, account_email=args.account),
+            )
+        return dual(
+            lambda: block.block_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_commands.block_sender(config, client, account_email=args.account, sender=args.sender),
+        )
     elif args.command == "unblock":
-        return dual(lambda: block.unblock_sender(config, client, account_email=args.account, sender=args.sender),
-                    lambda: owa_commands.unblock_sender(config, client, account_email=args.account, sender=args.sender))
+        return dual(
+            lambda: block.unblock_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_commands.unblock_sender(config, client, account_email=args.account, sender=args.sender),
+        )
 
 
 def _dispatch_calendar(args, config, client):
@@ -323,23 +351,50 @@ def _dispatch_calendar(args, config, client):
         return backend.run(choice, graph_call, owa_call)
 
     if args.command == "list":
-        kw = dict(account_email=args.account, calendar_name=args.calendar_name, days_ahead=args.days_ahead,
-                  days_back=args.days_back, include_details=not args.no_details, user_timezone=args.user_timezone)
+        kw = dict(
+            account_email=args.account,
+            calendar_name=args.calendar_name,
+            days_ahead=args.days_ahead,
+            days_back=args.days_back,
+            include_details=not args.no_details,
+            user_timezone=args.user_timezone,
+        )
         return dual(lambda: calendar.list_events(config, client, **kw), lambda: owa_commands.list_events(config, client, **kw))
     elif args.command == "calendars":
-        return dual(lambda: calendar.list_calendars(config, client, account_email=args.account),
-                    lambda: owa_commands.list_calendars(config, client, account_email=args.account))
+        return dual(
+            lambda: calendar.list_calendars(config, client, account_email=args.account),
+            lambda: owa_commands.list_calendars(config, client, account_email=args.account),
+        )
     elif args.command == "get":
         kw = dict(account_email=args.account, event_id=args.event_id)
         return dual(lambda: calendar.get_event(config, client, **kw), lambda: owa_commands.get_event(config, client, **kw))
     elif args.command == "create":
-        kw = dict(account_email=args.account, subject=args.subject, start=args.start, end=args.end, location=args.location,
-                  body=args.body, attendees=args.attendees, timezone=args.timezone, calendar_name=args.calendar_name,
-                  is_all_day=args.all_day, recurrence=args.recurrence, recurrence_end_date=args.recurrence_end_date)
+        kw = dict(
+            account_email=args.account,
+            subject=args.subject,
+            start=args.start,
+            end=args.end,
+            location=args.location,
+            body=args.body,
+            attendees=args.attendees,
+            timezone=args.timezone,
+            calendar_name=args.calendar_name,
+            is_all_day=args.all_day,
+            recurrence=args.recurrence,
+            recurrence_end_date=args.recurrence_end_date,
+        )
         return dual(lambda: calendar.create_event(config, client, **kw), lambda: owa_commands.create_event(config, client, **kw))
     elif args.command == "update":
-        kw = dict(account_email=args.account, event_id=args.event_id, subject=args.subject, start=args.start, end=args.end,
-                  location=args.location, body=args.body, timezone=args.timezone)
+        kw = dict(
+            account_email=args.account,
+            event_id=args.event_id,
+            subject=args.subject,
+            start=args.start,
+            end=args.end,
+            location=args.location,
+            body=args.body,
+            timezone=args.timezone,
+        )
         return dual(lambda: calendar.update_event(config, client, **kw), lambda: owa_commands.update_event(config, client, **kw))
     elif args.command == "delete":
         kw = dict(account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation)

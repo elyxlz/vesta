@@ -64,8 +64,9 @@ def send_email(config, client, *, account_email, to, subject, body, cc=None, bcc
     if not to and not cc and not bcc:
         raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
     s = _settings()
-    return owa.send_message(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                            to=to, subject=subject, body=body, cc=cc, bcc=bcc, html=html)
+    return owa.send_message(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), to=to, subject=subject, body=body, cc=cc, bcc=bcc, html=html
+    )
 
 
 def create_email_draft(config, client, *, account_email, to, subject, body, cc=None, bcc=None, attachments=None):
@@ -74,16 +75,18 @@ def create_email_draft(config, client, *, account_email, to, subject, body, cc=N
     if not to and not cc and not bcc:
         raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
     s = _settings()
-    return owa.create_draft(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                            to=to, subject=subject, body=body, cc=cc, bcc=bcc)
+    return owa.create_draft(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), to=to, subject=subject, body=body, cc=cc, bcc=bcc
+    )
 
 
 def reply_to_email(config, client, *, account_email, email_id, body, attachments=None, reply_all=False, html=False):
     if attachments:
         raise NotImplementedError("attachments are not yet supported on the OWA/EWS fallback path; use the Graph path for attachments")
     s = _settings()
-    return owa.reply_message(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                             item_id=email_id, body=body, reply_all=reply_all, html=html)
+    return owa.reply_message(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), item_id=email_id, body=body, reply_all=reply_all, html=html
+    )
 
 
 def get_attachment(config, client, *, account_email, email_id, attachment_id, save_path):
@@ -99,8 +102,9 @@ def update_email(config, client, *, account_email, email_id, is_read=None, categ
     if is_read is None and categories is None:
         raise ValueError("Must specify at least one field to update (is_read or categories)")
     s = _settings()
-    return owa.update_message(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                              item_id=email_id, is_read=is_read, categories=categories)
+    return owa.update_message(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), item_id=email_id, is_read=is_read, categories=categories
+    )
 
 
 def delete_email(config, client, *, account_email, email_id=None, sender=None, permanent=False):
@@ -139,8 +143,9 @@ def list_events(config, client, *, account_email, calendar_name=None, days_ahead
     start = (start_of_today - dt.timedelta(days=days_back)).astimezone(dt.UTC)
     end = (start_of_today + dt.timedelta(days=days_ahead + 1)).astimezone(dt.UTC)
     z = lambda d: d.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    return owa.list_events(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                           start_utc=z(start), end_utc=z(end), limit=100)
+    return owa.list_events(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), start_utc=z(start), end_utc=z(end), limit=100
+    )
 
 
 def list_calendars(config, client, *, account_email):
@@ -153,42 +158,85 @@ def get_event(config, client, *, account_email, event_id, user_timezone=None):
     return owa.get_event(client, config.cache_file, s, account_id=_aid(config, account_email, s), event_id=event_id)
 
 
-def create_event(config, client, *, account_email, subject, start, end=None, location=None, body=None,
-                 attendees=None, timezone, calendar_name=None, is_all_day=False, recurrence=None, recurrence_end_date=None):
+def create_event(
+    config,
+    client,
+    *,
+    account_email,
+    subject,
+    start,
+    end=None,
+    location=None,
+    body=None,
+    attendees=None,
+    timezone,
+    calendar_name=None,
+    is_all_day=False,
+    recurrence=None,
+    recurrence_end_date=None,
+):
     if recurrence:
         raise NotImplementedError("recurring events are not yet supported on the OWA/EWS fallback path; use the Graph path")
     s = _settings()
     if is_all_day:
         # All-day: pass date-only as midnight UTC start, +1 day end.
         start_date = start.split("T")[0]
-        end_date = (end.split("T")[0] if end else start_date)
+        end_date = end.split("T")[0] if end else start_date
         su = f"{start_date}T00:00:00Z"
-        eu = f"{end_date}T00:00:00Z" if end_date != start_date else (dt.date.fromisoformat(start_date) + dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+        eu = (
+            f"{end_date}T00:00:00Z"
+            if end_date != start_date
+            else (dt.date.fromisoformat(start_date) + dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+        )
     else:
         if not end:
             raise ValueError("end is required for non-all-day events")
         su = _to_utc_z(start, timezone)
         eu = _to_utc_z(end, timezone)
-    return owa.create_event(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                            subject=subject, start=su, end=eu, timezone="UTC", location=location, body=body,
-                            attendees=attendees, is_all_day=is_all_day)
+    return owa.create_event(
+        client,
+        config.cache_file,
+        s,
+        account_id=_aid(config, account_email, s),
+        subject=subject,
+        start=su,
+        end=eu,
+        timezone="UTC",
+        location=location,
+        body=body,
+        attendees=attendees,
+        is_all_day=is_all_day,
+    )
 
 
 def update_event(config, client, *, account_email, event_id, subject=None, start=None, end=None, location=None, body=None, timezone=None):
     s = _settings()
     su = _to_utc_z(start, timezone) if start is not None else None
     eu = _to_utc_z(end, timezone) if end is not None else None
-    return owa.update_event(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                            event_id=event_id, subject=subject, start=su, end=eu, location=location, body=body, timezone="UTC")
+    return owa.update_event(
+        client,
+        config.cache_file,
+        s,
+        account_id=_aid(config, account_email, s),
+        event_id=event_id,
+        subject=subject,
+        start=su,
+        end=eu,
+        location=location,
+        body=body,
+        timezone="UTC",
+    )
 
 
 def delete_event(config, client, *, account_email, event_id, send_cancellation=True):
     s = _settings()
-    return owa.delete_event(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                            event_id=event_id, send_cancellation=send_cancellation)
+    return owa.delete_event(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), event_id=event_id, send_cancellation=send_cancellation
+    )
 
 
 def respond_event(config, client, *, account_email, event_id, response="accept", message=None):
     s = _settings()
-    return owa.respond_event(client, config.cache_file, s, account_id=_aid(config, account_email, s),
-                             event_id=event_id, response=response, message=message)
+    return owa.respond_event(
+        client, config.cache_file, s, account_id=_aid(config, account_email, s), event_id=event_id, response=response, message=message
+    )
