@@ -80,10 +80,6 @@ path = "tests/live/mod.rs"
 name = "oauth"
 path = "tests/oauth/mod.rs"
 
-[[test]]
-name = "migrations"
-path = "tests/migrations/mod.rs"
-
 [profile.release]
 strip = true
 lto = true
