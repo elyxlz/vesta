@@ -18,6 +18,12 @@ use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws,
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
+// Upper bound on a single control/JSON request (docker/restic handlers already carry their own
+// inner timeouts; this caps the HTTP layer so a stalled handler cannot hold a connection open
+// forever). Deliberately NOT applied to the WS-upgrade route or the long-lived SSE/proxy
+// streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
+const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
+
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -1786,6 +1792,17 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 
 // --- Router ---
 
+// The request-timeout layer applied to the control/JSON sub-router only. Returns 408 Request
+// Timeout when a handler exceeds the deadline. Kept as one helper so the timed routes and the
+// tests that lock this behavior share a single 408-producing mechanism.
+fn request_timeout_layer(deadline: std::time::Duration) -> tower_http::timeout::TimeoutLayer {
+    tower_http::timeout::TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, deadline)
+}
+
+fn control_timeout_layer() -> tower_http::timeout::TimeoutLayer {
+    request_timeout_layer(std::time::Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS))
+}
+
 pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
@@ -1793,7 +1810,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/auth/session", post(auth::create_session_handler))
         .route("/auth/refresh", post(auth::refresh_session_handler));
 
-    let vestad_protected = Router::new()
+    // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
+    // request so a stalled docker/restic call cannot hold a connection open indefinitely.
+    let vestad_protected_timed = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
@@ -1815,14 +1834,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
-        .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
         .route("/backups", get(list_all_backups_handler))
-        .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
-        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
         .route("/agents/{name}/constitution", get(get_constitution_handler))
         .route("/agents/{name}/constitution", axum::routing::put(set_constitution_handler))
@@ -1832,6 +1848,19 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ));
+
+    // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
+    // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
+    // so a finite deadline cannot truncate a legitimate live stream or break a WS upgrade.
+    let vestad_protected_streaming = Router::new()
+        .route("/agents/{name}/logs", get(logs_handler))
+        .route("/agents/{name}/backups", post(create_backup_handler))
+        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1875,7 +1904,8 @@ pub fn build_router(state: SharedState) -> Router {
 
     Router::new()
         .merge(vestad_public)
-        .merge(vestad_protected)
+        .merge(vestad_protected_timed)
+        .merge(vestad_protected_streaming)
         .merge(agents_services)
         .merge(agents_services_read)
         .merge(gateway_logs)
@@ -2173,6 +2203,82 @@ pub async fn run_server(cfg: ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::is_cached_port_reusable;
+
+    // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---
+
+    // The same layering decision build_router makes: a TimeoutLayer on the control/JSON class and
+    // no timeout on the streaming/WS class. A short deadline keeps the test fast while exercising
+    // the real tower-http TimeoutLayer (the production 408-producing mechanism).
+    async fn serve_router(router: axum::Router) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn control_route_times_out_when_handler_exceeds_deadline() {
+        let deadline = std::time::Duration::from_millis(100);
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            "done"
+        };
+        let timed = axum::Router::new()
+            .route("/control", axum::routing::get(slow))
+            .layer(super::request_timeout_layer(deadline));
+        let (port, handle) = serve_router(timed).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/control", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn streaming_route_is_exempt_from_the_deadline() {
+        // The streaming class carries no timeout layer, so a handler that runs longer than the
+        // control deadline must still complete (mirrors logs `tail -f` / backup-progress SSE).
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            "stream"
+        };
+        let streaming = axum::Router::new().route("/stream", axum::routing::get(slow));
+        let (port, handle) = serve_router(streaming).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/stream", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "stream");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn control_route_under_deadline_succeeds() {
+        let fast = || async { "ok" };
+        let timed = axum::Router::new()
+            .route("/control", axum::routing::get(fast))
+            .layer(super::request_timeout_layer(std::time::Duration::from_secs(5)));
+        let (port, handle) = serve_router(timed).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}/control", port))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        handle.abort();
+    }
 
     #[tokio::test]
     async fn cached_port_is_reusable_when_free() {
