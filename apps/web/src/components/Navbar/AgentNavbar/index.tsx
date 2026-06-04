@@ -63,6 +63,7 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
+                  aria-label="dashboard"
                   onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
                 >
                   <LayoutDashboard />
@@ -76,6 +77,7 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
+                  aria-label="home"
                   onClick={() => navigate("/")}
                 >
                   <Home />
