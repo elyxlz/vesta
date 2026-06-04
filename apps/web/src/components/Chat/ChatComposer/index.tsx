@@ -111,6 +111,7 @@ export function ChatComposer({
             <InputGroupButton
               size="icon-sm"
               variant="ghost"
+              aria-label="send message"
               disabled={!connected}
               onClick={onSend}
             >

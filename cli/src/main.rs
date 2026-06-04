@@ -162,6 +162,21 @@ enum Command {
         /// Agent name
         name: String,
     },
+    /// View or edit an agent's constitution (a charter prepended to its memory; the agent
+    /// cannot edit it). With no flags, prints the current constitution.
+    Constitution {
+        /// Agent name
+        name: String,
+        /// Open the current constitution in $EDITOR and save on exit
+        #[arg(long)]
+        edit: bool,
+        /// Set the constitution from a file ('-' reads stdin)
+        #[arg(long, conflicts_with_all = ["edit", "clear"])]
+        file: Option<PathBuf>,
+        /// Clear the constitution
+        #[arg(long, conflicts_with_all = ["edit", "file"])]
+        clear: bool,
+    },
     /// Destroy an agent (irreversible)
     Destroy {
         /// Agent name
@@ -305,6 +320,40 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
         result["retention"]["weekly"].as_u64().unwrap_or(0),
         result["retention"]["monthly"].as_u64().unwrap_or(0),
     );
+}
+
+fn read_file_or_stdin(path: &std::path::Path) -> String {
+    if path == std::path::Path::new("-") {
+        let mut buf = String::new();
+        io::Read::read_to_string(&mut io::stdin(), &mut buf)
+            .unwrap_or_else(|e| platform::die(&format!("failed to read stdin: {e}")));
+        return buf;
+    }
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| platform::die(&format!("failed to read {}: {e}", path.display())))
+}
+
+/// Open `initial` in $EDITOR (falling back to vi) and return the edited contents.
+fn edit_in_editor(initial: &str) -> String {
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("vesta-constitution-{}.md", process::id()));
+    std::fs::write(&tmp, initial)
+        .unwrap_or_else(|e| platform::die(&format!("failed to write temp file: {e}")));
+    let status = process::Command::new(&editor)
+        .arg(&tmp)
+        .status()
+        .unwrap_or_else(|e| platform::die(&format!("failed to launch editor '{editor}': {e}")));
+    if !status.success() {
+        std::fs::remove_file(&tmp).ok();
+        platform::die("editor exited with an error, aborting");
+    }
+    let edited = std::fs::read_to_string(&tmp)
+        .unwrap_or_else(|e| platform::die(&format!("failed to read temp file: {e}")));
+    std::fs::remove_file(&tmp).ok();
+    edited
 }
 
 fn prompt_raw(label: &str) -> String {
@@ -649,11 +698,11 @@ fn detect_timezone() -> Option<String> {
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
-    println!("Quick start:");
-    println!("  vesta setup        Create an agent, authenticate, and start");
-    println!("  vesta list         List all agents");
+    println!("quick start:");
+    println!("  vesta setup        create an agent, authenticate, and start");
+    println!("  vesta list         list all agents");
     println!();
-    println!("Run 'vesta --help' for all commands.");
+    println!("run 'vesta --help' for all commands.");
 }
 
 fn run(cli: Cli) {
@@ -784,6 +833,36 @@ fn run(cli: Cli) {
             let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
             let val = result["manage_agent_code"].as_bool().unwrap_or(true);
             eprintln!("manage_agent_code = {val}");
+        }
+
+        Command::Constitution { name, edit, file, clear } => {
+            let c = get_client(host_ref, token_ref);
+            let new_content: Option<String> = if clear {
+                Some(String::new())
+            } else if let Some(path) = file {
+                Some(read_file_or_stdin(&path))
+            } else if edit {
+                let current = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                Some(edit_in_editor(&current))
+            } else {
+                None
+            };
+
+            match new_content {
+                None => {
+                    let content = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                    print!("{content}");
+                    if !content.ends_with('\n') {
+                        println!();
+                    }
+                }
+                Some(content) => {
+                    c.set_agent_constitution(&name, &content).unwrap_or_else(|e| platform::die(&e));
+                    // Restart so the new constitution is loaded into the system prompt.
+                    c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{name}: constitution updated, agent restarting");
+                }
+            }
         }
 
         Command::Start { name } => {

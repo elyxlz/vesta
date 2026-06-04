@@ -584,6 +584,21 @@ impl Client {
         read_json(resp)
     }
 
+    pub fn get_agent_constitution(&self, name: &str) -> Result<String, String> {
+        let resp = self.get(&format!("/agents/{name}/constitution"))?;
+        let body: serde_json::Value = read_json(resp)?;
+        body["content"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "response missing 'content' field".to_string())
+    }
+
+    pub fn set_agent_constitution(&self, name: &str, content: &str) -> Result<(), String> {
+        let body = serde_json::json!({ "content": content });
+        self.put_json(&format!("/agents/{name}/constitution"), &body)?;
+        Ok(())
+    }
+
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{name}/logs?tail={tail}"))?;
         consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
