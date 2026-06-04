@@ -77,7 +77,7 @@ export function Connect() {
                   autoComplete="url"
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
-                  className="text-center text-sm"
+                  className="text-center"
                 />
               </Field>
             )}
@@ -93,7 +93,7 @@ export function Connect() {
                 autoComplete="current-password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="text-center text-sm"
+                className="text-center"
               />
             </Field>
           </FieldGroup>
