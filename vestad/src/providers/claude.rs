@@ -14,6 +14,24 @@ pub struct OAuthStartResponse {
     pub session_id: String,
 }
 
+#[derive(Serialize)]
+pub struct ClaudeModel {
+    /// The alias stored in AGENT_MODEL; claude-code resolves it to the latest snapshot.
+    pub id: String,
+    pub label: String,
+    pub note: String,
+}
+
+/// Curated list of Claude models for the picker. Anthropic's lineup is a small,
+/// stable set, so this is static (unlike OpenRouter's remote top-models fetch).
+pub async fn list_models_handler() -> Json<Vec<ClaudeModel>> {
+    Json(vec![
+        ClaudeModel { id: "opus".into(), label: "Claude Opus".into(), note: "most capable".into() },
+        ClaudeModel { id: "sonnet".into(), label: "Claude Sonnet".into(), note: "balanced speed and capability".into() },
+        ClaudeModel { id: "haiku".into(), label: "Claude Haiku".into(), note: "fastest and cheapest".into() },
+    ])
+}
+
 #[derive(Deserialize)]
 pub struct OAuthCompleteBody {
     pub session_id: String,

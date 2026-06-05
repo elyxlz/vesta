@@ -1933,6 +1933,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/personalities", get(list_personalities_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
         .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
+        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))

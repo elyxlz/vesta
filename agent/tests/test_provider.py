@@ -10,6 +10,7 @@ import pytest
 from core.provider import (
     ProviderAuthState,
     _check_claude_auth,
+    _claude_provider_file,
     _openrouter_provider_file,
     _openrouter_token_present,
     _provider_declares_openrouter,
@@ -38,6 +39,28 @@ def test_openrouter_provider_file_escapes_shell_metacharacters():
     injected = _openrouter_provider_file("k'; touch /tmp/pwned #", "m")
     assert "export ANTHROPIC_AUTH_TOKEN='k'\\''; touch /tmp/pwned #'" in injected
     assert "TOKEN=k';" not in injected
+
+
+# --- Context window (MAX_CONTEXT_TOKENS) in provider files ---
+
+
+def test_claude_provider_file_includes_context_window_when_set():
+    f = _claude_provider_file("opus", 500_000)
+    assert "export AGENT_MODEL='opus'\n" in f
+    assert "export MAX_CONTEXT_TOKENS=500000\n" in f
+
+
+def test_claude_provider_file_omits_context_window_when_unset():
+    assert "MAX_CONTEXT_TOKENS" not in _claude_provider_file("opus")
+
+
+def test_openrouter_provider_file_includes_context_window_when_set():
+    f = _openrouter_provider_file("sk-or-v1-xyz", "anthropic/claude-sonnet-4-6", 200_000)
+    assert "export MAX_CONTEXT_TOKENS=200000\n" in f
+
+
+def test_openrouter_provider_file_omits_context_window_when_unset():
+    assert "MAX_CONTEXT_TOKENS" not in _openrouter_provider_file("k", "m")
 
 
 # --- Parser: provider-mode detection ---
