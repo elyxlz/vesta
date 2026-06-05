@@ -3,6 +3,7 @@ claude-code
 dashboard
 dream
 email-client
+onboard
 personality
 proactive-check
 restart

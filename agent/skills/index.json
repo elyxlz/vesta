@@ -68,6 +68,10 @@
     "description": "Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon."
   },
   {
+    "name": "onboard",
+    "description": "Use when someone who doesn't yet have their own vesta asks what this is or how to get one. Walks them through signup end to end \u2014 explains the product, collects email + subdomain + plan and how they want it set up (name, personality, starting skills), sends a Stripe checkout link, then hands off to the web app and the desktop/mobile installers. Never asks for card details (Stripe handles payment). Do NOT use to onboard the owner (they already have one)."
+  },
+  {
     "name": "onedrive",
     "description": "OneDrive cloud files: access, mount, or manage via rclone."
   },
