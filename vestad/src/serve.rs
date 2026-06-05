@@ -251,6 +251,21 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "user": user}))
 }
 
+// Unauthenticated: lets apps/web tell a hosted (vesta.run) VM from a self-hosted
+// one, since both get `*.vesta.run` tunnels and the URL alone can't distinguish.
+// Sourced from the cloud-init env: VESTA_MANAGED ("1" => managed), plus optional
+// VESTA_SERVER_ID / VESTA_LOGIN_URL.
+async fn info() -> Json<serde_json::Value> {
+    let managed = std::env::var("VESTA_MANAGED").as_deref() == Ok("1");
+    let server_id = std::env::var("VESTA_SERVER_ID").ok();
+    let login_url = std::env::var("VESTA_LOGIN_URL").ok();
+    Json(serde_json::json!({
+        "managed": managed,
+        "server_id": server_id,
+        "login_url": login_url,
+    }))
+}
+
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
     Json(version_json(&state).await)
 }
@@ -1929,6 +1944,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
         .route("/health", get(health))
+        .route("/info", get(info))
         .route("/auth/session", post(auth::create_session_handler))
         .route("/auth/refresh", post(auth::refresh_session_handler));
 
