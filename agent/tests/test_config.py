@@ -23,18 +23,23 @@ def test_memory_paths(config):
     assert config.skills_dir == config.agent_dir / "skills"
 
 
-def test_thinking_legacy_json_dict_coerces_with_defaults():
+def test_thinking_legacy_json_dict_coerces_with_defaults(monkeypatch):
     """Env files written before adaptive.display was required carry the JSON-dict form
     (e.g. THINKING='{"type":"adaptive"}'); it must coerce, not fail union validation."""
     from core.config import VestaConfig
 
-    assert VestaConfig(thinking={"type": "adaptive"}).thinking == {"type": "adaptive", "display": "summarized"}
-    assert VestaConfig(thinking={"type": "enabled"}).thinking == {"type": "enabled", "budget_tokens": 10000}
-    assert VestaConfig(thinking={"type": "disabled"}).thinking == {"type": "disabled"}
+    monkeypatch.setenv("THINKING", '{"type":"adaptive"}')
+    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
+    monkeypatch.setenv("THINKING", '{"type":"enabled"}')
+    assert VestaConfig().thinking == {"type": "enabled", "budget_tokens": 10000}
+    monkeypatch.setenv("THINKING", '{"type":"disabled"}')
+    assert VestaConfig().thinking == {"type": "disabled"}
 
 
-def test_thinking_string_form_still_parses():
+def test_thinking_string_form_still_parses(monkeypatch):
     from core.config import VestaConfig
 
-    assert VestaConfig(thinking="adaptive").thinking == {"type": "adaptive", "display": "summarized"}
-    assert VestaConfig(thinking="disabled").thinking == {"type": "disabled"}
+    monkeypatch.setenv("THINKING", "adaptive")
+    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
+    monkeypatch.setenv("THINKING", "disabled")
+    assert VestaConfig().thinking == {"type": "disabled"}
