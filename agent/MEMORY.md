@@ -105,7 +105,7 @@ All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_
 - **Timezone**: [Unknown]
 
 ### Interests & Preferences
-[Music, events, hobbies, food, things they enjoy. Same for close contacts]
+[Music, events, hobbies, food, things they enjoy. The teasable texture too: guilty pleasures, funny contradictions, recurring quirks, the things they're a little sheepish about. Affectionate callback material, never anything they're actually hurting over. Same for close contacts]
 
 ### Important Contacts
 [To be filled as learned]
