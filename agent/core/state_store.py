@@ -20,6 +20,9 @@ from . import config as cfg
 
 STATE_FILENAME = "state.json"
 
+# LEGACY-CLEANUP(#726): drop LEGACY_FILES, _import_legacy, _remove_legacy_files,
+# and their calls in load_state once every agent has booted once on a
+# state.json-aware version (old per-marker files are imported then deleted).
 LEGACY_FILES = (
     "first_start_done",
     "restart_reason",

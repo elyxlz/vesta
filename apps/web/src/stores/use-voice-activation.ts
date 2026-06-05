@@ -15,6 +15,8 @@ interface VoiceActivationState {
 function loadMode(): VoiceActivationMode {
   if (typeof localStorage === "undefined") return "toggle";
   // Migrate the old key if it's the only one present.
+  // LEGACY-CLEANUP(#726): drop the spacebar-mode fallback once existing installs
+  // have re-saved under STORAGE_KEY (a release or two after this shipped).
   const legacy = localStorage.getItem("spacebar-mode");
   const current = localStorage.getItem(STORAGE_KEY) ?? legacy;
   return current === "hold" ? "hold" : "toggle";
