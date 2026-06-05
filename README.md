@@ -10,12 +10,12 @@ A personal AI agent that lives in a Docker container, powered by Claude.
 - **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
 - **Self-proliferating.** A Vesta can encourage and help other users onboard and create their own Vestas.
-- **Secure by default.** An external supervisor LLM governs security. It follows strict guidelines, only inspects tool calls to avoid prompt injections, and can only be bypassed by user 2FA.
-- **Built on Claude Agent SDK.** Benefits from Anthropic's RL on its own harness.
+- **Secure by default.** Each agent is governed by a read-only `constitution.md` that the agent cannot edit (bind-mounted read-only into the container). An external supervisor LLM that inspects tool calls for prompt injection and can only be bypassed by user 2FA is planned (TODO).
+- **Built on the Claude harness.** Vesta drives the `claude` CLI directly rather than the Claude Agent SDK, so it benefits from Anthropic's RL on its own harness.
 
 ## Prerequisites
 
-- Claude subscription
+- Claude subscription or OpenRouter API key
 - **Server (vestad)**: Linux with Docker installed
 - **Client (CLI & app)**: Linux, macOS, or Windows — no additional dependencies
 
