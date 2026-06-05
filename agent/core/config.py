@@ -1,3 +1,4 @@
+import os
 import pathlib as pl
 import typing as tp
 
@@ -117,3 +118,37 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_name: str = "vesta"
     agent_model: str = "opus"
     agent_provider: tp.Literal["claude", "openrouter"] = "claude"
+
+
+def load_config() -> tuple[VestaConfig, list[str]]:
+    """Build VestaConfig without ever raising.
+
+    Config is on the container's boot path: an exception here exits the process, and with
+    `--restart=unless-stopped` that becomes a tight crash loop the agent can never escape.
+    So instead of letting a single malformed env override (e.g. a stale THINKING or a
+    non-numeric RESPONSE_TIMEOUT in ~/.bashrc) kill startup, drop each offending var from the
+    environment and rebuild, reverting only that field to its default. Returns the config plus
+    a human-readable message per reverted var so the caller can surface them to the agent.
+    """
+    issues: list[str] = []
+    dropped: set[str] = set()
+    while True:
+        try:
+            return VestaConfig(), issues
+        except pyd.ValidationError as exc:
+            progressed = False
+            for error in exc.errors():
+                loc = error["loc"]
+                if not loc:
+                    continue
+                env_name = str(loc[0]).upper()
+                if env_name in os.environ and env_name not in dropped:
+                    issues.append(f"{env_name}={os.environ[env_name]!r} is invalid ({error['msg']}); reverted to default")
+                    del os.environ[env_name]
+                    dropped.add(env_name)
+                    progressed = True
+            if not progressed:
+                # No offending env var to drop (would mean an invalid field default — a bug, not
+                # bad config). Fall back to pure defaults rather than crash-loop the boot.
+                issues.append(f"configuration could not be validated, using all defaults: {exc}")
+                return VestaConfig.model_construct(), issues

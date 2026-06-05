@@ -16,6 +16,7 @@ from . import state_store
 from .api import start_ws_server
 from .diagnostics import format_crash_detail
 from .loops import (
+    drop_core_notification,
     drop_greeting_notification,
     message_processor,
     monitor_loop,
@@ -152,6 +153,20 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.shutdown("sweet dreams!")
 
 
+def _report_config_issues(issues: list[str], *, config: vm.VestaConfig) -> None:
+    """Surface config vars that failed validation: log them and tell the agent via a core
+    notification so it can flag the bad values to the user, since the agent ran with defaults."""
+    if not issues:
+        return
+    for issue in issues:
+        logger.error(f"Invalid config, using default: {issue}")
+    body = (
+        "Some configuration env vars failed to validate and were reverted to their defaults. "
+        "Let the user know so they can fix the values in ~/.bashrc and run restart_vesta:\n" + "\n".join(f"- {issue}" for issue in issues)
+    )
+    drop_core_notification(type_=vm.TYPE_CONFIG_INVALID, body=body, interrupt=False, config=config)
+
+
 def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
     if first_start:
@@ -176,7 +191,7 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 
 async def async_main() -> None:
-    config = vm.VestaConfig()
+    config, config_issues = vm.load_config()
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
 
@@ -185,6 +200,7 @@ async def async_main() -> None:
 
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
+    _report_config_issues(config_issues, config=config)
 
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done
