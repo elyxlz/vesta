@@ -5,13 +5,13 @@ A personal AI agent that lives in a Docker container, powered by Claude.
 ## Why Vesta
 
 - **Opinionated and easy to set up.** One command to install, one command to start. No gateway, no infrastructure to manage.
-- **Bitter lesson pilled.** No MCP, and no hardcoded communication channels: channels are just skills the agent can read and rewrite. By default vestad mounts the core runtime read-only so it can sync updates from the host, but `--no-manage-core-code` disables that and lets the agent edit core in place too. The one thing it can never touch is the read-only `constitution.md`.
+- **Bitter lesson pilled.** Nothing is hardcoded. Every way Vesta reaches the world (messaging, email, calendars) is just a skill it can read and rewrite. It can even edit its own code: by default it stays in sync with official updates, but you can let it fully rewrite itself.
 - **Self-improving.** Vesta has a powerful self-improvement core. It can edit its own source code, write new skills, and fix its own bugs.
 - **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
 - **Self-proliferating.** A Vesta can encourage and help other users onboard and create their own Vestas.
-- **Secure by default.** Each agent is governed by a read-only `constitution.md` that the agent cannot edit (bind-mounted read-only into the container). An external supervisor LLM that inspects tool calls for prompt injection and can only be bypassed by user 2FA is planned (TODO).
-- **Built on the Claude harness.** Vesta drives the `claude` CLI directly rather than the Claude Agent SDK, so it benefits from Anthropic's RL on its own harness.
+- **Secure by default.** You write a constitution that Vesta must follow and can never edit, so your rules always hold. A security layer that screens for prompt-injection attacks and can only be overridden by you is on the roadmap.
+- **Built on Claude's own harness.** Vesta runs the real `claude` you already know, rather than a separate SDK, so it inherits everything Anthropic tunes into it.
 
 ## Prerequisites
 
