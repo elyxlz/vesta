@@ -63,10 +63,18 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
 
 
 def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
-    """Returns None if we can't determine (no client, or session not yet launched)."""
+    """Returns None if we can't determine (no client, or session not yet launched).
+
+    cc_sdk exposes a public ``is_alive()`` accessor (added in #690); the upstream
+    ``claude_agent_sdk.ClaudeSDKClient`` does not. Fall back to ``None`` so the
+    watchdog stays unobtrusive when running against the official SDK.
+    """
     if state.client is None:
         return None
-    return state.client.is_alive()
+    is_alive = getattr(state.client, "is_alive", None)
+    if is_alive is None:
+        return None
+    return is_alive()
 
 
 async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:

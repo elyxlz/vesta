@@ -197,7 +197,11 @@ async def _run_messages_with_interrupts(
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
-                sid = state.client.session_id
+                # cc_sdk exposes session_id as a client attribute; the official
+                # claude_agent_sdk only emits it via the message stream. Fall back to
+                # None when running on the upstream SDK so we don't AttributeError
+                # in the error path before sdk_parsing has captured the id.
+                sid = getattr(state.client, "session_id", None)
                 if sid:
                     persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
@@ -262,13 +266,22 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     if not state.compact_then_restart or state.client is None:
         return
     state.compact_then_restart = False
+    # cc_sdk exposes compact() because the CLI's /compact slash-command is reachable
+    # through tmux. The official claude_agent_sdk has no equivalent client method
+    # (its compaction primitive lives in fold_session_summary, a different signature).
+    # When unsupported, log and skip; the restart still happens.
+    compact = getattr(state.client, "compact", None)
+    if compact is None:
+        logger.client("Compaction unsupported on this SDK substrate, restarting without it")
+        state.graceful_shutdown.set()
+        return
     logger.client("Compacting session before nightly restart...")
     state.event_bus.set_state("thinking")
     state.compacting = True
     try:
-        await state.client.compact()
+        await compact()
     except (ClaudeSDKError, OSError, RuntimeError) as exc:
-        logger.warning(f"Compaction before restart failed: {exc} — restarting anyway")
+        logger.warning(f"Compaction before restart failed: {exc}, restarting anyway")
     finally:
         state.compacting = False
         state.event_bus.set_state("idle")
