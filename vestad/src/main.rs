@@ -112,10 +112,6 @@ enum TunnelAction {
     Setup {
         /// Subdomain name (e.g., "alice" for alice.yourdomain.com)
         subdomain: String,
-        /// Emit a single line of JSON ({"tunnel_id","dns_record_id","hostname"})
-        /// to stdout instead of human-readable output (for cloud-init / jq).
-        #[arg(long)]
-        json: bool,
     },
     /// Tear down tunnel and DNS record
     Destroy,
@@ -621,16 +617,9 @@ fn main() {
         Command::Tunnel { action } => {
             let config = config_dir();
             match action {
-                TunnelAction::Setup { subdomain, json } => {
-                    let tc = tunnel::setup_tunnel(&config, &subdomain)
+                TunnelAction::Setup { subdomain } => {
+                    tunnel::setup_tunnel(&config, &subdomain)
                         .unwrap_or_else(|e| die(e));
-                    if json {
-                        println!("{}", serde_json::json!({
-                            "tunnel_id": tc.tunnel_id,
-                            "dns_record_id": tc.dns_record_id,
-                            "hostname": tc.hostname,
-                        }));
-                    }
                 }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config)
