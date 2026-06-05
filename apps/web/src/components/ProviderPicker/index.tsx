@@ -4,7 +4,7 @@ import { ChevronLeftIcon } from "lucide-react";
 import { stepTransition } from "@/lib/motion";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
-import type { OpenRouterModelOption } from "@/api/providers/openrouter";
+import { useClaudeModels } from "@/hooks/use-claude-models";
 
 type AuthStartResult = claudeProvider.OAuthStartResult;
 import { ChoiceStep } from "./ChoiceStep";
@@ -22,14 +22,6 @@ type InternalStep =
   | "model"
   | "context";
 
-// Shown immediately; refined from vestad's /providers/claude/models on mount so a
-// newly-added model appears without a code change. claude-code resolves the aliases.
-const CLAUDE_FALLBACK: OpenRouterModelOption[] = [
-  { slug: "opus", label: "Claude Opus", author: "Anthropic" },
-  { slug: "sonnet", label: "Claude Sonnet", author: "Anthropic" },
-  { slug: "haiku", label: "Claude Haiku", author: "Anthropic" },
-];
-
 export function ProviderPicker({
   onDone,
   onBack,
@@ -43,31 +35,10 @@ export function ProviderPicker({
   const [model, setModel] = useState("");
   const [claudeModel, setClaudeModel] = useState("");
   const [credentials, setCredentials] = useState("");
-  const [claudeModels, setClaudeModels] =
-    useState<OpenRouterModelOption[]>(CLAUDE_FALLBACK);
+  // Fetch only once the user is actually on the Claude path, not on mount.
+  const claudeModels = useClaudeModels(mode === "claude" && step !== "choice");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
-
-  // Refine the Claude model list once; failures keep the fallback.
-  useEffect(() => {
-    let cancelled = false;
-    claudeProvider
-      .fetchModels()
-      .then((items) => {
-        if (cancelled || items.length === 0) return;
-        setClaudeModels(
-          items.map((m) => ({
-            slug: m.id,
-            label: m.label,
-            author: "Anthropic",
-          })),
-        );
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh

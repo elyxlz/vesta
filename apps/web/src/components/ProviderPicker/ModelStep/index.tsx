@@ -10,6 +10,7 @@ import {
 import { openrouterProvider } from "@/api";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
+import { formatTokens } from "@/lib/format";
 import { ProviderIcon } from "../ProviderIcon";
 import { fuzzyMatch } from "../fuzzy";
 
@@ -221,7 +222,7 @@ function ModelCard({
         <span className="truncate text-[11px] text-muted-foreground">
           {model.author}
           {model.context_length
-            ? ` · ${formatContextLength(model.context_length)} ctx`
+            ? ` · ${formatTokens(model.context_length)} ctx`
             : ""}
           {formatPrice(
             model.input_price,
@@ -234,14 +235,6 @@ function ModelCard({
       </div>
     </button>
   );
-}
-
-function formatContextLength(n: number): string {
-  if (n >= 1_000_000) {
-    return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
 }
 
 // input/output/cache-read price in USD per million tokens, or null when not

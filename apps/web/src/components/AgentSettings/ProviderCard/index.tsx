@@ -12,27 +12,12 @@ import {
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
-import type { openrouterProvider } from "@/api";
 import { setModel, setContextWindow } from "@/api/agents";
+import { formatTokens } from "@/lib/format";
 import { useProvider } from "@/hooks/use-provider";
+import { useClaudeModels } from "@/hooks/use-claude-models";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
-
-// Claude OAuth exposes a small fixed set; the SDK takes these short aliases.
-const CLAUDE_MODELS: openrouterProvider.OpenRouterModelOption[] = [
-  { slug: "opus", label: "Claude Opus", author: "Anthropic" },
-  { slug: "sonnet", label: "Claude Sonnet", author: "Anthropic" },
-  { slug: "haiku", label: "Claude Haiku", author: "Anthropic" },
-];
-
-// Display a token count as 1M / 500K / 200K.
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) {
-    return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
-}
 
 /// Provider hub for an agent: shows the current provider, model, and context
 /// window; lets you switch between Claude and OpenRouter (reuses the reconfigure
@@ -44,6 +29,7 @@ export function ProviderCard() {
   // Revalidate on status change so a provider switch (which restarts the agent)
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent?.status);
+  const claudeModels = useClaudeModels(provider?.kind === "claude");
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -151,7 +137,7 @@ export function ProviderCard() {
             <div className="flex flex-col items-center gap-3 py-2">
               <ModelStep
                 initialModel={provider.model ?? ""}
-                models={isOpenRouter ? undefined : CLAUDE_MODELS}
+                models={isOpenRouter ? undefined : claudeModels}
                 allowCustom={isOpenRouter}
                 submitLabel="switch model"
                 onSubmit={(model) => void applyModel(model)}

@@ -459,6 +459,26 @@ fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_fl
     ClaudeOptions { model, max_context_tokens }
 }
 
+/// Show a numbered list and return the chosen 0-based index. Empty input picks
+/// `default_idx`; an out-of-range number reprompts. Used by the fixed-list pickers
+/// (Claude model, context window); the OpenRouter picker is richer (search + custom
+/// slug) and stays separate.
+fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
+    for (idx, label) in labels.iter().enumerate() {
+        let marker = if idx == default_idx { "  (default)" } else { "" };
+        eprintln!("  {}) {label}{marker}", idx + 1);
+    }
+    loop {
+        match prompt_raw(&format!("choice [{}]", default_idx + 1)).as_str() {
+            "" => return default_idx,
+            s => match s.parse::<usize>().ok().filter(|n| (1..=labels.len()).contains(n)) {
+                Some(n) => return n - 1,
+                None => eprintln!("  pick a number between 1 and {}", labels.len()),
+            },
+        }
+    }
+}
+
 /// Prompt for a Claude model from the curated list (default = first entry, Opus).
 /// Falls back to "opus" if the list can't be fetched.
 fn prompt_claude_model(c: &client::Client) -> String {
@@ -467,43 +487,22 @@ fn prompt_claude_model(c: &client::Client) -> String {
         _ => return "opus".to_string(),
     };
     eprintln!("which Claude model?");
-    for (idx, model) in models.iter().enumerate() {
-        let default = if idx == 0 { "  (default)" } else { "" };
-        eprintln!("  {}) {} — {}{}", idx + 1, model.label, model.note, default);
-    }
-    loop {
-        match prompt_raw("choice [1]").as_str() {
-            "" => return models[0].id.clone(),
-            s => match s.parse::<usize>().ok().and_then(|n| models.get(n.wrapping_sub(1))) {
-                Some(model) => return model.id.clone(),
-                None => eprintln!("  pick a number between 1 and {}", models.len()),
-            },
-        }
-    }
+    let labels: Vec<String> = models.iter().map(|m| format!("{} — {}", m.label, m.note)).collect();
+    models[prompt_indexed_choice(&labels, 0)].id.clone()
 }
 
 /// Context-window presets (tokens, label). 1M is the default (largest).
 const CONTEXT_PRESETS: [(u64, &str); 3] = [
     (200_000, "200K — cheapest prompt-cache reads, compacts soonest"),
     (500_000, "500K — balanced"),
-    (1_000_000, "1M — most context (default)"),
+    (1_000_000, "1M — most context"),
 ];
 
-/// Prompt for a context-window preset. Default = 1M (the largest).
+/// Prompt for a context-window preset. Default = 1M (the largest, last entry).
 fn prompt_context_window() -> u64 {
     eprintln!("context window?");
-    for (idx, (_, label)) in CONTEXT_PRESETS.iter().enumerate() {
-        eprintln!("  {}) {}", idx + 1, label);
-    }
-    loop {
-        match prompt_raw("choice [3]").as_str() {
-            "" => return CONTEXT_PRESETS[2].0,
-            s => match s.parse::<usize>().ok().and_then(|n| CONTEXT_PRESETS.get(n.wrapping_sub(1))) {
-                Some((tokens, _)) => return *tokens,
-                None => eprintln!("  pick a number between 1 and {}", CONTEXT_PRESETS.len()),
-            },
-        }
-    }
+    let labels: Vec<String> = CONTEXT_PRESETS.iter().map(|(_, label)| label.to_string()).collect();
+    CONTEXT_PRESETS[prompt_indexed_choice(&labels, CONTEXT_PRESETS.len() - 1)].0
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
