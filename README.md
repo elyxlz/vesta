@@ -5,7 +5,7 @@ A personal AI agent that lives in a Docker container, powered by Claude.
 ## Why Vesta
 
 - **Opinionated and easy to set up.** One command to install, one command to start. No gateway, no infrastructure to manage.
-- **Bitter lesson pilled.** No MCP, no gateway. The agent's full source code is editable by itself, including communication channels. Nothing within the docker container is static.
+- **Bitter lesson pilled.** No MCP, and no hardcoded communication channels: channels are just skills the agent can read and rewrite. By default vestad mounts the core runtime read-only so it can sync updates from the host, but `--no-manage-core-code` disables that and lets the agent edit core in place too. The one thing it can never touch is the read-only `constitution.md`.
 - **Self-improving.** Vesta has a powerful self-improvement core. It can edit its own source code, write new skills, and fix its own bugs.
 - **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
