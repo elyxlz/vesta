@@ -21,3 +21,20 @@ def test_config_default_values():
 def test_memory_paths(config):
     assert get_memory_path(config) == config.agent_dir / "MEMORY.md"
     assert config.skills_dir == config.agent_dir / "skills"
+
+
+def test_thinking_legacy_json_dict_coerces_with_defaults():
+    """Env files written before adaptive.display was required carry the JSON-dict form
+    (e.g. THINKING='{"type":"adaptive"}'); it must coerce, not fail union validation."""
+    from core.config import VestaConfig
+
+    assert VestaConfig(thinking={"type": "adaptive"}).thinking == {"type": "adaptive", "display": "summarized"}
+    assert VestaConfig(thinking={"type": "enabled"}).thinking == {"type": "enabled", "budget_tokens": 10000}
+    assert VestaConfig(thinking={"type": "disabled"}).thinking == {"type": "disabled"}
+
+
+def test_thinking_string_form_still_parses():
+    from core.config import VestaConfig
+
+    assert VestaConfig(thinking="adaptive").thinking == {"type": "adaptive", "display": "summarized"}
+    assert VestaConfig(thinking="disabled").thinking == {"type": "disabled"}
