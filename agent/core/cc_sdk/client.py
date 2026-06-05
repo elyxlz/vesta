@@ -4,7 +4,7 @@ Drop-in replacement for the official SDK client. Instead of speaking the control
 protocol to a headless subprocess, it:
 
   * launches `claude` (the real TUI) in a dedicated tmux server,
-  * submits prompts by bracketed-pasting them into the input box and pressing Enter,
+  * submits prompts by typing randomized bracketed-paste chunks and pressing Enter,
   * streams the assistant's reply by tailing the session transcript JSONL,
   * receives tool/subagent/compaction events as native command hooks routed through
     a unix-socket bridge, and exposes the agent's MCP tools via a stdio proxy,
@@ -223,9 +223,7 @@ class ClaudeSDKClient:
             self._offset = 0
         self._turn_index += 1
         self._turn_started = time.monotonic()
-        await tmux.paste_text(self._tmux_socket, self._tmux_session, prompt)
-        await asyncio.sleep(0.1)
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Enter")
+        await tmux.submit_text(self._tmux_socket, self._tmux_session, prompt)
 
     async def receive_response(self) -> tp.AsyncIterator[tp.Any]:
         if self._transcript_path is None:
@@ -252,7 +250,7 @@ class ClaudeSDKClient:
         # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
         # where a lone Escape let generation run to completion). Sending Escape twice
         # flushes the first as a real Escape keypress and reliably interrupts.
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Escape", "Escape")
+        await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
         # An interrupted turn never fires its Stop hook (verified: no late Stop arrives
         # either), so account for the abandoned turn here. Without this, every turn after
         # an interrupt waits for a Stop count that can never be reached and hangs.
@@ -291,9 +289,7 @@ class ClaudeSDKClient:
         cursor = self._transcript_path.stat().st_size if self._transcript_path and self._transcript_path.exists() else 0
         command = f"/compact {instructions}".strip()
         self._compaction_started.clear()
-        await tmux.paste_text(self._tmux_socket, self._tmux_session, command)
-        await asyncio.sleep(0.1)
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Enter")
+        await tmux.submit_text(self._tmux_socket, self._tmux_session, command)
         try:
             await asyncio.wait_for(self._compaction_started.wait(), _COMPACT_START_TIMEOUT_S)
         except TimeoutError:
