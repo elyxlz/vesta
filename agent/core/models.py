@@ -8,12 +8,12 @@ import pydantic as pyd
 from aiohttp.web import AppRunner
 from core.cc_sdk import ClaudeSDKClient
 
-from .config import VestaConfig
+from .config import VestaConfig, load_config
 from .events import EventBus
 from .provider import ProviderStatus
 from .state_store import PersistedState
 
-__all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
+__all__ = ["State", "Notification", "VestaConfig", "PersistedState", "load_config"]
 
 CORE_SOURCE = "core"
 
@@ -24,6 +24,7 @@ TYPE_RESTART_GREETING = "restart_greeting"
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
+TYPE_CONFIG_INVALID = "config_invalid"
 
 CLEAN_RESTART = "restart: clean restart"
 NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
