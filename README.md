@@ -11,7 +11,7 @@ A personal AI agent that lives in a Docker container, powered by Claude.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
 - **Self-proliferating.** A Vesta can encourage and help other users onboard and create their own Vestas.
 - **Secure by default.** You write a constitution that Vesta must follow and can never edit, so your rules always hold. A security layer that screens for prompt-injection attacks and can only be overridden by you is on the roadmap.
-- **Built on Claude's own harness.** Vesta runs the real `claude` you already know, rather than a separate SDK, so it inherits everything Anthropic tunes into it.
+- **Built on Claude's own harness.** Benefits from Anthropic RL-maxing their models on it.
 
 ## Prerequisites
 
