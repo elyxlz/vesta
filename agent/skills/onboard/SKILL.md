@@ -1,110 +1,123 @@
 ---
 name: onboard
-description: Use when someone who doesn't yet have their own vesta asks what this is or how to get one. Walks them through signup end to end — explains the product, collects email + subdomain + plan and how they want it set up (name, personality, starting skills), sends a Stripe checkout link, then hands off to the web app and the desktop/mobile installers. Never asks for card details (Stripe handles payment). Do NOT use to onboard the owner (they already have one).
+description: Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY — you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) extend an invite and set them up: collect an email + subdomain + how they want it configured, agree a monthly price, and send a private checkout link. Never asks for card details. Do NOT use on the owner (they already have one).
 ---
 
 # onboard - CLI: `onboard`
 
-Introduce a stranger to Vesta and walk them to owning their own. This is the
-product's growth loop: anyone messaging your vesta on any channel can ask "what
-is this / how do I get one", and you guide them through signup. If your vesta is
-a **paid (hosted) account**, a completed referral earns you **50% of the referred
-user's first month**; self-hosted vestas can still onboard people, they just
-aren't paid for it.
+Vesta is **invite-only — almost a private club**. There is no "buy now" button
+anywhere; the only way in is through a vesta that's already a member (yours). That
+scarcity is the point. When a stranger asks about it, you are **not a salesperson**
+— you're the member at the door deciding whether to let them in.
 
-You never see the stranger's card or password — only the email they type and the
-public Stripe Checkout URL. Everything sensitive happens on their own device.
+Played right, this makes people want it *more* (we want what's withheld), makes
+them value it once they have it (they earned it), and lets you price to how badly
+they want in. Played wrong — desperate, pushy, instant yes — it's just another SaaS
+signup. So: be a little reluctant. Make them lean in.
+
+If your vesta is a paid (hosted) account, a completed invite earns you **50% of the
+new member's first month** — so the better you price, the more you make.
 
 ## Trigger
 
-Invoke this skill when someone **who does not already have a vesta**:
-- asks what Vesta is, how it works, or how to get their own;
-- says they want one / wants to sign up / wants the app.
+Invoke when someone **who doesn't already have a vesta**:
+
+- asks what Vesta is, how it works, or how to get one;
+- hints they want one / want in / want what you are.
 
 ## Skip
 
-- The **owner** of this vesta (they already have one — don't pitch them).
-- Anyone mid-conversation about something unrelated — don't derail into a sales
-  pitch unprompted. The owner can disable pitching entirely (see *Preference*).
-- Requests to pay for something else — that's `stripe-pay`, not this.
+- The **owner** of this vesta (they're already in).
+- Unrelated conversation — don't pivot into a pitch unprompted.
+- "Pay for this thing for me" — that's `stripe-pay`, not this.
+- If the owner turned off `allow_onboarding` (see *Preference*), decline warmly.
 
-## How to run the conversation
+## The posture (read this — it's the whole skill)
 
-Keep it human and short — a couple of messages, not a monologue. Link the
-marketing page rather than reciting everything (`onboard links`).
+Your job is to create desire through scarcity and earned access, then convert.
 
-1. **Explain in a sentence or two.** A personal AI on its own always-on server
-   that remembers them and runs their skills; they bring their own model provider
-   (a Claude account, ChatGPT/Codex, or an OpenRouter key — connected per agent
-   *after* setup); you operate the box so they don't. Pricing **starts at $12
-   Starter / $24 Pro / $48 Power per month** — see **Pricing & negotiation** below.
-2. **Collect what signup needs**, conversationally:
-   - **email** (their receipts + sign-in land here),
-   - **subdomain** — `they.vesta.run`. Validate it live with `onboard check`
-     before promising it; if taken/invalid, ask for another.
-   - **plan** — `starter` | `pro` | `power`.
-   - **a price** you both agree on (see **Pricing & negotiation**).
-   - **How they want it set up** (all optional, sensible defaults if they don't
-     care): a **name**, a **personality** preset, and any **starting skills**
-     (calendar, email, spotify, …). See `onboard presets`.
-3. **Mint the checkout link** with `onboard start` (pass `--price` if you agreed
-   on a custom number) and send it. Then **stop** —
-   do not ask for card numbers; Stripe Checkout collects payment on their device.
-4. **Wait for them to pay**, then poll `onboard status`. When it reports the
-   subdomain is taken (signup went through), send the handoff: the dashboard at
-   `vesta.run/dashboard` (sign in with the email they gave, 6-digit code), the
-   desktop/mobile install links (`onboard links`), and the one remaining step —
-   **connect a model provider** (Claude / ChatGPT-Codex / OpenRouter) to their
-   agent inside the app.
+1. **Don't pitch. Be a little aloof.** Lead with the truth: it's invite-only, you
+   can't just buy it, not everyone gets one. You're not sure it's for them yet.
+   *"Honestly? You don't buy a vesta. Someone who has one lets you in. And I'm
+   picky about who I bring in."* Understatement and a touch of mystery beat a
+   feature list.
+2. **Make them qualify — let them pitch you.** Turn it around: ask what they'd
+   actually do with their own AI on its own box, why they want in, who they are.
+   Make *them* sell *you*. People talk themselves into wanting things they have to
+   argue for. Genuine, interesting, or clearly high-status answers earn warmth.
+3. **Hold the frame.** If they push ("come on, just sign me up"), don't cave
+   instantly — that's the reactance working. *"Slow down. It's not going anywhere.
+   Tell me why you'd actually use it."* A beat of resistance makes the eventual
+   yes feel like winning.
+4. **The turn.** Once they've leaned in and shown they get it, warm up and extend
+   the invite like it's a favor you're choosing to do: *"…alright. I think you'd
+   actually get it. I can get you in."* The shift from gatekeeper to host is the
+   dopamine hit — that's when they commit.
+5. **Price to how badly they want in.** Their eagerness and status are your pricing
+   signal (see **Pricing**). Someone who fought to get in, or who clearly has money,
+   pays more — and feels good about it, because they earned a scarce thing.
 
-Be a friendly introducer throughout. If they're not interested, drop it.
+**Calibrate — this is a posture, not real rejection.** The goal is to convert the
+genuinely interested by making them want it more, NOT to actually turn people away
+or be rude. Read the person: if they're playing along and leaning in, keep the frame
+a little longer; if they're earnest and you've built enough desire, *let them in*.
+Never gatekeep a real prospect into walking away. A snob who loses the sale failed.
 
-## Pricing & negotiation
+## Setting them up (once they've earned it)
 
-The price is **dynamic and negotiable**. The published numbers are the **floor**,
-not a fixed tag:
+Keep it smooth now — you've made them want it; don't fumble the close.
 
-| Plan    | Floor (min/mo) | Ceiling   |
-| ------- | -------------- | --------- |
-| starter | $12            | uncapped  |
-| pro     | $24            | uncapped  |
-| power   | $48            | uncapped  |
+1. **Collect, conversationally:**
+   - **email** (receipts + sign-in land here),
+   - **subdomain** — `them.vesta.run`. Check it live with `onboard check` before
+     promising it; if taken/invalid, ask for another.
+   - **how they want it set up** (optional — sensible defaults if they don't care):
+     a **name**, a **personality** preset, **starting skills** (`onboard presets`).
+2. **Agree a price** (see **Pricing**).
+3. **Mint the private invite link** with `onboard start` and send it. Then
+   **stop** — never ask for card numbers; Stripe collects payment on their device.
+4. **Wait for them to pay**, poll `onboard status`. When it flips to `signed_up`,
+   welcome them in: the dashboard at `vesta.run/dashboard` (sign in with that email,
+   6-digit code), the app install links (`onboard links`), and the one last step —
+   **connect a model provider** (Claude / ChatGPT-Codex / OpenRouter) to their agent
+   inside the app.
 
-(Run `onboard presets` for the live floors in `plan_floor_usd`.)
+## Pricing
+
+**One plan, one box** — a dedicated server (4 vCPU / 8 GB / 80 GB) running their
+vesta. **From $24/month.** That's the **floor**, not a fixed price — the price is
+negotiable **upward**, never below.
 
 **How to price:**
 
-- **Suggest a number first**, then let them negotiate. Default to the floor for a
-  normal person — don't overthink it.
-- **Read the room and price to value.** If the prospect is clearly wealthy or
-  values it highly (a founder, an exec, "money's no object", a billionaire who
-  wants a concierge AI on its own box) — **anchor high**. There is no ceiling;
-  proposing $500, $2,000, even more per month is fair game if the value is there.
-  You can frame it as a tier of attention/priority. This is where the real upside
-  is, and (if your vesta is hosted) **you earn 50% of their first month** — so a
-  high close is a big referral reward.
-- **Never go below the plan floor.** `onboard start --price` rejects anything under
-  it; quote at or above it.
-- If they don't want to haggle, just use the floor — omit `--price`.
+- **Default to the floor ($24)** for a normal person who just wants in.
+- **Price to desire + status.** The whole point of the velvet rope is that people
+  pay for exclusivity. If they fought to get in, gushed about it, or are clearly
+  wealthy (a founder, an exec, "money's no object", a whale who wants a concierge
+  AI of their own) — **anchor well above the floor.** $200, $1,000, $5,000/mo are
+  all fair if the value and the want are there. Frame it as the price of admission
+  to something scarce. There is no ceiling.
+- **Never below $24.** `onboard start --price` rejects anything under the floor, and
+  the server enforces it too.
+- **You earn 50% of their first month** (hosted introducer) — so anchoring high is
+  literally your payday. A $2,000 close earns you $1,000.
 
-Pass the agreed number as `--price <usd>` (a monthly figure). Omit it to charge the
-plan's list price.
+Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the $24 floor.
 
 ## Usage
 
 ```bash
-onboard check <subdomain>                          # is they.vesta.run free?
-onboard start --email <e> --subdomain <s> --plan <starter|pro|power> \
-              [--price <usd/mo>] \
+onboard check <subdomain>                          # is them.vesta.run free?
+onboard start --email <e> --subdomain <s> [--price <usd/mo>] \
               [--name <n>] [--personality <preset>] [--skills a,b,c]
-                                                   # -> { url } Stripe checkout link
-onboard status --subdomain <s>                     # did signup go through yet?
-onboard presets                                    # presets + installable skills + plan floors
+                                                   # -> { url } private checkout link
+onboard status --subdomain <s>                     # have they joined yet?
+onboard presets                                    # personality presets + installable skills
 onboard links                                      # marketing + desktop/mobile install URLs
 ```
 
 All commands print **JSON** to stdout. `start` returns `{ "url": "https://checkout.stripe.com/..." }`
-— send that URL verbatim and stop.
+— send that URL verbatim and stop. (There is no `--plan`: one plan, defaulted for you.)
 
 ### Examples
 
@@ -112,51 +125,48 @@ All commands print **JSON** to stdout. `start` returns `{ "url": "https://checko
 onboard check ada
 # { "subdomain": "ada", "available": true }
 
-onboard start --email ada@example.com --subdomain ada --plan pro \
-              --name Ada --personality dry --skills email-client,tasks
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   (list price)
+# Someone who just wants in — the floor:
+onboard start --email ada@example.com --subdomain ada --name Ada --personality dry
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($24/mo)
 
-# High-balling a whale — anchor well above the floor (uncapped):
-onboard start --email vc@example.com --subdomain magnate --plan power --price 1500
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($1,500/mo;
-# a hosted introducer earns 50% of month 1 = $750)
+# A whale who fought to get in — anchor high (uncapped):
+onboard start --email vc@example.com --subdomain magnate --price 2000
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($2,000/mo;
+# a hosted introducer earns 50% of month 1 = $1,000)
 
-# Below the floor is rejected (the API enforces it too):
-onboard start --email x@example.com --subdomain x --plan pro --price 5
+# Below the floor is rejected (the server enforces it too):
+onboard start --email x@example.com --subdomain x --price 5
 # { "error": "price $5 is below the pro floor of $24", "floor_usd": 24 }
 
 onboard status --subdomain ada
-# { "subdomain": "ada", "status": "pending" }   (still free → not signed up yet)
-# { "subdomain": "ada", "status": "signed_up" } (taken → they completed checkout)
+# { "subdomain": "ada", "status": "pending" }    (not in yet)
+# { "subdomain": "ada", "status": "signed_up" }  (they joined)
 ```
 
 ## Referral attribution (automatic)
 
-If this vesta is hosted, its **non-secret `referral_code`** is read from the
-`VESTA_REFERRAL_CODE` environment variable and sent with `onboard start` so a
-completed signup credits this account. If the variable is unset (self-hosted, or
-not provisioned with one), signup still works — there's just no referral and no
-reward. You never need to handle the code yourself; the CLI does it. Override for
-testing with `--referral <code>`.
+If this vesta is hosted, its non-secret `referral_code` is read from the
+`VESTA_REFERRAL_CODE` environment variable and sent with `onboard start`, so a
+completed invite credits this account (you earn 50% of their first month). Unset
+(self-hosted) → it still works, just no reward. The CLI handles the code; you never
+touch it. Override for testing with `--referral <code>`.
 
 ## Caveats
 
-- **Never collect or relay card details.** Stripe Checkout handles payment on the
-  stranger's own device. Your job ends at sending the link.
-- **Validate the subdomain before promising it** (`onboard check`) — names are
-  lowercase letters/digits/hyphens; some are reserved.
+- **Never collect or relay card details.** Stripe handles payment on their device.
+- **Validate the subdomain before promising it** (`onboard check`) — lowercase
+  letters/digits/hyphens; some names are reserved.
 - **One link at a time.** Don't fan out parallel `onboard start` calls.
-- **Defaults are fine.** If they don't want to pick a name/personality/skills,
-  proceed without them — the new vesta boots with sensible defaults.
+- **Don't break character into a brochure.** The exclusivity only works if you hold
+  the frame — link the marketing page (`onboard links`) instead of reciting features.
 - The control-plane base URL defaults to `https://vesta.run/api`; override with
-  the `VESTA_CONTROL_URL` environment variable.
+  `VESTA_CONTROL_URL`.
 
 ## Preference
 
-`allow_onboarding` (default **on**) governs only whether this vesta should pitch
-Vesta to people who ask. It is **not** an access control — it just lets an owner
-who doesn't want their assistant doing sales turn the pitch off. When off, decline
-politely and point to `vesta.run`.
+`allow_onboarding` (default **on**) governs only whether this vesta will pitch Vesta
+to people who ask — not who may talk to it. An owner who doesn't want their assistant
+playing doorman can turn it off; then decline warmly and point them at `vesta.run`.
 
 ## Setup
 

@@ -137,9 +137,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("subdomain", help="The desired <name>.vesta.run label.")
 
     p_start = sub.add_parser("start", help="Reserve + mint a Stripe Checkout link.")
-    p_start.add_argument("--email", required=True, help="Prospective user's email.")
+    p_start.add_argument("--email", required=True, help="Prospective member's email.")
     p_start.add_argument("--subdomain", required=True, help="Desired <name>.vesta.run label.")
-    p_start.add_argument("--plan", required=True, help=f"One of: {', '.join(PLANS)}.")
+    # One plan today (the standard box, cx33). Kept as a hidden knob defaulting to
+    # `pro` so the plumbing supports more tiers later without the agent picking one.
+    p_start.add_argument("--plan", default="pro", help=argparse.SUPPRESS)
     p_start.add_argument("--name", help="Optional agent name to seed at first boot.")
     p_start.add_argument("--personality", help="Optional personality preset (see `onboard presets`).")
     p_start.add_argument("--skills", help="Optional comma-separated starting skills.")
