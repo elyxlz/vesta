@@ -89,6 +89,12 @@ enum Command {
         /// from `vesta auth` or an existing agent.
         #[arg(long)]
         claude_token: Option<String>,
+        /// Claude model: opus | sonnet | haiku (prompted on an interactive Claude setup if omitted)
+        #[arg(long)]
+        claude_model: Option<String>,
+        /// Context window in tokens, e.g. 200000 / 500000 / 1000000 (prompted if omitted; Claude default is 1M)
+        #[arg(long)]
+        context_window: Option<u64>,
         #[command(flatten)]
         openrouter: OpenRouterFlags,
     },
@@ -157,10 +163,17 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// View agent settings (manage_agent_code is fixed at create time and read-only here)
+    /// View or change agent settings. With no flags, prints model + context window
+    /// (manage_agent_code is fixed at create time and read-only here).
     Settings {
         /// Agent name
         name: String,
+        /// Change the model: opus | sonnet | haiku (Claude), or an OpenRouter slug
+        #[arg(long)]
+        model: Option<String>,
+        /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
+        #[arg(long)]
+        context_window: Option<u64>,
     },
     /// View or edit an agent's constitution (a charter prepended to its memory; the agent
     /// cannot edit it). With no flags, prints the current constitution.
@@ -389,14 +402,22 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
     Some(client::OpenRouterArgs { key, model })
 }
 
+/// Claude model + context window chosen for a `vesta setup`. Both optional: unset
+/// fields let vestad apply its defaults (Opus, 1M window).
+#[derive(Default)]
+struct ClaudeOptions {
+    model: Option<String>,
+    max_context_tokens: Option<u64>,
+}
+
 /// How `vesta setup` will provision the agent once it's created.
 enum ProvisionPlan {
     /// Run on OpenRouter (key already validated).
     OpenRouter(client::OpenRouterArgs),
     /// Provision Claude from credentials supplied up front (non-interactive).
-    ClaudeCredentials(String),
+    ClaudeCredentials { credentials: String, opts: ClaudeOptions },
     /// Provision Claude via the interactive OAuth dance after create.
-    ClaudeOAuth,
+    ClaudeOAuth { opts: ClaudeOptions },
 }
 
 /// Resolve how `vesta setup` should provision the agent. Every interactive prompt
@@ -405,7 +426,8 @@ enum ProvisionPlan {
 /// - `--claude-token` -> Claude from supplied credentials, no prompts
 /// - `--yes` with neither -> defaults to Claude (OAuth dance still runs)
 /// - otherwise -> prompt for the provider (and key/model, or OAuth)
-fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, yes: bool) -> ProvisionPlan {
+#[allow(clippy::too_many_arguments)]
+fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, claude_model: Option<String>, context_window: Option<u64>, yes: bool) -> ProvisionPlan {
     if flags.openrouter_key.is_some() && claude_token.is_some() {
         platform::die("--openrouter-key and --claude-token are mutually exclusive");
     }
@@ -416,12 +438,71 @@ fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_tok
         return ProvisionPlan::OpenRouter(args);
     }
     if let Some(credentials) = claude_token {
-        return ProvisionPlan::ClaudeCredentials(credentials);
+        // Non-interactive Claude: model/context come from flags only (no prompts).
+        return ProvisionPlan::ClaudeCredentials {
+            credentials,
+            opts: ClaudeOptions { model: claude_model, max_context_tokens: context_window },
+        };
     }
     if yes || !prompt_use_openrouter() {
-        return ProvisionPlan::ClaudeOAuth;
+        return ProvisionPlan::ClaudeOAuth { opts: resolve_claude_options(c, claude_model, context_window, yes) };
     }
     ProvisionPlan::OpenRouter(prompt_openrouter_interactive(c, flags.openrouter_model))
+}
+
+/// Collect the Claude model + context window for setup. Flags win; otherwise prompt
+/// interactively. With `--yes` and no flags, leave both unset so vestad applies its
+/// defaults (Opus, 1M window).
+fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_flag: Option<u64>, yes: bool) -> ClaudeOptions {
+    let model = model_flag.or_else(|| (!yes).then(|| prompt_claude_model(c)));
+    let max_context_tokens = ctx_flag.or_else(|| (!yes).then(prompt_context_window));
+    ClaudeOptions { model, max_context_tokens }
+}
+
+/// Show a numbered list and return the chosen 0-based index. Empty input picks
+/// `default_idx`; an out-of-range number reprompts. Used by the fixed-list pickers
+/// (Claude model, context window); the OpenRouter picker is richer (search + custom
+/// slug) and stays separate.
+fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
+    for (idx, label) in labels.iter().enumerate() {
+        let marker = if idx == default_idx { "  (default)" } else { "" };
+        eprintln!("  {}) {label}{marker}", idx + 1);
+    }
+    loop {
+        match prompt_raw(&format!("choice [{}]", default_idx + 1)).as_str() {
+            "" => return default_idx,
+            s => match s.parse::<usize>().ok().filter(|n| (1..=labels.len()).contains(n)) {
+                Some(n) => return n - 1,
+                None => eprintln!("  pick a number between 1 and {}", labels.len()),
+            },
+        }
+    }
+}
+
+/// Prompt for a Claude model from the curated list (default = first entry, Opus).
+/// Falls back to "opus" if the list can't be fetched.
+fn prompt_claude_model(c: &client::Client) -> String {
+    let models = match c.fetch_claude_models() {
+        Ok(models) if !models.is_empty() => models,
+        _ => return "opus".to_string(),
+    };
+    eprintln!("which Claude model?");
+    let labels: Vec<String> = models.iter().map(|m| format!("{} — {}", m.label, m.note)).collect();
+    models[prompt_indexed_choice(&labels, 0)].id.clone()
+}
+
+/// Context-window presets (tokens, label). 1M is the default (largest).
+const CONTEXT_PRESETS: [(u64, &str); 3] = [
+    (200_000, "200K — cheapest prompt-cache reads, compacts soonest"),
+    (500_000, "500K — balanced"),
+    (1_000_000, "1M — most context"),
+];
+
+/// Prompt for a context-window preset. Default = 1M (the largest, last entry).
+fn prompt_context_window() -> u64 {
+    eprintln!("context window?");
+    let labels: Vec<String> = CONTEXT_PRESETS.iter().map(|(_, label)| label.to_string()).collect();
+    CONTEXT_PRESETS[prompt_indexed_choice(&labels, CONTEXT_PRESETS.len() - 1)].0
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
@@ -534,8 +615,9 @@ fn oauth_dance(client: &client::Client) -> String {
 
 fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
+    // Reauth only: model + context window are preserved server-side (None = keep).
     client
-        .set_provider_credentials(name, &credentials)
+        .set_provider_credentials(name, &credentials, None, None)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -847,7 +929,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code, claude_token, openrouter } => {
+        Command::Setup { yes, name, no_manage_core_code, claude_token, claude_model, context_window, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -859,7 +941,7 @@ fn run(cli: Cli) {
             // is validated client-side here so a bad key fails fast, before we
             // create an agent we'd immediately fail to provision. Claude needs
             // no pre-validation; OAuth happens after create.
-            let plan = resolve_setup_provider(&c, openrouter, claude_token, yes);
+            let plan = resolve_setup_provider(&c, openrouter, claude_token, claude_model, context_window, yes);
             let timezone = detect_timezone();
 
             // 1. Create an empty agent. Vestad no longer accepts credentials at
@@ -890,15 +972,15 @@ fn run(cli: Cli) {
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
-                ProvisionPlan::ClaudeCredentials(credentials) => {
-                    c.set_provider_credentials(&created_name, &credentials)
+                ProvisionPlan::ClaudeCredentials { credentials, opts } => {
+                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated (claude)");
                 }
-                ProvisionPlan::ClaudeOAuth => {
+                ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.set_provider_credentials(&created_name, &credentials)
+                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated!");
                 }
@@ -953,11 +1035,28 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Settings { name } => {
+        Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
-            let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
-            let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-            eprintln!("manage_agent_code = {val}");
+            if model.is_some() || context_window.is_some() {
+                c.set_provider_settings(&name, model.as_deref(), context_window)
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("updated. the agent is restarting to apply the change.");
+            } else {
+                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+                eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
+                if let Ok(provider) = c.get_provider(&name) {
+                    if let Some(m) = provider["model"].as_str() {
+                        eprintln!("model = {m}");
+                    }
+                    match provider["max_context_tokens"].as_u64() {
+                        Some(ctx) => eprintln!("context_window = {ctx}"),
+                        None if provider["kind"].as_str() == Some("openrouter") => {
+                            eprintln!("context_window = default (model window, capped at 200K)")
+                        }
+                        None => eprintln!("context_window = default (1M for Claude)"),
+                    }
+                }
+            }
         }
 
         Command::Constitution { name, edit, file, clear } => {
@@ -1050,7 +1149,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.set_provider_credentials(&name, &token_str)
+                c.set_provider_credentials(&name, &token_str, None, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {
