@@ -75,7 +75,8 @@ def test_report_config_issues_notifies_agent(config):
     notifs = asyncio.run(load_notifications(config=config))
     assert len(notifs) == 1
     assert notifs[0].type == vm.TYPE_CONFIG_INVALID
-    assert "THINKING" in notifs[0].body
+    body = notifs[0].body
+    assert body is not None and "THINKING" in body
 
 
 def test_report_config_issues_noop_without_issues(config):
