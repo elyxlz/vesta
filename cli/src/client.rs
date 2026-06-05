@@ -240,6 +240,15 @@ pub struct OpenRouterModel {
     pub cache_read_price: Option<f64>,
 }
 
+/// A Claude model offered by the picker in `vesta setup` (from `GET /providers/claude/models`).
+#[derive(serde::Deserialize)]
+pub struct ClaudeModel {
+    /// The alias stored in AGENT_MODEL, e.g. "opus".
+    pub id: String,
+    pub label: String,
+    pub note: String,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Result<Self, String> {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -392,12 +401,38 @@ impl Client {
 
     /// Provision an existing agent with provider credentials. Either Claude
     /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
-    pub fn set_provider_credentials(&self, name: &str, credentials: &str) -> Result<(), String> {
+    pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        let body = serde_json::json!({"credentials": credentials});
+        let mut body = serde_json::json!({"credentials": credentials});
+        if let Some(model) = model {
+            body["model"] = serde_json::json!(model);
+        }
+        if let Some(ctx) = max_context_tokens {
+            body["max_context_tokens"] = serde_json::json!(ctx);
+        }
         self.post_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())
+    }
+
+    /// Change the model and/or context window on a provisioned agent, keeping its
+    /// provider and credentials. POSTs `{model?, max_context_tokens?}`.
+    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+        let mut body = serde_json::Map::new();
+        if let Some(model) = model {
+            body.insert("model".to_string(), serde_json::json!(model));
+        }
+        if let Some(ctx) = max_context_tokens {
+            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+        }
+        self.post_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(body))?;
+        Ok(())
+    }
+
+    /// Current provider status: `{state, kind, model, max_context_tokens}`.
+    pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!("/agents/{name}/provider"))?;
+        read_json(resp)
     }
 
     pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
@@ -542,6 +577,11 @@ impl Client {
 
     pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
         let resp = self.get("/providers/openrouter/models/top")?;
+        read_json(resp)
+    }
+
+    pub fn fetch_claude_models(&self) -> Result<Vec<ClaudeModel>, String> {
+        let resp = self.get("/providers/claude/models")?;
         read_json(resp)
     }
 
