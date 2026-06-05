@@ -295,11 +295,17 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
 
+    # The window claude-code actually enforces: for OpenRouter the resolved (capped)
+    # value, for Claude the user's chosen cap (None = model default). Drives the
+    # context-usage percentage, so it must match the real autocompact threshold —
+    # the raw, uncapped config value would under-report OpenRouter usage.
+    effective_max_context = state.openrouter_max_tokens if is_openrouter else config.max_context_tokens
+
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
         betas=betas,
-        max_context_tokens=config.max_context_tokens,
+        max_context_tokens=effective_max_context,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,

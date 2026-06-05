@@ -931,6 +931,9 @@ fn run(cli: Cli) {
                     }
                     match provider["max_context_tokens"].as_u64() {
                         Some(ctx) => eprintln!("context_window = {ctx}"),
+                        None if provider["kind"].as_str() == Some("openrouter") => {
+                            eprintln!("context_window = default (model window, capped at 200K)")
+                        }
                         None => eprintln!("context_window = default (1M for Claude)"),
                     }
                 }

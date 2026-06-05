@@ -27,6 +27,11 @@ pub struct ProviderStatus {
     /// older agent that doesn't report the field isn't stuck reporting `SettingUp`.
     #[serde(default = "default_setup_complete")]
     pub setup_complete: bool,
+    /// The agent's chosen context window in tokens, or null for the model default.
+    /// `#[serde(default)]` so an older agent that doesn't report it deserializes fine;
+    /// without the field here vestad would silently drop it on the status round-trip.
+    #[serde(default)]
+    pub max_context_tokens: Option<i64>,
 }
 
 fn default_setup_complete() -> bool {
