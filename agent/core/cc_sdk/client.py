@@ -20,6 +20,7 @@ import json
 import os
 import pathlib as pl
 import shlex
+import shutil
 import sys
 import tempfile
 import time
@@ -375,6 +376,11 @@ class ClaudeSDKClient:
             (self._workdir / "mcp.json").write_text(json.dumps(mcp))
 
     async def _launch(self) -> None:
+        # tmux is a hard dependency: the session runs the claude TUI inside a private tmux
+        # server. Fail loudly with the fix instead of a bare FileNotFoundError raised deep in
+        # tmux.py when the binary is missing (e.g. a container rebuilt from a pre-tmux snapshot).
+        if shutil.which("tmux") is None:
+            raise RuntimeError("cc_sdk requires tmux on $PATH; install it (e.g. `apt-get install -y tmux`)")
         sysprompt_file = self._workdir / "system_prompt.txt"
         settings_file = self._workdir / "settings.json"
         mcp_file = self._workdir / "mcp.json" if self._bridge.tools else None
