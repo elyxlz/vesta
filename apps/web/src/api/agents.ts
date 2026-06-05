@@ -6,23 +6,37 @@ export interface OpenRouterConfig {
 }
 
 export type ProviderResult =
-  | { kind: "claude"; credentials: string }
-  | { kind: "openrouter"; config: OpenRouterConfig };
+  | {
+      kind: "claude";
+      credentials: string;
+      model?: string;
+      maxContextTokens?: number;
+    }
+  | {
+      kind: "openrouter";
+      config: OpenRouterConfig;
+      maxContextTokens?: number;
+    };
 
 /// Switch (or refresh) an existing agent's provider. Body is either `credentials`
-/// (Claude OAuth blob) or the `openrouter_*` pair. The agent owns the file writes
-/// and clears the obsolete provider config; vestad proxies the call and restarts.
+/// (Claude OAuth blob) or the `openrouter_*` pair, plus an optional `model` (Claude)
+/// and `max_context_tokens`. The agent owns the file writes and clears the obsolete
+/// provider config; vestad proxies the call and restarts.
 export async function setProvider(
   name: string,
   result: ProviderResult,
 ): Promise<void> {
-  const body =
+  const body: Record<string, unknown> =
     result.kind === "claude"
       ? { credentials: result.credentials }
       : {
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
+  if (result.kind === "claude" && result.model) body.model = result.model;
+  if (result.maxContextTokens != null) {
+    body.max_context_tokens = result.maxContextTokens;
+  }
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -34,6 +48,7 @@ export interface ProviderInfo {
   state: string;
   kind: "claude" | "openrouter" | "none";
   model: string | null;
+  max_context_tokens: number | null;
   setup_complete: boolean;
 }
 
@@ -50,6 +65,19 @@ export async function setModel(name: string, model: string): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model }),
+  });
+}
+
+/// Change only the context window (tokens), keeping the provider, key, and model.
+/// Vestad restarts the agent so the new window takes effect.
+export async function setContextWindow(
+  name: string,
+  maxContextTokens: number,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_context_tokens: maxContextTokens }),
   });
 }
 

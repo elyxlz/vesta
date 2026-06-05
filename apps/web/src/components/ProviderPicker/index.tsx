@@ -4,15 +4,31 @@ import { ChevronLeftIcon } from "lucide-react";
 import { stepTransition } from "@/lib/motion";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
+import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 
 type AuthStartResult = claudeProvider.OAuthStartResult;
 import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
+import { ContextStep } from "./ContextStep";
 import { AuthStep } from "./AuthStep";
 import type { ProviderMode } from "./types";
 
-type InternalStep = "choice" | "auth" | "key" | "model";
+type InternalStep =
+  | "choice"
+  | "auth"
+  | "claude-model"
+  | "key"
+  | "model"
+  | "context";
+
+// Shown immediately; refined from vestad's /providers/claude/models on mount so a
+// newly-added model appears without a code change. claude-code resolves the aliases.
+const CLAUDE_FALLBACK: OpenRouterModelOption[] = [
+  { slug: "opus", label: "Claude Opus", author: "Anthropic" },
+  { slug: "sonnet", label: "Claude Sonnet", author: "Anthropic" },
+  { slug: "haiku", label: "Claude Haiku", author: "Anthropic" },
+];
 
 export function ProviderPicker({
   onDone,
@@ -22,10 +38,36 @@ export function ProviderPicker({
   onBack?: () => void;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
+  const [mode, setMode] = useState<ProviderMode>("claude");
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
+  const [claudeModel, setClaudeModel] = useState("");
+  const [credentials, setCredentials] = useState("");
+  const [claudeModels, setClaudeModels] =
+    useState<OpenRouterModelOption[]>(CLAUDE_FALLBACK);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
+
+  // Refine the Claude model list once; failures keep the fallback.
+  useEffect(() => {
+    let cancelled = false;
+    claudeProvider
+      .fetchModels()
+      .then((items) => {
+        if (cancelled || items.length === 0) return;
+        setClaudeModels(
+          items.map((m) => ({
+            slug: m.id,
+            label: m.label,
+            author: "Anthropic",
+          })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
@@ -50,12 +92,14 @@ export function ProviderPicker({
     };
   }, [step, authStart, authStartError]);
 
-  const handleChoice = (mode: ProviderMode) => {
-    if (mode === "claude") {
-      setStep("auth");
-      return;
-    }
-    setStep("key");
+  const handleChoice = (next: ProviderMode) => {
+    setMode(next);
+    setStep(next === "claude" ? "auth" : "key");
+  };
+
+  const handleCredentialsReady = (creds: string) => {
+    setCredentials(creds);
+    setStep("claude-model");
   };
 
   const handleKeyNext = (newKey: string) => {
@@ -63,21 +107,41 @@ export function ProviderPicker({
     setStep("model");
   };
 
-  const handleModelSubmit = (newModel: string) => {
-    onDone({ kind: "openrouter", config: { key, model: newModel } });
+  const handleContextSubmit = (maxContextTokens: number) => {
+    if (mode === "claude") {
+      onDone({
+        kind: "claude",
+        credentials,
+        model: claudeModel || undefined,
+        maxContextTokens,
+      });
+    } else {
+      onDone({
+        kind: "openrouter",
+        config: { key, model },
+        maxContextTokens,
+      });
+    }
   };
 
-  const handleCredentialsReady = (credentials: string) => {
-    onDone({ kind: "claude", credentials });
+  const resetAuth = () => {
+    setAuthStart(null);
+    setAuthStartError(null);
   };
 
   const back = (() => {
     if (step === "choice") return onBack;
     if (step === "model") return () => setStep("key");
+    if (step === "context")
+      return () => setStep(mode === "claude" ? "claude-model" : "model");
+    if (step === "claude-model")
+      return () => {
+        resetAuth();
+        setStep("choice");
+      };
     // auth and key both return to the choice screen.
     return () => {
-      setAuthStart(null);
-      setAuthStartError(null);
+      resetAuth();
       setStep("choice");
     };
   })();
@@ -104,9 +168,20 @@ export function ProviderPicker({
               startError={authStartError}
               onCredentialsReady={handleCredentialsReady}
               onCancel={() => {
-                setAuthStart(null);
-                setAuthStartError(null);
+                resetAuth();
                 setStep("choice");
+              }}
+            />
+          )}
+          {step === "claude-model" && (
+            <ModelStep
+              initialModel={claudeModel}
+              models={claudeModels}
+              allowCustom={false}
+              onModelChange={setClaudeModel}
+              onSubmit={(m) => {
+                setClaudeModel(m);
+                setStep("context");
               }}
             />
           )}
@@ -117,9 +192,13 @@ export function ProviderPicker({
             <ModelStep
               initialModel={model}
               onModelChange={setModel}
-              onSubmit={handleModelSubmit}
+              onSubmit={(m) => {
+                setModel(m);
+                setStep("context");
+              }}
             />
           )}
+          {step === "context" && <ContextStep onSubmit={handleContextSubmit} />}
         </motion.div>
       </AnimatePresence>
     </div>

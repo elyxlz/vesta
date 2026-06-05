@@ -26,3 +26,15 @@ export async function completeOAuth(
   );
   return resp.credentials;
 }
+
+export interface ClaudeModelOption {
+  /// The alias stored in AGENT_MODEL, e.g. "opus".
+  id: string;
+  label: string;
+  note: string;
+}
+
+/// The curated Claude model list, served by vestad (opus / sonnet / haiku).
+export async function fetchModels(): Promise<ClaudeModelOption[]> {
+  return apiJson<ClaudeModelOption[]>("/providers/claude/models");
+}

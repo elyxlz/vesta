@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cpu, ArrowLeftRight } from "lucide-react";
+import { Cpu, ArrowLeftRight, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -11,44 +11,41 @@ import {
 } from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
+import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import type { openrouterProvider } from "@/api";
-import { setModel } from "@/api/agents";
+import { setModel, setContextWindow } from "@/api/agents";
 import { useProvider } from "@/hooks/use-provider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
 // Claude OAuth exposes a small fixed set; the SDK takes these short aliases.
 const CLAUDE_MODELS: openrouterProvider.OpenRouterModelOption[] = [
-  {
-    slug: "opus",
-    label: "Claude Opus",
-    author: "Anthropic",
-    context_length: 200000,
-  },
-  {
-    slug: "sonnet",
-    label: "Claude Sonnet",
-    author: "Anthropic",
-    context_length: 200000,
-  },
-  {
-    slug: "haiku",
-    label: "Claude Haiku",
-    author: "Anthropic",
-    context_length: 200000,
-  },
+  { slug: "opus", label: "Claude Opus", author: "Anthropic" },
+  { slug: "sonnet", label: "Claude Sonnet", author: "Anthropic" },
+  { slug: "haiku", label: "Claude Haiku", author: "Anthropic" },
 ];
 
-/// Provider hub for an agent: shows the current provider + model, lets you
-/// switch between Claude and OpenRouter (reuses the reconfigure modal), and —
-/// for OpenRouter — change just the model without re-entering the key.
+// Display a token count as 1M / 500K / 200K.
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+/// Provider hub for an agent: shows the current provider, model, and context
+/// window; lets you switch between Claude and OpenRouter (reuses the reconfigure
+/// modal), change the model, and change the context window — each without
+/// re-entering credentials.
 export function ProviderCard() {
   const { name, agent } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
   // Revalidate on status change so a provider switch (which restarts the agent)
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent?.status);
-  const [open, setOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,17 +53,35 @@ export function ProviderCard() {
 
   const isOpenRouter = provider.kind === "openrouter";
 
-  const apply = async (model: string) => {
+  const applyModel = async (model: string) => {
     if (!name) return;
     setApplying(true);
     setError(null);
     try {
       await setModel(name, model);
-      setOpen(false);
+      setModelOpen(false);
       refresh();
     } catch (e: unknown) {
       setError(
         (e as { message?: string })?.message || "failed to change model",
+      );
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const applyContext = async (tokens: number) => {
+    if (!name) return;
+    setApplying(true);
+    setError(null);
+    try {
+      await setContextWindow(name, tokens);
+      setContextOpen(false);
+      refresh();
+    } catch (e: unknown) {
+      setError(
+        (e as { message?: string })?.message ||
+          "failed to change context window",
       );
     } finally {
       setApplying(false);
@@ -86,9 +101,25 @@ export function ProviderCard() {
           <span className="text-sm break-all">
             {provider.model ?? "unknown"}
           </span>
+          <span className="text-xs text-muted-foreground">
+            context window:{" "}
+            {provider.max_context_tokens != null
+              ? formatTokens(provider.max_context_tokens)
+              : isOpenRouter
+                ? "default"
+                : "1M (default)"}
+          </span>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button variant="outline" size="sm" onClick={() => setModelOpen(true)}>
           change model
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setContextOpen(true)}
+        >
+          <Gauge className="size-4" />
+          change context window
         </Button>
         <Button variant="ghost" size="sm" onClick={() => void handleOpenAuth()}>
           <ArrowLeftRight className="size-4" />
@@ -97,10 +128,10 @@ export function ProviderCard() {
       </CardContent>
 
       <Dialog
-        open={open}
+        open={modelOpen}
         onOpenChange={(next) => {
           if (!next) {
-            setOpen(false);
+            setModelOpen(false);
             setError(null);
           }
         }}
@@ -123,7 +154,42 @@ export function ProviderCard() {
                 models={isOpenRouter ? undefined : CLAUDE_MODELS}
                 allowCustom={isOpenRouter}
                 submitLabel="switch model"
-                onSubmit={(model) => void apply(model)}
+                onSubmit={(model) => void applyModel(model)}
+              />
+              {error && (
+                <p className="text-xs text-destructive text-center">{error}</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={contextOpen}
+        onOpenChange={(next) => {
+          if (!next) {
+            setContextOpen(false);
+            setError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>change context window</DialogTitle>
+            <DialogDescription className="sr-only">
+              pick a new context window for this agent
+            </DialogDescription>
+          </DialogHeader>
+          {applying ? (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <ProgressBar message="changing context window, restarting agent..." />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-2">
+              <ContextStep
+                initial={provider.max_context_tokens ?? undefined}
+                submitLabel="apply"
+                onSubmit={(tokens) => void applyContext(tokens)}
               />
               {error && (
                 <p className="text-xs text-destructive text-center">{error}</p>
