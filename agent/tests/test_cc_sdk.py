@@ -67,6 +67,16 @@ def _new_client(tmp_path, **opts):
     return ClaudeSDKClient(options=ClaudeAgentOptions(cwd=str(tmp_path), **opts))
 
 
+@pytest.mark.anyio
+async def test_launch_raises_actionable_error_when_tmux_missing(tmp_path, monkeypatch):
+    """A container rebuilt from a pre-tmux snapshot has no tmux on PATH; surface the fix
+    instead of a bare FileNotFoundError raised deep in tmux.py."""
+    monkeypatch.setattr("core.cc_sdk.client.shutil.which", lambda name: None)
+    client = _new_client(tmp_path)
+    with pytest.raises(RuntimeError, match="cc_sdk requires tmux"):
+        await client._launch()
+
+
 def test_hook_commands_carry_safepath_guard(tmp_path):
     client = _new_client(tmp_path, hooks={})
     client._write_config_files()

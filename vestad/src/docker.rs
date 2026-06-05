@@ -98,7 +98,7 @@ const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 9] = [
+    let steps: [String; 10] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
@@ -107,6 +107,14 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // built-in, so sourcing a missing file makes dash exit the whole script (and
         // `|| true` does NOT catch it), which would crash-loop every Claude agent.
         "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
+        // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
+        // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
+        // recreates a container from a `docker export|import` snapshot and never re-runs the
+        // Dockerfile, so an agent snapshotted before tmux was added boots without it and
+        // crash-loops on FileNotFoundError deep in cc_sdk. Self-heal at boot: a no-op (no
+        // network) once tmux is on PATH, and the next snapshot captures the install so it
+        // persists across future rebuilds. `|| true` so a failed install never aborts boot.
+        "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "uv sync --frozen --project /root/agent".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
@@ -2151,6 +2159,20 @@ mod tests {
         progress.set(BuildPhase::Preparing);
         progress.set(BuildPhase::Creating);
         assert_eq!(*seen.lock().expect("lock"), vec![BuildPhase::Building, BuildPhase::Preparing, BuildPhase::Creating]);
+    }
+
+    #[test]
+    fn entrypoint_self_heals_missing_tmux() {
+        // cc_sdk hard-depends on tmux; the entrypoint must install it at boot when missing so
+        // containers rebuilt from a pre-tmux snapshot self-heal instead of crash-looping.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("command -v tmux"), "entrypoint must guard on tmux presence: {script}");
+        assert!(script.contains("apt-get install -y -qq tmux"), "entrypoint must install tmux when absent: {script}");
+        // The install runs before the agent process so cc_sdk finds tmux on first launch.
+        let tmux_at = script.find("command -v tmux").expect("tmux step present");
+        let main_at = script.find("python -m core.main").expect("main step present");
+        assert!(tmux_at < main_at, "tmux install must precede launching core.main");
     }
 
     #[test]
