@@ -187,15 +187,7 @@ fn gethostname() -> String {
 }
 
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
-    // Managed (vesta.run hosted) deployments pin an exact subdomain via
-    // VESTA_SUBDOMAIN — the control plane guarantees uniqueness, so the
-    // collision-avoidance animal prefix is neither needed nor wanted there.
-    // Self-hosters leave it unset and keep the generated <animal>-<hostname>.
-    let preferred = std::env::var("VESTA_SUBDOMAIN")
-        .ok()
-        .map(|s| sanitize(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| generate_subdomain(0));
+    let preferred = generate_subdomain(0);
 
     // Reuse existing tunnel if it matches our preferred subdomain
     if let Some(tc) = get_tunnel_config(config_dir) {
