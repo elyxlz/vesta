@@ -26,6 +26,28 @@ def test_memory_paths(config):
     assert config.skills_dir == config.agent_dir / "skills"
 
 
+def test_thinking_legacy_json_dict_coerces_with_defaults(monkeypatch):
+    """Env files written before adaptive.display was required carry the JSON-dict form
+    (e.g. THINKING='{"type":"adaptive"}'); it must coerce, not fail union validation."""
+    from core.config import VestaConfig
+
+    monkeypatch.setenv("THINKING", '{"type":"adaptive"}')
+    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
+    monkeypatch.setenv("THINKING", '{"type":"enabled"}')
+    assert VestaConfig().thinking == {"type": "enabled", "budget_tokens": 10000}
+    monkeypatch.setenv("THINKING", '{"type":"disabled"}')
+    assert VestaConfig().thinking == {"type": "disabled"}
+
+
+def test_thinking_string_form_still_parses(monkeypatch):
+    from core.config import VestaConfig
+
+    monkeypatch.setenv("THINKING", "adaptive")
+    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
+    monkeypatch.setenv("THINKING", "disabled")
+    assert VestaConfig().thinking == {"type": "disabled"}
+
+
 def test_load_config_reverts_invalid_env_to_default(monkeypatch):
     """A malformed override must never crash the boot: the bad var drops to its default and is
     reported, instead of raising and crash-looping the container."""

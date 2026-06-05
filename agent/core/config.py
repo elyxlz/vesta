@@ -60,7 +60,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     @classmethod
     def _parse_thinking(cls, value: object) -> object:
         # The THINKING env var is documented as a plain string (adaptive|enabled|disabled);
-        # coerce it into the SDK's config dict. JSON object values pass through untouched.
+        # coerce it into the SDK's config dict.
         if isinstance(value, str):
             mode = value.strip().lower()
             if mode in ("", "adaptive"):
@@ -70,6 +70,21 @@ class VestaConfig(pyd_settings.BaseSettings):
             if mode == "disabled":
                 return ThinkingConfigDisabled(type="disabled")
             raise ValueError(f"THINKING must be adaptive|enabled|disabled (or a JSON config object), got {value!r}")
+        # Legacy env files set the JSON-dict form (e.g. THINKING='{"type":"adaptive"}'), which
+        # predates the now-required fields (adaptive.display). Fill in the same defaults the
+        # string form uses so an upgrade doesn't fail union validation. Unknown types fall
+        # through to pydantic's normal error.
+        if isinstance(value, dict):
+            data = tp.cast("dict[str, tp.Any]", value)
+            kind = str(data["type"]).strip().lower() if "type" in data else "adaptive"
+            if kind == "adaptive":
+                return ThinkingConfigAdaptive(type="adaptive", display=data["display"] if "display" in data else "summarized")
+            if kind == "enabled":
+                return ThinkingConfigEnabled(
+                    type="enabled", budget_tokens=data["budget_tokens"] if "budget_tokens" in data else _THINKING_ENABLED_BUDGET_TOKENS
+                )
+            if kind == "disabled":
+                return ThinkingConfigDisabled(type="disabled")
         return value
 
     @pyd.field_validator("agent_dir", mode="before")
