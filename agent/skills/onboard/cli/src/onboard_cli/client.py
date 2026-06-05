@@ -48,11 +48,15 @@ class Client:
         plan: str,
         seed: dict[str, Any] | None,
         referral_code: str | None,
+        price: float | None = None,
     ) -> dict[str, Any]:
         """POST /api/onboard/checkout -> {url} (or 409 taken / 429 rate-limited)."""
         body: dict[str, Any] = {"email": email, "subdomain": subdomain, "plan": plan}
         if seed:
             body["seed"] = seed
+        if price is not None:
+            # Negotiated MONTHLY price (USD). The control plane enforces the floor.
+            body["price"] = price
         headers = {}
         if referral_code:
             headers["X-Vesta-Referral"] = referral_code

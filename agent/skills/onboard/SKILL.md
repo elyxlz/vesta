@@ -36,18 +36,19 @@ marketing page rather than reciting everything (`onboard links`).
 1. **Explain in a sentence or two.** A personal AI on its own always-on server
    that remembers them and runs their skills; they bring their own model provider
    (a Claude account, ChatGPT/Codex, or an OpenRouter key — connected per agent
-   *after* setup); you operate the box so they don't. Pricing is **$12 Starter /
-   $24 Pro / $48 Power per month** (annual = 2 months free). Quote real numbers;
-   don't invent discounts.
+   *after* setup); you operate the box so they don't. Pricing **starts at $12
+   Starter / $24 Pro / $48 Power per month** — see **Pricing & negotiation** below.
 2. **Collect what signup needs**, conversationally:
    - **email** (their receipts + sign-in land here),
    - **subdomain** — `they.vesta.run`. Validate it live with `onboard check`
      before promising it; if taken/invalid, ask for another.
    - **plan** — `starter` | `pro` | `power`.
+   - **a price** you both agree on (see **Pricing & negotiation**).
    - **How they want it set up** (all optional, sensible defaults if they don't
      care): a **name**, a **personality** preset, and any **starting skills**
      (calendar, email, spotify, …). See `onboard presets`.
-3. **Mint the checkout link** with `onboard start` and send it. Then **stop** —
+3. **Mint the checkout link** with `onboard start` (pass `--price` if you agreed
+   on a custom number) and send it. Then **stop** —
    do not ask for card numbers; Stripe Checkout collects payment on their device.
 4. **Wait for them to pay**, then poll `onboard status`. When it reports the
    subdomain is taken (signup went through), send the handoff: the dashboard at
@@ -58,15 +59,47 @@ marketing page rather than reciting everything (`onboard links`).
 
 Be a friendly introducer throughout. If they're not interested, drop it.
 
+## Pricing & negotiation
+
+The price is **dynamic and negotiable**. The published numbers are the **floor**,
+not a fixed tag:
+
+| Plan    | Floor (min/mo) | Ceiling   |
+| ------- | -------------- | --------- |
+| starter | $12            | uncapped  |
+| pro     | $24            | uncapped  |
+| power   | $48            | uncapped  |
+
+(Run `onboard presets` for the live floors in `plan_floor_usd`.)
+
+**How to price:**
+
+- **Suggest a number first**, then let them negotiate. Default to the floor for a
+  normal person — don't overthink it.
+- **Read the room and price to value.** If the prospect is clearly wealthy or
+  values it highly (a founder, an exec, "money's no object", a billionaire who
+  wants a concierge AI on its own box) — **anchor high**. There is no ceiling;
+  proposing $500, $2,000, even more per month is fair game if the value is there.
+  You can frame it as a tier of attention/priority. This is where the real upside
+  is, and (if your vesta is hosted) **you earn 50% of their first month** — so a
+  high close is a big referral reward.
+- **Never go below the plan floor.** `onboard start --price` rejects anything under
+  it; quote at or above it.
+- If they don't want to haggle, just use the floor — omit `--price`.
+
+Pass the agreed number as `--price <usd>` (a monthly figure). Omit it to charge the
+plan's list price.
+
 ## Usage
 
 ```bash
 onboard check <subdomain>                          # is they.vesta.run free?
 onboard start --email <e> --subdomain <s> --plan <starter|pro|power> \
+              [--price <usd/mo>] \
               [--name <n>] [--personality <preset>] [--skills a,b,c]
                                                    # -> { url } Stripe checkout link
 onboard status --subdomain <s>                     # did signup go through yet?
-onboard presets                                    # personality presets + installable skills
+onboard presets                                    # presets + installable skills + plan floors
 onboard links                                      # marketing + desktop/mobile install URLs
 ```
 
@@ -81,7 +114,16 @@ onboard check ada
 
 onboard start --email ada@example.com --subdomain ada --plan pro \
               --name Ada --personality dry --skills email-client,tasks
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   (list price)
+
+# High-balling a whale — anchor well above the floor (uncapped):
+onboard start --email vc@example.com --subdomain magnate --plan power --price 1500
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($1,500/mo;
+# a hosted introducer earns 50% of month 1 = $750)
+
+# Below the floor is rejected (the API enforces it too):
+onboard start --email x@example.com --subdomain x --plan pro --price 5
+# { "error": "price $5 is below the pro floor of $24", "floor_usd": 24 }
 
 onboard status --subdomain ada
 # { "subdomain": "ada", "status": "pending" }   (still free → not signed up yet)

@@ -17,6 +17,12 @@ DEFAULT_CONTROL_URL = "https://vesta.run/api"
 # agree on the canonical plan ids the checkout endpoint accepts.
 PLANS = ("starter", "pro", "power")
 
+# List MONTHLY price (USD) per plan — the NEGOTIATION FLOOR. The agent can quote
+# any price >= the floor (uncapped above); the control plane enforces the floor
+# server-side, so this is for the agent's UX + a friendly local error. Keep these
+# in sync with the control plane's listMonthlyCents().
+PLAN_FLOOR_USD = {"starter": 12, "pro": 24, "power": 48}
+
 # Personality presets shipped by the `personality` skill (presets/<name>.md).
 # Listed here so `onboard presets` works even if that skill isn't installed yet.
 PERSONALITY_PRESETS = ("chill", "classic", "dry", "extra", "polished", "terse")

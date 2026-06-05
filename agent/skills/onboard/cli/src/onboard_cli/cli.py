@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .client import Client, OnboardError
-from .config import LINKS, PERSONALITY_PRESETS, PLANS, Config
+from .config import LINKS, PERSONALITY_PRESETS, PLAN_FLOOR_USD, PLANS, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -37,6 +37,19 @@ def _cmd_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     if plan not in PLANS:
         _print({"error": f"plan must be one of {', '.join(PLANS)}"})
         return 2
+    # Negotiated price (optional). Floor = the plan's list price; uncapped above.
+    price: float | None = None
+    if args.price is not None:
+        floor = PLAN_FLOOR_USD[plan]
+        if args.price < floor:
+            _print(
+                {
+                    "error": f"price ${args.price:g} is below the {plan} floor of ${floor}",
+                    "floor_usd": floor,
+                }
+            )
+            return 2
+        price = args.price
     seed: dict[str, Any] = {}
     if args.name:
         seed["name"] = args.name.strip()
@@ -53,6 +66,7 @@ def _cmd_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         seed=seed or None,
         # explicit --referral wins; otherwise the env-derived code (hosted only)
         referral_code=args.referral or cfg.referral_code,
+        price=price,
     )
     _print(result)
     # A structured {error} (taken/rate-limited) is a normal, surfaced outcome.
@@ -100,6 +114,8 @@ def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             "personalities": list(PERSONALITY_PRESETS),
             "skills": _installable_skills(),
             "plans": list(PLANS),
+            # Negotiation floor (USD/mo) per plan; quote >= these, uncapped above.
+            "plan_floor_usd": PLAN_FLOOR_USD,
         }
     )
     return 0
@@ -127,6 +143,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--name", help="Optional agent name to seed at first boot.")
     p_start.add_argument("--personality", help="Optional personality preset (see `onboard presets`).")
     p_start.add_argument("--skills", help="Optional comma-separated starting skills.")
+    p_start.add_argument(
+        "--price",
+        type=float,
+        help="Negotiated MONTHLY price in USD. Floor = plan list price; uncapped above. Omit for list price.",
+    )
     p_start.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
 
     p_status = sub.add_parser("status", help="Has signup gone through yet?")
