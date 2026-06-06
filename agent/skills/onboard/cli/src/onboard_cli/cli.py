@@ -11,6 +11,7 @@ step is a subcommand; the buyer's verified session persists between invocations
 - ``onboard create-agent --email``   — create their first agent (name/personality/skills).
 - ``onboard claude-start --email``   — begin Claude connect -> an auth link.
 - ``onboard claude-finish --email``  — the code they paste back -> agent alive.
+- ``onboard claim-key --email``      — one-time owner setup: become an inviter.
 - ``onboard presets`` / ``onboard links`` — reference data.
 
 Output is always JSON on stdout. Exit codes: 0 success, 2 invalid input / surfaced
@@ -76,13 +77,13 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             return 2
         price = args.price
 
-    # Invite-only gate: use the explicit --invite, else mint one as the referrer
-    # (server-to-server, via the api_key/admin secret in the env). No credential and
-    # no --invite means this vesta can't extend invites.
+    # Invite-only gate: use the explicit --invite, else mint one with this vesta's
+    # invite_key (VESTA_INVITE_KEY, claimed once via `onboard claim-key`). No
+    # credential and no --invite means this vesta isn't set up to invite yet.
     invite = args.invite.strip() if args.invite else None
     if not invite:
         if not cfg.invite_credential:
-            _print({"error": "no invite: set VESTA_API_KEY (this vesta's key) to mint one, or pass --invite <code> from the operator"})
+            _print({"error": "no invite: run `onboard claim-key` once + set VESTA_INVITE_KEY, or pass --invite <code> from the operator"})
             return 2
         minted = client.mint_invite(cfg.invite_credential)
         if "code" not in minted:
@@ -271,6 +272,30 @@ def _cmd_links(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0
 
 
+def _cmd_claim_key(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    """Owner becomes an inviter: claim an invite_key (one-time setup).
+
+    Run as the OWNER (verify the owner's email first). Prints the key to put in the
+    vestad config as VESTA_INVITE_KEY so this vesta can mint invites in chat.
+    """
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` as the owner first"})
+        return 2
+    result = client.claim_inviter_key(token)
+    if "invite_key" not in result:
+        _print(result if "error" in result else {"error": "could not claim an invite key"})
+        return 2
+    _print(
+        {
+            "invite_key": result["invite_key"],
+            "next": "set VESTA_INVITE_KEY=<this> in your vestad config so your vesta can invite people",
+        }
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="onboard",
@@ -314,6 +339,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cfinish.add_argument("--name", help="Agent name (defaults to the one from create-agent).")
     p_cfinish.add_argument("--model", help=f"Claude model (default {DEFAULT_MODEL}).")
 
+    p_claim = sub.add_parser("claim-key", help="One-time: become an inviter (run as the owner).")
+    p_claim.add_argument("--email", required=True, help="The OWNER's email (verify it first).")
+
     sub.add_parser("presets", help="Personality presets + installable skills + models.")
     sub.add_parser("links", help="Marketing + desktop/mobile install URLs.")
     return parser
@@ -333,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         "create-agent": _cmd_create_agent,
         "claude-start": _cmd_claude_start,
         "claude-finish": _cmd_claude_finish,
+        "claim-key": _cmd_claim_key,
         "presets": _cmd_presets,
         "links": _cmd_links,
     }

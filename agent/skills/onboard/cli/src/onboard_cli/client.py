@@ -69,12 +69,21 @@ class Client:
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 
+    def claim_inviter_key(self, session_token: str) -> dict[str, Any]:
+        """POST /onboard/inviter -> {invite_key}. Become an inviter.
+
+        Authenticated by the OWNER's email-verified session. Works for hosted
+        members and self-hosters alike; the owner configures their vestad with the
+        returned key (VESTA_INVITE_KEY) so the agent can mint invites.
+        """
+        return self._json(self._post("/onboard/inviter", json={}, headers=self._auth(session_token)))
+
     def mint_invite(self, credential: str) -> dict[str, Any]:
         """POST /onboard/invite -> {code, expires_at}.
 
-        Authenticated as the REFERRER (server-to-server) by `credential` — the
-        referring vesta's per-VM api_key, or the operator admin secret. The invite
-        is the access gate + referral attribution that checkout requires.
+        Authenticated by `credential` — an `invite_key` (claimed via
+        claim_inviter_key) or the operator admin secret. The invite is the access
+        gate; its referral attribution is the key owner's paying server, if any.
         """
         return self._json(self._post("/onboard/invite", json={}, headers=self._auth(credential)))
 

@@ -60,11 +60,11 @@ class Config:
         base = os.environ.get("VESTA_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
         # Non-secret per-server attribution id; absent on self-hosted boxes.
         ref = os.environ.get("VESTA_REFERRAL_CODE", "").strip() or None
-        # The SECRET that mints invites (the gate for invite-only): the referring
-        # vesta's per-VM api_key, or the operator admin secret. The data plane must
-        # inject one of these into the agent's env for in-chat invite minting; the
-        # operator can otherwise hand a pre-minted invite via --invite.
-        cred = os.environ.get("VESTA_API_KEY", "").strip() or os.environ.get("VESTA_ADMIN_SECRET", "").strip() or None
+        # The dedicated, low-power secret that mints invites (NOT the api_key). The
+        # owner claims one with `onboard claim-key` and configures their vestad with
+        # it (hosted or self-hosted), which exposes it to the agent as
+        # VESTA_INVITE_KEY. The operator admin secret also works.
+        cred = os.environ.get("VESTA_INVITE_KEY", "").strip() or os.environ.get("VESTA_ADMIN_SECRET", "").strip() or None
         return cls(base_url=base, referral_code=ref, invite_credential=cred)
 
     @property

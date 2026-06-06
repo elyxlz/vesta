@@ -80,6 +80,21 @@ def test_verify_rejects_bad_code(capsys, monkeypatch):
     assert state_mod.token_for(E) is None
 
 
+# --- claim-key (become an inviter) ------------------------------------------
+
+
+def test_claim_key_returns_invite_key(capsys, monkeypatch):
+    _verified()  # owner has a verified session
+    monkeypatch.setattr(cli_mod.Client, "claim_inviter_key", lambda self, t: {"invite_key": "IK"})
+    rc, data = _run(["claim-key", "--email", E], capsys)
+    assert rc == 0 and data["invite_key"] == "IK"
+
+
+def test_claim_key_requires_verification(capsys):
+    rc, data = _run(["claim-key", "--email", E], capsys)
+    assert rc == 2 and "not verified" in data["error"]
+
+
 # --- checkout ---------------------------------------------------------------
 
 
@@ -109,7 +124,7 @@ def test_checkout_passes_explicit_invite_and_forwards_price_code(capsys, monkeyp
 
 def test_checkout_mints_an_invite_from_the_credential(capsys, monkeypatch):
     _verified()
-    monkeypatch.setenv("VESTA_API_KEY", "referrer-api-key")
+    monkeypatch.setenv("VESTA_INVITE_KEY", "referrer-invite-key")
     minted = {}
 
     def fake_mint(self, credential):
@@ -128,13 +143,13 @@ def test_checkout_mints_an_invite_from_the_credential(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "me", lambda self, t: {"server": {"id": "srv1"}})
     rc, _ = _run(["checkout", "--email", E], capsys)
     assert rc == 0
-    assert minted["credential"] == "referrer-api-key"
+    assert minted["credential"] == "referrer-invite-key"
     assert captured["invite"] == "MINTED"
 
 
 def test_checkout_no_invite_and_no_credential_errors(capsys, monkeypatch):
     _verified()
-    monkeypatch.delenv("VESTA_API_KEY", raising=False)
+    monkeypatch.delenv("VESTA_INVITE_KEY", raising=False)
     monkeypatch.delenv("VESTA_ADMIN_SECRET", raising=False)
     calls = {"n": 0}
     monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})

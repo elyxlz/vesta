@@ -191,15 +191,22 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 # { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
-## Invites & referral attribution (automatic)
+## Invites & referral attribution
 
 Vesta is invite-only as real access control: provisioning requires a one-time
-invite, and `onboard checkout` mints one as YOU and redeems it for the buyer. The
-mint is authenticated by this vesta's own secret (`VESTA_API_KEY`, or an operator
-`VESTA_ADMIN_SECRET`), read from the environment — you never touch it. A completed
-signup through your invite credits this account (you earn 50% of their first
-month). If no minting credential is present, checkout errors; the owner/operator
-can hand you a pre-minted code to pass as `--invite <code>`.
+invite, and `onboard checkout` mints one and redeems it for the buyer. The mint
+uses this vesta's **invite_key** (`VESTA_INVITE_KEY` in the environment) — a
+dedicated, low-power secret, NOT the api_key. You never touch it; the CLI does. A
+completed signup through your invite credits this account (you earn 50% of their
+first month) **if** this account runs a paying server; a self-hoster's invites
+still work but earn nothing.
+
+**One-time setup (the owner, not in a sales chat):** become an inviter by claiming
+a key — `onboard verify-send`/`onboard verify` as the owner's own email, then
+`onboard claim-key --email <owner>` prints an `invite_key` to set as
+`VESTA_INVITE_KEY` in the vestad config. Hosted and self-hosted vestas both do
+this. If no key is configured, `onboard checkout` errors and the operator can hand
+a pre-minted code to pass as `--invite <code>`.
 
 ## Caveats
 
