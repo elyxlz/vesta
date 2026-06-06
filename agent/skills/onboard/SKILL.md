@@ -76,6 +76,9 @@ Keep it smooth now — you've made them want it; don't fumble the close.
 2. **Agree a price** (see **Pricing**).
 3. **Mint the private invite link** with `onboard start` and send it. Then
    **stop** — never ask for card numbers; Stripe collects payment on their device.
+   On that checkout page they tick a box agreeing to Vesta's terms (it's handled
+   there — you collect no agreement yourself); if asked, share `onboard links` →
+   `terms` / `privacy`.
 4. **Wait for them to pay**, poll `onboard status`. When it flips to `signed_up`,
    welcome them in: the dashboard at `vesta.run/dashboard` (sign in with that email,
    6-digit code), the app install links (`onboard links`), and the one last step —
@@ -104,11 +107,18 @@ negotiable **upward**, never below.
 
 Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the $24 floor.
 
+**Discount codes.** If the owner has given you a discount/invite code, pass it as
+`--code <code>` and it knocks a percentage off the first month at checkout (it
+composes with whatever `--price` you set — half off $24 or off $2,000 alike). You
+never invent codes: pass only what the owner hands you. An unknown code comes back
+`{"error": "invalid code"}` — relay that and continue without it. There is nothing
+to look up or reveal; the code's value and effect live entirely on the server.
+
 ## Usage
 
 ```bash
 onboard check <subdomain>                          # is them.vesta.run free?
-onboard start --email <e> --subdomain <s> [--price <usd/mo>] \
+onboard start --email <e> --subdomain <s> [--price <usd/mo>] [--code <code>] \
               [--name <n>] [--personality <preset>] [--skills a,b,c]
                                                    # -> { url } private checkout link
 onboard status --subdomain <s>                     # have they joined yet?

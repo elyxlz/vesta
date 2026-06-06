@@ -35,6 +35,8 @@ LINKS = {
     "ios": "https://vesta.run/download#ios",
     "android": "https://vesta.run/download#android",
     "desktop": "https://vesta.run/download#desktop",
+    "terms": "https://vesta.run/legal/terms",
+    "privacy": "https://vesta.run/legal/privacy",
 }
 
 
