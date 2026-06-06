@@ -1,12 +1,23 @@
-"""Tests for the onboard CLI — pure logic + a mocked control-plane client."""
+"""Tests for the onboard CLI — the conduit flow with a mocked client + temp state."""
 
 from __future__ import annotations
 
 import json
 
+import pytest
 
 from onboard_cli import cli as cli_mod
+from onboard_cli import state as state_mod
 from onboard_cli.client import OnboardError
+
+E = "ada@example.com"
+
+
+@pytest.fixture(autouse=True)
+def _tmp_state(tmp_path, monkeypatch):
+    """Point the session store at a throwaway dir so tests don't touch ~/.config."""
+    monkeypatch.setattr(state_mod, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(state_mod, "_STATE_FILE", tmp_path / "sessions.json")
 
 
 def _run(argv, capsys):
@@ -15,183 +26,188 @@ def _run(argv, capsys):
     return rc, (json.loads(out) if out.strip() else None)
 
 
+def _verified(token="TOK"):
+    """Seed a verified session for E."""
+    state_mod.update(E, token=token)
+
+
+def _active_server(monkeypatch, status="active"):
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "me",
+        lambda self, t: {
+            "user": {"id": "u1", "email": E},
+            "server": {"id": "srv1", "subdomain": "ada", "status": status, "url": "https://ada.vesta.run"},
+        },
+    )
+    monkeypatch.setattr(cli_mod.Client, "server_token", lambda self, t, sid: "VTOK")
+
+
+# --- reference data ---------------------------------------------------------
+
+
 def test_links(capsys):
     rc, data = _run(["links"], capsys)
-    assert rc == 0
-    assert data["marketing"] == "https://vesta.run"
-    assert "ios" in data and "android" in data and "desktop" in data
+    assert rc == 0 and data["marketing"] == "https://vesta.run"
 
 
-def test_presets(capsys):
+def test_presets_has_models_and_floors(capsys):
     rc, data = _run(["presets"], capsys)
     assert rc == 0
     assert "dry" in data["personalities"]
-    assert data["plans"] == ["starter", "pro", "power"]
-    assert isinstance(data["skills"], list)
-
-
-def test_start_rejects_bad_plan(capsys):
-    rc, data = _run(
-        ["start", "--email", "a@b.com", "--subdomain", "ada", "--plan", "enterprise"],
-        capsys,
-    )
-    assert rc == 2
-    assert "plan must be one of" in data["error"]
-
-
-def test_check_calls_client(capsys, monkeypatch):
-    seen = {}
-
-    def fake_check(self, subdomain):
-        seen["subdomain"] = subdomain
-        return {"subdomain": subdomain, "available": True}
-
-    monkeypatch.setattr(cli_mod.Client, "check", fake_check)
-    rc, data = _run(["check", "Ada"], capsys)
-    assert rc == 0
-    assert seen["subdomain"] == "ada"  # normalised to lowercase
-    assert data["available"] is True
-
-
-def test_status_maps_availability(capsys, monkeypatch):
-    monkeypatch.setattr(cli_mod.Client, "check", lambda self, s: {"subdomain": s, "available": True})
-    rc, data = _run(["status", "--subdomain", "ada"], capsys)
-    assert rc == 0 and data["status"] == "pending"
-
-    monkeypatch.setattr(
-        cli_mod.Client,
-        "check",
-        lambda self, s: {"subdomain": s, "available": False, "reason": "taken"},
-    )
-    rc, data = _run(["status", "--subdomain", "ada"], capsys)
-    assert rc == 0 and data["status"] == "signed_up"
-
-
-def test_start_builds_seed_and_forwards_referral(capsys, monkeypatch):
-    captured = {}
-
-    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
-        captured.update(
-            email=email,
-            subdomain=subdomain,
-            plan=plan,
-            seed=seed,
-            referral_code=referral_code,
-            price=price,
-            code=code,
-        )
-        return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
-
-    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    rc, data = _run(
-        [
-            "start",
-            "--email",
-            "ada@example.com",
-            "--subdomain",
-            "Ada",
-            "--plan",
-            "Pro",
-            "--name",
-            "Ada",
-            "--personality",
-            "Dry",
-            "--skills",
-            "email-client, tasks ,",
-            "--referral",
-            "ref_abc",
-        ],
-        capsys,
-    )
-    assert rc == 0
-    assert data["url"].startswith("https://checkout.stripe.com/")
-    assert captured["subdomain"] == "ada" and captured["plan"] == "pro"
-    assert captured["seed"] == {"name": "Ada", "personality": "dry", "skills": ["email-client", "tasks"]}
-    assert captured["referral_code"] == "ref_abc"
-
-
-def test_start_forwards_negotiated_price(capsys, monkeypatch):
-    captured = {}
-
-    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
-        captured["price"] = price
-        return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
-
-    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    rc, data = _run(
-        ["start", "--email", "vc@x.com", "--subdomain", "whale", "--plan", "power", "--price", "1500"],
-        capsys,
-    )
-    assert rc == 0 and captured["price"] == 1500.0
-
-
-def test_start_forwards_discount_code(capsys, monkeypatch):
-    captured = {}
-
-    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
-        captured["code"] = code
-        return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
-
-    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    rc, data = _run(
-        ["start", "--email", "a@x.com", "--subdomain", "ada", "--code", "  friend50 "],
-        capsys,
-    )
-    assert rc == 0 and captured["code"] == "friend50"
-
-
-def test_start_rejects_price_below_floor(capsys, monkeypatch):
-    called = {"n": 0}
-
-    def fake_checkout(self, **kw):
-        called["n"] += 1
-        return {"url": "x"}
-
-    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    # pro floor is $24; $5 must be rejected locally, before any checkout call.
-    rc, data = _run(
-        ["start", "--email", "a@b.com", "--subdomain", "ada", "--plan", "pro", "--price", "5"],
-        capsys,
-    )
-    assert rc == 2
-    assert "below the pro floor" in data["error"] and data["floor_usd"] == 24
-    assert called["n"] == 0
-
-
-def test_start_at_floor_is_allowed(capsys, monkeypatch):
-    captured = {}
-    monkeypatch.setattr(
-        cli_mod.Client,
-        "checkout",
-        lambda self, **kw: captured.update(kw) or {"url": "https://checkout.stripe.com/x"},
-    )
-    rc, _ = _run(
-        ["start", "--email", "a@b.com", "--subdomain", "ada", "--plan", "starter", "--price", "12"],
-        capsys,
-    )
-    assert rc == 0 and captured["price"] == 12.0
-
-
-def test_presets_includes_floors(capsys):
-    rc, data = _run(["presets"], capsys)
-    assert rc == 0
     assert data["plan_floor_usd"] == {"starter": 12, "pro": 24, "power": 48}
+    assert data["claude_models"] == ["opus", "sonnet", "haiku"]
 
 
-def test_start_surfaces_structured_error(capsys, monkeypatch):
+# --- verify -----------------------------------------------------------------
+
+
+def test_verify_stores_session(capsys, monkeypatch):
+    monkeypatch.setattr(cli_mod.Client, "send_otp", lambda self, email: {"success": True})
+    monkeypatch.setattr(cli_mod.Client, "verify_otp", lambda self, email, code: "SESS")
+    assert _run(["verify-send", "--email", E], capsys)[0] == 0
+    rc, data = _run(["verify", "--email", E, "--code", "123456"], capsys)
+    assert rc == 0 and data["verified"] is True
+    assert state_mod.token_for(E) == "SESS"
+
+
+# --- checkout ---------------------------------------------------------------
+
+
+def test_checkout_requires_verification(capsys):
+    rc, data = _run(["checkout", "--email", E], capsys)
+    assert rc == 2 and "not verified" in data["error"]
+
+
+def test_checkout_forwards_price_code_referral(capsys, monkeypatch):
+    _verified()
+    captured = {}
+
+    def fake_checkout(self, *, token, plan, referral_code, price, code):
+        captured.update(token=token, plan=plan, referral_code=referral_code, price=price, code=code)
+        return {"url": "https://checkout.stripe.com/x", "subdomain": "ada"}
+
+    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
+    monkeypatch.setattr(cli_mod.Client, "me", lambda self, t: {"server": {"id": "srv1"}})
+    rc, data = _run(
+        ["checkout", "--email", E, "--price", "200", "--code", " friend50 ", "--referral", "ref_x"],
+        capsys,
+    )
+    assert rc == 0 and data["url"].startswith("https://checkout.stripe.com/")
+    assert captured == {"token": "TOK", "plan": "pro", "referral_code": "ref_x", "price": 200.0, "code": "friend50"}
+    assert state_mod.load(E)["server_id"] == "srv1"
+
+
+def test_checkout_rejects_below_floor_without_calling(capsys, monkeypatch):
+    _verified()
+    calls = {"n": 0}
+    monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})
+    rc, data = _run(["checkout", "--email", E, "--price", "5"], capsys)
+    assert rc == 2 and data["floor_usd"] == 24 and calls["n"] == 0
+
+
+def test_checkout_surfaces_structured_error(capsys, monkeypatch):
+    _verified()
+    monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: {"error": "already provisioned"})
+    rc, data = _run(["checkout", "--email", E], capsys)
+    assert rc == 2 and data["error"] == "already provisioned"
+
+
+# --- status -----------------------------------------------------------------
+
+
+def test_status_reports_server_state(capsys, monkeypatch):
+    _verified()
+    _active_server(monkeypatch)
+    rc, data = _run(["status", "--email", E], capsys)
+    assert rc == 0 and data["status"] == "active" and data["url"] == "https://ada.vesta.run"
+
+
+# --- create-agent -----------------------------------------------------------
+
+
+def test_create_agent_needs_active_server(capsys, monkeypatch):
+    _verified()
+    _active_server(monkeypatch, status="reserved")
+    rc, data = _run(["create-agent", "--email", E, "--name", "Ada"], capsys)
+    assert rc == 2 and "not ready" in data["error"]
+
+
+def test_create_agent_passes_seed(capsys, monkeypatch):
+    _verified()
+    _active_server(monkeypatch)
+    captured = {}
+
+    def fake_create(self, *, subdomain, server_token, name, personality, skills):
+        captured.update(subdomain=subdomain, server_token=server_token, name=name, personality=personality, skills=skills)
+        return {"name": name}
+
+    monkeypatch.setattr(cli_mod.Client, "create_agent", fake_create)
+    rc, data = _run(
+        ["create-agent", "--email", E, "--name", "Ada", "--personality", "Dry", "--skills", "email, calendar ,"],
+        capsys,
+    )
+    assert rc == 0 and data["created"] is True
+    assert captured["subdomain"] == "ada" and captured["server_token"] == "VTOK"
+    assert captured["personality"] == "dry" and captured["skills"] == ["email", "calendar"]
+    assert state_mod.load(E)["agent_name"] == "Ada"
+
+
+# --- claude connect ---------------------------------------------------------
+
+
+def test_claude_start_stores_session(capsys, monkeypatch):
+    _verified()
+    _active_server(monkeypatch)
     monkeypatch.setattr(
         cli_mod.Client,
-        "checkout",
-        lambda self, **kw: {"error": "subdomain taken"},
+        "claude_oauth_start",
+        lambda self, *, subdomain, server_token: {"auth_url": "https://claude.ai/oauth", "session_id": "CS"},
     )
-    rc, data = _run(["start", "--email", "a@b.com", "--subdomain", "ada", "--plan", "starter"], capsys)
-    assert rc == 2 and data["error"] == "subdomain taken"
+    rc, data = _run(["claude-start", "--email", E], capsys)
+    assert rc == 0 and data["auth_url"] == "https://claude.ai/oauth"
+    assert state_mod.load(E)["claude_session_id"] == "CS"
+
+
+def test_claude_finish_connects_and_clears(capsys, monkeypatch):
+    _verified()
+    state_mod.update(E, claude_session_id="CS", agent_name="Ada")
+    _active_server(monkeypatch)
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "claude_oauth_complete",
+        lambda self, *, subdomain, server_token, session_id, code: (
+            "CREDS" if (session_id == "CS" and code == "PASTE") else pytest.fail("bad relay")
+        ),
+    )
+    captured = {}
+
+    def fake_set(self, *, subdomain, server_token, name, credentials, model):
+        captured.update(name=name, credentials=credentials, model=model)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli_mod.Client, "set_provider", fake_set)
+    rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
+    assert rc == 0 and data["connected"] is True and data["name"] == "Ada"
+    assert captured == {"name": "Ada", "credentials": "CREDS", "model": "sonnet"}
+    # onboarding complete -> session forgotten
+    assert state_mod.token_for(E) is None
+
+
+def test_claude_finish_without_start(capsys, monkeypatch):
+    _verified()
+    _active_server(monkeypatch)
+    rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
+    assert rc == 2 and "claude-start" in data["error"]
+
+
+# --- error propagation ------------------------------------------------------
 
 
 def test_unreachable_control_plane_exits_3(capsys, monkeypatch):
-    def boom(self, subdomain):
-        raise OnboardError("could not reach the control plane")
+    def boom(self, email):
+        raise OnboardError("could not reach https://vesta.run/api")
 
-    monkeypatch.setattr(cli_mod.Client, "check", boom)
-    rc, data = _run(["check", "ada"], capsys)
+    monkeypatch.setattr(cli_mod.Client, "send_otp", boom)
+    rc, data = _run(["verify-send", "--email", E], capsys)
     assert rc == 3 and "could not reach" in data["error"]

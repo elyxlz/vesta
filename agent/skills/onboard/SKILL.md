@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY — you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) extend an invite and set them up: collect an email + subdomain + how they want it configured, agree a monthly price, and send a private checkout link. Never asks for card details. Do NOT use on the owner (they already have one).
+description: Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY — you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) set them up end-to-end IN CHAT: verify their email by a code they read back, confirm they have a paid Claude account, agree a price, send a private Stripe link, then once they've paid create their agent and connect their Claude (an auth link + a code they paste back) — and only then hand them the app to talk to it. Never asks for card details. Do NOT use on the owner (they already have one).
 ---
 
 # onboard - CLI: `onboard`
@@ -65,25 +65,41 @@ Never gatekeep a real prospect into walking away. A snob who loses the sale fail
 
 ## Setting them up (once they've earned it)
 
-Keep it smooth now — you've made them want it; don't fumble the close.
+Keep it smooth now — you've made them want it; don't fumble the close. You run the
+WHOLE setup right here in the conversation: they never touch a website until the
+very end, when they get a link to a vesta that's already theirs, paid for, named,
+and signed in to their Claude. Each step is one `onboard` command; you relay codes
+and links between them and the CLI.
 
-1. **Collect, conversationally:**
-   - **email** (receipts + sign-in land here),
-   - **subdomain** — `them.vesta.run`. Check it live with `onboard check` before
-     promising it; if taken/invalid, ask for another.
-   - **how they want it set up** (optional — sensible defaults if they don't care):
-     a **name**, a **personality** preset, **starting skills** (`onboard presets`).
-2. **Agree a price** (see **Pricing**).
-3. **Mint the private invite link** with `onboard start` and send it. Then
-   **stop** — never ask for card numbers; Stripe collects payment on their device.
-   On that checkout page they tick a box agreeing to Vesta's terms (it's handled
-   there — you collect no agreement yourself); if asked, share `onboard links` →
-   `terms` / `privacy`.
-4. **Wait for them to pay**, poll `onboard status`. When it flips to `signed_up`,
-   welcome them in: the dashboard at `vesta.run/dashboard` (sign in with that email,
-   6-digit code), the app install links (`onboard links`), and the one last step —
-   **connect a model provider** (Claude / ChatGPT-Codex / OpenRouter) to their agent
-   inside the app.
+1. **Verify their email.** Ask for it, then `onboard verify-send --email <e>` — a
+   6-digit code lands in their inbox. Ask them to read it back, and
+   `onboard verify --email <e> --code <c>`. From here you're acting on their behalf
+   (their own verified session); their email is now confirmed, so their later
+   sign-in is frictionless.
+2. **Confirm a paid Claude account — BEFORE money changes hands.** Their vesta runs
+   on *their* Claude (bring-your-own). Ask plainly: *"do you have a paid Claude
+   account (Pro or Max)?"* If not, don't take their money — tell them to grab one
+   first; nothing here works without it.
+3. **Agree a name + a price.** What do they want it called / how should it feel
+   (`onboard presets` for personalities + skills)? Agree the monthly price (see
+   **Pricing**).
+4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
+   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop** — never ask
+   for card numbers; Stripe collects payment on their device, and they tick the
+   terms box right there (share `onboard links` → `terms`/`privacy` if asked). The
+   subdomain is assigned for them.
+5. **Wait for the box.** Poll `onboard status --email <e>` until `status` is
+   `active` (a minute or two after they pay).
+6. **Create their agent.** `onboard create-agent --email <e> --name <name>
+   [--personality <preset>] [--skills a,b,c]`.
+7. **Connect their Claude — in chat.** `onboard claude-start --email <e>` returns an
+   `auth_url`. Send it; they open it, approve, and read back the code shown. Then
+   `onboard claude-finish --email <e> --code <pasted>` wakes the agent on their
+   Claude. (The link is safe to relay — the secret half of the exchange never leaves
+   their box, so the code is useless to anyone else.)
+8. **Hand them off.** Now — and only now — give them the app (`onboard links`):
+   sign in with their email (already verified), and their vesta `<name>` is right
+   there waiting.
 
 ## Pricing
 
@@ -100,8 +116,8 @@ negotiable **upward**, never below.
   AI of their own) — **anchor well above the floor.** $200, $1,000, $5,000/mo are
   all fair if the value and the want are there. Frame it as the price of admission
   to something scarce. There is no ceiling.
-- **Never below $24.** `onboard start --price` rejects anything under the floor, and
-  the server enforces it too.
+- **Never below $24.** `onboard checkout --price` rejects anything under the floor,
+  and the server enforces it too.
 - **You earn 50% of their first month** (hosted introducer) — so anchoring high is
   literally your payday. A $2,000 close earns you $1,000.
 
@@ -116,47 +132,64 @@ to look up or reveal; the code's value and effect live entirely on the server.
 
 ## Usage
 
+The flow is ordered — each command is one step (see **Setting them up**). Every
+command keys off the buyer's `--email`; their verified session is remembered
+between commands for you.
+
 ```bash
-onboard check <subdomain>                          # is them.vesta.run free?
-onboard start --email <e> --subdomain <s> [--price <usd/mo>] [--code <code>] \
-              [--name <n>] [--personality <preset>] [--skills a,b,c]
-                                                   # -> { url } private checkout link
-onboard status --subdomain <s>                     # have they joined yet?
-onboard presets                                    # personality presets + installable skills
-onboard links                                      # marketing + desktop/mobile install URLs
+onboard verify-send  --email <e>                       # email them a 6-digit code
+onboard verify       --email <e> --code <c>            # the code they read back -> their session
+onboard checkout     --email <e> [--price <usd/mo>] [--code <code>]
+                                                       # -> { url, subdomain }  (auto subdomain)
+onboard status       --email <e>                       # -> { status: reserved|active|... }
+onboard create-agent --email <e> --name <n> [--personality <preset>] [--skills a,b,c]
+onboard claude-start  --email <e>                      # -> { auth_url }  (send it to them)
+onboard claude-finish --email <e> --code <pasted> [--model opus|sonnet|haiku]
+onboard presets                                        # personalities + skills + models
+onboard links                                          # marketing + app install URLs
 ```
 
-All commands print **JSON** to stdout. `start` returns `{ "url": "https://checkout.stripe.com/..." }`
-— send that URL verbatim and stop. (There is no `--plan`: one plan, defaulted for you.)
+All commands print **JSON** to stdout. `checkout` returns `{ "url": "https://checkout.stripe.com/..." }`
+— send that URL verbatim and stop. (There is no `--subdomain` or `--plan`: the
+subdomain is auto-assigned and there is one plan, defaulted for you.)
 
 ### Examples
 
 ```bash
-onboard check ada
-# { "subdomain": "ada", "available": true }
+onboard verify-send --email ada@example.com
+# { "sent": true, "email": "ada@example.com" }
+onboard verify --email ada@example.com --code 123456
+# { "verified": true, "email": "ada@example.com" }
 
 # Someone who just wants in — the floor:
-onboard start --email ada@example.com --subdomain ada --name Ada --personality dry
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($24/mo)
+onboard checkout --email ada@example.com
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_...", "subdomain": "ada" }   ($24/mo)
 
 # A whale who fought to get in — anchor high (uncapped):
-onboard start --email vc@example.com --subdomain magnate --price 2000
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_..." }   ($2,000/mo;
-# a hosted introducer earns 50% of month 1 = $1,000)
+onboard checkout --email vc@example.com --price 2000
+# { "url": "https://...", "subdomain": "vc" }   ($2,000/mo; you earn 50% of month 1 = $1,000)
 
 # Below the floor is rejected (the server enforces it too):
-onboard start --email x@example.com --subdomain x --price 5
-# { "error": "price $5 is below the pro floor of $24", "floor_usd": 24 }
+onboard checkout --email x@example.com --price 5
+# { "error": "price $5 is below the $24 floor", "floor_usd": 24 }
 
-onboard status --subdomain ada
-# { "subdomain": "ada", "status": "pending" }    (not in yet)
-# { "subdomain": "ada", "status": "signed_up" }  (they joined)
+onboard status --email ada@example.com
+# { "status": "reserved", ... }   (paid? provisioning? not active yet)
+# { "status": "active", "subdomain": "ada", "url": "https://ada.vesta.run" }   (box is up)
+
+# Once active: create the agent, then connect their Claude.
+onboard create-agent --email ada@example.com --name Ada --personality dry --skills email,calendar
+# { "created": true, "name": "Ada" }
+onboard claude-start --email ada@example.com
+# { "auth_url": "https://claude.ai/oauth/authorize?...", "next": "..." }
+onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
+# { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
 ## Referral attribution (automatic)
 
 If this vesta is hosted, its non-secret `referral_code` is read from the
-`VESTA_REFERRAL_CODE` environment variable and sent with `onboard start`, so a
+`VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
 completed invite credits this account (you earn 50% of their first month). Unset
 (self-hosted) → it still works, just no reward. The CLI handles the code; you never
 touch it. Override for testing with `--referral <code>`.
@@ -164,9 +197,15 @@ touch it. Override for testing with `--referral <code>`.
 ## Caveats
 
 - **Never collect or relay card details.** Stripe handles payment on their device.
-- **Validate the subdomain before promising it** (`onboard check`) — lowercase
-  letters/digits/hyphens; some names are reserved.
-- **One link at a time.** Don't fan out parallel `onboard start` calls.
+- **The codes are theirs — relay, don't keep.** The email code and the Claude code
+  are the buyer's; pass each straight to the CLI and move on. Never store or reuse
+  them. The Claude auth *link* is safe to send (the secret half of the exchange
+  stays on their box), so connecting Claude in chat is fine.
+- **Paid Claude required (BYOK).** Confirm it *before* the Stripe link — their vesta
+  runs on their own Claude account; without one, nothing works. Don't take money first.
+- **Order matters, and one person at a time.** Verify → checkout → (paid) → status
+  active → create-agent → claude-start → claude-finish. Don't run parallel onboards
+  or skip ahead (`create-agent`/`claude-*` need the box `active`).
 - **Don't break character into a brochure.** The exclusivity only works if you hold
   the frame — link the marketing page (`onboard links`) instead of reciting features.
 - The control-plane base URL defaults to `https://vesta.run/api`; override with

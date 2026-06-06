@@ -1,15 +1,20 @@
-"""``onboard`` CLI entry point.
+"""``onboard`` CLI entry point — the conduit onboarding flow.
 
-Subcommands:
-- ``onboard check <subdomain>``   — is they.vesta.run free?
-- ``onboard start ...``           — reserve + mint a Stripe Checkout link.
-- ``onboard status --subdomain``  — has signup gone through yet?
-- ``onboard presets``             — personality presets + installable skills.
-- ``onboard links``               — marketing + install URLs.
+The agent (an existing member's vesta) walks a stranger in, in conversation. Each
+step is a subcommand; the buyer's verified session persists between invocations
+(`state.py`), so after the OTP the CLI acts AS the buyer:
 
-Output is always JSON on stdout; human-readable errors go through the same JSON
-(`{"error": ...}`). Exit codes: 0 success, 2 invalid input, 3 control-plane
-unreachable/error, 1 unexpected.
+- ``onboard verify-send --email``    — email the buyer a 6-digit code.
+- ``onboard verify --email --code``  — the code they read back -> their session.
+- ``onboard checkout --email``       — reserve + mint a Stripe link (auto subdomain).
+- ``onboard status --email``         — has the VM come up yet?
+- ``onboard create-agent --email``   — create their first agent (name/personality/skills).
+- ``onboard claude-start --email``   — begin Claude connect -> an auth link.
+- ``onboard claude-finish --email``  — the code they paste back -> agent alive.
+- ``onboard presets`` / ``onboard links`` — reference data.
+
+Output is always JSON on stdout. Exit codes: 0 success, 2 invalid input / surfaced
+{error}, 3 control-plane/vestad unreachable, 1 unexpected.
 """
 
 from __future__ import annotations
@@ -19,78 +24,191 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import state
 from .client import Client, OnboardError
-from .config import LINKS, PERSONALITY_PRESETS, PLAN_FLOOR_USD, PLANS, Config
+from .config import DEFAULT_MODEL, LINKS, PERSONALITY_PRESETS, PLAN_FLOOR_USD, PLANS, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _cmd_check(args: argparse.Namespace, client: Client, cfg: Config) -> int:
-    _print(client.check(args.subdomain.strip().lower()))
+def _email(args: argparse.Namespace) -> str:
+    return args.email.strip().lower()
+
+
+# --- auth -------------------------------------------------------------------
+
+
+def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    client.send_otp(email)
+    _print({"sent": True, "email": email})
     return 0
 
 
-def _cmd_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
-    plan = args.plan.strip().lower()
-    if plan not in PLANS:
-        _print({"error": f"plan must be one of {', '.join(PLANS)}"})
+def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = client.verify_otp(email, args.code.strip())
+    state.update(email, token=token)
+    _print({"verified": True, "email": email})
+    return 0
+
+
+# --- checkout + status ------------------------------------------------------
+
+
+def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` with the buyer's code first"})
         return 2
-    # Negotiated price (optional). Floor = the plan's list price; uncapped above.
+
     price: float | None = None
     if args.price is not None:
-        floor = PLAN_FLOOR_USD[plan]
+        floor = PLAN_FLOOR_USD[args.plan]
         if args.price < floor:
-            _print(
-                {
-                    "error": f"price ${args.price:g} is below the {plan} floor of ${floor}",
-                    "floor_usd": floor,
-                }
-            )
+            _print({"error": f"price ${args.price:g} is below the ${floor} floor", "floor_usd": floor})
             return 2
         price = args.price
-    seed: dict[str, Any] = {}
-    if args.name:
-        seed["name"] = args.name.strip()
-    if args.personality:
-        seed["personality"] = args.personality.strip().lower()
-    if args.skills:
-        skills = [s.strip() for s in args.skills.split(",") if s.strip()]
-        if skills:
-            seed["skills"] = skills
+
     result = client.checkout(
-        email=args.email.strip(),
-        subdomain=args.subdomain.strip().lower(),
-        plan=plan,
-        seed=seed or None,
-        # explicit --referral wins; otherwise the env-derived code (hosted only)
+        token=token,
+        plan=args.plan,
         referral_code=args.referral or cfg.referral_code,
         price=price,
         code=(args.code.strip() if args.code else None),
     )
+    if "url" in result:
+        # Stash the assigned subdomain + server id so later steps don't re-derive them.
+        me = client.me(token)
+        server = me.get("server") or {}
+        state.update(email, subdomain=result.get("subdomain"), server_id=server.get("id"))
     _print(result)
-    # A structured {error} (taken/rate-limited) is a normal, surfaced outcome.
     return 0 if "url" in result else 2
 
 
 def _cmd_status(args: argparse.Namespace, client: Client, cfg: Config) -> int:
-    """No dedicated status endpoint exists; infer from subdomain availability.
-
-    Free (available) → nobody has signed up with it yet (`pending`); taken →
-    signup went through (`signed_up`). This is the signal the introducer needs:
-    "did they complete checkout?".
-    """
-    res = client.check(args.subdomain.strip().lower())
-    sub = res.get("subdomain", args.subdomain)
-    if res.get("available") is True:
-        status = "pending"
-    elif res.get("reason") == "taken":
-        status = "signed_up"
-    else:
-        status = res.get("reason", "unknown")
-    _print({"subdomain": sub, "status": status})
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` first"})
+        return 2
+    server = client.me(token).get("server")
+    if not server:
+        _print({"status": "no_server", "hint": "run `onboard checkout` and have them pay"})
+        return 0
+    state.update(email, subdomain=server.get("subdomain"), server_id=server.get("id"))
+    _print({"status": server.get("status"), "subdomain": server.get("subdomain"), "url": server.get("url")})
     return 0
+
+
+# --- agent + Claude ---------------------------------------------------------
+
+
+def _active_server(client: Client, token: str) -> dict[str, Any] | None:
+    """The buyer's server iff it is live (`active`), else None."""
+    server = client.me(token).get("server")
+    if server and server.get("status") == "active":
+        return server
+    return None
+
+
+def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` first"})
+        return 2
+    server = _active_server(client, token)
+    if not server:
+        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
+        return 2
+
+    name = args.name.strip()
+    skills = [s.strip() for s in args.skills.split(",") if s.strip()] if args.skills else None
+    server_token = client.server_token(token, server["id"])
+    result = client.create_agent(
+        subdomain=server["subdomain"],
+        server_token=server_token,
+        name=name,
+        personality=(args.personality.strip().lower() if args.personality else None),
+        skills=skills,
+    )
+    if "error" in result:
+        _print(result)
+        return 2
+    state.update(email, agent_name=name)
+    _print({"created": True, "name": result.get("name", name)})
+    return 0
+
+
+def _cmd_claude_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` first"})
+        return 2
+    server = _active_server(client, token)
+    if not server:
+        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
+        return 2
+
+    server_token = client.server_token(token, server["id"])
+    result = client.claude_oauth_start(subdomain=server["subdomain"], server_token=server_token)
+    if "error" in result:
+        _print(result)
+        return 2
+    state.update(email, claude_session_id=result["session_id"])
+    _print({"auth_url": result["auth_url"], "next": "have them open it, approve, and read the code back"})
+    return 0
+
+
+def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = state.token_for(email)
+    if not token:
+        _print({"error": "not verified — run `onboard verify` first"})
+        return 2
+    st = state.load(email)
+    session_id = st.get("claude_session_id")
+    if not session_id:
+        _print({"error": "no Claude auth in progress — run `onboard claude-start` first"})
+        return 2
+    name = args.name.strip() if args.name else st.get("agent_name")
+    if not name:
+        _print({"error": "unknown agent name — pass --name (the one used in create-agent)"})
+        return 2
+    server = _active_server(client, token)
+    if not server:
+        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
+        return 2
+
+    server_token = client.server_token(token, server["id"])
+    credentials = client.claude_oauth_complete(
+        subdomain=server["subdomain"],
+        server_token=server_token,
+        session_id=session_id,
+        code=args.code.strip(),
+    )
+    result = client.set_provider(
+        subdomain=server["subdomain"],
+        server_token=server_token,
+        name=name,
+        credentials=credentials,
+        model=(args.model or DEFAULT_MODEL),
+    )
+    if "error" in result:
+        _print(result)
+        return 2
+    # Onboarding complete — forget the buyer's session token.
+    state.clear(email)
+    _print({"connected": True, "name": name})
+    return 0
+
+
+# --- reference data ---------------------------------------------------------
 
 
 def _installable_skills() -> list[str]:
@@ -115,8 +233,8 @@ def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             "personalities": list(PERSONALITY_PRESETS),
             "skills": _installable_skills(),
             "plans": list(PLANS),
-            # Negotiation floor (USD/mo) per plan; quote >= these, uncapped above.
             "plan_floor_usd": PLAN_FLOOR_USD,
+            "claude_models": ["opus", "sonnet", "haiku"],
         }
     )
     return 0
@@ -130,34 +248,44 @@ def _cmd_links(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="onboard",
-        description="Introduce a stranger to Vesta and mint a signup checkout link.",
+        description="Walk a stranger into Vesta: verify, checkout, create + connect their agent.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_check = sub.add_parser("check", help="Is a subdomain available?")
-    p_check.add_argument("subdomain", help="The desired <name>.vesta.run label.")
+    p_send = sub.add_parser("verify-send", help="Email the buyer a 6-digit sign-in code.")
+    p_send.add_argument("--email", required=True, help="The buyer's email.")
 
-    p_start = sub.add_parser("start", help="Reserve + mint a Stripe Checkout link.")
-    p_start.add_argument("--email", required=True, help="Prospective member's email.")
-    p_start.add_argument("--subdomain", required=True, help="Desired <name>.vesta.run label.")
-    # One plan today (the standard box, cx33). Kept as a hidden knob defaulting to
-    # `pro` so the plumbing supports more tiers later without the agent picking one.
-    p_start.add_argument("--plan", default="pro", help=argparse.SUPPRESS)
-    p_start.add_argument("--name", help="Optional agent name to seed at first boot.")
-    p_start.add_argument("--personality", help="Optional personality preset (see `onboard presets`).")
-    p_start.add_argument("--skills", help="Optional comma-separated starting skills.")
-    p_start.add_argument(
-        "--price",
-        type=float,
-        help="Negotiated MONTHLY price in USD. Floor = plan list price; uncapped above. Omit for list price.",
-    )
-    p_start.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
-    p_start.add_argument("--code", help="Optional discount code to redeem at checkout (e.g. a 50%%-off invite code).")
+    p_verify = sub.add_parser("verify", help="Verify the code the buyer reads back.")
+    p_verify.add_argument("--email", required=True)
+    p_verify.add_argument("--code", required=True, help="The 6-digit code from their inbox.")
 
-    p_status = sub.add_parser("status", help="Has signup gone through yet?")
-    p_status.add_argument("--subdomain", required=True, help="The subdomain to check.")
+    p_checkout = sub.add_parser("checkout", help="Reserve + mint a Stripe link (auto subdomain).")
+    p_checkout.add_argument("--email", required=True)
+    # One plan today; hidden knob defaulting to `pro` so more tiers can slot in later.
+    p_checkout.add_argument("--plan", default="pro", help=argparse.SUPPRESS)
+    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the floor; uncapped above).")
+    p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
+    p_checkout.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
 
-    sub.add_parser("presets", help="Personality presets + installable skills.")
+    p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")
+    p_status.add_argument("--email", required=True)
+
+    p_agent = sub.add_parser("create-agent", help="Create the buyer's first agent.")
+    p_agent.add_argument("--email", required=True)
+    p_agent.add_argument("--name", required=True, help="What they want their vesta called.")
+    p_agent.add_argument("--personality", help="Personality preset (see `onboard presets`).")
+    p_agent.add_argument("--skills", help="Comma-separated starting skills.")
+
+    p_cstart = sub.add_parser("claude-start", help="Begin connecting the buyer's Claude -> an auth link.")
+    p_cstart.add_argument("--email", required=True)
+
+    p_cfinish = sub.add_parser("claude-finish", help="Finish Claude connect with the pasted code.")
+    p_cfinish.add_argument("--email", required=True)
+    p_cfinish.add_argument("--code", required=True, help="The code the buyer pasted from the auth page.")
+    p_cfinish.add_argument("--name", help="Agent name (defaults to the one from create-agent).")
+    p_cfinish.add_argument("--model", help=f"Claude model (default {DEFAULT_MODEL}).")
+
+    sub.add_parser("presets", help="Personality presets + installable skills + models.")
     sub.add_parser("links", help="Marketing + desktop/mobile install URLs.")
     return parser
 
@@ -169,9 +297,13 @@ def main(argv: list[str] | None = None) -> int:
     client = Client(cfg)
 
     handlers = {
-        "check": _cmd_check,
-        "start": _cmd_start,
+        "verify-send": _cmd_verify_send,
+        "verify": _cmd_verify,
+        "checkout": _cmd_checkout,
         "status": _cmd_status,
+        "create-agent": _cmd_create_agent,
+        "claude-start": _cmd_claude_start,
+        "claude-finish": _cmd_claude_finish,
         "presets": _cmd_presets,
         "links": _cmd_links,
     }

@@ -1,17 +1,24 @@
 """Configuration for the onboard CLI.
 
-Everything is read from the environment so the skill needs no setup state on
-disk: the control-plane base URL and (for hosted vestas) the non-secret referral
-code that attributes a completed signup to this account.
+Everything is read from the environment: the control-plane base URL and (for
+hosted vestas) the non-secret referral code that attributes a completed signup to
+this account. The ONE bit of on-disk state is the buyer's short onboarding session
+token (see `state.py`) — needed because the agent drives the flow across separate
+CLI invocations.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 # Production control plane. Override with VESTA_CONTROL_URL for staging/testing.
 DEFAULT_CONTROL_URL = "https://vesta.run/api"
+
+# Default Claude model for a freshly onboarded agent (the buyer can switch later
+# in the app). Anthropic's curated picker is opus / sonnet / haiku.
+DEFAULT_MODEL = "sonnet"
 
 # How long the marketing/plan copy quotes; kept here so the CLI and SKILL.md
 # agree on the canonical plan ids the checkout endpoint accepts.
@@ -53,3 +60,12 @@ class Config:
         # Non-secret per-server attribution id; absent on self-hosted boxes.
         ref = os.environ.get("VESTA_REFERRAL_CODE", "").strip() or None
         return cls(base_url=base, referral_code=ref)
+
+    @property
+    def apex_host(self) -> str:
+        """The apex host the control plane lives under, e.g. ``vesta.run``."""
+        return urlparse(self.base_url).netloc or "vesta.run"
+
+    def tenant_base(self, subdomain: str) -> str:
+        """Base URL of a buyer's own vestad, ``https://<subdomain>.<apex>``."""
+        return f"https://{subdomain}.{self.apex_host}"
