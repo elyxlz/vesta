@@ -67,6 +67,7 @@ def _cmd_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         # explicit --referral wins; otherwise the env-derived code (hosted only)
         referral_code=args.referral or cfg.referral_code,
         price=price,
+        code=(args.code.strip() if args.code else None),
     )
     _print(result)
     # A structured {error} (taken/rate-limited) is a normal, surfaced outcome.
@@ -151,6 +152,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Negotiated MONTHLY price in USD. Floor = plan list price; uncapped above. Omit for list price.",
     )
     p_start.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
+    p_start.add_argument("--code", help="Optional discount code to redeem at checkout (e.g. a 50%%-off invite code).")
 
     p_status = sub.add_parser("status", help="Has signup gone through yet?")
     p_status.add_argument("--subdomain", required=True, help="The subdomain to check.")

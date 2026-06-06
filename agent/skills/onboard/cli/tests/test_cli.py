@@ -70,7 +70,7 @@ def test_status_maps_availability(capsys, monkeypatch):
 def test_start_builds_seed_and_forwards_referral(capsys, monkeypatch):
     captured = {}
 
-    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None):
+    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
         captured.update(
             email=email,
             subdomain=subdomain,
@@ -78,6 +78,7 @@ def test_start_builds_seed_and_forwards_referral(capsys, monkeypatch):
             seed=seed,
             referral_code=referral_code,
             price=price,
+            code=code,
         )
         return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
 
@@ -112,7 +113,7 @@ def test_start_builds_seed_and_forwards_referral(capsys, monkeypatch):
 def test_start_forwards_negotiated_price(capsys, monkeypatch):
     captured = {}
 
-    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None):
+    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
         captured["price"] = price
         return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
 
@@ -122,6 +123,21 @@ def test_start_forwards_negotiated_price(capsys, monkeypatch):
         capsys,
     )
     assert rc == 0 and captured["price"] == 1500.0
+
+
+def test_start_forwards_discount_code(capsys, monkeypatch):
+    captured = {}
+
+    def fake_checkout(self, *, email, subdomain, plan, seed, referral_code, price=None, code=None):
+        captured["code"] = code
+        return {"url": "https://checkout.stripe.com/c/pay/cs_test_x"}
+
+    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
+    rc, data = _run(
+        ["start", "--email", "a@x.com", "--subdomain", "ada", "--code", "  friend50 "],
+        capsys,
+    )
+    assert rc == 0 and captured["code"] == "friend50"
 
 
 def test_start_rejects_price_below_floor(capsys, monkeypatch):
