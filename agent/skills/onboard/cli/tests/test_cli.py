@@ -71,6 +71,15 @@ def test_verify_stores_session(capsys, monkeypatch):
     assert state_mod.token_for(E) == "SESS"
 
 
+def test_verify_rejects_bad_code(capsys, monkeypatch):
+    # A wrong/expired code -> verify_otp returns None -> surfaced as exit 2, not a
+    # transport failure (exit 3), and no session is stored.
+    monkeypatch.setattr(cli_mod.Client, "verify_otp", lambda self, email, code: None)
+    rc, data = _run(["verify", "--email", E, "--code", "000000"], capsys)
+    assert rc == 2 and "wrong or expired" in data["error"]
+    assert state_mod.token_for(E) is None
+
+
 # --- checkout ---------------------------------------------------------------
 
 
@@ -140,17 +149,20 @@ def test_create_agent_passes_seed(capsys, monkeypatch):
 
     def fake_create(self, *, subdomain, server_token, name, personality, skills):
         captured.update(subdomain=subdomain, server_token=server_token, name=name, personality=personality, skills=skills)
-        return {"name": name}
+        # vestad normalizes the name and returns the actual created name.
+        return {"name": "ada"}
 
     monkeypatch.setattr(cli_mod.Client, "create_agent", fake_create)
     rc, data = _run(
         ["create-agent", "--email", E, "--name", "Ada", "--personality", "Dry", "--skills", "email, calendar ,"],
         capsys,
     )
-    assert rc == 0 and data["created"] is True
+    assert rc == 0 and data["created"] is True and data["name"] == "ada"
     assert captured["subdomain"] == "ada" and captured["server_token"] == "VTOK"
     assert captured["personality"] == "dry" and captured["skills"] == ["email", "calendar"]
-    assert state_mod.load(E)["agent_name"] == "Ada"
+    # the NORMALIZED name vestad returned is stored, so claude-finish addresses a
+    # path vestad's validate_name accepts (not the raw "Ada").
+    assert state_mod.load(E)["agent_name"] == "ada"
 
 
 # --- claude connect ---------------------------------------------------------
@@ -199,6 +211,29 @@ def test_claude_finish_without_start(capsys, monkeypatch):
     _active_server(monkeypatch)
     rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
     assert rc == 2 and "claude-start" in data["error"]
+
+
+def test_claude_finish_clears_session_when_attach_fails(capsys, monkeypatch):
+    _verified()
+    state_mod.update(E, claude_session_id="CS", agent_name="ada")
+    _active_server(monkeypatch)
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "claude_oauth_complete",
+        lambda self, *, subdomain, server_token, session_id, code: "CREDS",
+    )
+    # The attach (set_provider) fails after OAuth was consumed on the VM.
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "set_provider",
+        lambda self, *, subdomain, server_token, name, credentials, model: {"error": "bad gateway"},
+    )
+    rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
+    assert rc == 2 and "claude-start" in data["error"]
+    # The consumed session_id is forgotten (a retry must re-run claude-start), but
+    # the buyer's session token survives so they aren't kicked out mid-onboard.
+    assert "claude_session_id" not in state_mod.load(E)
+    assert state_mod.token_for(E) == "TOK"
 
 
 # --- error propagation ------------------------------------------------------

@@ -49,9 +49,12 @@ class Client:
         )
         return self._json(resp)
 
-    def verify_otp(self, email: str, code: str) -> str:
+    def verify_otp(self, email: str, code: str) -> str | None:
         """POST /auth/sign-in/email-otp — verify the code, return THE buyer's token.
 
+        Returns None when the code is wrong/expired (Better Auth answers 4xx with
+        `{message: "INVALID_OTP", ...}`, no token) so the CLI can surface a friendly
+        'wrong code' rather than treating it as the control plane being unreachable.
         Better Auth's `bearer` plugin returns the session token in the
         `set-auth-token` response header (falling back to the body `token`).
         """
@@ -59,11 +62,10 @@ class Client:
             "/auth/sign-in/email-otp",
             json={"email": email, "otp": code},
         )
-        data = self._json(resp)
-        token = resp.headers.get("set-auth-token") or data.get("token")
-        if not token:
-            raise OnboardError("verification did not return a session token")
-        return token
+        if 400 <= resp.status_code < 500:
+            return None  # invalid/expired code — a normal, surfaced outcome
+        data = self._json(resp)  # raises on 5xx (real transport/server failure)
+        return resp.headers.get("set-auth-token") or data.get("token")
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 

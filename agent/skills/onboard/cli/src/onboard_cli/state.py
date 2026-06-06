@@ -32,10 +32,15 @@ def _read_all() -> dict[str, Any]:
 
 def _write_all(data: dict[str, Any]) -> None:
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    # Write 0600 — it holds a session token.
-    fd = os.open(str(_STATE_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Write 0600 (it holds a session token) to a temp file, then atomically
+    # os.replace — so an overlapping CLI invocation never reads a half-written
+    # file (the read-modify-write itself is still unsynchronized; the SKILL keeps
+    # onboards one-at-a-time, and atomic replace prevents corruption).
+    tmp = _STATE_FILE.with_suffix(".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(data, f)
+    os.replace(tmp, _STATE_FILE)
 
 
 def load(email: str) -> dict[str, Any]:
@@ -57,6 +62,17 @@ def clear(email: str) -> None:
     """Forget everything stored for ``email`` (call once onboarding completes)."""
     data = _read_all()
     if data.pop(_key(email), None) is not None:
+        _write_all(data)
+
+
+def forget(email: str, *keys: str) -> None:
+    """Drop specific keys from ``email``'s context (e.g. a consumed OAuth nonce)."""
+    data = _read_all()
+    entry = data.get(_key(email))
+    if not entry:
+        return
+    if any(entry.pop(k, None) is not None for k in keys):
+        data[_key(email)] = entry
         _write_all(data)
 
 

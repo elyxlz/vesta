@@ -50,6 +50,9 @@ def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> i
 def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
     token = client.verify_otp(email, args.code.strip())
+    if not token:
+        _print({"error": "wrong or expired code — ask them to re-read it (or resend)"})
+        return 2
     state.update(email, token=token)
     _print({"verified": True, "email": email})
     return 0
@@ -139,8 +142,11 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
     if "error" in result:
         _print(result)
         return 2
-    state.update(email, agent_name=name)
-    _print({"created": True, "name": result.get("name", name)})
+    # vestad normalizes the name (lowercases/strips); store what it ACTUALLY created
+    # so claude-finish addresses /agents/<name>/provider with a name that validates.
+    created_name = result.get("name", name)
+    state.update(email, agent_name=created_name)
+    _print({"created": True, "name": created_name})
     return 0
 
 
@@ -192,6 +198,10 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         session_id=session_id,
         code=args.code.strip(),
     )
+    # The OAuth session is single-use and now consumed on the VM; forget it so a
+    # retry can't re-post a spent session_id (which vestad rejects). If the attach
+    # below fails the buyer must restart with claude-start.
+    state.forget(email, "claude_session_id")
     result = client.set_provider(
         subdomain=server["subdomain"],
         server_token=server_token,
@@ -200,7 +210,9 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         model=(args.model or DEFAULT_MODEL),
     )
     if "error" in result:
-        _print(result)
+        _print(
+            {"error": f"authorized on Anthropic's side but attaching it failed ({result['error']}); run `onboard claude-start` again to retry"}
+        )
         return 2
     # Onboarding complete — forget the buyer's session token.
     state.clear(email)
