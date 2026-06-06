@@ -76,10 +76,24 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             return 2
         price = args.price
 
+    # Invite-only gate: use the explicit --invite, else mint one as the referrer
+    # (server-to-server, via the api_key/admin secret in the env). No credential and
+    # no --invite means this vesta can't extend invites.
+    invite = args.invite.strip() if args.invite else None
+    if not invite:
+        if not cfg.invite_credential:
+            _print({"error": "no invite: set VESTA_API_KEY (this vesta's key) to mint one, or pass --invite <code> from the operator"})
+            return 2
+        minted = client.mint_invite(cfg.invite_credential)
+        if "code" not in minted:
+            _print(minted if "error" in minted else {"error": "could not mint an invite"})
+            return 2
+        invite = minted["code"]
+
     result = client.checkout(
         token=token,
         plan=args.plan,
-        referral_code=args.referral or cfg.referral_code,
+        invite=invite,
         price=price,
         code=(args.code.strip() if args.code else None),
     )
@@ -277,7 +291,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_checkout.add_argument("--plan", default="pro", help=argparse.SUPPRESS)
     p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
-    p_checkout.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
+    p_checkout.add_argument(
+        "--invite",
+        help="One-time invite code. Omit to mint one as the referrer (needs VESTA_API_KEY).",
+    )
 
     p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")
     p_status.add_argument("--email", required=True)

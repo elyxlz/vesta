@@ -69,25 +69,34 @@ class Client:
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 
+    def mint_invite(self, credential: str) -> dict[str, Any]:
+        """POST /onboard/invite -> {code, expires_at}.
+
+        Authenticated as the REFERRER (server-to-server) by `credential` — the
+        referring vesta's per-VM api_key, or the operator admin secret. The invite
+        is the access gate + referral attribution that checkout requires.
+        """
+        return self._json(self._post("/onboard/invite", json={}, headers=self._auth(credential)))
+
     def checkout(
         self,
         *,
         token: str,
         plan: str,
-        referral_code: str | None,
+        invite: str,
         price: float | None,
         code: str | None,
     ) -> dict[str, Any]:
-        """POST /onboard/checkout -> {url, subdomain}. Auto-assigns the subdomain."""
-        body: dict[str, Any] = {"plan": plan}
+        """POST /onboard/checkout -> {url, subdomain}. Auto-assigns the subdomain.
+
+        `invite` is REQUIRED (invite-only) and carries the referral attribution.
+        """
+        body: dict[str, Any] = {"plan": plan, "invite": invite}
         if price is not None:
             body["price"] = price  # negotiated monthly USD; floor enforced server-side
         if code:
             body["code"] = code  # discount code; unknown -> {"error": "invalid code"}
-        headers = self._auth(token)
-        if referral_code:
-            headers["X-Vesta-Referral"] = referral_code
-        return self._json(self._post("/onboard/checkout", json=body, headers=headers))
+        return self._json(self._post("/onboard/checkout", json=body, headers=self._auth(token)))
 
     def me(self, token: str) -> dict[str, Any]:
         """GET /me -> {user, server}. `server` is null until checkout reserves one."""
