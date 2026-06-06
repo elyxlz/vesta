@@ -43,10 +43,6 @@ vestad/tests/                   (the actual suites — run via `cargo test -p ve
     common.rs       endpoint checker, constants
     endpoints.rs    authorize, token, callback endpoints
     token_exchange.rs  token exchange format validation
-
-  migrations/     filesystem/skill layout migrations (3 tests)
-    normalize.rs        legacy ~/vesta/ layout normalization (mirrors LEGACY_LAYOUT_NORMALIZE_SCRIPT)
-    sparse_checkout.rs  installed-skills sparse-checkout pattern (mirrors upstream-sync SETUP.md)
 ```
 
 ## Running
