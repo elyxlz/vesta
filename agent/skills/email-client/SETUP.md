@@ -170,6 +170,19 @@ A notification arrives to you looking like this, so your rules can match on `fro
 
 Without this line you still handle email on request, but standing rules (especially "stay silent" / auto-handle rules) may not fire on their own.
 
+## 7. First Use: Data Gathering
+
+Once accounts are connected and the smoke test passes, go deep into the user's mail to learn who they are. This is the single most important onboarding step. Treat it as a real project, not a quick skim: budget hours, not minutes, and fan out background subagents to read accounts and folders in parallel so you cover far more without burning your own context.
+
+1. **Map the folders** (`email-client list-folders --account <acct>`): the sent folder may be "Sent", "Sent Items", or "Sent Mail" depending on provider
+2. **Read sent mail** (`email-client list --account <acct> --folder Sent --limit 200`, then page back): writing style, tone, sign-offs, key contacts, how their tone shifts by recipient. Open interesting ones in full (`email-client get --account <acct> --folder Sent --uid <uid> --body-chars 8000`)
+3. **Read inbox** (`email-client list --account <acct> --folder INBOX --limit 200`, keep paging): what they receive, subscriptions, who contacts them. Read anything important or personal. Use `email-client search --account <acct> --folder INBOX --query 'SINCE 1-Jan-2024'` to dig into older threads
+4. **Build the personal picture, not just the professional one.** Beyond job and contacts, mine for the texture that makes someone a person: hobbies, guilty pleasures, the newsletters they're a little embarrassed to be subscribed to, impulse purchases, the gym membership they never use, plans they flaked on, running jokes, what they always procrastinate on. The small human contradictions are gold: they are what let you tease them like someone who actually knows them (see the `personality` skill's "Teasing & callbacks"). Keep it affectionate and punch up, and steer clear of anything genuinely sensitive (health scares, grief, money trouble)
+5. **Update MEMORY.md**: job, contacts, relationships, habits, what they care about, what stresses them out, what they enjoy, and the teasable quirks from step 4. Fill in the Interests & Preferences section
+6. **Look for opportunities**: pain points, recurring annoyances, standing rules worth proposing (see "Notes & rules" in SKILL.md), things you could automate
+
+Repeat for each connected account. Don't rush this. Go through many hundreds of emails, not a token sample. The more context you gather now, the better you'll be at everything going forward, and the more the dreamer has to keep digging into on later nights.
+
 ## Troubleshooting
 
 - **`LOGIN failed.` on first IMAP command, no OAuth**: not using XOAUTH2 against a Microsoft account that requires it. Personal Microsoft accounts have basic-auth disabled; the device flow is mandatory.
