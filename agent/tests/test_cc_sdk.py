@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from core import cc_sdk
+from core.cc_sdk import tmux as cc_tmux
 from core.cc_sdk.client import ClaudeSDKClient, _FORWARD, _MCP_STDIO
 from core.cc_sdk.messages import ClaudeAgentOptions
 from core.cc_sdk.transcript import assistant_message_from, read_new_objects
@@ -108,6 +109,111 @@ def test_mcp_config_carries_safepath_env(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_tmux_type_text_sends_random_literal_chunks(monkeypatch):
+    calls: list[tuple[tuple[str, ...], bytes | None]] = []
+    sleeps: list[float] = []
+    chunk_sizes = [8, 12]
+
+    async def record_run(socket: str, *args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
+        calls.append((args, stdin))
+        return 0, "", ""
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    def randint(start: int, stop: int) -> int:
+        return min(chunk_sizes.pop(0), stop)
+
+    def uniform(start: float, stop: float) -> float:
+        return start
+
+    monkeypatch.setattr(cc_tmux, "_run", record_run)
+    monkeypatch.setattr(cc_tmux.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(cc_tmux.random, "randint", randint)
+    monkeypatch.setattr(cc_tmux.random, "uniform", uniform)
+
+    await cc_tmux.type_text("sock", "session", "abcdefghijklmnop")
+
+    assert calls == [
+        (("send-keys", "-t", "session", "-l", "--", "\x1b[200~"), None),
+        (("send-keys", "-t", "session", "-l", "--", "abcdefgh"), None),
+        (("send-keys", "-t", "session", "-l", "--", "ijklmnop"), None),
+        (("send-keys", "-t", "session", "-l", "--", "\x1b[201~"), None),
+    ]
+    assert sleeps == [0.0005]
+
+
+@pytest.mark.anyio
+async def test_tmux_submit_text_types_then_enters(monkeypatch):
+    sent: list[tuple[str, str]] = []
+    sleeps: list[float] = []
+
+    async def record_type_text(socket: str, name: str, text: str) -> None:
+        sent.append(("type", text))
+
+    async def record_send_keys(socket: str, name: str, *keys: str) -> None:
+        sent.append(("keys", " ".join(keys)))
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(cc_tmux, "type_text", record_type_text)
+    monkeypatch.setattr(cc_tmux, "send_keys", record_send_keys)
+    monkeypatch.setattr(cc_tmux.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(cc_tmux.random, "uniform", lambda start, stop: start)
+
+    await cc_tmux.submit_text("sock", "session", "hello")
+
+    assert sent == [("type", "hello"), ("keys", "Enter")]
+    assert sleeps == [0.015]
+
+
+@pytest.mark.anyio
+async def test_tmux_submit_text_pastes_long_text_then_enters(monkeypatch):
+    sent: list[tuple[str, str]] = []
+    sleeps: list[float] = []
+    text = "x" * (cc_tmux._PASTE_TEXT_CHARS + 1)
+
+    async def record_type_text(socket: str, name: str, value: str) -> None:
+        sent.append(("type", value))
+
+    async def record_paste_text(socket: str, name: str, value: str) -> None:
+        sent.append(("paste", value))
+
+    async def record_send_keys(socket: str, name: str, *keys: str) -> None:
+        sent.append(("keys", " ".join(keys)))
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(cc_tmux, "type_text", record_type_text)
+    monkeypatch.setattr(cc_tmux, "paste_text", record_paste_text)
+    monkeypatch.setattr(cc_tmux, "send_keys", record_send_keys)
+    monkeypatch.setattr(cc_tmux.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(cc_tmux.random, "uniform", lambda start, stop: start)
+
+    await cc_tmux.submit_text("sock", "session", text)
+
+    assert sent == [("paste", text), ("keys", "Enter")]
+    assert sleeps == [0.015]
+
+
+@pytest.mark.anyio
+async def test_query_submits_prompt(tmp_path, monkeypatch):
+    sent: list[str] = []
+
+    async def record_submit_text(socket: str, name: str, text: str) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("core.cc_sdk.client.tmux.submit_text", record_submit_text)
+    client = _new_client(tmp_path)
+
+    await client.query("hello")
+
+    assert sent == ["hello"]
+
+
+@pytest.mark.anyio
 async def test_late_stop_does_not_complete_next_turn(tmp_path):
     """The Nth Stop completes the Nth turn. A leftover Stop from an abandoned turn only
     advances the count toward the current turn's threshold, never ending it prematurely."""
@@ -149,7 +255,7 @@ async def test_interrupt_credits_missing_stop_and_double_escapes(tmp_path, monke
     client._stops_received = 2  # turns 1-2 completed, turn 3 in flight
 
     await client.interrupt()
-    assert sent == [("Escape", "Escape")]
+    assert sent == [("Escape",), ("Escape",)]
     assert client._stops_received == 3
 
 
