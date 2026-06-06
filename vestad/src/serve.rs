@@ -279,6 +279,7 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         ),
         None => (None, None),
     };
+    let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
@@ -286,6 +287,7 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         "update_available": update_available,
         "dev_mode": state.dev_mode,
         "channel": effective_channel(state).await.as_str(),
+        "auto_update": auto_update,
     })
 }
 
@@ -1241,7 +1243,7 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) services: HashMap<String, HashMap<String, ServiceEntry>>,
@@ -1252,6 +1254,25 @@ pub(crate) struct Settings {
     /// Release channel: "stable" or "beta". Empty/unknown is treated as stable.
     #[serde(default = "default_channel")]
     pub(crate) channel: String,
+    /// Apply updates automatically when the periodic check finds a newer release on
+    /// the active channel. On by default; opt out at runtime via PUT /settings/auto-update.
+    #[serde(default = "default_true")]
+    pub(crate) auto_update: bool,
+}
+
+// Manual `Default` (not derived) so a fresh install with no settings.json gets
+// `auto_update: true` — `#[derive(Default)]` would zero the bool to `false`,
+// silently shipping every new VM with auto-update off.
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            services: HashMap::new(),
+            backup: BackupGlobalSettings::default(),
+            agents: HashMap::new(),
+            channel: default_channel(),
+            auto_update: true,
+        }
+    }
 }
 
 fn default_channel() -> String {
@@ -1737,6 +1758,30 @@ async fn set_channel_handler(
     Ok(Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() })))
 }
 
+// --- Auto-update ---
+
+async fn get_auto_update_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "auto_update": state.settings.read().await.auto_update }))
+}
+
+#[derive(Deserialize)]
+struct SetAutoUpdateBody {
+    auto_update: bool,
+}
+
+async fn set_auto_update_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SetAutoUpdateBody>,
+) -> Json<serde_json::Value> {
+    {
+        let mut settings = state.settings.write().await;
+        settings.auto_update = body.auto_update;
+        save_settings(&settings);
+    }
+    tracing::info!(auto_update = body.auto_update, "auto-update setting updated");
+    Json(serde_json::json!({ "auto_update": body.auto_update }))
+}
+
 // --- Per-agent settings ---
 
 async fn get_agent_settings_handler(
@@ -1963,6 +2008,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/settings/channel", get(get_channel_handler))
         .route("/settings/channel", axum::routing::put(set_channel_handler))
+        .route("/settings/auto-update", get(get_auto_update_handler))
+        .route("/settings/auto-update", axum::routing::put(set_auto_update_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2200,8 +2247,26 @@ fn spawn_update_check_task(state: SharedState) {
             let channel = effective_channel(&state).await;
             match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
                 Ok(Ok(info)) => {
-                    let mut slot = state.update_info.lock().await;
-                    *slot = Some(info);
+                    let update_available = info.update_available;
+                    *state.update_info.lock().await = Some(info);
+                    // Auto-apply when enabled (the default) and a newer release exists
+                    // on the active channel. `perform_update` no-ops if already current
+                    // and restarts the systemd service on success — replacing this
+                    // process — so control may never return past this call.
+                    if update_available && state.settings.read().await.auto_update {
+                        tracing::info!(channel = channel.as_str(), "auto-update: newer release available, applying");
+                        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+                            Ok(Ok(outcome)) => tracing::info!(
+                                updated = outcome.updated,
+                                restarted = outcome.restarted,
+                                current = %outcome.current,
+                                latest = %outcome.latest,
+                                "auto-update finished",
+                            ),
+                            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
+                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+                        }
+                    }
                 }
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
@@ -2319,6 +2384,28 @@ pub async fn run_server(cfg: ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::is_cached_port_reusable;
+
+    // --- auto_update defaults on (a fresh install and a settings.json predating the
+    // field must both end up with auto-update enabled, not the bool's `false`) ---
+
+    #[test]
+    fn settings_default_enables_auto_update() {
+        assert!(super::Settings::default().auto_update);
+    }
+
+    #[test]
+    fn settings_missing_auto_update_field_deserializes_true() {
+        // A settings.json written before auto_update existed has no such key.
+        let s: super::Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
+        assert!(s.auto_update);
+    }
+
+    #[test]
+    fn settings_auto_update_false_is_honored() {
+        let s: super::Settings =
+            serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
+        assert!(!s.auto_update);
+    }
 
     // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---
 
