@@ -38,6 +38,7 @@ type WhatsAppClient struct {
 	notificationsDir  string
 	instance          string
 	readOnly          bool
+	noNotify          bool
 	skipSenders       map[string]bool
 	interruptSenders  map[string]bool
 	interruptExplicit bool
@@ -57,7 +58,7 @@ type WhatsAppClient struct {
 	transcribeSem     chan struct{} // limits concurrent audio transcriptions
 }
 
-func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders, interruptSenders map[string]bool, interruptExplicit, noInterrupt bool, logger waLog.Logger) (*WhatsAppClient, error) {
+func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders, interruptSenders map[string]bool, interruptExplicit, noInterrupt bool, logger waLog.Logger) (*WhatsAppClient, error) {
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize message store: %v", err)
@@ -104,6 +105,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		notificationsDir:  notificationsDir,
 		instance:          instance,
 		readOnly:          readOnly,
+		noNotify:          noNotify,
 		skipSenders:       skipSenders,
 		interruptSenders:  interruptSenders,
 		interruptExplicit: interruptExplicit,
@@ -217,6 +219,11 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 }
 
 func (wac *WhatsAppClient) EnsureOnline() error {
+	// Read-only instances never broadcast presence, so the linked account
+	// does not appear online to its contacts.
+	if wac.readOnly {
+		return nil
+	}
 	wac.presenceMutex.Lock()
 	defer wac.presenceMutex.Unlock()
 

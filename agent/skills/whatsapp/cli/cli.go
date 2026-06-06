@@ -36,6 +36,15 @@ func extractFlag(name string) string {
 func extractInstance() string         { return extractFlag("instance") }
 func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
+func isNoNotifications() bool {
+	for _, arg := range os.Args {
+		if arg == "--no-notifications" {
+			return true
+		}
+	}
+	return false
+}
+
 func isReadOnly() bool {
 	for _, arg := range os.Args {
 		if arg == "--read-only" {
@@ -181,8 +190,9 @@ func runServe(logger waLog.Logger) {
 	dataDir, _ := parseStateDir()
 
 	notifDir := extractNotificationsDir()
-	if notifDir == "" {
-		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve")
+	noNotify := isNoNotifications()
+	if notifDir == "" && !noNotify {
+		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve (or pass --no-notifications)")
 		os.Exit(1)
 	}
 
@@ -192,14 +202,16 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	notifDir, err = resolveDir(notifDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if notifDir != "" {
+		notifDir, err = resolveDir(notifDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	interruptAllow, interruptExplicit, noInterrupt := extractInterruptSenders()
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders(), interruptAllow, interruptExplicit, noInterrupt, logger)
+	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), interruptAllow, interruptExplicit, noInterrupt, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -222,9 +234,13 @@ func runServe(logger waLog.Logger) {
 	} else {
 		fmt.Fprintf(os.Stderr, "WhatsApp client initialized. Data: %s\n", dataDir)
 	}
-	fmt.Fprintf(os.Stderr, "Notifications: %s\n", notifDir)
+	if noNotify {
+		fmt.Fprintln(os.Stderr, "Notifications: DISABLED (--no-notifications)")
+	} else {
+		fmt.Fprintf(os.Stderr, "Notifications: %s\n", notifDir)
+	}
 	if isReadOnly() {
-		fmt.Fprintln(os.Stderr, "Running in READ-ONLY mode (no sending, no read receipts)")
+		fmt.Fprintln(os.Stderr, "Running in READ-ONLY mode (no sending, no read receipts, no presence)")
 	}
 
 	if !wac.IsAuthenticated() {
@@ -268,7 +284,7 @@ func stripGlobalFlags(args []string) []string {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") || strings.HasPrefix(arg, "--interrupt-senders=") {
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || arg == "--no-notifications" || strings.HasPrefix(arg, "--skip-senders=") || strings.HasPrefix(arg, "--interrupt-senders=") {
 			continue
 		}
 		filtered = append(filtered, arg)

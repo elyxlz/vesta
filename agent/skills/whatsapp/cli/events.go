@@ -129,7 +129,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	}
 
 	// Build notification context (shared by sync and async paths)
-	shouldNotify := wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone]
+	shouldNotify := wac.notificationsDir != "" && !wac.noNotify && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
 	if shouldNotify {
 		interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
