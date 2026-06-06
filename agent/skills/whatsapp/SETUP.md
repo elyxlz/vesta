@@ -82,13 +82,28 @@ QR code is the default and preferred method:
 whatsapp authenticate
 ```
 
-A QR code image is saved to `~/.whatsapp/qr-code.png`. Upload it to a temporary host:
+A QR code image is saved to `~/.whatsapp/<instance>/qr-code.png` (or `~/.whatsapp/qr-code.png` for the default instance).
+
+**Preferred delivery: the auto-refresh QR page.** WhatsApp rotates the QR every ~20s and browsers cache a static image by URL, so sending a one-off PNG usually means the user scans a dead code (they refresh and nothing changes). Instead serve the self-contained page in `qr-link-server.py`, which always shows the CURRENT code.
+
+The page binds to localhost, so it needs a public route to be shareable. On vesta, register a public vestad service and bind the page to the port it hands back:
+
+```bash
+PORT=$(curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services" \
+  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"wa-link","public":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['port'])")
+python3 ~/agent/skills/whatsapp/qr-link-server.py --instance <name> --port "$PORT" &
+```
+
+The shareable URL is then `$VESTAD_TUNNEL/agents/$AGENT_NAME/wa-link/` (public route, no token). Off vesta, bind any port and expose it with your own tunnel/ssh. The user opens it on a second screen, gets to Linked Devices > Link a Device, and scans whatever code is showing. The page re-fetches the QR every 3s with no-cache, so rotation, caching, and timing all stop being a problem.
+
+Fallback (one-off static image): upload the PNG to a temporary host:
 
 ```bash
 curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/.whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
 ```
 
-**QR codes expire in ~20 seconds.** Confirm the user is on the **Linked Devices > Link a Device** screen with the camera ready BEFORE you call `authenticate`. Sequence: ask "ready?" → wait for confirmation → run `authenticate` + upload + send link in a single chained command, no preamble. If they scan and get **"Could not link device, try again later"**, the daemon's WS to whatsapp.com went stale: restart the daemon (see Troubleshooting below) before the next attempt, otherwise every retry fails the same way.
+**QR codes expire in ~20 seconds.** Have the user on the Linked Devices > Link a Device screen with the camera ready before they open the page. If they scan and get "Could not link device, try again later", the daemon's WS to whatsapp.com went stale: restart the daemon (see Troubleshooting below) before the next attempt, the auto-refresh page then picks up the fresh code on its own.
 
 ### Phone pairing (fallback)
 

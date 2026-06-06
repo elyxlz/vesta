@@ -67,6 +67,20 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `authenticate` - QR-code pairing
 - `pair-phone` - phone-number pairing; `--phone <+E.164>`
 
+### `serve` flags
+
+- `--notifications-dir <dir>` (required unless `--no-notifications`): directory where inbound notification JSON files are written for the agent to pick up.
+- `--no-notifications` (optional): the daemon writes no notification files at all, so the agent receives nothing from this instance. When set, `--notifications-dir` is not required. Inbound messages are still stored locally and queryable on demand. Use for a passive linked account you want to read but never be pinged about.
+- `--instance <name>` (optional): run a second, isolated account/session. State lives in `~/.whatsapp/<name>/` instead of `~/.whatsapp/`. This is how you link a second WhatsApp account (e.g. a personal account) alongside the agent's own line.
+- `--read-only` (optional): passive mode. Blocks every write command (`send-message`, `send-file`, `send-audio`, `send-reaction`, `revoke-message`, `add-contact`, `remove-contact`, all group ops, `archive-chat`, `archive-all-chats`, `delete-chat`, `clear-all-chats`); each returns `command "X" blocked: instance is read-only`. Suppresses delayed read receipts (incoming messages are NOT marked read, no blue ticks) AND suppresses presence: `EnsureOnline()` is a no-op under read-only, so the account never broadcasts `available` and does not appear online to contacts. Read-only alone does NOT stop notifications; use `--no-notifications` or `--skip-senders` for that.
+- `--skip-senders <phone,phone,...>` (optional): comma-separated E.164 numbers whose inbound messages never generate a notification. Messages are still stored and queryable, just silent.
+
+**Recipe: link a personal account fully silently (passive, invisible to contacts).**
+```bash
+whatsapp serve --instance personal --read-only --no-notifications
+```
+The agent can read/search that account on demand (`whatsapp list-chats --instance personal`, `list-messages`, `search-contacts`, etc.) but receives zero notifications, never sends or marks-read, and the account never shows online to its contacts. Deliver the linking QR with the auto-refresh page (see SETUP.md), then `whatsapp authenticate --instance personal`.
+
 ## Rules
 
 - **Send messages one tool call at a time. Never batch WhatsApp sends in a single parallel tool-call block.**
