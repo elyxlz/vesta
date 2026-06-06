@@ -84,14 +84,10 @@ and links between them and the CLI.
    (`onboard presets` for personalities + skills)? Agree the monthly price (see
    **Pricing**).
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
-   <code>]` → `{ url, subdomain }`. This is where invite-only is enforced: checkout
-   mints a one-time **invite** as YOU (the referring vesta) and redeems it for them,
-   so the spot is granted by you — that's also what credits you the referral. (If
-   this vesta has no minting credential, it errors; then the owner/operator hands
-   you a code to pass as `--invite <code>`.) Send the `url` verbatim and **stop** —
-   never ask for card numbers; Stripe collects payment on their device, and they
-   tick the terms box right there (share `onboard links` → `terms`/`privacy` if
-   asked). The subdomain is assigned for them.
+   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop** — never ask
+   for card numbers; Stripe collects payment on their device, and they tick the
+   terms box right there (share `onboard links` → `terms`/`privacy` if asked). The
+   subdomain is assigned for them.
 5. **Wait for the box.** Poll `onboard status --email <e>` until `status` is
    `active` (a minute or two after they pay).
 6. **Create their agent.** `onboard create-agent --email <e> --name <name>
@@ -143,9 +139,8 @@ between commands for you.
 ```bash
 onboard verify-send  --email <e>                       # email them a 6-digit code
 onboard verify       --email <e> --code <c>            # the code they read back -> their session
-onboard checkout     --email <e> [--price <usd/mo>] [--code <code>] [--invite <code>]
-                                                       # -> { url, subdomain }  (auto subdomain;
-                                                       #    mints your invite unless --invite given)
+onboard checkout     --email <e> [--price <usd/mo>] [--code <code>]
+                                                       # -> { url, subdomain }  (auto subdomain)
 onboard status       --email <e>                       # -> { status: reserved|active|... }
 onboard create-agent --email <e> --name <n> [--personality <preset>] [--skills a,b,c]
 onboard claude-start  --email <e>                      # -> { auth_url }  (send it to them)
@@ -191,22 +186,13 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 # { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
-## Invites & referral attribution
+## Referral attribution (automatic)
 
-Vesta is invite-only as real access control: provisioning requires a one-time
-invite, and `onboard checkout` mints one and redeems it for the buyer. The mint
-uses this vesta's **invite_key** (`VESTA_INVITE_KEY` in the environment) — a
-dedicated, low-power secret, NOT the api_key. You never touch it; the CLI does. A
-completed signup through your invite credits this account (you earn 50% of their
-first month) **if** this account runs a paying server; a self-hoster's invites
-still work but earn nothing.
-
-**One-time setup (the owner, not in a sales chat):** become an inviter by claiming
-a key — `onboard verify-send`/`onboard verify` as the owner's own email, then
-`onboard claim-key --email <owner>` prints an `invite_key` to set as
-`VESTA_INVITE_KEY` in the vestad config. Hosted and self-hosted vestas both do
-this. If no key is configured, `onboard checkout` errors and the operator can hand
-a pre-minted code to pass as `--invite <code>`.
+If this vesta is hosted, its non-secret `referral_code` is read from the
+`VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
+completed invite credits this account (you earn 50% of their first month). Unset
+(self-hosted) → it still works, just no reward. The CLI handles the code; you never
+touch it. Override for testing with `--referral <code>`.
 
 ## Caveats
 

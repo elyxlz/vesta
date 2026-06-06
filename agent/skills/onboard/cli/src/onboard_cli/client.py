@@ -69,43 +69,25 @@ class Client:
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 
-    def claim_inviter_key(self, session_token: str) -> dict[str, Any]:
-        """POST /onboard/inviter -> {invite_key}. Become an inviter.
-
-        Authenticated by the OWNER's email-verified session. Works for hosted
-        members and self-hosters alike; the owner configures their vestad with the
-        returned key (VESTA_INVITE_KEY) so the agent can mint invites.
-        """
-        return self._json(self._post("/onboard/inviter", json={}, headers=self._auth(session_token)))
-
-    def mint_invite(self, credential: str) -> dict[str, Any]:
-        """POST /onboard/invite -> {code, expires_at}.
-
-        Authenticated by `credential` — an `invite_key` (claimed via
-        claim_inviter_key) or the operator admin secret. The invite is the access
-        gate; its referral attribution is the key owner's paying server, if any.
-        """
-        return self._json(self._post("/onboard/invite", json={}, headers=self._auth(credential)))
-
     def checkout(
         self,
         *,
         token: str,
         plan: str,
-        invite: str,
+        referral_code: str | None,
         price: float | None,
         code: str | None,
     ) -> dict[str, Any]:
-        """POST /onboard/checkout -> {url, subdomain}. Auto-assigns the subdomain.
-
-        `invite` is REQUIRED (invite-only) and carries the referral attribution.
-        """
-        body: dict[str, Any] = {"plan": plan, "invite": invite}
+        """POST /onboard/checkout -> {url, subdomain}. Auto-assigns the subdomain."""
+        body: dict[str, Any] = {"plan": plan}
         if price is not None:
             body["price"] = price  # negotiated monthly USD; floor enforced server-side
         if code:
             body["code"] = code  # discount code; unknown -> {"error": "invalid code"}
-        return self._json(self._post("/onboard/checkout", json=body, headers=self._auth(token)))
+        headers = self._auth(token)
+        if referral_code:
+            headers["X-Vesta-Referral"] = referral_code
+        return self._json(self._post("/onboard/checkout", json=body, headers=headers))
 
     def me(self, token: str) -> dict[str, Any]:
         """GET /me -> {user, server}. `server` is null until checkout reserves one."""

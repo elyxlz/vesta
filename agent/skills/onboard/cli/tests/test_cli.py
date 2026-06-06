@@ -80,21 +80,6 @@ def test_verify_rejects_bad_code(capsys, monkeypatch):
     assert state_mod.token_for(E) is None
 
 
-# --- claim-key (become an inviter) ------------------------------------------
-
-
-def test_claim_key_returns_invite_key(capsys, monkeypatch):
-    _verified()  # owner has a verified session
-    monkeypatch.setattr(cli_mod.Client, "claim_inviter_key", lambda self, t: {"invite_key": "IK"})
-    rc, data = _run(["claim-key", "--email", E], capsys)
-    assert rc == 0 and data["invite_key"] == "IK"
-
-
-def test_claim_key_requires_verification(capsys):
-    rc, data = _run(["claim-key", "--email", E], capsys)
-    assert rc == 2 and "not verified" in data["error"]
-
-
 # --- checkout ---------------------------------------------------------------
 
 
@@ -103,72 +88,37 @@ def test_checkout_requires_verification(capsys):
     assert rc == 2 and "not verified" in data["error"]
 
 
-def test_checkout_passes_explicit_invite_and_forwards_price_code(capsys, monkeypatch):
+def test_checkout_forwards_price_code_referral(capsys, monkeypatch):
     _verified()
     captured = {}
 
-    def fake_checkout(self, *, token, plan, invite, price, code):
-        captured.update(token=token, plan=plan, invite=invite, price=price, code=code)
+    def fake_checkout(self, *, token, plan, referral_code, price, code):
+        captured.update(token=token, plan=plan, referral_code=referral_code, price=price, code=code)
         return {"url": "https://checkout.stripe.com/x", "subdomain": "ada"}
 
     monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
     monkeypatch.setattr(cli_mod.Client, "me", lambda self, t: {"server": {"id": "srv1"}})
     rc, data = _run(
-        ["checkout", "--email", E, "--price", "200", "--code", " friend50 ", "--invite", "inv_x"],
+        ["checkout", "--email", E, "--price", "200", "--code", " friend50 ", "--referral", "ref_x"],
         capsys,
     )
     assert rc == 0 and data["url"].startswith("https://checkout.stripe.com/")
-    assert captured == {"token": "TOK", "plan": "pro", "invite": "inv_x", "price": 200.0, "code": "friend50"}
+    assert captured == {"token": "TOK", "plan": "pro", "referral_code": "ref_x", "price": 200.0, "code": "friend50"}
     assert state_mod.load(E)["server_id"] == "srv1"
-
-
-def test_checkout_mints_an_invite_from_the_credential(capsys, monkeypatch):
-    _verified()
-    monkeypatch.setenv("VESTA_INVITE_KEY", "referrer-invite-key")
-    minted = {}
-
-    def fake_mint(self, credential):
-        minted["credential"] = credential
-        return {"code": "MINTED", "expires_at": "later"}
-
-    captured = {}
-    monkeypatch.setattr(cli_mod.Client, "mint_invite", fake_mint)
-    monkeypatch.setattr(
-        cli_mod.Client,
-        "checkout",
-        lambda self, *, token, plan, invite, price, code: (
-            captured.update(invite=invite) or {"url": "https://checkout.stripe.com/x", "subdomain": "ada"}
-        ),
-    )
-    monkeypatch.setattr(cli_mod.Client, "me", lambda self, t: {"server": {"id": "srv1"}})
-    rc, _ = _run(["checkout", "--email", E], capsys)
-    assert rc == 0
-    assert minted["credential"] == "referrer-invite-key"
-    assert captured["invite"] == "MINTED"
-
-
-def test_checkout_no_invite_and_no_credential_errors(capsys, monkeypatch):
-    _verified()
-    monkeypatch.delenv("VESTA_INVITE_KEY", raising=False)
-    monkeypatch.delenv("VESTA_ADMIN_SECRET", raising=False)
-    calls = {"n": 0}
-    monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})
-    rc, data = _run(["checkout", "--email", E], capsys)
-    assert rc == 2 and "invite" in data["error"] and calls["n"] == 0
 
 
 def test_checkout_rejects_below_floor_without_calling(capsys, monkeypatch):
     _verified()
     calls = {"n": 0}
     monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})
-    rc, data = _run(["checkout", "--email", E, "--price", "5", "--invite", "inv_x"], capsys)
+    rc, data = _run(["checkout", "--email", E, "--price", "5"], capsys)
     assert rc == 2 and data["floor_usd"] == 24 and calls["n"] == 0
 
 
 def test_checkout_surfaces_structured_error(capsys, monkeypatch):
     _verified()
     monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: {"error": "already provisioned"})
-    rc, data = _run(["checkout", "--email", E, "--invite", "inv_x"], capsys)
+    rc, data = _run(["checkout", "--email", E], capsys)
     assert rc == 2 and data["error"] == "already provisioned"
 
 

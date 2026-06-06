@@ -53,19 +53,13 @@ class Config:
 
     base_url: str
     referral_code: str | None
-    invite_credential: str | None
 
     @classmethod
     def load(cls) -> Config:
         base = os.environ.get("VESTA_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
         # Non-secret per-server attribution id; absent on self-hosted boxes.
         ref = os.environ.get("VESTA_REFERRAL_CODE", "").strip() or None
-        # The dedicated, low-power secret that mints invites (NOT the api_key). The
-        # owner claims one with `onboard claim-key` and configures their vestad with
-        # it (hosted or self-hosted), which exposes it to the agent as
-        # VESTA_INVITE_KEY. The operator admin secret also works.
-        cred = os.environ.get("VESTA_INVITE_KEY", "").strip() or os.environ.get("VESTA_ADMIN_SECRET", "").strip() or None
-        return cls(base_url=base, referral_code=ref, invite_credential=cred)
+        return cls(base_url=base, referral_code=ref)
 
     @property
     def apex_host(self) -> str:
