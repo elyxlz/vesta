@@ -59,7 +59,7 @@ fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), Strin
 
 /// Resolve Cloudflare credentials for self-hosted tunnel management.
 ///
-/// Order: the saved `cloudflare.json` (written by `vestad tunnel login` /
+/// Order: the saved `cloudflare.json` (written by `vestad connect` /
 /// first-run setup), then env vars (power users + CI). There is NO baked
 /// build-time token anymore — the public binary carries no shared credential.
 fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
@@ -73,7 +73,7 @@ fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
         }
     }
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
-        "no Cloudflare credentials — run `vestad tunnel login` to connect your domain".to_string()
+        "no Cloudflare credentials — run `vestad connect` to connect your domain".to_string()
     })?;
     let account_id =
         std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
@@ -102,7 +102,7 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
 
     if !std::io::stdin().is_terminal() {
         return Err(
-            "connecting a domain needs an interactive terminal. Run `vestad tunnel login` \
+            "connecting a domain needs an interactive terminal. Run `vestad connect` \
              from a shell, or set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / \
              CLOUDFLARE_ZONE_ID in the environment. (Or run `vestad --standalone --no-tunnel` \
              to run locally without a tunnel.)"
@@ -319,6 +319,17 @@ fn gethostname() -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     if output.is_empty() { "vesta".to_string() } else { output }
+}
+
+/// Full self-host connect flow (`vestad connect`): collect the user's own
+/// Cloudflare credentials, make sure cloudflared is present, then create (or
+/// reuse) the tunnel. Returns the live tunnel config so the caller can show the
+/// URL. This is the one command a self-hoster needs — they never have to discover
+/// `tunnel setup`.
+pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
+    setup_cf_creds_interactive(config_dir)?;
+    ensure_cloudflared(config_dir)?;
+    ensure_tunnel(config_dir)
 }
 
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
