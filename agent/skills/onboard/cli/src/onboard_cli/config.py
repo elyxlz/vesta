@@ -20,15 +20,16 @@ DEFAULT_CONTROL_URL = "https://vesta.run/api"
 # in the app). Anthropic's curated picker is opus / sonnet / haiku.
 DEFAULT_MODEL = "sonnet"
 
-# How long the marketing/plan copy quotes; kept here so the CLI and SKILL.md
-# agree on the canonical plan ids the checkout endpoint accepts.
-PLANS = ("starter", "pro", "power")
+# Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (4 vCPU /
+# 8 GB). The control plane also defines starter/power for admin provisioning and
+# upgrades, but onboarding only ever sells this one.
+PLAN = "pro"
 
-# List MONTHLY price (USD) per plan — the NEGOTIATION FLOOR. The agent can quote
-# any price >= the floor (uncapped above); the control plane enforces the floor
-# server-side, so this is for the agent's UX + a friendly local error. Keep these
-# in sync with the control plane's listMonthlyCents().
-PLAN_FLOOR_USD = {"starter": 12, "pro": 24, "power": 48}
+# List MONTHLY price (USD) — the NEGOTIATION FLOOR. The agent can quote any price
+# >= it (uncapped above); the control plane enforces the floor server-side, so
+# this is for the agent's UX + a friendly local error. Keep in sync with the
+# control plane's listMonthlyCents("pro").
+PLAN_FLOOR_USD = 24
 
 # Personality presets shipped by the `personality` skill (presets/<name>.md).
 # Listed here so `onboard presets` works even if that skill isn't installed yet.
@@ -37,7 +38,7 @@ PERSONALITY_PRESETS = ("chill", "classic", "dry", "extra", "polished", "terse")
 # Public marketing + install links surfaced by `onboard links`.
 LINKS = {
     "marketing": "https://vesta.run",
-    "dashboard": "https://vesta.run/dashboard",
+    "account": "https://vesta.run/account",
     "download": "https://vesta.run/download",
     "ios": "https://vesta.run/download#ios",
     "android": "https://vesta.run/download#android",

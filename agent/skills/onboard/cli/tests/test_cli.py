@@ -51,11 +51,12 @@ def test_links(capsys):
     assert rc == 0 and data["marketing"] == "https://vesta.run"
 
 
-def test_presets_has_models_and_floors(capsys):
+def test_presets_has_models_and_floor(capsys):
     rc, data = _run(["presets"], capsys)
     assert rc == 0
     assert "dry" in data["personalities"]
-    assert data["plan_floor_usd"] == {"starter": 12, "pro": 24, "power": 48}
+    assert data["plan_floor_usd"] == 24
+    assert "plans" not in data  # single plan — no tier list
     assert data["claude_models"] == ["opus", "sonnet", "haiku"]
 
 
@@ -94,17 +95,18 @@ def test_checkout_forwards_price_code_referral(capsys, monkeypatch):
 
     def fake_checkout(self, *, token, plan, referral_code, price, code):
         captured.update(token=token, plan=plan, referral_code=referral_code, price=price, code=code)
-        return {"url": "https://checkout.stripe.com/x", "subdomain": "ada"}
+        return {"url": "https://checkout.stripe.com/x", "subdomain": "ada", "server_id": "srv1"}
 
     monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    monkeypatch.setattr(cli_mod.Client, "me", lambda self, t: {"server": {"id": "srv1"}})
     rc, data = _run(
         ["checkout", "--email", E, "--price", "200", "--code", " friend50 ", "--referral", "ref_x"],
         capsys,
     )
     assert rc == 0 and data["url"].startswith("https://checkout.stripe.com/")
     assert captured == {"token": "TOK", "plan": "pro", "referral_code": "ref_x", "price": 200.0, "code": "friend50"}
+    # server_id is stashed for later steps but kept out of the agent-facing output.
     assert state_mod.load(E)["server_id"] == "srv1"
+    assert "server_id" not in data
 
 
 def test_checkout_rejects_below_floor_without_calling(capsys, monkeypatch):

@@ -78,7 +78,7 @@ class Client:
         price: float | None,
         code: str | None,
     ) -> dict[str, Any]:
-        """POST /onboard/checkout -> {url, subdomain}. Auto-assigns the subdomain."""
+        """POST /onboard/checkout -> {url, subdomain, server_id}. Auto-assigns the subdomain."""
         body: dict[str, Any] = {"plan": plan}
         if price is not None:
             body["price"] = price  # negotiated monthly USD; floor enforced server-side

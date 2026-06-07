@@ -26,7 +26,7 @@ from typing import Any
 
 from . import state
 from .client import Client, OnboardError
-from .config import DEFAULT_MODEL, LINKS, PERSONALITY_PRESETS, PLAN_FLOOR_USD, PLANS, Config
+from .config import DEFAULT_MODEL, LINKS, PERSONALITY_PRESETS, PLAN, PLAN_FLOOR_USD, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -70,24 +70,23 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 
     price: float | None = None
     if args.price is not None:
-        floor = PLAN_FLOOR_USD[args.plan]
-        if args.price < floor:
-            _print({"error": f"price ${args.price:g} is below the ${floor} floor", "floor_usd": floor})
+        if args.price < PLAN_FLOOR_USD:
+            _print({"error": f"price ${args.price:g} is below the ${PLAN_FLOOR_USD} floor", "floor_usd": PLAN_FLOOR_USD})
             return 2
         price = args.price
 
     result = client.checkout(
         token=token,
-        plan=args.plan,
+        plan=PLAN,
         referral_code=args.referral or cfg.referral_code,
         price=price,
         code=(args.code.strip() if args.code else None),
     )
     if "url" in result:
-        # Stash the assigned subdomain + server id so later steps don't re-derive them.
-        me = client.me(token)
-        server = me.get("server") or {}
-        state.update(email, subdomain=result.get("subdomain"), server_id=server.get("id"))
+        # Stash the assigned subdomain + server id (both returned by checkout) so
+        # later steps don't re-derive them; server_id is internal, so pop it out of
+        # the agent-facing output.
+        state.update(email, subdomain=result.get("subdomain"), server_id=result.pop("server_id", None))
     _print(result)
     return 0 if "url" in result else 2
 
@@ -244,7 +243,6 @@ def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         {
             "personalities": list(PERSONALITY_PRESETS),
             "skills": _installable_skills(),
-            "plans": list(PLANS),
             "plan_floor_usd": PLAN_FLOOR_USD,
             "claude_models": ["opus", "sonnet", "haiku"],
         }
@@ -273,9 +271,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_checkout = sub.add_parser("checkout", help="Reserve + mint a Stripe link (auto subdomain).")
     p_checkout.add_argument("--email", required=True)
-    # One plan today; hidden knob defaulting to `pro` so more tiers can slot in later.
-    p_checkout.add_argument("--plan", default="pro", help=argparse.SUPPRESS)
-    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the floor; uncapped above).")
+    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $24 floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
     p_checkout.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
 
