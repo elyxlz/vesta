@@ -726,21 +726,14 @@ async fn rename_agent_handler(
     Ok(Json(serde_json::json!({"name": new_name})))
 }
 
-/// Drop a high-priority notification into the renamed agent so it self-updates
-/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
-/// to write the notification doesn't block the rename.
-async fn drop_rename_notification(
-    docker: &bollard::Docker,
-    new_name: &str,
-    old_name: &str,
-) -> Result<(), String> {
-    let cname = docker::container_name(new_name);
-    let epoch = crate::time_utils::now_epoch_secs();
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch as i64)
+/// Build the rename notification payload. Pure (no IO) so its shape can be
+/// asserted without spinning up a container.
+fn rename_notification_payload(old_name: &str, new_name: &str, epoch_secs: u64) -> Result<serde_json::Value, String> {
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
         .map_err(|e| format!("epoch out of range: {e}"))?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| format!("format timestamp: {e}"))?;
-    let payload = serde_json::json!({
+    Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
         "type": "rename",
@@ -752,12 +745,27 @@ async fn drop_rename_notification(
              AGENT_NAME is now '{new_name}'. update your MEMORY.md and any prompt files \
              under ~/agent/prompts/ that reference your old name."
         ),
-    });
+    }))
+}
+
+/// Drop a high-priority notification into the renamed agent so it self-updates
+/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
+/// to write the notification doesn't block the rename. Returns the notification
+/// file name written into the container.
+pub(crate) async fn drop_rename_notification(
+    docker: &bollard::Docker,
+    new_name: &str,
+    old_name: &str,
+) -> Result<String, String> {
+    let cname = docker::container_name(new_name);
+    let epoch = crate::time_utils::now_epoch_secs();
+    let payload = rename_notification_payload(old_name, new_name, epoch)?;
     let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
     let file_name = format!("rename-{epoch}.json");
     docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(file_name)
 }
 
 /// GET an existing agent's provider status (state/kind/model/setup_complete),
@@ -2432,6 +2440,23 @@ mod tests {
         let s: super::Settings =
             serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
         assert!(!s.auto_update);
+    }
+
+    // --- Rename notification payload (the content contract the agent self-heals on) ---
+
+    #[test]
+    fn rename_notification_payload_carries_both_names_and_rfc3339_timestamp() {
+        // Fixed epoch -> deterministic RFC3339 timestamp, no wall clock.
+        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000).expect("payload");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "rename");
+        assert_eq!(payload["interrupt"], true);
+        assert_eq!(payload["old_name"], "old-bot");
+        assert_eq!(payload["new_name"], "new-bot");
+        assert_eq!(payload["timestamp"], "2023-11-14T22:13:20Z");
+        let message = payload["message"].as_str().expect("message is a string");
+        assert!(message.contains("old-bot"), "message missing old name: {message}");
+        assert!(message.contains("new-bot"), "message missing new name: {message}");
     }
 
     // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---

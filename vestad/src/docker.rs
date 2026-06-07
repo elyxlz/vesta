@@ -2794,4 +2794,53 @@ mod tests {
 
         assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
     }
+
+    // Bound on retries while the container's `mkdir` races its start (200ms apart).
+    const RENAME_NOTIF_DROP_TRIES: usize = 25;
+
+    #[tokio::test]
+    #[ignore]
+    async fn drop_rename_notification_writes_payload_into_container() {
+        let docker = test_docker();
+        let agent_name = format!("rename-notif-{}", std::process::id());
+        let cname = container_name(&agent_name);
+        // Explicit name so it matches container_name(agent_name); Drop still cleans up.
+        let tc = TestContainer { name: cname.clone() };
+        docker_cleanup(&["rm", "-f", &cname]);
+
+        // A bare sleeper that owns the notifications dir but never runs the agent's
+        // monitor loop, so nothing deletes the dropped file out from under us. This
+        // is what makes the assertion deterministic, unlike driving it through a
+        // started agent that races to consume and unlink the notification.
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "mkdir -p /root/agent/notifications && sleep 600".to_string(),
+        ];
+        create_test_container_async(&docker, &tc, &[], cmd, NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &cname).await, "test container should start");
+
+        // mkdir runs asynchronously after start; retry the drop until the dir exists.
+        let mut file_name = None;
+        for _ in 0..RENAME_NOTIF_DROP_TRIES {
+            match crate::serve::drop_rename_notification(&docker, &agent_name, "old-name").await {
+                Ok(name) => {
+                    file_name = Some(name);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+            }
+        }
+        let file_name = file_name.expect("notification should drop once the dir exists");
+
+        let body = download_from_container(&docker, &cname, &format!("/root/agent/notifications/{file_name}"))
+            .await
+            .expect("dropped notification file should be readable");
+        let payload: serde_json::Value = serde_json::from_str(&body).expect("notification is valid json");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "rename");
+        assert_eq!(payload["interrupt"], true);
+        assert_eq!(payload["old_name"], "old-name");
+        assert_eq!(payload["new_name"], agent_name);
+    }
 }
