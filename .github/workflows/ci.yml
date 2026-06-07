@@ -613,10 +613,10 @@ jobs:
 
       - name: Build vestad
         working-directory: vestad
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        # No CLOUDFLARE_* here: vestad no longer bakes a Cloudflare token into the
+        # binary. Self-hosters bring their own (`vestad tunnel login`); managed VMs
+        # get a control-plane-seeded tunnel.json. Nothing fleet-wide ships in the
+        # public binary.
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package

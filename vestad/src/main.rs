@@ -119,6 +119,8 @@ enum TunnelAction {
     },
     /// Tear down tunnel and DNS record
     Destroy,
+    /// Connect a Cloudflare account + domain for a self-hosted stable tunnel (BYOK)
+    Login,
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -407,10 +409,22 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
         return;
     }
 
+    // Forced BYOK: the service runs the tunnel non-interactively, so collect the
+    // self-hoster's Cloudflare credentials HERE (while we still have a terminal),
+    // before starting it. Skipped when: a tunnel is already configured, creds
+    // already exist, or this is a managed (vesta.run) VM whose tunnel.json the
+    // control plane seeds. `--no-tunnel` is honored only in --standalone mode.
+    let config = config_dir();
+    if std::env::var("VESTA_MANAGED").is_err()
+        && tunnel::get_tunnel_config(&config).is_none()
+        && !tunnel::has_cf_creds(&config)
+    {
+        tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
+    }
+
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
 
-    let config = config_dir();
     let (tunnel_url, local_url, api_key) = read_server_info(&config);
 
     eprintln!();
@@ -635,6 +649,11 @@ fn main() {
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config)
                         .unwrap_or_else(|e| die(e));
+                }
+                TunnelAction::Login => {
+                    tunnel::setup_cf_creds_interactive(&config)
+                        .unwrap_or_else(|e| die(e));
+                    eprintln!("Cloudflare connected. Run `vestad` to bring up your tunnel.");
                 }
             }
         }
