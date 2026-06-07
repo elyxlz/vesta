@@ -275,15 +275,22 @@ EOF
   esac
 
   echo ""
-  echo "Done! Get started:"
+  echo "Installed!"
+  echo ""
   if [ "$OS" = "linux" ]; then
-    echo "  vestad              # Install systemd service and start"
-    echo "  vesta connect       # Connect the CLI"
+    echo "Start your server — this one command does the rest:"
+    echo ""
+    echo "    vestad"
+    echo ""
+    echo "It walks you through connecting a domain, then prints your agent's URL."
+    echo "Open that URL in a browser to create your first agent."
   else
-    echo "  vesta connect <host>#<key>   # Connect to a remote vestad"
+    echo "Connect to a vestad server:"
+    echo "    vesta connect <host>#<key>"
   fi
   if has_gui; then
-    echo "  Open Vesta app and connect to your server"
+    echo ""
+    echo "Prefer an app? Open the Vesta app and connect with your server's URL + key."
   fi
   if [ -n "$PATH_UPDATED" ]; then
     echo ""

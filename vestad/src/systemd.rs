@@ -144,8 +144,10 @@ fn journal_args(lines: usize, follow: bool) -> Vec<String> {
         "-n".into(),
         lines.to_string(),
         "--no-hostname".into(),
+        // short-iso (not `cat`) so each line carries a timestamp — essential when
+        // debugging "when did this happen".
         "-o".into(),
-        "cat".into(),
+        "short-iso".into(),
     ];
     if follow {
         args.push("-f".into());
