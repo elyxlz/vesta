@@ -13,6 +13,11 @@ const (
 	ConnectRetryAttempts = 10
 	ConnectRetryDelay    = 1 * time.Second
 
+	// KeepAliveRestartThreshold is the consecutive keep-alive failure count at
+	// which the socket is treated as dead. Below it, whatsmeow is still
+	// retrying and will emit KeepAliveRestored on recovery, so we wait.
+	KeepAliveRestartThreshold = 5
+
 	StaleCheckInterval    = 10 * time.Minute
 	StaleMessageThreshold = 4 * time.Hour
 

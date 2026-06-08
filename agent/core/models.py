@@ -8,12 +8,12 @@ import pydantic as pyd
 from aiohttp.web import AppRunner
 from core.cc_sdk import ClaudeSDKClient
 
-from .config import VestaConfig
+from .config import VestaConfig, load_config
 from .events import EventBus
 from .provider import ProviderStatus
 from .state_store import PersistedState
 
-__all__ = ["State", "Notification", "VestaConfig", "PersistedState"]
+__all__ = ["State", "Notification", "VestaConfig", "PersistedState", "load_config"]
 
 CORE_SOURCE = "core"
 
@@ -24,9 +24,10 @@ TYPE_RESTART_GREETING = "restart_greeting"
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
+TYPE_CONFIG_INVALID = "config_invalid"
 
 CLEAN_RESTART = "restart: clean restart"
-NIGHTLY_RESTART = "nightly: dreamer ran, session cleared for fresh context"
+NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
 CRASH_RESTART = "crash: restarted after unexpected exit"
 FIRST_START_REASON = "first start"
 
@@ -60,6 +61,10 @@ class State:
     cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
+    # Set by mark_dreamer_complete; the message processor compacts the live session at the next
+    # idle point, then triggers the restart (which resumes the compacted session). Deferred rather
+    # than done inline because /compact only works while the session is idle, never mid-turn.
+    compact_then_restart: bool = False
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))

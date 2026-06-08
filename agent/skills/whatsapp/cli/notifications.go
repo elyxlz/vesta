@@ -28,6 +28,10 @@ type messageNotif struct {
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	// Pointer so omitempty drops the field entirely when --interrupt-senders
+	// isn't set, letting the agent-side default (interrupt=True) stand; a
+	// plain bool would always emit an explicit `"interrupt": false`.
+	Interrupt *bool `json:"interrupt,omitempty"`
 }
 
 type reactionNotif struct {
@@ -43,6 +47,7 @@ type reactionNotif struct {
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	Interrupt       *bool  `json:"interrupt,omitempty"`
 }
 
 type authNotif struct {
@@ -88,6 +93,10 @@ func WriteNotification(
 		MessageID:       messageID,
 		ContactUnknown:  !ctx.ContactSaved,
 	}
+	if ctx.InterruptExplicit {
+		v := ctx.Interrupt
+		n.Interrupt = &v
+	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
 		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
@@ -113,6 +122,10 @@ func WriteReactionNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !ctx.ContactSaved,
+	}
+	if ctx.InterruptExplicit {
+		v := ctx.Interrupt
+		n.Interrupt = &v
 	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName

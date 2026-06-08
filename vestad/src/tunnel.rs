@@ -18,20 +18,155 @@ struct CloudflareEnv {
     zone_id: String,
 }
 
-fn cf_env() -> Result<CloudflareEnv, String> {
-    let api_token = option_env!("CLOUDFLARE_API_TOKEN")
-        .map(String::from)
-        .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())
-        .ok_or("CLOUDFLARE_API_TOKEN not set (build-time or env)")?;
-    let account_id = option_env!("CLOUDFLARE_ACCOUNT_ID")
-        .map(String::from)
-        .or_else(|| std::env::var("CLOUDFLARE_ACCOUNT_ID").ok())
-        .ok_or("CLOUDFLARE_ACCOUNT_ID not set (build-time or env)")?;
-    let zone_id = option_env!("CLOUDFLARE_ZONE_ID")
-        .map(String::from)
-        .or_else(|| std::env::var("CLOUDFLARE_ZONE_ID").ok())
-        .ok_or("CLOUDFLARE_ZONE_ID not set (build-time or env)")?;
+/// Self-hosted (BYOK) Cloudflare credentials, persisted to `cloudflare.json`.
+///
+/// The public vestad binary ships **no** Cloudflare token — a self-hoster brings
+/// their own, scoped to a domain they control (Account → Cloudflare Tunnel: Edit,
+/// Zone → DNS: Edit, Zone → Zone: Read). Managed (vesta.run) VMs never reach this
+/// path: the control plane creates the tunnel and seeds `tunnel.json` directly.
+#[derive(Serialize, Deserialize, Clone)]
+struct CloudflareCreds {
+    api_token: String,
+    account_id: String,
+    zone_id: String,
+}
+
+fn cf_creds_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("cloudflare.json")
+}
+
+/// True iff usable Cloudflare credentials already exist (saved file or env).
+pub fn has_cf_creds(config_dir: &Path) -> bool {
+    cf_creds_path(config_dir).exists()
+        || (std::env::var("CLOUDFLARE_API_TOKEN").is_ok()
+            && std::env::var("CLOUDFLARE_ACCOUNT_ID").is_ok()
+            && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
+}
+
+fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("failed to create config dir: {}", e))?;
+    let path = cf_creds_path(config_dir);
+    std::fs::write(&path, serde_json::to_string_pretty(creds).unwrap())
+        .map_err(|e| format!("failed to write cloudflare creds: {}", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).ok();
+    }
+    Ok(())
+}
+
+/// Resolve Cloudflare credentials for self-hosted tunnel management.
+///
+/// Order: the saved `cloudflare.json` (written by `vestad connect` /
+/// first-run setup), then env vars (power users + CI). There is NO baked
+/// build-time token anymore — the public binary carries no shared credential.
+fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
+    if let Ok(data) = std::fs::read_to_string(cf_creds_path(config_dir)) {
+        if let Ok(c) = serde_json::from_str::<CloudflareCreds>(&data) {
+            return Ok(CloudflareEnv {
+                api_token: c.api_token,
+                account_id: c.account_id,
+                zone_id: c.zone_id,
+            });
+        }
+    }
+    let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
+        "no Cloudflare credentials — run `vestad connect` to connect your domain".to_string()
+    })?;
+    let account_id =
+        std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
+    let zone_id =
+        std::env::var("CLOUDFLARE_ZONE_ID").map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
     Ok(CloudflareEnv { api_token, account_id, zone_id })
+}
+
+fn prompt(label: &str) -> Result<String, String> {
+    use std::io::Write;
+    eprint!("{label}");
+    std::io::stderr().flush().ok();
+    let mut s = String::new();
+    std::io::stdin()
+        .read_line(&mut s)
+        .map_err(|e| format!("failed to read input: {}", e))?;
+    Ok(s.trim().to_string())
+}
+
+/// Interactively collect + validate BYOK Cloudflare credentials, then persist
+/// them (0600). The user pastes just their domain + an API token; the zone id and
+/// account id are auto-discovered from the domain, so there are no opaque IDs to
+/// copy. Returns the resolved creds on success.
+pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
+    use std::io::IsTerminal;
+
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "connecting a domain needs an interactive terminal. Run `vestad connect` \
+             from a shell, or set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / \
+             CLOUDFLARE_ZONE_ID in the environment. (Or run `vestad --standalone --no-tunnel` \
+             to run locally without a tunnel.)"
+                .to_string(),
+        );
+    }
+
+    eprintln!();
+    eprintln!("  \x1b[1;35mConnect your domain\x1b[0m");
+    eprintln!();
+    eprintln!("  Vesta creates a secure Cloudflare tunnel to this machine and a DNS");
+    eprintln!("  record for it, on a domain you own in Cloudflare. That needs an API token.");
+    eprintln!();
+    eprintln!("  Create one at https://dash.cloudflare.com/profile/api-tokens");
+    eprintln!("  → Create Token → Create Custom Token, with these permissions:");
+    eprintln!("    • Account → Cloudflare Tunnel → Edit");
+    eprintln!("    • Zone     → DNS            → Edit");
+    eprintln!("    • Zone     → Zone           → Read");
+    eprintln!("  Scope it to your account and your domain, then paste it below.");
+    eprintln!(
+        "  It's stored only on this machine ({}), never sent anywhere else.",
+        cf_creds_path(config_dir).display()
+    );
+    eprintln!();
+
+    let domain = prompt("  Your domain (e.g. example.com): ")?.to_lowercase();
+    if domain.is_empty() {
+        return Err("no domain entered".into());
+    }
+    let api_token = prompt("  Cloudflare API token: ")?;
+    if api_token.is_empty() {
+        return Err("no token entered".into());
+    }
+
+    eprintln!("  verifying token and looking up zone…");
+    let zones_url = format!("{}/zones?name={}", CF_API_BASE, domain);
+    let resp = cf_request("GET", &zones_url, &api_token, None)
+        .map_err(|e| format!("could not verify token / find zone: {}", e))?;
+    let zone = resp["result"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| {
+            format!(
+                "no Cloudflare zone found for '{}'. Add the domain to your Cloudflare \
+                 account first, and make sure the token can read it.",
+                domain
+            )
+        })?;
+    let zone_id = zone["id"]
+        .as_str()
+        .ok_or("zone lookup response missing zone id")?
+        .to_string();
+    let account_id = zone["account"]["id"]
+        .as_str()
+        .ok_or("zone lookup response missing account id")?
+        .to_string();
+
+    save_cf_creds(
+        config_dir,
+        &CloudflareCreds { api_token, account_id, zone_id },
+    )?;
+    eprintln!("  \x1b[32m✓\x1b[0m connected to {}", domain);
+    eprintln!();
+    Ok(())
 }
 
 fn cf_request(
@@ -186,8 +321,38 @@ fn gethostname() -> String {
     if output.is_empty() { "vesta".to_string() } else { output }
 }
 
+/// Full self-host connect flow (`vestad connect`): collect the user's own
+/// Cloudflare credentials, make sure cloudflared is present, then create (or
+/// reuse) the tunnel. Returns the live tunnel config so the caller can show the
+/// URL. This is the one command a self-hoster needs — they never have to discover
+/// `tunnel setup`.
+pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
+    setup_cf_creds_interactive(config_dir)?;
+    ensure_cloudflared(config_dir)?;
+    ensure_tunnel(config_dir)
+}
+
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
-    let preferred = generate_subdomain(0);
+    // Managed (vesta.run) VMs: the control plane creates the tunnel + DNS and
+    // SEEDS tunnel.json into the config dir. vestad holds no Cloudflare account
+    // credential here, so it must NEVER call the Cloudflare API — it just uses the
+    // seeded config as-is. This is the load-bearing half of removing the baked
+    // fleet-wide token: a managed box can run its one tunnel but cannot touch the
+    // zone or any other tunnel.
+    if std::env::var("VESTA_MANAGED").is_ok() {
+        return get_tunnel_config(config_dir).ok_or_else(|| {
+            "managed mode: no tunnel.json seeded by the control plane".to_string()
+        });
+    }
+
+    // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
+    // set; otherwise keep the generated <animal>-<hostname>. Creation uses the
+    // BYOK creds in cloudflare.json (see cf_env / setup_cf_creds_interactive).
+    let preferred = std::env::var("VESTA_SUBDOMAIN")
+        .ok()
+        .map(|s| sanitize(&s))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| generate_subdomain(0));
 
     // Reuse existing tunnel if it matches our preferred subdomain
     if let Some(tc) = get_tunnel_config(config_dir) {
@@ -211,7 +376,7 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
 
 
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
-    let env = cf_env()?;
+    let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
     let hostname = format!("{}.{}", subdomain, domain);
     let tunnel_name = format!("vesta-{}", subdomain);
@@ -288,7 +453,7 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
     let config = get_tunnel_config(config_dir)
         .ok_or("no tunnel configured")?;
 
-    let env = cf_env()?;
+    let env = cf_env(config_dir)?;
 
     if let Some(record_id) = &config.dns_record_id {
         tracing::info!("deleting DNS record");
@@ -413,7 +578,7 @@ pub async fn start_tunnel(
     // devices aggressively time out idle UDP flows, which silently drops the
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
-    let child = tokio::process::Command::new(cloudflared)
+    let mut child = tokio::process::Command::new(cloudflared)
         .args([
             "tunnel", "--protocol", "http2", "--config", cf_config_path.to_str().unwrap(),
             "run", "--token", &tc.tunnel_token,
@@ -422,6 +587,23 @@ pub async fn start_tunnel(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to start cloudflared: {}", e))?;
+
+    // cloudflared logs its connection lifecycle (registering/registered/lost connections)
+    // to stderr. Forward it into vestad's tracing so `vestad logs` shows tunnel state —
+    // otherwise a reconnecting tunnel looks like silence and a transient 502 has no trail.
+    // This also drains the piped stderr, which would otherwise fill and stall cloudflared.
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let line = line.trim();
+                if !line.is_empty() {
+                    tracing::info!(target: "tunnel", "{line}");
+                }
+            }
+        });
+    }
 
     let url = format!("https://{}", tc.hostname);
     Ok((child, url))

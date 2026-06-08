@@ -5,7 +5,6 @@ import {
   setProvider,
   waitUntilRunning,
   waitUntilAlive,
-  type OpenRouterConfig,
   type ProviderResult,
 } from "@/api/agents";
 import { stepTransition } from "@/lib/motion";
@@ -25,8 +24,11 @@ export function NewAgent() {
   const setStep = useOnboarding((s) => s.setStep);
   const [agentName, setAgentName] = useState("");
   const [seedPersonality, setSeedPersonality] = useState<string | null>(null);
-  const [openrouter, setOpenrouter] = useState<OpenRouterConfig | null>(null);
-  const [credentials, setCredentials] = useState<string | null>(null);
+  // The full provider result from the picker — carries credentials/key plus the
+  // chosen model and context window, all forwarded verbatim to setProvider.
+  const [providerResult, setProviderResult] = useState<ProviderResult | null>(
+    null,
+  );
   const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,7 +37,13 @@ export function NewAgent() {
   }, []);
 
   useEffect(() => {
-    if (step !== "creating" || !agentName || !seedPersonality) return;
+    if (
+      step !== "creating" ||
+      !agentName ||
+      !seedPersonality ||
+      !providerResult
+    )
+      return;
     let cancelled = false;
     (async () => {
       try {
@@ -48,11 +56,8 @@ export function NewAgent() {
         if (cancelled) return;
 
         // Phase 3: provision the provider via POST /agents/{name}/provider.
-        const result: ProviderResult =
-          openrouter !== null
-            ? { kind: "openrouter", config: openrouter }
-            : { kind: "claude", credentials: credentials ?? "" };
-        await setProvider(agentName, result);
+        // The picker's result carries the chosen model + context window.
+        await setProvider(agentName, providerResult);
         if (cancelled) return;
 
         // Phase 4: wait for the provision-triggered restart to settle.
@@ -63,29 +68,23 @@ export function NewAgent() {
       } catch (e) {
         if (cancelled) return;
         setCreateError(errorMessage(e, "creation failed"));
-        setCredentials(null);
-        setOpenrouter(null);
+        setProviderResult(null);
         setStep("name");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [step, agentName, seedPersonality, openrouter, credentials, setStep]);
+  }, [step, agentName, seedPersonality, providerResult, setStep]);
 
   const content = (() => {
     if (step === "provider")
       return (
         <ProviderPicker
           onDone={(result) => {
-            // Single result type now — ProviderPicker handles OAuth internally.
-            if (result.kind === "openrouter") {
-              setOpenrouter(result.config);
-              setCredentials(null);
-            } else {
-              setCredentials(result.credentials);
-              setOpenrouter(null);
-            }
+            // The picker handles OAuth/key + model + context internally and hands
+            // back a complete result; forward it verbatim to setProvider.
+            setProviderResult(result);
             setStep("personality");
           }}
           onBack={() => setStep("name")}

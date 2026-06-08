@@ -358,8 +358,8 @@ jobs:
           command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh integration
 
       # Flakiness must be visible, not silently absorbed by the retry: surface every
-      # multi-attempt run as a warning annotation + job summary. The nightly workflow
-      # runs this suite with NO retry, so genuine flakes fail there.
+      # multi-attempt run as a warning annotation + job summary so a masked race or
+      # Docker flake still gets noticed.
       - name: Report flaky test retries
         if: always() && steps.integration.outputs.total_attempts > 1
         run: |
@@ -613,10 +613,10 @@ jobs:
 
       - name: Build vestad
         working-directory: vestad
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        # No CLOUDFLARE_* here: vestad no longer bakes a Cloudflare token into the
+        # binary. Self-hosters bring their own (`vestad tunnel login`); managed VMs
+        # get a control-plane-seeded tunnel.json. Nothing fleet-wide ships in the
+        # public binary.
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package

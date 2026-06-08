@@ -32,6 +32,22 @@ async function fetchVersionInfo(): Promise<GatewayVersionInfo | null> {
   }
 }
 
+/**
+ * Whether this box is a hosted (vesta.run-managed) instance — the unauthenticated
+ * `/info` flag the control plane sets via cloud-init. The app uses it to surface
+ * the hosted account/billing page; a self-hosted box reports `false`.
+ */
+async function fetchManaged(): Promise<boolean> {
+  try {
+    const data = await apiJson<{ managed?: boolean }>("/info", {
+      signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
+    });
+    return data.managed === true;
+  } catch {
+    return false;
+  }
+}
+
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
@@ -39,6 +55,8 @@ const VERSION_POLL_MS = 60000;
 
 interface GatewayContextValue {
   reachable: boolean;
+  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
+  managed: boolean;
   gatewayVersion: string;
   gatewayBranch: string | null;
   gatewayChannel: ReleaseChannel;
@@ -57,6 +75,7 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
 
 const disconnectedValue: GatewayContextValue = {
   reachable: false,
+  managed: false,
   gatewayVersion: "",
   gatewayBranch: null,
   gatewayChannel: "stable",
@@ -81,6 +100,7 @@ function controlWsUrl(): string {
 function ConnectedGateway({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
   const [reachable, setReachable] = useState(false);
+  const [managed, setManaged] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
   const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
   const [gatewayChannel, setGatewayChannel] =
@@ -156,6 +176,11 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
           return;
       }
       if (!cancelled) setVersionChecked(true);
+
+      // Hosted vs self-hosted — non-blocking, never gates the connection.
+      void fetchManaged().then((m) => {
+        if (!cancelled) setManaged(m);
+      });
 
       if (cancelled) return;
 
@@ -250,6 +275,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     <GatewayContext.Provider
       value={{
         reachable,
+        managed,
         gatewayVersion,
         gatewayBranch,
         gatewayChannel,

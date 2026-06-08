@@ -251,6 +251,15 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "user": user}))
 }
 
+// Unauthenticated: lets apps/web tell a hosted (vesta.run) VM from a self-hosted
+// one, since both get `*.vesta.run` tunnels and the URL alone can't distinguish.
+// Managed boxes set VESTA_MANAGED=1 via the control plane's cloud-init; the app
+// uses this single bit to surface the hosted account/billing page.
+async fn info() -> Json<serde_json::Value> {
+    let managed = std::env::var("VESTA_MANAGED").as_deref() == Ok("1");
+    Json(serde_json::json!({ "managed": managed }))
+}
+
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
     Json(version_json(&state).await)
 }
@@ -279,6 +288,7 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         ),
         None => (None, None),
     };
+    let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
@@ -286,6 +296,7 @@ async fn version_json(state: &SharedState) -> serde_json::Value {
         "update_available": update_available,
         "dev_mode": state.dev_mode,
         "channel": effective_channel(state).await.as_str(),
+        "auto_update": auto_update,
     })
 }
 
@@ -464,6 +475,16 @@ struct CreateBody {
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
     seed_personality: Option<String>,
+    /// Comma-separated skill names to install at first boot (in addition to the
+    /// default skill set). Exported as AGENT_SEED_SKILLS; consumed by the agent's
+    /// first-wake setup. Unset means "default skills only".
+    seed_skills: Option<String>,
+    /// Freeform, unstructured context the creator wants the new agent to start
+    /// with (e.g. what it learned about the user during an onboarding chat).
+    /// Written to ~/agent/data/seed-context.md in the container; the agent folds
+    /// the useful parts into its memory at first wake. Treated as untrusted data,
+    /// never as instructions.
+    seed_context: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -514,7 +535,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), body.seed_skills.as_deref(), body.seed_context.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 
@@ -699,21 +720,14 @@ async fn rename_agent_handler(
     Ok(Json(serde_json::json!({"name": new_name})))
 }
 
-/// Drop a high-priority notification into the renamed agent so it self-updates
-/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
-/// to write the notification doesn't block the rename.
-async fn drop_rename_notification(
-    docker: &bollard::Docker,
-    new_name: &str,
-    old_name: &str,
-) -> Result<(), String> {
-    let cname = docker::container_name(new_name);
-    let epoch = crate::time_utils::now_epoch_secs();
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch as i64)
+/// Build the rename notification payload. Pure (no IO) so its shape can be
+/// asserted without spinning up a container.
+fn rename_notification_payload(old_name: &str, new_name: &str, epoch_secs: u64) -> Result<serde_json::Value, String> {
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
         .map_err(|e| format!("epoch out of range: {e}"))?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| format!("format timestamp: {e}"))?;
-    let payload = serde_json::json!({
+    Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
         "type": "rename",
@@ -725,12 +739,27 @@ async fn drop_rename_notification(
              AGENT_NAME is now '{new_name}'. update your MEMORY.md and any prompt files \
              under ~/agent/prompts/ that reference your old name."
         ),
-    });
+    }))
+}
+
+/// Drop a high-priority notification into the renamed agent so it self-updates
+/// MEMORY.md and any prompts that reference the old name. Best-effort: failure
+/// to write the notification doesn't block the rename. Returns the notification
+/// file name written into the container.
+pub(crate) async fn drop_rename_notification(
+    docker: &bollard::Docker,
+    new_name: &str,
+    old_name: &str,
+) -> Result<String, String> {
+    let cname = docker::container_name(new_name);
+    let epoch = crate::time_utils::now_epoch_secs();
+    let payload = rename_notification_payload(old_name, new_name, epoch)?;
     let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
     let file_name = format!("rename-{epoch}.json");
     docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(file_name)
 }
 
 /// GET an existing agent's provider status (state/kind/model/setup_complete),
@@ -1241,7 +1270,7 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) services: HashMap<String, HashMap<String, ServiceEntry>>,
@@ -1252,6 +1281,25 @@ pub(crate) struct Settings {
     /// Release channel: "stable" or "beta". Empty/unknown is treated as stable.
     #[serde(default = "default_channel")]
     pub(crate) channel: String,
+    /// Apply updates automatically when the periodic check finds a newer release on
+    /// the active channel. On by default; opt out at runtime via PUT /settings/auto-update.
+    #[serde(default = "default_true")]
+    pub(crate) auto_update: bool,
+}
+
+// Manual `Default` (not derived) so a fresh install with no settings.json gets
+// `auto_update: true` — `#[derive(Default)]` would zero the bool to `false`,
+// silently shipping every new VM with auto-update off.
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            services: HashMap::new(),
+            backup: BackupGlobalSettings::default(),
+            agents: HashMap::new(),
+            channel: default_channel(),
+            auto_update: true,
+        }
+    }
 }
 
 fn default_channel() -> String {
@@ -1737,6 +1785,30 @@ async fn set_channel_handler(
     Ok(Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() })))
 }
 
+// --- Auto-update ---
+
+async fn get_auto_update_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "auto_update": state.settings.read().await.auto_update }))
+}
+
+#[derive(Deserialize)]
+struct SetAutoUpdateBody {
+    auto_update: bool,
+}
+
+async fn set_auto_update_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SetAutoUpdateBody>,
+) -> Json<serde_json::Value> {
+    {
+        let mut settings = state.settings.write().await;
+        settings.auto_update = body.auto_update;
+        save_settings(&settings);
+    }
+    tracing::info!(auto_update = body.auto_update, "auto-update setting updated");
+    Json(serde_json::json!({ "auto_update": body.auto_update }))
+}
+
 // --- Per-agent settings ---
 
 async fn get_agent_settings_handler(
@@ -1919,6 +1991,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
         .route("/health", get(health))
+        .route("/info", get(info))
         .route("/auth/session", post(auth::create_session_handler))
         .route("/auth/refresh", post(auth::refresh_session_handler));
 
@@ -1933,6 +2006,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/personalities", get(list_personalities_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
         .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
+        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
@@ -1963,6 +2037,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/settings/channel", get(get_channel_handler))
         .route("/settings/channel", axum::routing::put(set_channel_handler))
+        .route("/settings/auto-update", get(get_auto_update_handler))
+        .route("/settings/auto-update", axum::routing::put(set_auto_update_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2200,8 +2276,26 @@ fn spawn_update_check_task(state: SharedState) {
             let channel = effective_channel(&state).await;
             match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
                 Ok(Ok(info)) => {
-                    let mut slot = state.update_info.lock().await;
-                    *slot = Some(info);
+                    let update_available = info.update_available;
+                    *state.update_info.lock().await = Some(info);
+                    // Auto-apply when enabled (the default) and a newer release exists
+                    // on the active channel. `perform_update` no-ops if already current
+                    // and restarts the systemd service on success — replacing this
+                    // process — so control may never return past this call.
+                    if update_available && state.settings.read().await.auto_update {
+                        tracing::info!(channel = channel.as_str(), "auto-update: newer release available, applying");
+                        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+                            Ok(Ok(outcome)) => tracing::info!(
+                                updated = outcome.updated,
+                                restarted = outcome.restarted,
+                                current = %outcome.current,
+                                latest = %outcome.latest,
+                                "auto-update finished",
+                            ),
+                            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
+                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+                        }
+                    }
                 }
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
@@ -2319,6 +2413,45 @@ pub async fn run_server(cfg: ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::is_cached_port_reusable;
+
+    // --- auto_update defaults on (a fresh install and a settings.json predating the
+    // field must both end up with auto-update enabled, not the bool's `false`) ---
+
+    #[test]
+    fn settings_default_enables_auto_update() {
+        assert!(super::Settings::default().auto_update);
+    }
+
+    #[test]
+    fn settings_missing_auto_update_field_deserializes_true() {
+        // A settings.json written before auto_update existed has no such key.
+        let s: super::Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
+        assert!(s.auto_update);
+    }
+
+    #[test]
+    fn settings_auto_update_false_is_honored() {
+        let s: super::Settings =
+            serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
+        assert!(!s.auto_update);
+    }
+
+    // --- Rename notification payload (the content contract the agent self-heals on) ---
+
+    #[test]
+    fn rename_notification_payload_carries_both_names_and_rfc3339_timestamp() {
+        // Fixed epoch -> deterministic RFC3339 timestamp, no wall clock.
+        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000).expect("payload");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "rename");
+        assert_eq!(payload["interrupt"], true);
+        assert_eq!(payload["old_name"], "old-bot");
+        assert_eq!(payload["new_name"], "new-bot");
+        assert_eq!(payload["timestamp"], "2023-11-14T22:13:20Z");
+        let message = payload["message"].as_str().expect("message is a string");
+        assert!(message.contains("old-bot"), "message missing old name: {message}");
+        assert!(message.contains("new-bot"), "message missing new name: {message}");
+    }
 
     // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---
 

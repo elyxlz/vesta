@@ -293,7 +293,7 @@ pub async fn restore_backup(
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "restoring snapshot into image");
     let image = crate::restic::restore_to_image(name, backup_id).await?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, None, None, None).await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed("failed to start restored agent".into()));
@@ -369,6 +369,10 @@ pub async fn cleanup_backups(
 /// Reclaim disk from the old docker-image backups: drop an agent's legacy
 /// `vesta-backup:<agent>_*` images once it has a restic snapshot (so a current
 /// backup always exists first). Idempotent; safe to call repeatedly.
+///
+/// LEGACY-CLEANUP(#726): remove this fn, `legacy_backup_images`, and the two
+/// `cleanup_legacy_backups` call sites in serve.rs once all agents have migrated
+/// off the pre-restic docker-image backup model.
 pub async fn cleanup_legacy_backups(docker: &Docker) {
     for name in list_agent_names(docker).await {
         let images = legacy_backup_images(&name).await;

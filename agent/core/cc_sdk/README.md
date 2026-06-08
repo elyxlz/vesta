@@ -12,7 +12,7 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
 ```
               ┌─────────────────────── agent process ───────────────────────┐
               │  ClaudeSDKClient                                             │
-  query() ───▶│   tmux paste + Enter ──────────────┐                        │
+  query() ───▶│   tmux typed chunks + Enter ───────┐                        │
               │                                     ▼                        │
               │                          ┌──────────────────┐               │
               │  receive_response()  ◀── │  tmux: claude TUI │  (own -L srv) │
@@ -28,10 +28,13 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
               └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Prompts** are submitted by bracketed-pasting the text into the tmux pane and
-  sending `Enter` (multi-line stays in the box; a single Enter submits; leading `/`
-  runs as a slash command). **Interrupt** sends a double `Escape`: the TUI's
-  escape-sequence parser buffers a lone ESC waiting for a follow-up byte that never
+- **Prompts** and slash commands are submitted by sending randomized literal
+  `send-keys` bursts inside bracketed-paste guards, then sending `Enter` after a
+  short randomized pause (multi-line stays in the box; a single Enter submits).
+  Long text is pasted via tmux's paste buffer, like a person using Ctrl-V in the
+  TUI, so large prompts stay fast. **Interrupt** sends two
+  `Escape` keypresses with a small randomized gap: the TUI's escape-sequence
+  parser buffers a lone ESC waiting for a follow-up byte that never
   comes (verified against claude v2.1.159), so a second ESC is needed to flush the
   first as a real keypress. An interrupted turn never fires its `Stop` hook (no late
   Stop arrives either), so `interrupt()` credits the abandoned turn's Stop itself —
@@ -42,6 +45,12 @@ plumbing, same MCP-tool registration, same `ClaudeSDKClient` lifecycle.
   ends on the native `Stop` hook, after which a synthetic `ResultMessage` (session id
   + usage) is yielded. Subagent (`isSidechain`) lines are skipped — they surface via
   SubagentStart/Stop hooks instead.
+- **Compaction** via `compact()` submits `/compact` and waits for it to finish. A manual
+  compaction fires `PreCompact` but **never a `Stop`** (verified against claude v2.1.16x),
+  and rewrites the *same* session transcript in place so `--resume` keeps working. The
+  summarization request can leave the transcript silent for tens of seconds, so completion
+  is the `isCompactSummary` transcript line, not quiescence; `compact()` deliberately leaves
+  the `query()`/`Stop` turn accounting untouched. Both waits are bounded.
 - **Hooks** are configured as native command hooks (`--settings`) that run
   `_forward.py`, which relays the event JSON to the in-process **bridge** over a unix
   socket. The bridge dispatches to the registered `HookMatcher` callbacks, so

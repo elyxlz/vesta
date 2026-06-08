@@ -89,6 +89,12 @@ enum Command {
         /// from `vesta auth` or an existing agent.
         #[arg(long)]
         claude_token: Option<String>,
+        /// Claude model: opus | sonnet | haiku (prompted on an interactive Claude setup if omitted)
+        #[arg(long)]
+        claude_model: Option<String>,
+        /// Context window in tokens, e.g. 200000 / 500000 / 1000000 (prompted if omitted; Claude default is 1M)
+        #[arg(long)]
+        context_window: Option<u64>,
         #[command(flatten)]
         openrouter: OpenRouterFlags,
     },
@@ -157,10 +163,17 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// View agent settings (manage_agent_code is fixed at create time and read-only here)
+    /// View or change agent settings. With no flags, prints model + context window
+    /// (manage_agent_code is fixed at create time and read-only here).
     Settings {
         /// Agent name
         name: String,
+        /// Change the model: opus | sonnet | haiku (Claude), or an OpenRouter slug
+        #[arg(long)]
+        model: Option<String>,
+        /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
+        #[arg(long)]
+        context_window: Option<u64>,
     },
     /// View or edit an agent's constitution (a charter prepended to its memory; the agent
     /// cannot edit it). With no flags, prints the current constitution.
@@ -389,14 +402,22 @@ fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArg
     Some(client::OpenRouterArgs { key, model })
 }
 
+/// Claude model + context window chosen for a `vesta setup`. Both optional: unset
+/// fields let vestad apply its defaults (Opus, 1M window).
+#[derive(Default)]
+struct ClaudeOptions {
+    model: Option<String>,
+    max_context_tokens: Option<u64>,
+}
+
 /// How `vesta setup` will provision the agent once it's created.
 enum ProvisionPlan {
     /// Run on OpenRouter (key already validated).
     OpenRouter(client::OpenRouterArgs),
     /// Provision Claude from credentials supplied up front (non-interactive).
-    ClaudeCredentials(String),
+    ClaudeCredentials { credentials: String, opts: ClaudeOptions },
     /// Provision Claude via the interactive OAuth dance after create.
-    ClaudeOAuth,
+    ClaudeOAuth { opts: ClaudeOptions },
 }
 
 /// Resolve how `vesta setup` should provision the agent. Every interactive prompt
@@ -405,7 +426,8 @@ enum ProvisionPlan {
 /// - `--claude-token` -> Claude from supplied credentials, no prompts
 /// - `--yes` with neither -> defaults to Claude (OAuth dance still runs)
 /// - otherwise -> prompt for the provider (and key/model, or OAuth)
-fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, yes: bool) -> ProvisionPlan {
+#[allow(clippy::too_many_arguments)]
+fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, claude_model: Option<String>, context_window: Option<u64>, yes: bool) -> ProvisionPlan {
     if flags.openrouter_key.is_some() && claude_token.is_some() {
         platform::die("--openrouter-key and --claude-token are mutually exclusive");
     }
@@ -416,12 +438,71 @@ fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_tok
         return ProvisionPlan::OpenRouter(args);
     }
     if let Some(credentials) = claude_token {
-        return ProvisionPlan::ClaudeCredentials(credentials);
+        // Non-interactive Claude: model/context come from flags only (no prompts).
+        return ProvisionPlan::ClaudeCredentials {
+            credentials,
+            opts: ClaudeOptions { model: claude_model, max_context_tokens: context_window },
+        };
     }
     if yes || !prompt_use_openrouter() {
-        return ProvisionPlan::ClaudeOAuth;
+        return ProvisionPlan::ClaudeOAuth { opts: resolve_claude_options(c, claude_model, context_window, yes) };
     }
     ProvisionPlan::OpenRouter(prompt_openrouter_interactive(c, flags.openrouter_model))
+}
+
+/// Collect the Claude model + context window for setup. Flags win; otherwise prompt
+/// interactively. With `--yes` and no flags, leave both unset so vestad applies its
+/// defaults (Opus, 1M window).
+fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_flag: Option<u64>, yes: bool) -> ClaudeOptions {
+    let model = model_flag.or_else(|| (!yes).then(|| prompt_claude_model(c)));
+    let max_context_tokens = ctx_flag.or_else(|| (!yes).then(prompt_context_window));
+    ClaudeOptions { model, max_context_tokens }
+}
+
+/// Show a numbered list and return the chosen 0-based index. Empty input picks
+/// `default_idx`; an out-of-range number reprompts. Used by the fixed-list pickers
+/// (Claude model, context window); the OpenRouter picker is richer (search + custom
+/// slug) and stays separate.
+fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
+    for (idx, label) in labels.iter().enumerate() {
+        let marker = if idx == default_idx { "  (default)" } else { "" };
+        eprintln!("  {}) {label}{marker}", idx + 1);
+    }
+    loop {
+        match prompt_raw(&format!("choice [{}]", default_idx + 1)).as_str() {
+            "" => return default_idx,
+            s => match s.parse::<usize>().ok().filter(|n| (1..=labels.len()).contains(n)) {
+                Some(n) => return n - 1,
+                None => eprintln!("  pick a number between 1 and {}", labels.len()),
+            },
+        }
+    }
+}
+
+/// Prompt for a Claude model from the curated list (default = first entry, Opus).
+/// Falls back to "opus" if the list can't be fetched.
+fn prompt_claude_model(c: &client::Client) -> String {
+    let models = match c.fetch_claude_models() {
+        Ok(models) if !models.is_empty() => models,
+        _ => return "opus".to_string(),
+    };
+    eprintln!("which Claude model?");
+    let labels: Vec<String> = models.iter().map(|m| format!("{} — {}", m.label, m.note)).collect();
+    models[prompt_indexed_choice(&labels, 0)].id.clone()
+}
+
+/// Context-window presets (tokens, label). 1M is the default (largest).
+const CONTEXT_PRESETS: [(u64, &str); 3] = [
+    (200_000, "200K — cheapest prompt-cache reads, compacts soonest"),
+    (500_000, "500K — balanced"),
+    (1_000_000, "1M — most context"),
+];
+
+/// Prompt for a context-window preset. Default = 1M (the largest, last entry).
+fn prompt_context_window() -> u64 {
+    eprintln!("context window?");
+    let labels: Vec<String> = CONTEXT_PRESETS.iter().map(|(_, label)| label.to_string()).collect();
+    CONTEXT_PRESETS[prompt_indexed_choice(&labels, CONTEXT_PRESETS.len() - 1)].0
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
@@ -534,8 +615,9 @@ fn oauth_dance(client: &client::Client) -> String {
 
 fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
+    // Reauth only: model + context window are preserved server-side (None = keep).
     client
-        .set_provider_credentials(name, &credentials)
+        .set_provider_credentials(name, &credentials, None, None)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -543,7 +625,77 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
-    client::Client::new(&config).unwrap_or_else(|e| platform::die(&e))
+    let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
+    enforce_version_match(&client);
+    client
+}
+
+/// Which side is out of date when the CLI and gateway versions differ.
+#[derive(Debug, PartialEq)]
+enum VersionGate {
+    Match,
+    /// The CLI is older — it should self-update to the gateway's version.
+    CliOlder,
+    /// The gateway is older — it should self-update via POST /gateway/update.
+    GatewayOlder,
+}
+
+fn classify_version_gate(cli: &str, gateway: &str) -> VersionGate {
+    if cli == gateway {
+        VersionGate::Match
+    } else if version_less_than(cli, gateway) {
+        VersionGate::CliOlder
+    } else {
+        VersionGate::GatewayOlder
+    }
+}
+
+/// Refuse to drive a vestad whose version differs from this CLI, mirroring the
+/// app's version-mismatch gate. The CLI is a client just like the app, so it
+/// offers the matching fix: self-update the CLI to the gateway's version when the
+/// CLI is older, or update the gateway when the gateway is older. A definitive
+/// mismatch exits non-zero; an unreachable or pre-version gateway is left alone so
+/// the command can surface its own error.
+fn enforce_version_match(client: &client::Client) {
+    let gateway = match client.gateway_version() {
+        Ok(version) => version,
+        Err(_) => return,
+    };
+    let cli = env!("CARGO_PKG_VERSION");
+    match classify_version_gate(cli, &gateway) {
+        VersionGate::Match => return,
+        VersionGate::CliOlder => {
+            eprintln!("version mismatch: vesta CLI v{cli} is older than gateway v{gateway}");
+            if confirm("update the CLI now?") {
+                run_cli_self_update(Some(&gateway));
+                eprintln!("re-run your command now.");
+            } else {
+                eprintln!("run 'vesta update' to update the CLI, then retry.");
+            }
+        }
+        VersionGate::GatewayOlder => {
+            eprintln!("version mismatch: gateway v{gateway} is older than vesta CLI v{cli}");
+            if confirm("update the gateway now?") {
+                client.update_gateway().unwrap_or_else(|e| platform::die(&format!("gateway update failed: {e}")));
+                eprintln!("gateway update started; wait for it to restart, then re-run your command.");
+            } else {
+                eprintln!("update the gateway, then retry.");
+            }
+        }
+    }
+    process::exit(1);
+}
+
+/// Prompt for a yes/no confirmation, defaulting to no on empty input or a
+/// non-interactive stdin (so scripts get a clean non-zero exit, not a hang).
+fn confirm(question: &str) -> bool {
+    eprint!("{question} [y/N] ");
+    io::stderr().flush().ok();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    answer.trim().eq_ignore_ascii_case("y")
 }
 
 // Ask the configured vestad for the latest release tag so the CLI does not hit
@@ -577,8 +729,23 @@ fn check_latest_version() -> Option<String> {
     Some(latest)
 }
 
-fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Option<PathBuf> {
-    let latest = check_latest_version()?;
+// Download and self-replace the CLI binary. `target_version` pins a specific
+// version (the gateway's, when resolving a mismatch — like the app's "update your
+// app" which targets the gateway's exact version); `None` resolves the latest
+// release for the explicit `vesta update`.
+fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool, binary_subpath: &str) -> Option<PathBuf> {
+    let latest = match target_version {
+        Some(version) => {
+            eprintln!("current version: v{}", env!("CARGO_PKG_VERSION"));
+            if version == env!("CARGO_PKG_VERSION") {
+                eprintln!("already up to date");
+                return None;
+            }
+            eprintln!("updating to v{version}...");
+            version.to_string()
+        }
+        None => check_latest_version()?,
+    };
 
     let ext = if is_zip { "zip" } else { "tar.gz" };
     let archive_name = format!("vesta-{rust_target}.{ext}");
@@ -639,6 +806,41 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
 
     eprintln!("updated to v{latest}");
     Some(tmp_dir)
+}
+
+// Resolve the platform target/archive and run the self-update. `target_version`
+// pins a specific version (the gateway's) or is `None` for the latest release.
+fn run_cli_self_update(target_version: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    {
+        let target = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            other => platform::die(&format!("unsupported architecture: {other}")),
+        };
+        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let target = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-apple-darwin",
+            "aarch64" => "aarch64-apple-darwin",
+            other => platform::die(&format!("unsupported architecture: {other}")),
+        };
+        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(tmp_dir) =
+            cli_self_update(target_version, "x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
+        {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+    }
 }
 
 fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
@@ -727,7 +929,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code, claude_token, openrouter } => {
+        Command::Setup { yes, name, no_manage_core_code, claude_token, claude_model, context_window, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -739,7 +941,7 @@ fn run(cli: Cli) {
             // is validated client-side here so a bad key fails fast, before we
             // create an agent we'd immediately fail to provision. Claude needs
             // no pre-validation; OAuth happens after create.
-            let plan = resolve_setup_provider(&c, openrouter, claude_token, yes);
+            let plan = resolve_setup_provider(&c, openrouter, claude_token, claude_model, context_window, yes);
             let timezone = detect_timezone();
 
             // 1. Create an empty agent. Vestad no longer accepts credentials at
@@ -770,15 +972,15 @@ fn run(cli: Cli) {
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
-                ProvisionPlan::ClaudeCredentials(credentials) => {
-                    c.set_provider_credentials(&created_name, &credentials)
+                ProvisionPlan::ClaudeCredentials { credentials, opts } => {
+                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated (claude)");
                 }
-                ProvisionPlan::ClaudeOAuth => {
+                ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.set_provider_credentials(&created_name, &credentials)
+                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated!");
                 }
@@ -833,11 +1035,28 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Settings { name } => {
+        Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
-            let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
-            let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-            eprintln!("manage_agent_code = {val}");
+            if model.is_some() || context_window.is_some() {
+                c.set_provider_settings(&name, model.as_deref(), context_window)
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("updated. the agent is restarting to apply the change.");
+            } else {
+                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+                eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
+                if let Ok(provider) = c.get_provider(&name) {
+                    if let Some(m) = provider["model"].as_str() {
+                        eprintln!("model = {m}");
+                    }
+                    match provider["max_context_tokens"].as_u64() {
+                        Some(ctx) => eprintln!("context_window = {ctx}"),
+                        None if provider["kind"].as_str() == Some("openrouter") => {
+                            eprintln!("context_window = default (model window, capped at 200K)")
+                        }
+                        None => eprintln!("context_window = default (1M for Claude)"),
+                    }
+                }
+            }
         }
 
         Command::Constitution { name, edit, file, clear } => {
@@ -930,7 +1149,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.set_provider_credentials(&name, &token_str)
+                c.set_provider_credentials(&name, &token_str, None, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {
@@ -1187,36 +1406,7 @@ fn run(cli: Cli) {
         }
 
         Command::Update => {
-            #[cfg(target_os = "linux")]
-            {
-                let target = match std::env::consts::ARCH {
-                    "x86_64" => "x86_64-unknown-linux-gnu",
-                    "aarch64" => "aarch64-unknown-linux-gnu",
-                    other => platform::die(&format!("unsupported architecture: {}", other)),
-                };
-                if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let target = match std::env::consts::ARCH {
-                    "x86_64" => "x86_64-apple-darwin",
-                    "aarch64" => "aarch64-apple-darwin",
-                    other => platform::die(&format!("unsupported architecture: {other}")),
-                };
-                if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
-            #[cfg(target_os = "windows")]
-            {
-                if let Some(tmp_dir) =
-                    cli_self_update("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
-                {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-            }
+            run_cli_self_update(None);
         }
 
         Command::Channel { channel } => {
@@ -1277,5 +1467,14 @@ mod tests {
         ] {
             assert_eq!(format_size(input), expected, "format_size({input})");
         }
+    }
+
+    #[test]
+    fn version_gate_classification() {
+        assert_eq!(classify_version_gate("1.2.3", "1.2.3"), VersionGate::Match);
+        assert_eq!(classify_version_gate("1.2.3", "1.2.4"), VersionGate::CliOlder);
+        assert_eq!(classify_version_gate("1.2.3", "2.0.0"), VersionGate::CliOlder);
+        assert_eq!(classify_version_gate("1.3.0", "1.2.9"), VersionGate::GatewayOlder);
+        assert_eq!(classify_version_gate("2.0.0", "1.9.9"), VersionGate::GatewayOlder);
     }
 }

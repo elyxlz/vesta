@@ -15,11 +15,11 @@ def test_config_defaults_to_claude(tmp_path):
     assert config.agent_provider == "claude"
 
 
-def test_config_max_context_tokens_defaults_to_200k(tmp_path):
-    """Big-window models are capped to a 200k working window by default: cache-read
-    cost scales with how large the cached prefix grows before autocompact."""
+def test_config_max_context_tokens_defaults_to_unset(tmp_path):
+    """Unset (None) by default: Claude runs at its model default (1M via beta) and
+    OpenRouter falls back to a 200k working cap. A chosen value overrides both."""
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    assert config.max_context_tokens == 200_000
+    assert config.max_context_tokens is None
 
 
 def test_config_max_context_tokens_env_override(tmp_path, monkeypatch):
@@ -62,6 +62,9 @@ def test_build_client_options_passes_resolved_context_window(tmp_path, state):
     options = build_client_options(config, state)
     # Overrides claude-code's 200k default for non-Anthropic models (claude-code#46416).
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
+    # Usage is reported against the RESOLVED window, not the raw config cap, so the
+    # context-usage % matches the real autocompact threshold.
+    assert options.max_context_tokens == 1_000_000
 
 
 def test_build_client_options_omits_context_window_when_unresolved(tmp_path, state):
@@ -69,3 +72,30 @@ def test_build_client_options_omits_context_window_when_unresolved(tmp_path, sta
     state.openrouter_proxy_url = "http://127.0.0.1:40000"
     options = build_client_options(config, state)
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
+    assert options.max_context_tokens is None
+
+
+def test_build_client_options_claude_default_keeps_1m_window(tmp_path, state):
+    """Unset context window: existing behaviour — 1M beta on, no explicit cap."""
+    config = _config_with_memory(tmp_path)
+    options = build_client_options(config, state)
+    assert options.betas == ["context-1m-2025-08-07"]
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
+    assert options.max_context_tokens is None
+
+
+def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
+    """A chosen window above 200k still needs the 1M beta, and caps the threshold."""
+    config = _config_with_memory(tmp_path, max_context_tokens=500_000)
+    options = build_client_options(config, state)
+    assert options.betas == ["context-1m-2025-08-07"]
+    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "500000"
+    assert options.max_context_tokens == 500_000
+
+
+def test_build_client_options_claude_200k_drops_beta(tmp_path, state):
+    """A 200k window fits without the 1M beta."""
+    config = _config_with_memory(tmp_path, max_context_tokens=200_000)
+    options = build_client_options(config, state)
+    assert options.betas == []
+    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "200000"

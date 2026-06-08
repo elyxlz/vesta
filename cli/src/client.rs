@@ -240,6 +240,15 @@ pub struct OpenRouterModel {
     pub cache_read_price: Option<f64>,
 }
 
+/// A Claude model offered by the picker in `vesta setup` (from `GET /providers/claude/models`).
+#[derive(serde::Deserialize)]
+pub struct ClaudeModel {
+    /// The alias stored in AGENT_MODEL, e.g. "opus".
+    pub id: String,
+    pub label: String,
+    pub note: String,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Result<Self, String> {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -349,6 +358,25 @@ impl Client {
         Ok(extract_latest_version(&value))
     }
 
+    // The version vestad itself is running (the `version` field of `/version`),
+    // used to gate the CLI against a mismatched gateway the same way the app does.
+    pub fn gateway_version(&self) -> Result<String, String> {
+        let resp = self.get("/version")?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value["version"].as_str() {
+            Some(version) => Ok(version.trim().trim_start_matches('v').to_string()),
+            None => Err("version response missing 'version'".into()),
+        }
+    }
+
+    // Ask vestad to self-update to the latest release on its channel. Mirrors the
+    // app's "update your gateway" button (POST /gateway/update). vestad restarts on
+    // success, so the caller should re-run its command once the daemon is back.
+    pub fn update_gateway(&self) -> Result<(), String> {
+        self.post("/gateway/update")?;
+        Ok(())
+    }
+
     pub fn get_channel(&self) -> Result<String, String> {
         let resp = self.get("/settings/channel")?;
         let value: serde_json::Value = read_json(resp)?;
@@ -392,12 +420,38 @@ impl Client {
 
     /// Provision an existing agent with provider credentials. Either Claude
     /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
-    pub fn set_provider_credentials(&self, name: &str, credentials: &str) -> Result<(), String> {
+    pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        let body = serde_json::json!({"credentials": credentials});
+        let mut body = serde_json::json!({"credentials": credentials});
+        if let Some(model) = model {
+            body["model"] = serde_json::json!(model);
+        }
+        if let Some(ctx) = max_context_tokens {
+            body["max_context_tokens"] = serde_json::json!(ctx);
+        }
         self.post_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())
+    }
+
+    /// Change the model and/or context window on a provisioned agent, keeping its
+    /// provider and credentials. POSTs `{model?, max_context_tokens?}`.
+    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+        let mut body = serde_json::Map::new();
+        if let Some(model) = model {
+            body.insert("model".to_string(), serde_json::json!(model));
+        }
+        if let Some(ctx) = max_context_tokens {
+            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+        }
+        self.post_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(body))?;
+        Ok(())
+    }
+
+    /// Current provider status: `{state, kind, model, max_context_tokens}`.
+    pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!("/agents/{name}/provider"))?;
+        read_json(resp)
     }
 
     pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
@@ -542,6 +596,11 @@ impl Client {
 
     pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
         let resp = self.get("/providers/openrouter/models/top")?;
+        read_json(resp)
+    }
+
+    pub fn fetch_claude_models(&self) -> Result<Vec<ClaudeModel>, String> {
+        let resp = self.get("/providers/claude/models")?;
         read_json(resp)
     }
 
@@ -703,12 +762,22 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
     let port = parsed.port_or_known_default().unwrap_or(443);
     let tcp = std::net::TcpStream::connect((host, port))
         .map_err(|e| format!("ws tcp connect failed: {e}"))?;
-    tcp.set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
-        .map_err(|e| format!("failed to set read timeout: {e}"))?;
+    // The read timeout is for the chat read loop (so socket.read() returns to poll typed input),
+    // not the handshake. Applying it before client_tls_with_config kills the blocking TLS+WS
+    // handshake over any non-local link (e.g. a cloudflare tunnel): a handshake read that exceeds
+    // CHAT_READ_TIMEOUT_MS returns WouldBlock and tungstenite aborts with "Interrupted handshake".
+    // So hand the handshake a timeout-free socket, then set the timeout via a clone (the dup'd fd
+    // shares the same kernel socket, so SO_RCVTIMEO applies to the moved-in stream too).
+    let timeout_handle = tcp
+        .try_clone()
+        .map_err(|e| format!("failed to clone ws socket: {e}"))?;
     let connector =
         tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
         .map_err(|e| format!("ws connect failed: {e}"))?;
+    timeout_handle
+        .set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
+        .map_err(|e| format!("failed to set read timeout: {e}"))?;
     Ok(socket)
 }
 
@@ -875,6 +944,30 @@ mod tests {
         // so the reconnect loop can keep retrying.
         let err = connect_chat_socket(&test_client(), "wss://127.0.0.1:1/agents/x/ws?token=tok").unwrap_err();
         assert!(err.contains("ws tcp connect failed") || err.contains("ws connect failed"), "got: {err}");
+    }
+
+    #[test]
+    fn connect_chat_socket_survives_a_slow_handshake() {
+        // Regression: the chat read-loop timeout (CHAT_READ_TIMEOUT_MS) must not be applied to the
+        // socket until *after* the handshake. A server slower than that timeout (here a cloudflare
+        // tunnel's worth of latency, simulated) used to make the handshake read return WouldBlock,
+        // surfacing as "ws connect failed: Interrupted handshake (WouldBlock)".
+        let handshake_delay = Duration::from_millis(CHAT_READ_TIMEOUT_MS * 3);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            // Stall before reading/answering the upgrade, longer than the read-loop timeout.
+            std::thread::sleep(handshake_delay);
+            // tungstenite drives the server side of the handshake (correct Sec-WebSocket-Accept).
+            let _ws = tungstenite::accept(stream).expect("server handshake");
+            std::thread::sleep(Duration::from_millis(50));
+        });
+
+        let url = format!("ws://127.0.0.1:{port}/agents/x/ws?token=tok");
+        let socket = connect_chat_socket(&test_client(), &url).expect("handshake should survive a slow server");
+        drop(socket);
+        server.join().expect("server thread");
     }
 
     #[test]

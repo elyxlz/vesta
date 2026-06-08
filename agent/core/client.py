@@ -19,6 +19,7 @@ from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, Too
 from . import logger
 from . import models as vm
 from . import state_store
+from .config import DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_constitution_path, get_memory_path
@@ -272,6 +273,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # os.environ here would leak the OpenRouter URL into every other subprocess
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
     sdk_env: dict[str, str] = {}
+    betas: list[str] = []
     if is_openrouter:
         # The SDK always routes through the local caching proxy, never OpenRouter
         # directly. start_cache_proxy runs first in message_processor, so the URL is set.
@@ -282,11 +284,28 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         # threshold instead of its 200k default for non-Anthropic models.
         if state.openrouter_max_tokens:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
+    else:
+        # Claude. The 1M-context beta unlocks windows above claude-code's 200k default.
+        # Honor a user-chosen window (MAX_CONTEXT_TOKENS): cap the autocompact threshold
+        # to it, and request the 1M beta only when the choice needs the larger window.
+        # Unset (existing agents) keeps the historical default: 1M beta on, no explicit cap.
+        chosen = config.max_context_tokens
+        if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
+            betas = ["context-1m-2025-08-07"]
+        if chosen is not None:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
+
+    # The window claude-code actually enforces: for OpenRouter the resolved (capped)
+    # value, for Claude the user's chosen cap (None = model default). Drives the
+    # context-usage percentage, so it must match the real autocompact threshold —
+    # the raw, uncapped config value would under-report OpenRouter usage.
+    effective_max_context = state.openrouter_max_tokens if is_openrouter else config.max_context_tokens
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
-        betas=[] if is_openrouter else ["context-1m-2025-08-07"],
+        betas=betas,
+        max_context_tokens=effective_max_context,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,

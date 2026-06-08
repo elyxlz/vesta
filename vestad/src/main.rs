@@ -70,7 +70,9 @@ enum Command {
         /// Agent name
         name: String,
     },
-    /// Manage Cloudflare tunnel
+    /// Connect a Cloudflare domain so your agent gets a public URL
+    Connect,
+    /// Manage the Cloudflare tunnel (advanced)
     Tunnel {
         #[command(subcommand)]
         action: TunnelAction,
@@ -112,6 +114,10 @@ enum TunnelAction {
     Setup {
         /// Subdomain name (e.g., "alice" for alice.yourdomain.com)
         subdomain: String,
+        /// Emit a single line of JSON ({"tunnel_id","dns_record_id","hostname"})
+        /// to stdout instead of human-readable output (for cloud-init / jq).
+        #[arg(long)]
+        json: bool,
     },
     /// Tear down tunnel and DNS record
     Destroy,
@@ -120,6 +126,23 @@ enum TunnelAction {
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("error: {}", msg);
     std::process::exit(1);
+}
+
+/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
+/// is unset. Without this, `vestad status > file` / piping captures raw escape
+/// codes.
+fn color_on() -> bool {
+    use std::io::IsTerminal;
+    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+}
+
+/// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
+fn paint(code: &str, s: &str) -> String {
+    if color_on() {
+        format!("\x1b[{code}m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
 }
 
 fn find_available_port() -> Option<u16> {
@@ -155,29 +178,129 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
         tracing::warn!(stored_port = stored, "stored port unavailable, allocating new one");
     }
 
-    find_available_port().unwrap_or_else(|| die("no available port found"))
+    find_available_port()
+        .unwrap_or_else(|| die("no free port found — another service may be using the range; try `vestad restart`"))
 }
 
 fn config_dir() -> std::path::PathBuf {
-    paths::config_dir().unwrap_or_else(|| die("HOME not set"))
+    paths::config_dir()
+        .unwrap_or_else(|| die("couldn't find your home directory ($HOME) — vestad stores its config there"))
 }
 
+const RESTART_LOCAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const RESTART_TUNNEL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+const RESTART_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const HEALTH_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// After `vestad restart`, systemd marks the unit "active" the instant the process is
+/// spawned — but the HTTP server is still binding and the Cloudflare tunnel needs several
+/// seconds to re-establish its edge connections. In that window the tunnel returns 502
+/// (no healthy origin yet), which reads like an error but is just startup. Poll `/health`
+/// locally and through the tunnel so the message reflects what is actually reachable.
+fn report_restart_readiness(config: &std::path::Path) {
+    // The probe below can take tens of seconds (local API + tunnel reconnect), so
+    // say what we're doing rather than appearing to hang.
+    eprintln!("waiting for vestad to come back up…");
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("vestad restarted (could not probe readiness: {e}).");
+            return;
+        }
+    };
+    runtime.block_on(async {
+        let client = match reqwest::Client::builder().timeout(HEALTH_PROBE_TIMEOUT).build() {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("vestad restarted (could not probe readiness: {e}).");
+                return;
+            }
+        };
+
+        let local_ready = match local_health_url(config) {
+            Some(url) => wait_for_health(&client, &url, RESTART_LOCAL_READY_TIMEOUT).await,
+            None => false,
+        };
+        if !local_ready {
+            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            return;
+        }
+
+        match tunnel::get_tunnel_config(config) {
+            None => eprintln!("vestad restarted and serving (no tunnel configured)."),
+            Some(tc) => {
+                let tunnel_health = format!("https://{}/health", tc.hostname);
+                if wait_for_health(&client, &tunnel_health, RESTART_TUNNEL_READY_TIMEOUT).await {
+                    eprintln!("vestad restarted and reachable at https://{}", tc.hostname);
+                } else {
+                    eprintln!(
+                        "vestad restarted and serving locally; the tunnel (https://{}) is still \
+                         reconnecting — a 502 for a few seconds is expected, not an error.",
+                        tc.hostname
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// `http://127.0.0.1:<https_port + 1>/health` — the unauthenticated local HTTP API
+/// (serve.rs binds HTTPS on the stored port and plain HTTP on port + 1).
+fn local_health_url(config: &std::path::Path) -> Option<String> {
+    let https_port = std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|stored| stored.trim().parse::<u16>().ok())?;
+    let http_port = https_port.checked_add(1)?;
+    Some(format!("http://127.0.0.1:{http_port}/health"))
+}
+
+/// Poll `url` until it answers 2xx or `timeout` elapses. A connection refused / 5xx
+/// just means "not ready yet", so keep retrying until the deadline.
+async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(resp) = client.get(url).send().await {
+            if resp.status().is_success() {
+                return true;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(RESTART_READY_POLL_INTERVAL).await;
+    }
+}
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
+    match tunnel_url {
+        Some(url) => eprintln!("  {} {}", paint("36", "public "), paint("1", url)),
+        // A missing tunnel is a first-class, visible state — never a silent
+        // "local only". Tell the user the exact command to fix it.
+        None => eprintln!(
+            "  {} {} — run {} to get a public URL",
+            paint("36", "public "),
+            paint("33", "not connected"),
+            paint("1", "vestad connect"),
+        ),
+    }
+    eprintln!("  {} {}", paint("36", "key    "), paint("33", api_key));
+    eprintln!();
+    eprintln!("  open the app and paste the key:");
     if let Some(url) = tunnel_url {
-        eprintln!("  \x1b[36mtunnel\x1b[0m  \x1b[1m{}\x1b[0m", url);
+        eprintln!(
+            "    {} {}  {}",
+            paint("36", "remote"),
+            paint("1", &format!("{url}/app")),
+            paint("32", "(recommended)"),
+        );
     }
-    eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
-    eprintln!("  \x1b[36mapp\x1b[0m     \x1b[2m(open in a browser and paste the key)\x1b[0m");
-    if let Some(url) = tunnel_url {
-        eprintln!("    \x1b[36mremote\x1b[0m  \x1b[1m{}/app\x1b[0m  \x1b[32m(recommended)\x1b[0m", url);
-    }
-    eprintln!("    \x1b[36mlocal\x1b[0m   \x1b[1m{}/app\x1b[0m  \x1b[2m(same machine only)\x1b[0m", local_url);
-    if tunnel_url.is_none() {
-        eprintln!();
-        eprintln!("  \x1b[33mtip:\x1b[0m run without --no-tunnel to get a remote URL");
-    }
+    eprintln!(
+        "    {} {}  {}",
+        paint("36", "local "),
+        paint("1", &format!("{local_url}/app")),
+        paint("2", "(same machine only)"),
+    );
     eprintln!();
 }
 
@@ -323,10 +446,22 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
         return;
     }
 
+    // Forced BYOK: the service runs the tunnel non-interactively, so collect the
+    // self-hoster's Cloudflare credentials HERE (while we still have a terminal),
+    // before starting it. Skipped when: a tunnel is already configured, creds
+    // already exist, or this is a managed (vesta.run) VM whose tunnel.json the
+    // control plane seeds. `--no-tunnel` is honored only in --standalone mode.
+    let config = config_dir();
+    if std::env::var("VESTA_MANAGED").is_err()
+        && tunnel::get_tunnel_config(&config).is_none()
+        && !tunnel::has_cf_creds(&config)
+    {
+        tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
+    }
+
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
 
-    let config = config_dir();
     let (tunnel_url, local_url, api_key) = read_server_info(&config);
 
     eprintln!();
@@ -341,9 +476,11 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     }
 
     eprintln!("manage with:");
-    eprintln!("  vestad status     show service status");
+    eprintln!("  vestad status     show status + your URL");
+    eprintln!("  vestad connect    connect a domain for a public URL");
     eprintln!("  vestad logs       show service logs");
     eprintln!("  vestad restart    restart the service");
+    eprintln!("  vestad update     update to the latest version");
     eprintln!("  vestad stop       stop the service");
 }
 
@@ -416,7 +553,7 @@ fn main() {
 
         Command::Restart => {
             systemd::restart().unwrap_or_else(|e| die(&e));
-            eprintln!("vestad restarted.");
+            report_restart_readiness(&config_dir());
         }
 
         Command::Shell { name } => {
@@ -426,6 +563,7 @@ fn main() {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
 
+            eprintln!("entering {name} (exit with `exit`, or detach with Ctrl-Q)…");
             // Keep the docker exec -it subprocess as-is for TTY support
             let status = std::process::Command::new("docker")
                 .args(["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"])
@@ -522,7 +660,7 @@ fn main() {
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, None, None).await
+                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, None, None, None).await
                             .unwrap_or_else(|e| die(&e));
 
                         if !docker::start_container(&docker, &cname).await {
@@ -534,16 +672,42 @@ fn main() {
             }
         },
 
+        Command::Connect => {
+            let config = config_dir();
+            // Collect the user's own Cloudflare creds, create the tunnel, then
+            // restart the running service so it picks the tunnel up.
+            let tc = tunnel::connect_interactive(&config).unwrap_or_else(|e| die(e));
+            if systemd::is_active() {
+                systemd::restart().unwrap_or_else(|e| die(&e));
+            }
+            eprintln!();
+            eprintln!(
+                "  {} your agent is live at {}",
+                paint("32", "✓"),
+                paint("1", &format!("https://{}/app", tc.hostname)),
+            );
+            eprintln!();
+        }
+
         Command::Tunnel { action } => {
             let config = config_dir();
             match action {
-                TunnelAction::Setup { subdomain } => {
-                    tunnel::setup_tunnel(&config, &subdomain)
+                TunnelAction::Setup { subdomain, json } => {
+                    let tc = tunnel::setup_tunnel(&config, &subdomain)
                         .unwrap_or_else(|e| die(e));
+                    if json {
+                        println!("{}", serde_json::json!({
+                            "tunnel_id": tc.tunnel_id,
+                            "dns_record_id": tc.dns_record_id,
+                            "hostname": tc.hostname,
+                        }));
+                    } else {
+                        eprintln!("✓ tunnel ready at https://{}", tc.hostname);
+                    }
                 }
                 TunnelAction::Destroy => {
-                    tunnel::destroy_tunnel(&config)
-                        .unwrap_or_else(|e| die(e));
+                    tunnel::destroy_tunnel(&config).unwrap_or_else(|e| die(e));
+                    eprintln!("✓ tunnel removed");
                 }
             }
         }
@@ -552,7 +716,17 @@ fn main() {
             let outcome =
                 self_update::perform_update(channel::Channel::effective()).unwrap_or_else(|e| die(e.to_string()));
             if !outcome.updated {
-                println!("vestad already at latest version (v{})", outcome.current);
+                println!("vestad already at the latest version (v{})", outcome.current);
+            } else {
+                println!("✓ updated v{} → v{}", outcome.current, outcome.latest);
+                println!(
+                    "{}",
+                    if outcome.restarted {
+                        "  service restarted on the new version."
+                    } else {
+                        "  run `vestad` to start the new version."
+                    },
+                );
             }
         }
 
@@ -612,5 +786,26 @@ fn main() {
             eprintln!("Note: Docker containers and images for agents are still intact.");
             eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_health_url_targets_http_port_plus_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("port"), "39565").expect("write port");
+        assert_eq!(
+            local_health_url(dir.path()).as_deref(),
+            Some("http://127.0.0.1:39566/health"),
+        );
+    }
+
+    #[test]
+    fn local_health_url_none_without_port_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(local_health_url(dir.path()), None);
     }
 }

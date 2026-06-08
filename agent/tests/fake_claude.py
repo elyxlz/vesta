@@ -25,6 +25,7 @@ Prompt protocol (the test controls behavior through the prompt text):
   sidechain:<text>      emit a sidechain line with <text>, then a main "done" line
   think:<text>          emit a thinking block, then a text block
   tool:<name>:<json>    PreToolUse hook + tool_use block + MCP round trip + PostToolUse
+  /compact[ <instr>]    PreCompact (trigger=manual) + isCompactSummary line + NO Stop hook
   anything else         echo the prompt back as `echo: <prompt>`
 """
 
@@ -176,6 +177,25 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
 
     if prompt == "silent":
         ctx["in_flight"] = True
+        return
+
+    if prompt.startswith("/compact"):
+        # Manual /compact: fire PreCompact (trigger=manual), write the isCompactSummary line that
+        # marks completion, and fire NO Stop hook — the exact contract cc_sdk.compact() waits on
+        # (verified against real claude v2.1.16x: manual compaction never emits Stop and rewrites
+        # the same session transcript in place).
+        instructions = prompt[len("/compact") :].strip()
+        fire_hook(ctx, "PreCompact", {"trigger": "manual", "custom_instructions": instructions})
+        write_line(
+            ctx,
+            {
+                "type": "user",
+                "isSidechain": False,
+                "isCompactSummary": True,
+                "message": {"role": "user", "content": "[compacted conversation summary]"},
+            },
+        )
+        ctx["in_flight"] = False
         return
 
     if prompt.startswith("hook:"):

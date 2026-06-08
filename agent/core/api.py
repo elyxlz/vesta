@@ -24,7 +24,7 @@ from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
 from .helpers import get_memory_path
 from .models import State
-from .provider import CREDENTIALS_PATH, set_claude, set_model, set_openrouter
+from .provider import CREDENTIALS_PATH, set_claude, set_openrouter, set_settings
 
 
 logger = logging.getLogger("vesta.api")
@@ -221,6 +221,7 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
             "state": status.state.value,
             "kind": status.kind,
             "model": status.model,
+            "max_context_tokens": status.max_context_tokens,
             # vestad gates "alive" on this: an authenticated agent that hasn't yet
             # finished first-start setup (or whose first model call failed) is not ready.
             "setup_complete": state.persisted.first_start_done,
@@ -230,9 +231,11 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
 
 async def _provider_set_handler(request: web.Request) -> web.Response:
     """Apply new provider config. Mutually exclusive body shapes:
-    - `{credentials, model?}`            -> set Claude (OAuth blob, optional model)
-    - `{openrouter_key, openrouter_model}` -> set OpenRouter (switch / refresh key)
-    - `{model}`                          -> change model only, keep current provider
+    - `{credentials, model?, max_context_tokens?}`             -> set Claude (OAuth blob)
+    - `{openrouter_key, openrouter_model, max_context_tokens?}`-> set OpenRouter
+    - `{model?, max_context_tokens?}`                          -> change model and/or
+      context window only, keeping the current provider
+    `max_context_tokens` is the context window in tokens; omit to leave it unchanged.
     Vestad orchestrates the container restart that picks up env-var changes."""
     state = request.app["state"]
     config: VestaConfig = request.app["config"]
@@ -246,15 +249,20 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
     has_creds = "credentials" in data and isinstance(data["credentials"], str)
     has_or = "openrouter_key" in data and isinstance(data["openrouter_key"], str)
     has_model = "model" in data and isinstance(data["model"], str)
+    ctx = data["max_context_tokens"] if "max_context_tokens" in data else None
+    # bool is an int subclass; reject True/False explicitly so {"max_context_tokens": true} 400s.
+    if ctx is not None and (not isinstance(ctx, int) or isinstance(ctx, bool) or ctx <= 0):
+        return web.json_response({"error": "max_context_tokens must be a positive integer"}, status=400)
+    has_ctx = ctx is not None
     if has_creds and has_or:
         return web.json_response({"error": "credentials and openrouter_key are mutually exclusive"}, status=400)
-    if not has_creds and not has_or and not has_model:
-        return web.json_response({"error": "must provide credentials, openrouter_key, or model"}, status=400)
+    if not has_creds and not has_or and not has_model and not has_ctx:
+        return web.json_response({"error": "must provide credentials, openrouter_key, model, or max_context_tokens"}, status=400)
 
     if has_creds:
         claude_model = data["model"] if has_model else None
         try:
-            state.provider_status = set_claude(data["credentials"], claude_model, config=config, persisted=state.persisted)
+            state.provider_status = set_claude(data["credentials"], claude_model, ctx, config=config, persisted=state.persisted)
         except (json.JSONDecodeError, TypeError) as e:
             return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
         except OSError as e:
@@ -263,17 +271,24 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
         if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
             return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
         try:
-            state.provider_status = set_openrouter(data["openrouter_key"], data["openrouter_model"], config=config, persisted=state.persisted)
+            state.provider_status = set_openrouter(
+                data["openrouter_key"], data["openrouter_model"], ctx, config=config, persisted=state.persisted
+            )
         except OSError as e:
             return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
     else:
-        # Model-only change: keep the current provider and any stored key.
+        # Model and/or context-window change: keep the current provider and any stored key.
         try:
-            state.provider_status = set_model(data["model"], config=config, persisted=state.persisted)
+            state.provider_status = set_settings(
+                model=data["model"] if has_model else None,
+                max_context_tokens=ctx,
+                config=config,
+                persisted=state.persisted,
+            )
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         except OSError as e:
-            return web.json_response({"error": f"set_model failed: {e}"}, status=500)
+            return web.json_response({"error": f"set_settings failed: {e}"}, status=500)
 
     return web.json_response({"ok": True})
 

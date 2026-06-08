@@ -76,6 +76,11 @@ def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:
     return AssistantMessage(content=blocks, model=model)
 
 
+def is_compact_summary(obj: dict[str, tp.Any]) -> bool:
+    """True for the transcript line claude writes when a /compact finishes (its only completion marker)."""
+    return "isCompactSummary" in obj and bool(obj["isCompactSummary"])
+
+
 def usage_from(obj: dict[str, tp.Any]) -> dict[str, tp.Any] | None:
     if not _is_main_assistant(obj):
         return None

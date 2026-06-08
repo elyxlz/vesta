@@ -14,6 +14,7 @@ from watchfiles import awatch, Change
 from . import models as vm
 from . import logger
 from . import state_store
+from .config import DEFAULT_CONTEXT_WINDOW
 from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
@@ -252,6 +253,29 @@ async def _run_messages_with_interrupts(
         raise
 
 
+async def compact_then_restart_if_requested(*, state: vm.State) -> None:
+    """If the dreamer flagged it, compact the live session at idle, then trigger the restart.
+
+    Called between turns (right after one completes) because /compact only works while the
+    session is idle. The session_id is kept, so the restart resumes the compacted conversation
+    instead of starting blank. A compaction failure is logged, not fatal: we restart regardless,
+    and resume still works on the un-compacted session."""
+    if not state.compact_then_restart or state.client is None:
+        return
+    state.compact_then_restart = False
+    logger.client("Compacting session before nightly restart...")
+    state.event_bus.set_state("thinking")
+    state.compacting = True
+    try:
+        await state.client.compact()
+    except (ClaudeSDKError, OSError, RuntimeError) as exc:
+        logger.warning(f"Compaction before restart failed: {exc} — restarting anyway")
+    finally:
+        state.compacting = False
+        state.event_bus.set_state("idle")
+    state.graceful_shutdown.set()
+
+
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
     if config.agent_provider == "openrouter":
@@ -261,7 +285,8 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                 # Cap at MAX_CONTEXT_TOKENS: cache-read cost scales with how large the
                 # cached prefix grows before autocompact, so big-window models default
                 # to a 200k working window unless the user raises the cap.
-                state.openrouter_max_tokens = min(real_window, config.max_context_tokens)
+                cap = config.max_context_tokens or DEFAULT_CONTEXT_WINDOW
+                state.openrouter_max_tokens = min(real_window, cap)
                 capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
                 logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
         if state.openrouter_proxy_url is None:
@@ -284,6 +309,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         state.processor_busy = True
                         try:
                             await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                            await compact_then_restart_if_requested(state=state)
                         finally:
                             state.processor_busy = False
                 finally:

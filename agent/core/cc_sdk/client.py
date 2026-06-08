@@ -4,7 +4,7 @@ Drop-in replacement for the official SDK client. Instead of speaking the control
 protocol to a headless subprocess, it:
 
   * launches `claude` (the real TUI) in a dedicated tmux server,
-  * submits prompts by bracketed-pasting them into the input box and pressing Enter,
+  * submits prompts by typing randomized bracketed-paste chunks and pressing Enter,
   * streams the assistant's reply by tailing the session transcript JSONL,
   * receives tool/subagent/compaction events as native command hooks routed through
     a unix-socket bridge, and exposes the agent's MCP tools via a stdio proxy,
@@ -20,6 +20,7 @@ import json
 import os
 import pathlib as pl
 import shlex
+import shutil
 import sys
 import tempfile
 import time
@@ -41,7 +42,15 @@ _EXIT_MARKER = "__CC_EXIT__:"
 _STARTUP_TIMEOUT_S = 120.0
 _POLL_S = 0.15
 _POST_STOP_DRAIN_S = 2.5
-_ALWAYS_EVENTS = ("SessionStart", "Stop")
+# Manual /compact fires PreCompact but never a Stop hook, and the summarization request
+# between them can run for tens of seconds with no transcript writes — so completion is the
+# isCompactSummary transcript line, not quiescence. Both waits are deliberately generous: the
+# nightly restart that drives compact() is not latency sensitive, and a full day-sized context
+# summarizes slowly. Erring long only costs a wait before restarting if compaction truly hangs;
+# erring short would abandon a still-running compaction and restart on the un-compacted session.
+_COMPACT_START_TIMEOUT_S = 60.0
+_COMPACT_TIMEOUT_S = 900.0
+_ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
 _DEFAULT_MAX_TOKENS = 200_000
 _BETA_1M = "context-1m-2025-08-07"
 
@@ -136,6 +145,7 @@ class ClaudeSDKClient:
         self._exit_code: int | None = None
         self._stderr_read = 0
         self._ready = asyncio.Event()
+        self._compaction_started = asyncio.Event()
         self._monitor_task: asyncio.Task[None] | None = None
 
     # --- public API ---
@@ -214,9 +224,7 @@ class ClaudeSDKClient:
             self._offset = 0
         self._turn_index += 1
         self._turn_started = time.monotonic()
-        await tmux.paste_text(self._tmux_socket, self._tmux_session, prompt)
-        await asyncio.sleep(0.1)
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Enter")
+        await tmux.submit_text(self._tmux_socket, self._tmux_session, prompt)
 
     async def receive_response(self) -> tp.AsyncIterator[tp.Any]:
         if self._transcript_path is None:
@@ -243,7 +251,7 @@ class ClaudeSDKClient:
         # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
         # where a lone Escape let generation run to completion). Sending Escape twice
         # flushes the first as a real Escape keypress and reliably interrupts.
-        await tmux.send_keys(self._tmux_socket, self._tmux_session, "Escape", "Escape")
+        await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
         # An interrupted turn never fires its Stop hook (verified: no late Stop arrives
         # either), so account for the abandoned turn here. Without this, every turn after
         # an interrupt waits for a Stop count that can never be reached and hangs.
@@ -253,15 +261,54 @@ class ClaudeSDKClient:
         usage = self._last_usage or {}
         keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
         total = sum(usage[k] for k in keys if k in usage and isinstance(usage[k], int))
-        # Don't assume the 1M beta took effect (it is silently ignored on some auth modes).
-        # Stay on the conservative 200k ceiling until usage actually exceeds it — which can
-        # only happen if the larger window is really active — so the overflow warning in
-        # diagnostics.log_context_usage still fires near the real limit instead of never.
-        max_tokens = _DEFAULT_MAX_TOKENS
-        if _BETA_1M in self._options.betas and total > _DEFAULT_MAX_TOKENS:
-            max_tokens = 1_000_000
+        configured = self._options.max_context_tokens
+        if configured:
+            # The user pinned a window; report usage against exactly that.
+            max_tokens = configured
+        else:
+            # Don't assume the 1M beta took effect (it is silently ignored on some auth modes).
+            # Stay on the conservative 200k ceiling until usage actually exceeds it — which can
+            # only happen if the larger window is really active — so the overflow warning in
+            # diagnostics.log_context_usage still fires near the real limit instead of never.
+            max_tokens = _DEFAULT_MAX_TOKENS
+            if _BETA_1M in self._options.betas and total > _DEFAULT_MAX_TOKENS:
+                max_tokens = 1_000_000
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
+
+    async def compact(self, instructions: str = "") -> None:
+        """Compact the conversation in place via `/compact` and wait for it to finish.
+
+        Manual /compact rewrites the SAME session transcript (resume keeps working) and never
+        fires a Stop hook, so this does NOT touch the turn/Stop accounting query() relies on.
+        It waits for PreCompact (compaction began), then for the isCompactSummary transcript
+        line (compaction finished) — not for quiescence, since the summarization request can
+        leave the transcript silent for tens of seconds mid-compaction. Both waits are bounded;
+        on timeout it logs and returns so a caller that compacts-then-restarts still proceeds."""
+        if self._transcript_path is None:
+            self._transcript_path = self._find_transcript()
+        cursor = self._transcript_path.stat().st_size if self._transcript_path and self._transcript_path.exists() else 0
+        command = f"/compact {instructions}".strip()
+        self._compaction_started.clear()
+        await tmux.submit_text(self._tmux_socket, self._tmux_session, command)
+        try:
+            await asyncio.wait_for(self._compaction_started.wait(), _COMPACT_START_TIMEOUT_S)
+        except TimeoutError:
+            self._log("compact: PreCompact never fired — nothing to compact")
+            return
+        if self._transcript_path is None:
+            self._log("compact: no transcript to watch for the summary")
+            return
+        deadline = time.monotonic() + _COMPACT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if self._exit_code is not None:
+                raise ClaudeSDKError(f"claude exited during compaction (code {self._exit_code})\n{self._stderr_tail()}")
+            objects, cursor = transcript.read_new_objects(self._transcript_path, cursor)
+            if any(transcript.is_compact_summary(obj) for obj in objects):
+                self._log("compact: summary written")
+                return
+            await asyncio.sleep(_POLL_S)
+        self._log("compact: timed out waiting for the compaction summary")
 
     # --- internals ---
 
@@ -274,8 +321,12 @@ class ClaudeSDKClient:
         async def on_stop(payload: dict[str, tp.Any]) -> None:
             self._stops_received += 1
 
+        async def on_precompact(payload: dict[str, tp.Any]) -> None:
+            self._compaction_started.set()
+
         self._bridge.on("SessionStart", on_session_start)
         self._bridge.on("Stop", on_stop)
+        self._bridge.on("PreCompact", on_precompact)
 
     def _hook_events(self) -> list[str]:
         events = {str(e) for e in self._options.hooks}
@@ -321,6 +372,11 @@ class ClaudeSDKClient:
             (self._workdir / "mcp.json").write_text(json.dumps(mcp))
 
     async def _launch(self) -> None:
+        # tmux is a hard dependency: the session runs the claude TUI inside a private tmux
+        # server. Fail loudly with the fix instead of a bare FileNotFoundError raised deep in
+        # tmux.py when the binary is missing (e.g. a container rebuilt from a pre-tmux snapshot).
+        if shutil.which("tmux") is None:
+            raise RuntimeError("cc_sdk requires tmux on $PATH; install it (e.g. `apt-get install -y tmux`)")
         sysprompt_file = self._workdir / "system_prompt.txt"
         settings_file = self._workdir / "settings.json"
         mcp_file = self._workdir / "mcp.json" if self._bridge.tools else None

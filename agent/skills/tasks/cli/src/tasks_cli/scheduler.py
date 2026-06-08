@@ -21,6 +21,12 @@ def create_scheduler() -> BackgroundScheduler:
     )
 
 
+_REARM_HINT = (
+    "Tip: if no action is taken on this reminder, rearm it for a later date"
+    " via `tasks remind delete {rid}` followed by a new `tasks remind ... --at ...`."
+)
+
+
 def write_reminder_notification(
     notif_dir: Path,
     reminder_id: str,
@@ -35,10 +41,12 @@ def write_reminder_notification(
 
     notif_dir.mkdir(exist_ok=True)
 
+    full_message = f"{message}\n{_REARM_HINT.format(rid=reminder_id)}"
+
     notif = {
         "source": "tasks",
         "type": "reminder",
-        "message": message,
+        "message": full_message,
         "reminder_id": reminder_id,
         "task_id": task_id,
         **(extra or {}),

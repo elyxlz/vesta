@@ -6,8 +6,28 @@ agent process environment.
 """
 
 import asyncio
+import random
 
 _TMUX = "tmux"
+_BRACKETED_PASTE_START = "\x1b[200~"
+_BRACKETED_PASTE_END = "\x1b[201~"
+_SHORT_TEXT_CHARS = 240
+_LONG_TEXT_CHARS = 1000
+_PASTE_TEXT_CHARS = 1000
+_TYPE_SHORT_CHUNK_MIN = 8
+_TYPE_SHORT_CHUNK_MAX = 32
+_TYPE_MEDIUM_CHUNK_MIN = 32
+_TYPE_MEDIUM_CHUNK_MAX = 96
+_TYPE_LONG_CHUNK_MIN = 96
+_TYPE_LONG_CHUNK_MAX = 256
+_TYPE_DELAY_MIN_S = 0.0005
+_TYPE_DELAY_MAX_S = 0.003
+_TYPE_PUNCTUATION_DELAY_MAX_S = 0.008
+_SUBMIT_DELAY_MIN_S = 0.015
+_SUBMIT_DELAY_MAX_S = 0.055
+_DOUBLE_ESCAPE_DELAY_MIN_S = 0.015
+_DOUBLE_ESCAPE_DELAY_MAX_S = 0.045
+_TYPE_PAUSE_AFTER = frozenset(".!?,;:\n")
 
 
 async def _run(socket: str, *args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
@@ -33,6 +53,52 @@ async def start_session(socket: str, name: str, *, cwd: str, command: str, width
 
 async def send_keys(socket: str, name: str, *keys: str) -> None:
     await _run(socket, "send-keys", "-t", name, *keys)
+
+
+async def send_literal(socket: str, name: str, text: str) -> None:
+    await _run(socket, "send-keys", "-t", name, "-l", "--", text)
+
+
+def _chunk_bounds(text_len: int) -> tuple[int, int]:
+    if text_len > _LONG_TEXT_CHARS:
+        return _TYPE_LONG_CHUNK_MIN, _TYPE_LONG_CHUNK_MAX
+    if text_len > _SHORT_TEXT_CHARS:
+        return _TYPE_MEDIUM_CHUNK_MIN, _TYPE_MEDIUM_CHUNK_MAX
+    return _TYPE_SHORT_CHUNK_MIN, _TYPE_SHORT_CHUNK_MAX
+
+
+async def type_text(socket: str, name: str, text: str) -> None:
+    """Type `text` into the pane in randomized literal bursts without submitting."""
+    await send_literal(socket, name, _BRACKETED_PASTE_START)
+    index = 0
+    chunk_min, chunk_max = _chunk_bounds(len(text))
+    while index < len(text):
+        remaining = len(text) - index
+        chunk_len = random.randint(min(chunk_min, remaining), min(chunk_max, remaining))
+        chunk = text[index : index + chunk_len]
+        await send_literal(socket, name, chunk)
+        index += chunk_len
+        if index < len(text):
+            delay = random.uniform(_TYPE_DELAY_MIN_S, _TYPE_DELAY_MAX_S)
+            if chunk[-1] in _TYPE_PAUSE_AFTER:
+                delay += random.uniform(0.0, _TYPE_PUNCTUATION_DELAY_MAX_S)
+            await asyncio.sleep(delay)
+    await send_literal(socket, name, _BRACKETED_PASTE_END)
+
+
+async def submit_text(socket: str, name: str, text: str) -> None:
+    if len(text) > _PASTE_TEXT_CHARS:
+        await paste_text(socket, name, text)
+    else:
+        await type_text(socket, name, text)
+    await asyncio.sleep(random.uniform(_SUBMIT_DELAY_MIN_S, _SUBMIT_DELAY_MAX_S))
+    await send_keys(socket, name, "Enter")
+
+
+async def send_double_escape(socket: str, name: str) -> None:
+    await send_keys(socket, name, "Escape")
+    await asyncio.sleep(random.uniform(_DOUBLE_ESCAPE_DELAY_MIN_S, _DOUBLE_ESCAPE_DELAY_MAX_S))
+    await send_keys(socket, name, "Escape")
 
 
 async def paste_text(socket: str, name: str, text: str) -> None:

@@ -62,6 +62,9 @@ const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
   },
 };
 
+// LEGACY-CLEANUP(#726): remove this map (and its use in extractTags / color
+// lookup) once the minimum supported agent emits the hierarchical
+// family/subfamily log format instead of these old flat tags.
 const LEGACY_TAG_TO_FAMILY: Record<string, string> = {
   ASSISTANT: "AGENT",
   THINKING: "AGENT",
