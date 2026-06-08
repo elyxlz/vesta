@@ -54,6 +54,7 @@ type WhatsAppClient struct {
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
 	connectMutex      sync.Mutex
+	connRecoverOnce   sync.Once
 	staleDetectorDone chan struct{}
 	transcribeSem     chan struct{} // limits concurrent audio transcriptions
 }
@@ -216,6 +217,32 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 	}
 
 	return fmt.Errorf("WhatsApp is not connected. Ensure WhatsApp is authenticated and connected")
+}
+
+// recoverOrRestart handles connection-fatal events that whatsmeow does not
+// auto-recover from: StreamReplaced disables auto-reconnect by design, and a
+// StreamError or a high-count KeepAliveTimeout means the socket is dead. It
+// tries one active reconnect; if that fails the daemon is alive but deaf
+// (receiving nothing, not reconnecting), so it writes the daemon_died marker
+// the agent watches for and exits, letting the supervisor start a fresh
+// session. Without this the process silently drops every inbound message until
+// a manual restart. Runs in its own goroutine so EnsureConnected's retry loop
+// does not block the whatsmeow event dispatcher.
+func (wac *WhatsAppClient) recoverOrRestart(reason string) {
+	wac.logger.Warnf("Connection-fatal event (%s); attempting reconnect", reason)
+	if err := wac.EnsureConnected(); err == nil {
+		wac.logger.Infof("Reconnected after %s", reason)
+		return
+	}
+	wac.connRecoverOnce.Do(func() {
+		wac.logger.Errorf("Reconnect failed after %s; writing death marker and exiting for restart", reason)
+		if wac.notificationsDir != "" {
+			writeDeathNotification(wac.notificationsDir, "connection_lost:"+reason)
+		}
+		// Best-effort exit. The unix socket is removed by startSocketServer on
+		// the next daemon boot, so skipping the deferred socket cleanup is safe.
+		os.Exit(1)
+	})
 }
 
 func (wac *WhatsAppClient) EnsureOnline() error {
