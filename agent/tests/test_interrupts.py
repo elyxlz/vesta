@@ -333,11 +333,13 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
-    """When client.interrupt() times out, attempt_interrupt SIGTERMs the process, then force-exits.
+async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
+    """When client.interrupt() times out with no tool in flight, attempt_interrupt warns and
+    returns False instead of SIGTERMing the process.
 
-    Mirrors the os._exit-patching style of test_run_vesta_force_exits_on_hung_cleanup: the
-    supervised-restart model depends on the container actually exiting when the SDK is wedged."""
+    The 5s timeout fires more often during heavy thinking than during a real hang, so a
+    false-positive must not kill the whole container; the diagnostics watchdog owns the
+    genuinely-stuck-idle SIGTERM path (see issue #737)."""
     from core.client import attempt_interrupt
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
@@ -356,7 +358,6 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
 
     kills: list[tuple[int, int]] = []
     exits: list[int] = []
-    slept: list[float] = []
 
     def fake_kill(pid, sig):
         kills.append((pid, sig))
@@ -364,30 +365,51 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
     def fake_exit(code):
         exits.append(code)
 
-    async def fake_sleep(seconds):
-        slept.append(seconds)
-
     with (
         patch("core.client.os.kill", fake_kill),
         patch("core.client.os._exit", fake_exit),
-        patch("core.client.asyncio.sleep", fake_sleep),
     ):
-        await attempt_interrupt(state, config=config, reason="hung SDK")
+        result = await attempt_interrupt(state, config=config, reason="hung SDK")
 
-    import os as _os
-    import signal as _signal
+    assert result is False, "a timed-out interrupt with no tool in flight must report failure, not success"
+    assert kills == [], f"timed-out interrupt must not SIGTERM the process, got {kills}"
+    assert exits == [], f"timed-out interrupt must not force-exit, got {exits}"
 
-    assert kills == [(_os.getpid(), _signal.SIGTERM)], f"expected one SIGTERM to our own pid, got {kills}"
-    assert exits == [1], f"expected os._exit(1), got {exits}"
-    assert 10 in slept, "the 10s grace sleep before hard exit must be awaited (patched, not real)"
-
-    errors: list[str] = []
+    events: list[str] = []
     while not queue.empty():
         event = queue.get_nowait()
         if event["type"] == "error":
-            errors.append(event["text"])
-    assert len(errors) == 1, f"unresponsive SDK must emit exactly one error event before SIGTERM, got {errors}"
-    assert "SDK unresponsive" in errors[0]
+            events.append(event["text"])
+    assert len(events) == 1, f"a timed-out interrupt must surface exactly one event, got {events}"
+    assert "SDK interrupt timed out" in events[0]
+    state.event_bus.close()
+
+
+@pytest.mark.anyio
+async def test_attempt_interrupt_skips_while_tool_in_flight(tmp_path):
+    """While a tool is executing, attempt_interrupt is a no-op: the SDK is doing real work and a
+    5s timeout against it would be a false-positive interrupt (see issue #737)."""
+    from core.client import attempt_interrupt
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="ls", started_at=0.0)
+
+    interrupted = False
+
+    async def interrupt():
+        nonlocal interrupted
+        interrupted = True
+
+    mock_client = MagicMock()
+    mock_client.interrupt = interrupt
+    state.client = mock_client
+
+    result = await attempt_interrupt(state, config=config, reason="notification")
+
+    assert result is False, "skipping the interrupt must report failure"
+    assert interrupted is False, "client.interrupt() must not be called while a tool is in flight"
     state.event_bus.close()
 
 

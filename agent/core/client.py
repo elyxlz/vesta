@@ -84,7 +84,9 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         diag = diagnostics.format_hang_diagnostics(state)
         msg = f"SDK interrupt timed out (no tool in flight) | reason={reason} | {diag}"
         logger.warning(msg)
-        state.event_bus.emit({"type": "warning", "text": msg})
+        # The event bus has no "warning" severity; like log_context_usage's warning-band
+        # crossing (diagnostics.py), surface warn-level conditions as an "error" event.
+        state.event_bus.emit({"type": "error", "text": msg})
         return False
     except (OSError, RuntimeError) as e:
         diag = diagnostics.format_hang_diagnostics(state)
