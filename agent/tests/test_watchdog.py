@@ -122,6 +122,7 @@ async def test_watchdog_warns_at_thresholds():
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle for 65s
+    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
     stop = asyncio.Event()
     warnings: list[str] = []
 
@@ -159,6 +160,7 @@ async def test_watchdog_resets_after_activity_resumes():
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle
+    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
     stop = asyncio.Event()
     warnings: list[str] = []
 
@@ -220,6 +222,7 @@ async def test_watchdog_emits_error_event_once_per_threshold(tmp_path):
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
     state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
+    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
     stop = asyncio.Event()
     seen: list[tp.Any] = []
 
@@ -245,6 +248,58 @@ async def test_watchdog_emits_error_event_once_per_threshold(tmp_path):
         await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_some_polls())
 
     assert len(sixty_events()) == 1, f"expected exactly one 60s error event, got {sixty_events()}"
+    state.event_bus.close()
+
+
+@pytest.mark.anyio
+async def test_watchdog_stays_quiet_when_idle_between_turns(tmp_path):
+    """No turn in flight + a live subprocess means silence is benign: log at debug, emit no error event."""
+    from unittest.mock import patch as _patch
+
+    import core.diagnostics as diagnostics_mod
+
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
+    state.interrupt_event = None  # No turn in flight
+    stop = asyncio.Event()
+    warnings: list[str] = []
+
+    original_warning = diagnostics_mod.logger.warning
+
+    def capture_warning(msg):
+        warnings.append(str(msg))
+
+    diagnostics_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
+        return await original_wait_for(coro, timeout=0.01)
+
+    def error_events() -> list[tp.Any]:
+        events: list[tp.Any] = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if event["type"] == "error" and "SDK silent" in event["text"]:
+                events.append(event)
+        return events
+
+    try:
+
+        async def let_several_polls_run():
+            for _ in range(5):
+                await asyncio.sleep(0.02)
+            stop.set()
+
+        with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+            await asyncio.gather(sdk_watchdog(state, stop=stop), let_several_polls_run())
+    finally:
+        diagnostics_mod.logger.warning = original_warning
+
+    assert not [w for w in warnings if "SDK silent" in w], f"expected no warnings while idle between turns, got {warnings}"
+    assert error_events() == [], f"expected no error events while idle between turns, got {error_events()}"
     state.event_bus.close()
 
 
