@@ -69,7 +69,7 @@
   },
   {
     "name": "onboard",
-    "description": "Use when someone who doesn't yet have their own vesta asks what this is or how to get one. Walks them through signup end to end \u2014 explains the product, collects email + subdomain + plan and how they want it set up (name, personality, starting skills), sends a Stripe checkout link, then hands off to the web app and the desktop/mobile installers. Never asks for card details (Stripe handles payment). Do NOT use to onboard the owner (they already have one)."
+    "description": "Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY: you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) set them up end-to-end IN CHAT: verify their email by a code they read back, confirm they have a paid Claude account, agree a price, send a private Stripe link, then once they've paid create their agent and connect their Claude (an auth link + a code they paste back), and only then hand them the app to talk to it. Never asks for card details. Do NOT use on the owner (they already have one)."
   },
   {
     "name": "onedrive",
