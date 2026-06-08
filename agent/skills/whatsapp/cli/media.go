@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,27 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
+
+// extractDirectPath returns the URL path + query (no host) so callers can
+// populate the DirectPath proto field. whatsmeow >= 2026-06-04 only consults
+// DirectPath in Client.Download (URL alone returns ErrNoURLPresent), and its
+// DownloadMediaWithPath appends "&hash=…&mms-type=…" directly to directPath,
+// so the query string from the original URL (including the CDN signing
+// params ccb/oh/oe/_nc_sid) must be preserved. Returns "" if rawURL is
+// empty or unparseable.
+func extractDirectPath(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if u.RawQuery != "" {
+		return u.Path + "?" + u.RawQuery
+	}
+	return u.Path
+}
 
 func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath string) (string, error) {
 	if messageID == "" {
@@ -31,29 +53,35 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 		return "", err
 	}
 
+	directPath := extractDirectPath(mediaInfo.URL)
+
 	var downloadable whatsmeow.DownloadableMessage
 	switch mediaInfo.MediaType {
 	case MediaTypeImage:
 		downloadable = &waProto.ImageMessage{
-			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
+			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeVideo:
 		downloadable = &waProto.VideoMessage{
-			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
+			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeAudio:
 		downloadable = &waProto.AudioMessage{
-			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
+			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeDocument:
 		downloadable = &waProto.DocumentMessage{
-			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
+			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
