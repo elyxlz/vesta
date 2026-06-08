@@ -57,6 +57,8 @@ type WhatsAppClient struct {
 	connRecoverOnce   sync.Once
 	staleDetectorDone chan struct{}
 	transcribeSem     chan struct{} // limits concurrent audio transcriptions
+	readQueueMu       sync.Mutex
+	readQueue         map[string]*chatReadBatch // keyed by chatJID|senderJID; coalesces read receipts in order
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders, interruptSenders map[string]bool, interruptExplicit, noInterrupt bool, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -114,6 +116,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		messageSenders:    make(map[string]string),
 		authStatus:        AuthStatusNotAuthenticated,
 		transcribeSem:     make(chan struct{}, MaxConcurrentTranscriptions),
+		readQueue:         make(map[string]*chatReadBatch),
 	}
 
 	client.AddEventHandler(wac.eventHandler)
