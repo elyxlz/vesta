@@ -1,15 +1,31 @@
-import type { RefObject } from "react";
+import { forwardRef, useMemo, type RefObject } from "react";
+import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
+import {
+  buildDecorated,
+  useStableFirstItemIndex,
+  type DecoratedRow,
+} from "./virtual";
+
+interface ChatListContext {
+  isTyping: boolean;
+  hasMore: boolean;
+  hasMessages: boolean;
+  fullscreen?: boolean;
+  navbarHeight: number;
+  connected: boolean;
+  agentName: string;
+  isMobile: boolean;
+}
 
 interface ChatMessageAreaProps {
-  scrollRef: RefObject<HTMLDivElement | null>;
-  bottomRef: RefObject<HTMLDivElement | null>;
-  onScroll: () => void;
+  virtuosoRef: RefObject<VirtuosoHandle | null>;
+  onStartReached: () => void;
+  onAtBottomStateChange: (atBottom: boolean) => void;
   fullscreen?: boolean;
   navbarHeight: number;
   loadingMore: boolean;
@@ -18,12 +34,84 @@ interface ChatMessageAreaProps {
   connected: boolean;
   agentName: string;
   isTyping: boolean;
+  isMobile: boolean;
 }
 
+const Scroller: Components<DecoratedRow, ChatListContext>["Scroller"] =
+  forwardRef(function Scroller({ context, style, ...props }, ref) {
+    const fullscreen = context?.fullscreen;
+    const navbarHeight = context?.navbarHeight ?? 0;
+    return (
+      <div
+        {...props}
+        ref={ref}
+        className="px-4"
+        style={{
+          ...style,
+          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+        }}
+      />
+    );
+  });
+
+function Header({ context }: { context?: ChatListContext }) {
+  if (!context) return null;
+  const paddingTop = context.fullscreen
+    ? `calc(${context.navbarHeight}px + 1rem)`
+    : 32;
+  return (
+    <div style={{ paddingTop }}>
+      {!context.hasMore && context.hasMessages && (
+        <div className="flex justify-center py-3">
+          <span className="text-[11px] text-muted-foreground/40">
+            beginning of conversation
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Footer({ context }: { context?: ChatListContext }) {
+  return (
+    <div className="pb-4">
+      {context?.isTyping && (
+        <div className="flex justify-start mt-2">
+          <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
+            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
+            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
+            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyPlaceholder({ context }: { context?: ChatListContext }) {
+  if (!context) return null;
+  return (
+    <div className="flex flex-col items-center gap-2 py-2">
+      <span className="text-xs text-muted-foreground">
+        {context.connected
+          ? `${context.agentName} is setting things up`
+          : "connecting..."}
+      </span>
+    </div>
+  );
+}
+
+const components: Components<DecoratedRow, ChatListContext> = {
+  Scroller,
+  Header,
+  Footer,
+  EmptyPlaceholder,
+};
+
 export function ChatMessageArea({
-  scrollRef,
-  bottomRef,
-  onScroll,
+  virtuosoRef,
+  onStartReached,
+  onAtBottomStateChange,
   fullscreen,
   navbarHeight,
   loadingMore,
@@ -32,7 +120,34 @@ export function ChatMessageArea({
   connected,
   agentName,
   isTyping,
+  isMobile,
 }: ChatMessageAreaProps) {
+  const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
+  const firstItemIndex = useStableFirstItemIndex(decorated);
+
+  const context = useMemo<ChatListContext>(
+    () => ({
+      isTyping,
+      hasMore,
+      hasMessages: decorated.length > 0,
+      fullscreen,
+      navbarHeight,
+      connected,
+      agentName,
+      isMobile,
+    }),
+    [
+      isTyping,
+      hasMore,
+      decorated.length,
+      fullscreen,
+      navbarHeight,
+      connected,
+      agentName,
+      isMobile,
+    ],
+  );
+
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
       <AnimatePresence>
@@ -53,99 +168,41 @@ export function ChatMessageArea({
           </motion.div>
         )}
       </AnimatePresence>
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4 px-4"
-        style={{
-          paddingTop: fullscreen ? `calc(${navbarHeight}px + 1rem)` : 32,
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
-        }}
-      >
-        <div ref={bottomRef} className="h-px shrink-0" />
-        {isTyping && (
-          <div className="flex justify-start mt-2">
-            <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
-            </div>
+      <Virtuoso<DecoratedRow, ChatListContext>
+        ref={virtuosoRef}
+        className="h-full"
+        data={decorated}
+        context={context}
+        components={components}
+        firstItemIndex={firstItemIndex}
+        computeItemKey={(_index, row) => row.key}
+        alignToBottom
+        followOutput={(atBottom) => (atBottom ? "smooth" : false)}
+        initialTopMostItemIndex={{ index: "LAST", align: "end" }}
+        startReached={onStartReached}
+        atBottomStateChange={onAtBottomStateChange}
+        atBottomThreshold={48}
+        increaseViewportBy={{ top: 600, bottom: 200 }}
+        itemContent={(_index, row, ctx) => (
+          <div className="flex flex-col">
+            {row.showDayStamp && row.dayLabel && (
+              <div
+                className={cn("flex justify-center", !row.isFirst && "mt-5")}
+              >
+                <span className="text-[11px] text-muted-foreground/60 select-none">
+                  {row.dayLabel}
+                </span>
+              </div>
+            )}
+            <ChatBubble
+              event={row.event}
+              className={row.gap}
+              fullscreen={ctx.fullscreen}
+              isMobile={ctx.isMobile}
+            />
           </div>
         )}
-        <div>
-          {chatMessages.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-2">
-              <span className="text-xs text-muted-foreground">
-                {connected
-                  ? `${agentName} is setting things up`
-                  : "connecting..."}
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col">
-              {(() => {
-                let lastDayKey: string | null = null;
-                return chatMessages.map((msg, i) => {
-                  const prev = chatMessages[i - 1];
-                  const dayKey = calendarDayKey(msg.ts);
-                  const showDayStamp = Boolean(
-                    dayKey && (lastDayKey === null || dayKey !== lastDayKey),
-                  );
-                  if (dayKey) lastDayKey = dayKey;
-                  const isTool = msg.type === "tool_start";
-                  const prevIsTool = prev?.type === "tool_start";
-                  const gap = showDayStamp
-                    ? "mt-2"
-                    : i === 0
-                      ? ""
-                      : isTool && prevIsTool
-                        ? "mt-1"
-                        : isTool || prevIsTool
-                          ? "mt-2"
-                          : prev && prev.type === msg.type
-                            ? "mt-1.5"
-                            : "mt-5";
-                  const dayLabel =
-                    showDayStamp && msg.ts
-                      ? formatChatDayStampLabel(msg.ts)
-                      : "";
-                  return (
-                    <div
-                      key={msg.ts ? `${msg.ts}-${msg.type}` : `idx-${i}`}
-                      className="flex flex-col"
-                    >
-                      {showDayStamp && dayLabel && (
-                        <div
-                          className={cn(
-                            "flex justify-center",
-                            i > 0 ? "mt-5" : "",
-                          )}
-                        >
-                          <span className="text-[11px] text-muted-foreground/60 select-none">
-                            {dayLabel}
-                          </span>
-                        </div>
-                      )}
-                      <ChatBubble
-                        event={msg}
-                        className={gap}
-                        fullscreen={fullscreen}
-                      />
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
-        </div>
-        {!hasMore && chatMessages.length > 0 && (
-          <div className="flex justify-center py-3">
-            <span className="text-[11px] text-muted-foreground/40">
-              beginning of conversation
-            </span>
-          </div>
-        )}
-      </div>
+      />
     </CardContent>
   );
 }

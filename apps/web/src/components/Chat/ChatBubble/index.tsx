@@ -1,19 +1,20 @@
-import { useIsMobile } from "@/hooks/use-mobile";
+import { memo } from "react";
 import { Markdown } from "@/lib/markdown";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ToolCallLabel } from "../ToolCallLabel";
 
-export function ChatBubble({
+export const ChatBubble = memo(function ChatBubble({
   event,
   className,
   fullscreen,
+  isMobile,
 }: {
   event: VestaEvent;
   className?: string;
   fullscreen?: boolean;
+  isMobile: boolean;
 }) {
-  const isMobile = useIsMobile();
   if (event.type === "history" || event.type === "status") return null;
 
   const ts = event.ts
@@ -87,4 +88,4 @@ export function ChatBubble({
       </div>
     </div>
   );
-}
+});

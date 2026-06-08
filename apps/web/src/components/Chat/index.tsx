@@ -7,6 +7,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
+import type { VirtuosoHandle } from "react-virtuoso";
 import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
@@ -60,8 +61,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const [wasConnected, setWasConnected] = useState(false);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomVisibleRef = useRef(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
@@ -70,21 +70,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   useEffect(() => {
     if (connected) setWasConnected(true);
   }, [connected]);
-
-  useEffect(() => {
-    const el = bottomRef.current;
-    const root = scrollRef.current;
-    if (!el || !root) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        bottomVisibleRef.current = entry.isIntersecting;
-        if (entry.isIntersecting) setHasNewMessage(false);
-      },
-      { root, threshold: 0 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   const chatMessages = useMemo(
     () =>
@@ -113,28 +98,17 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   }, [chatMessages]);
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !hasMore || loadingMore) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      loadMore();
-    }
-  }, [chatMessages, hasMore, loadingMore, loadMore]);
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const distanceFromTop = el.scrollHeight - el.clientHeight + el.scrollTop;
-    if (distanceFromTop < 100 && hasMore && !loadingMore) {
-      loadMore();
-    }
+  const handleStartReached = useCallback(() => {
+    if (hasMore && !loadingMore) loadMore();
   }, [hasMore, loadingMore, loadMore]);
 
+  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+    bottomVisibleRef.current = atBottom;
+    if (atBottom) setHasNewMessage(false);
+  }, []);
+
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: 0, behavior: "smooth" });
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
   }, []);
 
   const handleSend = () => {
@@ -190,9 +164,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         />
 
         <ChatMessageArea
-          scrollRef={scrollRef}
-          bottomRef={bottomRef}
-          onScroll={handleScroll}
+          virtuosoRef={virtuosoRef}
+          onStartReached={handleStartReached}
+          onAtBottomStateChange={handleAtBottomChange}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
@@ -201,6 +175,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           connected={connected}
           agentName={name}
           isTyping={isTyping}
+          isMobile={isMobile}
         />
 
         <div className="relative">
