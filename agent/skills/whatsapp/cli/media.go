@@ -60,28 +60,28 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 	case MediaTypeImage:
 		downloadable = &waProto.ImageMessage{
 			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
-			MediaKey: mediaInfo.MediaKey,
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeVideo:
 		downloadable = &waProto.VideoMessage{
 			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
-			MediaKey: mediaInfo.MediaKey,
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeAudio:
 		downloadable = &waProto.AudioMessage{
 			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
-			MediaKey: mediaInfo.MediaKey,
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
 	case MediaTypeDocument:
 		downloadable = &waProto.DocumentMessage{
 			URL: proto.String(mediaInfo.URL), DirectPath: proto.String(directPath),
-			MediaKey: mediaInfo.MediaKey,
+			MediaKey:   mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
