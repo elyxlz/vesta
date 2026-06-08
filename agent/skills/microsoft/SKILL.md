@@ -13,14 +13,14 @@ description: Outlook email, inbox, calendar, meetings, events via Microsoft. Req
 Every email and calendar command runs over one of two paths, chosen with
 `--backend {auto,graph,owa}` (default `auto`):
 
-- **`graph`** — the official Microsoft Graph API (`graph.microsoft.com`). The
+- **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
   clean, supported path.
-- **`owa`** — a reverse-engineered fallback that speaks Exchange Web Services
+- **`owa`**: a reverse-engineered fallback that speaks Exchange Web Services
   (EWS) over the same endpoint Outlook on the web uses, authenticated with a
   bearer token from the first-party "Microsoft Office" client. It exists for
   locked-down tenants where Graph is unavailable because of permissions
   (third-party apps blocked, Graph disabled, a missing delegated scope).
-- **`auto`** (default) — try Graph; on a permission failure (401/403, a missing
+- **`auto`** (default): try Graph; on a permission failure (401/403, a missing
   scope, or no usable Graph token) transparently fall back to OWA/EWS. Any other
   error propagates unchanged, so the fallback never hides real bugs.
 

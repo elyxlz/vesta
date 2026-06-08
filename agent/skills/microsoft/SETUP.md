@@ -3,7 +3,7 @@
 ## No Azure app required (default)
 
 By default the skill uses the first-party "Microsoft Office" public client, so it
-works with **zero Azure setup** — just install, authenticate, and go. This is also
+works with **zero Azure setup**: just install, authenticate, and go. This is also
 what makes the reverse-engineered OWA fallback usable on locked-down company
 tenants (see "Two backends" in SKILL.md). Skip to step 4.
 
