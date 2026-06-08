@@ -84,10 +84,19 @@ async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
                 alive = _check_sdk_subprocess_alive(state)
                 alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
                 diag = format_hang_diagnostics(state)
-                logger.warning(f"SDK silent for {threshold}s | {alive_str} | {diag}")
-                # One event per threshold crossing (warned_at gates re-emit), so a multi-minute
-                # hang reaches the observability surface without spamming the stream every poll.
-                state.event_bus.emit({"type": "error", "text": f"SDK silent for {threshold}s | {alive_str} | {diag}"})
+                msg = f"SDK silent for {threshold}s | {alive_str} | {diag}"
+                # Only escalate when something is actually wrong: a turn is in flight
+                # (so silence = stalled processing) OR the alive check returned False
+                # (verified subprocess death). Otherwise the SDK is just idle between
+                # turns; log at debug so quiet stretches don't spam the warning stream.
+                turn_in_flight = state.interrupt_event is not None
+                if turn_in_flight or alive is False:
+                    logger.warning(msg)
+                    # One event per threshold crossing (warned_at gates re-emit), so a multi-minute
+                    # hang reaches the observability surface without spamming the stream every poll.
+                    state.event_bus.emit({"type": "error", "text": msg})
+                else:
+                    logger.debug(msg)
         if idle < _WATCHDOG_THRESHOLDS_S[0]:
             warned_at.clear()
 
