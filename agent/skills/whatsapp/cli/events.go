@@ -33,10 +33,15 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		wac.presenceMutex.Unlock()
 	case *events.KeepAliveTimeout:
 		wac.logger.Warnf("WhatsApp keep-alive timeout: error_count=%d, last_success=%s", v.ErrorCount, v.LastSuccess.Format(time.RFC3339))
+		if v.ErrorCount >= KeepAliveRestartThreshold {
+			go wac.recoverOrRestart(fmt.Sprintf("keepalive_timeout:error_count=%d", v.ErrorCount))
+		}
 	case *events.StreamReplaced:
-		wac.logger.Warnf("WhatsApp stream replaced — another connection took over this session")
+		wac.logger.Warnf("WhatsApp stream replaced; another connection took over this session")
+		go wac.recoverOrRestart("stream_replaced")
 	case *events.StreamError:
 		wac.logger.Errorf("WhatsApp stream error: code=%s", v.Code)
+		go wac.recoverOrRestart("stream_error:" + v.Code)
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
 		wac.initiateReauth()
