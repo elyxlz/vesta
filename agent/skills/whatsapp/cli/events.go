@@ -169,32 +169,73 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		WriteNotification(notifCtx, info.ID, content, mediaType, isForwarded, quotedMessageID, quotedText)
 	}
 
-	// Delayed read receipt
+	// Delayed read receipt, coalesced per chat+sender so receipts never go out
+	// of order (see enqueueReadReceipt).
 	if !info.IsFromMe && !wac.readOnly && wac.client.IsConnected() {
-		msgID := info.ID
-		chatJID := info.Chat
-		senderJID := info.Sender
-		go wac.sendReadReceiptDelayed(msgID, chatJID, senderJID, content)
+		wac.enqueueReadReceipt(info.ID, info.Chat, info.Sender, content)
 	}
 }
 
-func (wac *WhatsAppClient) sendReadReceiptDelayed(msgID string, chatJID, senderJID types.JID, content string) {
-	time.Sleep(humanDelay(ReadDelayBase, ReadDelayPerChar, len(content), ReadDelayMax))
+// chatReadBatch accumulates the unread messages from one sender in one chat
+// that are waiting for their human-delayed read receipt.
+type chatReadBatch struct {
+	chatJID types.JID
+	sender  types.JID
+	msgIDs  []types.MessageID
+	maxLen  int // longest content in the batch, drives the human read delay
+	timer   *time.Timer
+}
+
+// enqueueReadReceipt schedules a read receipt for an inbound message. Receipts
+// are coalesced per (chat, sender): all messages that arrive before the timer
+// fires are marked read together, in arrival order, in a single MarkRead. This
+// makes it impossible to mark a later message read before an earlier one (the
+// old per-message goroutine raced because each had an independent random
+// delay), and means a daemon crash leaves the whole batch unread rather than
+// acking some messages but not earlier ones.
+func (wac *WhatsAppClient) enqueueReadReceipt(msgID string, chatJID, senderJID types.JID, content string) {
+	key := chatJID.String() + "|" + senderJID.String()
+
+	wac.readQueueMu.Lock()
+	defer wac.readQueueMu.Unlock()
+
+	batch, ok := wac.readQueue[key]
+	if !ok {
+		batch = &chatReadBatch{chatJID: chatJID, sender: senderJID}
+		wac.readQueue[key] = batch
+	}
+	batch.msgIDs = append(batch.msgIDs, types.MessageID(msgID))
+	if len(content) > batch.maxLen {
+		batch.maxLen = len(content)
+	}
+	if batch.timer == nil {
+		delay := humanDelay(ReadDelayBase, ReadDelayPerChar, batch.maxLen, ReadDelayMax)
+		batch.timer = time.AfterFunc(delay, func() { wac.flushReadReceipt(key) })
+	}
+}
+
+func (wac *WhatsAppClient) flushReadReceipt(key string) {
+	wac.readQueueMu.Lock()
+	batch := wac.readQueue[key]
+	delete(wac.readQueue, key)
+	wac.readQueueMu.Unlock()
+	if batch == nil || len(batch.msgIDs) == 0 {
+		return
+	}
 
 	if err := wac.EnsureOnline(); err != nil {
 		wac.logger.Warnf("Failed to set online status for read receipt: %v", err)
 		return
 	}
 
-	err := wac.client.MarkRead(
+	if err := wac.client.MarkRead(
 		context.Background(),
-		[]types.MessageID{msgID},
+		batch.msgIDs,
 		time.Now(),
-		chatJID,
-		senderJID,
+		batch.chatJID,
+		batch.sender,
 		types.ReceiptTypeRead,
-	)
-	if err != nil {
+	); err != nil {
 		wac.logger.Warnf("Failed to send read receipt: %v", err)
 	}
 }

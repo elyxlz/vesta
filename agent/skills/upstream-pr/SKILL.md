@@ -20,7 +20,7 @@ Three gates before opening a worktree.
 Never file: personal config, memory files, credentials, user-specific customizations.
 
 **2. Issue, PR, or both?**
-- You have a fix: **PR + issue**. (Reference issue in the PR with 'fixes' or 'closes' terminology)
+- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `pr.py --body "...fixes #N"` is enough.
 - You don't have a fix yet: **issue only**.
 
 **3. Strip personal information.** Upstream is public; the user must not be identifiable. No names, contact details, private context, or specifics tied to the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
