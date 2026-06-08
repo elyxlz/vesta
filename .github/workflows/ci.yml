@@ -358,8 +358,8 @@ jobs:
           command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh integration
 
       # Flakiness must be visible, not silently absorbed by the retry: surface every
-      # multi-attempt run as a warning annotation + job summary. The nightly workflow
-      # runs this suite with NO retry, so genuine flakes fail there.
+      # multi-attempt run as a warning annotation + job summary so a masked race or
+      # Docker flake still gets noticed.
       - name: Report flaky test retries
         if: always() && steps.integration.outputs.total_attempts > 1
         run: |

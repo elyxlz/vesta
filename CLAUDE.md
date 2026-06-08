@@ -142,8 +142,6 @@ Docker-based jobs (integration tests, vestad Docker unit tests, live tests) buil
 
 A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` secret **only on the release event** (not PRs — it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
 
-A nightly workflow (`nightly.yml`, 03:30 UTC) runs every suite plus the Docker tests with **no retry wrapper**, so flaky tests surface there; failures open or update an issue labeled `nightly-failure`.
-
 ## Karpathy Guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes, derived from [Andrej Karpathy's observations](https://x.com/karpathy/status/2015883857489522876) on LLM coding pitfalls.
@@ -237,5 +235,5 @@ Reconciled rubric for this system. Where canonical architecture advice fights Ve
 - **DAMP over DRY; no logic in example tests.** No computed expected values or conditionals. The sanctioned exception is hypothesis property tests (`test_property.py`).
 - **Beyonce rule, mapped to suites.** Crash recovery / resume -> `test_crash_recovery.py`; interrupts / compaction deferral -> `test_interrupts.py`; notification batching -> `test_notifications.py`; backup/restore and ports -> vestad tests; skill-index freshness -> CI. If you do not want it to break, it has a test.
 - **Coverage is a diagnostic, never a gate.** Do not add a coverage threshold. A line is tested only when a behavioral assertion exercises it.
-- **Red is stop-the-line.** A failing main branch or `check.sh` suite is reverted or fixed forward immediately. Flaky tests surface in `nightly.yml` (no retry); quarantine or fix, do not blanket-rerun.
+- **Red is stop-the-line.** A failing main branch or `check.sh` suite is reverted or fixed forward immediately. When a flaky test surfaces (e.g. the integration suite needs a retry), quarantine or fix it, do not blanket-rerun.
 - **Reliability is tested, not assumed.** Every finite timeout, capped retry (`retry_import_pipeline`), single-shot session-resume guard, cancellation path, and `finally`-block resource release has behavioral coverage.
