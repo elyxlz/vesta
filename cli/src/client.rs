@@ -762,12 +762,22 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
     let port = parsed.port_or_known_default().unwrap_or(443);
     let tcp = std::net::TcpStream::connect((host, port))
         .map_err(|e| format!("ws tcp connect failed: {e}"))?;
-    tcp.set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
-        .map_err(|e| format!("failed to set read timeout: {e}"))?;
+    // The read timeout is for the chat read loop (so socket.read() returns to poll typed input),
+    // not the handshake. Applying it before client_tls_with_config kills the blocking TLS+WS
+    // handshake over any non-local link (e.g. a cloudflare tunnel): a handshake read that exceeds
+    // CHAT_READ_TIMEOUT_MS returns WouldBlock and tungstenite aborts with "Interrupted handshake".
+    // So hand the handshake a timeout-free socket, then set the timeout via a clone (the dup'd fd
+    // shares the same kernel socket, so SO_RCVTIMEO applies to the moved-in stream too).
+    let timeout_handle = tcp
+        .try_clone()
+        .map_err(|e| format!("failed to clone ws socket: {e}"))?;
     let connector =
         tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
         .map_err(|e| format!("ws connect failed: {e}"))?;
+    timeout_handle
+        .set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
+        .map_err(|e| format!("failed to set read timeout: {e}"))?;
     Ok(socket)
 }
 
@@ -934,6 +944,30 @@ mod tests {
         // so the reconnect loop can keep retrying.
         let err = connect_chat_socket(&test_client(), "wss://127.0.0.1:1/agents/x/ws?token=tok").unwrap_err();
         assert!(err.contains("ws tcp connect failed") || err.contains("ws connect failed"), "got: {err}");
+    }
+
+    #[test]
+    fn connect_chat_socket_survives_a_slow_handshake() {
+        // Regression: the chat read-loop timeout (CHAT_READ_TIMEOUT_MS) must not be applied to the
+        // socket until *after* the handshake. A server slower than that timeout (here a cloudflare
+        // tunnel's worth of latency, simulated) used to make the handshake read return WouldBlock,
+        // surfacing as "ws connect failed: Interrupted handshake (WouldBlock)".
+        let handshake_delay = Duration::from_millis(CHAT_READ_TIMEOUT_MS * 3);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            // Stall before reading/answering the upgrade, longer than the read-loop timeout.
+            std::thread::sleep(handshake_delay);
+            // tungstenite drives the server side of the handshake (correct Sec-WebSocket-Accept).
+            let _ws = tungstenite::accept(stream).expect("server handshake");
+            std::thread::sleep(Duration::from_millis(50));
+        });
+
+        let url = format!("ws://127.0.0.1:{port}/agents/x/ws?token=tok");
+        let socket = connect_chat_socket(&test_client(), &url).expect("handshake should survive a slow server");
+        drop(socket);
+        server.join().expect("server thread");
     }
 
     #[test]
