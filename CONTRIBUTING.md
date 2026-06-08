@@ -1,15 +1,16 @@
-# AGENTS.md
+# Contributing to Vesta
 
-Operating standards for any agent writing code in this repo: build/test commands, code
-conventions, the testing strategy, CI behavior, the PR process, and the Karpathy Guidelines
-that govern *how* you make changes. **Follow these on every change.** For how the system is
-built and the design principles behind these standards, see **[`CLAUDE.md`](./CLAUDE.md)**
-(architecture + Architecture Principles); for install/setup, see [`README.md`](./README.md).
+This is your guide, agent, to working in this repo and contributing changes: the project
+layout, the commands you run, the code conventions you follow, the testing strategy, how CI
+works, how you open PRs, and the Karpathy Guidelines that govern *how* you make changes.
+**Follow these on every change.** For how the system is built and the design principles
+behind these standards, see **[`CLAUDE.md`](./CLAUDE.md)** (architecture + Architecture
+Principles); for install/setup, see [`README.md`](./README.md).
 
 > **Two files, one source of truth.** `CLAUDE.md` (auto-loaded) covers architecture and
-> principles. `AGENTS.md` (this file) covers the concrete working rules and is imported into
-> `CLAUDE.md` via `@AGENTS.md`, so it loads every session. Neither duplicates the other —
-> they cross-link.
+> principles. `CONTRIBUTING.md` (this file) covers the concrete working rules and is imported
+> into `CLAUDE.md` via `@CONTRIBUTING.md`, so it loads every session. Neither duplicates the
+> other — they cross-link.
 
 ## Karpathy Guidelines
 

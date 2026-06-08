@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 It focuses on **how this system is built and the principles that govern it**. The concrete
 working rules — build/test commands, per-language code conventions, CI, and the PR
-process — live in **[`AGENTS.md`](./AGENTS.md)**, the authoritative standards doc every
+process — live in **[`CONTRIBUTING.md`](./CONTRIBUTING.md)**, the authoritative standards doc every
 agent follows. Read it before writing or shipping code.
 
 ## Project Overview
@@ -38,19 +38,19 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Auth**: vestad generates an API key at `~/.config/vesta/vestad/api-key` (clients use `Bearer` token or `?token=` query param). Each agent gets a unique `AGENT_TOKEN` for agent-to-vestad auth via `X-Agent-Token` header. TLS uses self-signed certs with fingerprint verification (no CA chain).
 
-**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are loaded natively by Claude Code (via `setting_sources` + the skill directories). `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change (see [`AGENTS.md`](./AGENTS.md)).
+**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are loaded natively by Claude Code (via `setting_sources` + the skill directories). `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change (see [`CONTRIBUTING.md`](./CONTRIBUTING.md)).
 
 **Backup/restore**: each backup is a `restic` snapshot in a single deduplicated, compressed, encrypted repository at `~/.config/vesta/vestad/restic-repo` (passphrase at `~/.config/vesta/vestad/restic-password`). A snapshot is `docker export <container>` streamed into `restic backup --stdin`, tagged `agent:<name>` + `type:<backup_type>`; restore is `restic dump | docker import` into a fresh container. Because restic deduplicates, retaining many snapshots of a multi-GB agent costs roughly one full copy plus per-run diffs (the old `docker export|import` model wrote an independent full image per backup, which filled the host disk). `restic` is located on PATH or extracted from a copy embedded into the vestad binary at build time (`build.rs` vendors it into `vestad/vendored/`, `src/restic_embed.rs` bakes it in, `src/restic.rs` extracts it — same mechanism as cloudflared). Retention (3 daily, 2 weekly, 1 monthly default) is computed in `compute_backups_to_delete` and applied via `restic forget --prune`. The separate `vestad backup export/import` file path (`.tar.gz` via `docker export`) is unchanged and used for cross-machine transfer. All `~/agent/` state (events.db, session_id) survives backup/restore.
 
 ## Contributing & standards
 
 Build and test commands, per-language code conventions, CI behavior, the testing
-strategy, and the PR process are documented in **[`AGENTS.md`](./AGENTS.md)**,
+strategy, and the PR process are documented in **[`CONTRIBUTING.md`](./CONTRIBUTING.md)**,
 imported below so its standards are always loaded. Treat it as binding on every change.
 
-@AGENTS.md
+@CONTRIBUTING.md
 
-The Karpathy Guidelines (in [`AGENTS.md`](./AGENTS.md#karpathy-guidelines), imported above) and the Architecture Principles below govern *how* to apply those standards.
+The Karpathy Guidelines (in [`CONTRIBUTING.md`](./CONTRIBUTING.md#karpathy-guidelines), imported above) and the Architecture Principles below govern *how* to apply those standards.
 
 ## Architecture Principles
 
@@ -69,4 +69,4 @@ Reconciled rubric for this system. Where canonical architecture advice fights Ve
 - **Simplicity and surgical changes (Karpathy).** Solve only today's problem, no speculative flexibility for a single caller; match surrounding style, do not refactor adjacent working code, remove only the orphans your change created.
 - **Comments explain why.** Reserve them for non-obvious mechanics (cc_sdk double-Escape, the watchfiles local-stop bridge, the circular dreamer window).
 
-**Conflicts resolved (our design wins):** circuit breakers, per-dependency bulkhead pools, load-shed 429s, and golden-signal dashboards are skipped: Vesta is a single-tenant personal daemon where timeout + capped-retry + supervised-restart already bound blast radius. Formal ADR/C4 docs and SCA/SLSA supply-chain ceremony are replaced by CLAUDE.md plus AGENTS.md plus the memory feedback files as the in-repo decision record. Port/adapter interface objects are replaced by explicit-config-passing because Python is intentionally class-free.
+**Conflicts resolved (our design wins):** circuit breakers, per-dependency bulkhead pools, load-shed 429s, and golden-signal dashboards are skipped: Vesta is a single-tenant personal daemon where timeout + capped-retry + supervised-restart already bound blast radius. Formal ADR/C4 docs and SCA/SLSA supply-chain ceremony are replaced by CLAUDE.md plus CONTRIBUTING.md plus the memory feedback files as the in-repo decision record. Port/adapter interface objects are replaced by explicit-config-passing because Python is intentionally class-free.
