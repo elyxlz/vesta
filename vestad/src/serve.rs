@@ -253,17 +253,11 @@ async fn health() -> Json<serde_json::Value> {
 
 // Unauthenticated: lets apps/web tell a hosted (vesta.run) VM from a self-hosted
 // one, since both get `*.vesta.run` tunnels and the URL alone can't distinguish.
-// Sourced from the cloud-init env: VESTA_MANAGED ("1" => managed), plus optional
-// VESTA_SERVER_ID / VESTA_LOGIN_URL.
+// Managed boxes set VESTA_MANAGED=1 via the control plane's cloud-init; the app
+// uses this single bit to surface the hosted account/billing page.
 async fn info() -> Json<serde_json::Value> {
     let managed = std::env::var("VESTA_MANAGED").as_deref() == Ok("1");
-    let server_id = std::env::var("VESTA_SERVER_ID").ok();
-    let login_url = std::env::var("VESTA_LOGIN_URL").ok();
-    Json(serde_json::json!({
-        "managed": managed,
-        "server_id": server_id,
-        "login_url": login_url,
-    }))
+    Json(serde_json::json!({ "managed": managed }))
 }
 
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {

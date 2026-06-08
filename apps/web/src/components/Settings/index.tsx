@@ -6,6 +6,8 @@ import {
   Monitor,
   LogOut,
   RefreshCw,
+  CreditCard,
+  ExternalLink,
 } from "lucide-react";
 import {
   Dialog,
@@ -35,6 +37,11 @@ import {
 } from "@/components/ui/field";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useAppMode, type AppMode } from "@/stores/use-app-mode";
+import { openExternalUrl } from "@/lib/open-external-url";
+
+// Hosted (managed) boxes are always under vesta.run; the account + billing page
+// lives on the control plane. Self-hosted boxes never reach this.
+const ACCOUNT_URL = "https://vesta.run/account";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -51,6 +58,7 @@ export function SettingsDialog({
   const { disconnect } = useAuth();
   const {
     reachable,
+    managed,
     gatewayVersion,
     gatewayBranch,
     gatewayChannel,
@@ -240,6 +248,17 @@ export function SettingsDialog({
                 Disconnect
               </Button>
             </div>
+            {reachable && managed && (
+              <Button
+                variant="secondary"
+                className="mt-3 w-full justify-start"
+                onClick={() => openExternalUrl(ACCOUNT_URL)}
+              >
+                <CreditCard data-icon="inline-start" />
+                Manage account &amp; billing
+                <ExternalLink data-icon="inline-end" className="ml-auto" />
+              </Button>
+            )}
             {reachable && (
               <Field
                 orientation="horizontal"
