@@ -11,6 +11,7 @@ import { getConnection } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
+import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
   GatewayVersionInfo,
@@ -52,6 +53,10 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
 const VERSION_POLL_MS = 60000;
+
+// Brief grace before the disconnect overlay appears, so quick WS blips and the
+// gap between the initial version fetch and the first socket open don't flash it.
+const DISCONNECT_GRACE_MS = 750;
 
 interface GatewayContextValue {
   reachable: boolean;
@@ -112,6 +117,10 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
+  const [lastConnectAttempt, setLastConnectAttempt] = useState<number | null>(
+    null,
+  );
+  const [showDisconnected, setShowDisconnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [connectEpoch, setConnectEpoch] = useState(0);
@@ -151,6 +160,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
     const doConnect = async () => {
       if (cancelled) return;
+      setLastConnectAttempt(Date.now());
 
       await ensureFreshToken();
 
@@ -261,6 +271,22 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     };
   }, [reachable]);
 
+  // Surface a blocking overlay once the gateway has been unreachable past a
+  // brief grace period, and dismiss it the moment it reconnects. The grace
+  // avoids flashing on quick reconnects and during initial connect, where
+  // `reachable` is false until the first socket opens.
+  useEffect(() => {
+    if (loading || reachable) {
+      setShowDisconnected(false);
+      return;
+    }
+    const timer = setTimeout(
+      () => setShowDisconnected(true),
+      DISCONNECT_GRACE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [loading, reachable]);
+
   const send = (event: object): boolean => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -297,6 +323,9 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         />
       ) : (
         children
+      )}
+      {showDisconnected && (
+        <DisconnectedOverlay lastAttempt={lastConnectAttempt} />
       )}
     </GatewayContext.Provider>
   );
