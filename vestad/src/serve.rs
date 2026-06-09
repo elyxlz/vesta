@@ -253,11 +253,36 @@ async fn health() -> Json<serde_json::Value> {
 
 // Unauthenticated: lets apps/web tell a hosted (vesta.run) VM from a self-hosted
 // one, since both get `*.vesta.run` tunnels and the URL alone can't distinguish.
-// Managed boxes set VESTA_MANAGED=1 via the control plane's cloud-init; the app
-// uses this single bit to surface the hosted account/billing page.
+// Managed boxes are gated by VESTA_CLOUD_MANAGED (legacy VESTA_MANAGED still
+// honored) via the control plane's cloud-init; the app uses this single bit to
+// surface the hosted account/billing page.
 async fn info() -> Json<serde_json::Value> {
-    let managed = std::env::var("VESTA_MANAGED").as_deref() == Ok("1");
-    Json(serde_json::json!({ "managed": managed }))
+    Json(serde_json::json!({ "managed": crate::is_cloud_managed() }))
+}
+
+/// `POST /agents/{name}/account-token` — mint a short-lived server-identity token
+/// for the on-box agent (issue #20).
+///
+/// Agent-token authenticated (the agent proves itself with its `X-Agent-Token`);
+/// vestad then signs `{ sub: SERVER_ID, typ: "server-identity" }` with its
+/// `api_key` and hands it back. The agent carries this to the control plane's
+/// `/api/account/*` to read its plan or open a billing portal. vestad makes NO
+/// network call — it only signs locally; the agent does the talking. The
+/// `api_key` never enters the agent container, only this 10-minute token does.
+async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
+    if !crate::is_cloud_managed() {
+        return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
+    }
+    let Ok(server_id) = std::env::var("SERVER_ID") else {
+        // Managed but SERVER_ID not seeded — an older cloud-init. Nothing to mint.
+        return err_response(StatusCode::NOT_FOUND, "no server identity available").into_response();
+    };
+    let token = crate::jwt::create_server_identity_token(&state.api_key, &server_id);
+    Json(serde_json::json!({
+        "token": token,
+        "expires_in": crate::jwt::SERVER_IDENTITY_TTL,
+    }))
+    .into_response()
 }
 
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
@@ -2064,11 +2089,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
         .with_state(state.clone());
 
-    // Service registry: mutating endpoints require agent token
+    // Service registry: mutating endpoints require agent token. The
+    // account-token mint (issue #20) rides the same agent-token tier: the agent
+    // proves itself, vestad signs a server-identity token locally and returns it.
     let agents_services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
+        .route("/agents/{name}/account-token", post(account_token_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_agent_token,

@@ -4,6 +4,10 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "account",
+    "description": "Use when the OWNER asks about their Vesta hosting plan, billing, subscription, or account. Triggers like \"what plan am I on\", \"how much am I paying\", \"when does it renew\", \"upgrade my plan\", \"cancel my account\", \"change my card\", \"manage my billing\". Reads the plan directly, and for any change (upgrade, cancel, payment) hands back a secure link the owner opens to confirm. Hosted (vesta.run) boxes only; a self-hosted box has no plan. NOT for buying a new vesta for someone else (that is `onboard`), and NOT for paying a third-party invoice (that is `stripe-pay`)."
+  },
+  {
     "name": "agentmail",
     "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently."
   },

@@ -187,6 +187,20 @@ fn config_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| die("couldn't find your home directory ($HOME) — vestad stores its config there"))
 }
 
+/// True iff this VM is managed by the vesta-cloud control plane.
+///
+/// `VESTA_CLOUD_MANAGED` is the canonical gate (set by the control plane's
+/// cloud-init drop-in); `VESTA_MANAGED` is the legacy name still present on VMs
+/// provisioned before the rename. We accept BOTH so a box that self-updates to
+/// this binary keeps its managed tunnel + server-identity behavior regardless of
+/// which name its drop-in carries. This single bit gates ALL vesta-cloud
+/// integration (managed tunnel, the `/info` managed flag, the account-token
+/// endpoint).
+pub fn is_cloud_managed() -> bool {
+    std::env::var("VESTA_CLOUD_MANAGED").as_deref() == Ok("1")
+        || std::env::var("VESTA_MANAGED").as_deref() == Ok("1")
+}
+
 const RESTART_LOCAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const RESTART_TUNNEL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 const RESTART_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -452,7 +466,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     // already exist, or this is a managed (vesta.run) VM whose tunnel.json the
     // control plane seeds. `--no-tunnel` is honored only in --standalone mode.
     let config = config_dir();
-    if std::env::var("VESTA_MANAGED").is_err()
+    if !is_cloud_managed()
         && tunnel::get_tunnel_config(&config).is_none()
         && !tunnel::has_cf_creds(&config)
     {

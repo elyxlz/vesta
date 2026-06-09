@@ -145,6 +145,28 @@ jobs:
           uv run python agent/skills/generate-index.py
           git diff --exit-code agent/skills/index.json || (echo "skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" && exit 1)
 
+  # ── New default skill must ship a migration ───────────────────────────
+  # A skill added to default-skills.txt ships on FRESH vestas (Docker build),
+  # but EXISTING vestas only converge via the prompt-migration runner. This
+  # guard fails a PR that adds a default skill without a `skills-install <name>`
+  # migration, so existing boxes never silently miss it.
+  default-skill-migration-check:
+    needs: detect-changes
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check default-skills additions have migrations
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 scripts/check-default-skill-migrations.py "origin/${{ github.base_ref }}"
+
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
     needs: detect-changes
@@ -1227,6 +1249,7 @@ jobs:
     needs:
       - version-check
       - skills-index-check
+      - default-skill-migration-check
       - agent-tests
       - lockfile
       - go-checks
