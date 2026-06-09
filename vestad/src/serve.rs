@@ -138,6 +138,10 @@ pub struct AppState {
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
+    /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
+    /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
+    /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
+    pub(crate) refresh_live: Mutex<HashMap<String, crate::auth::RefreshFamily>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
@@ -157,11 +161,16 @@ pub struct AppState {
 impl AppState {
     fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool, https_port: u16) -> Self {
         let settings = load_settings();
+        // Restore the refresh-token registry from disk (dropping expired families)
+        // so a restart/self-update doesn't log everyone out. Read before `env_config`
+        // is moved into the struct below.
+        let refresh_live = crate::auth::load_refresh_live(&env_config.config_dir);
         Self {
             api_key,
             env_config,
             docker,
             auth_sessions: Mutex::new(HashMap::new()),
+            refresh_live: Mutex::new(refresh_live),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
@@ -2023,6 +2032,11 @@ pub fn build_router(state: SharedState) -> Router {
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
     let vestad_protected_timed = Router::new()
+        // Hosted (vesta.run) login upgrade: the native app arrives with a control-
+        // plane-minted ACCESS token (verified by auth_middleware) and exchanges it
+        // for a registered, rotating refresh token — so the box never mints a
+        // refresh token for an unauthenticated caller.
+        .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/version", get(version))
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
