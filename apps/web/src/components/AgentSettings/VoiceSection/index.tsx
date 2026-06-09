@@ -615,57 +615,57 @@ function VoicePicker({
             const selected = opt.value === selectedId;
             const playing = playingId === opt.value;
             return (
-              <button
-                key={opt.value}
-                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${
-                  selected
-                    ? "bg-primary/10 ring-1 ring-primary/30"
-                    : "hover:bg-muted"
-                }`}
-                onClick={() => select(opt)}
-              >
-                <div
-                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+              <div key={opt.value} className="group relative">
+                <button
+                  className={`flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer w-full ${
                     selected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
+                      ? "bg-primary/10 ring-1 ring-ring"
+                      : "hover:bg-muted"
                   }`}
+                  onClick={() => select(opt)}
+                  aria-pressed={selected}
                 >
-                  {opt.label[0]}
-                  {opt.preview && (
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      aria-label={playing ? "Stop preview" : "Play preview"}
-                      className="absolute inset-0 size-full rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        playPreview(opt);
-                      }}
-                    >
-                      {playing ? (
-                        <Square className="size-3 text-white" />
-                      ) : (
-                        <Play className="size-3 text-white ml-0.5" />
-                      )}
+                  <div
+                    className={`size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+                      selected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {opt.label[0]}
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight text-center truncate max-w-full ${
+                      selected
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </span>
+                  {typeof opt.description === "string" && opt.description && (
+                    <span className="text-[11px] leading-tight text-center text-muted-foreground truncate max-w-full">
+                      {opt.description}
                     </span>
                   )}
-                </div>
-                <span
-                  className={`text-[10px] leading-tight text-center truncate max-w-full ${
-                    selected
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {opt.label}
-                </span>
-                {typeof opt.description === "string" && opt.description && (
-                  <span className="text-[9px] leading-tight text-center text-muted-foreground/60 truncate max-w-full">
-                    {opt.description}
-                  </span>
+                </button>
+                {opt.preview && (
+                  <button
+                    aria-label={playing ? "Stop preview" : "Play preview"}
+                    className="absolute top-2 left-1/2 -translate-x-1/2 size-9 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playPreview(opt);
+                    }}
+                  >
+                    {playing ? (
+                      <Square className="size-3 text-white" />
+                    ) : (
+                      <Play className="size-3 text-white ml-0.5" />
+                    )}
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>

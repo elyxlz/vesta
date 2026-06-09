@@ -114,6 +114,7 @@ export function ChatComposer({
               aria-label="send message"
               disabled={!connected}
               onClick={onSend}
+              className="size-11 [&_svg]:size-4"
             >
               <SendHorizontal />
             </InputGroupButton>

@@ -22,13 +22,16 @@ function Pagination() {
       {Array.from({ length: totalPages }, (_, i) => (
         <motion.button
           key={i}
-          className={"size-1.5 rounded-full bg-muted-foreground"}
+          aria-label={`page ${i + 1}`}
+          className={"p-2 rounded-full"}
           animate={{
             opacity: currentPage === i ? 1 : 0.3,
             scale: currentPage === i ? 1.4 : 1,
           }}
           onClick={() => gotoPage(i)}
-        />
+        >
+          <span className="block size-1.5 rounded-full bg-muted-foreground" />
+        </motion.button>
       ))}
     </div>
   );

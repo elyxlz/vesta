@@ -120,7 +120,7 @@ const Scroller: Components<LogLine, ConsoleContext>["Scroller"] = forwardRef(
 );
 
 function ReconnectingNotice() {
-  return <div className="text-center text-[#444] py-2">— reconnecting —</div>;
+  return <div className="text-center text-white/70 py-2">— reconnecting —</div>;
 }
 
 function Footer({ context }: { context?: ConsoleContext }) {
@@ -137,7 +137,7 @@ function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
         <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
         <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
       </div>
-      <span className="text-xs text-[#666]">streaming logs...</span>
+      <span className="text-xs text-white/70">streaming logs...</span>
     </div>
   );
 }
