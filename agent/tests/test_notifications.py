@@ -244,7 +244,7 @@ def test_format_for_display_strips_timestamp_microseconds():
     [
         (
             {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"},
-            "whatsapp send --to 'Alice'",
+            "Reply using the `whatsapp` skill",
         ),
         (
             {
@@ -255,15 +255,15 @@ def test_format_for_display_strips_timestamp_microseconds():
                 "sender": "bob",
                 "message": "hi",
             },
-            "whatsapp send --to 'Group'",
+            "Reply using the `whatsapp` skill",
         ),
         (
             {"timestamp": "2025-01-01T00:00:00", "source": "telegram", "type": "message", "contact_name": "Carol", "message": "hi"},
-            "telegram send 'Carol'",
+            "Reply using the `telegram` skill",
         ),
         (
             {"timestamp": "2025-01-01T00:00:00", "source": "app-chat", "type": "message", "message": "hi"},
-            "app-chat send --message",
+            "Reply using the `app-chat` skill",
         ),
     ],
     ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
@@ -271,14 +271,14 @@ def test_format_for_display_strips_timestamp_microseconds():
 def test_batch_includes_reply_hint(payload, expected_substr):
     notif = vm.Notification.model_validate(payload)
     formatted = format_notification_batch([notif])
-    assert "→ Reply with:" in formatted
+    assert "→ Reply using" in formatted
     assert expected_substr in formatted
 
 
 def test_batch_no_hint_for_unknown_source():
     notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     formatted = format_notification_batch([notif])
-    assert "→ Reply with:" not in formatted
+    assert "→ Reply using" not in formatted
 
 
 def test_batch_no_hint_for_non_message_type():
@@ -286,7 +286,7 @@ def test_batch_no_hint_for_non_message_type():
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
     )
     formatted = format_notification_batch([notif])
-    assert "→ Reply with:" not in formatted
+    assert "→ Reply using" not in formatted
 
 
 # --- load_new_notifications ---

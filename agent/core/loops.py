@@ -70,25 +70,14 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
         pl.Path(path_str).unlink(missing_ok=True)
 
 
+_REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
+
+
 def _reply_hint(notif: vm.Notification) -> str:
-    """Inline command hint so the model invokes the reply skill instead of forgetting."""
-    if notif.type != "message":
+    """Point the model at the originating channel's reply skill instead of copying its CLI syntax."""
+    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return ""
-    if notif.source == "app-chat":
-        return "\n→ Reply with: `app-chat send --message '...'`"
-    if notif.source in ("whatsapp", "telegram"):
-        data = notif.model_dump(exclude={"file_path", "type", "source", "interrupt", "timestamp"})
-        recipient = None
-        for key in ("chat_name", "contact_name"):
-            if key in data and data[key]:
-                recipient = data[key]
-                break
-        if not recipient:
-            return ""
-        if notif.source == "whatsapp":
-            return f"\n→ Reply with: `whatsapp send --to '{recipient}' --message '...'`"
-        return f"\n→ Reply with: `telegram send '{recipient}' '...'`"
-    return ""
+    return f"\n→ Reply using the `{notif.source}` skill."
 
 
 def _format_one(notif: vm.Notification) -> str:
