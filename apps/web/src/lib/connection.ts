@@ -51,12 +51,6 @@ function readFromLocalStorage(): ConnectionConfig | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // LEGACY-CLEANUP(#726): drop this branch once pre-token (apiKey) installs are
-    // assumed cleared; it discards the old auth format so it can't be misread.
-    if (parsed.apiKey && !parsed.accessToken) {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
     if (parsed.url && parsed.accessToken && parsed.refreshToken) return parsed;
     return null;
   } catch {
