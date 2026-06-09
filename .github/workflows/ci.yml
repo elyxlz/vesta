@@ -19,6 +19,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   NSIS_VERSION: "3.11"
+  # Harden cargo against transient crates.io registry flakes (sporadic
+  # "curl failed" / partial downloads). Retry network ops well past the
+  # default of 3, and disable HTTP/2 multiplexing, whose connection reuse is
+  # the usual trigger for those mid-download curl errors on CI runners.
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
