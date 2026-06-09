@@ -25,14 +25,6 @@ export const ChatBubble = memo(function ChatBubble({
       })
     : "";
 
-  if (event.type === "error") {
-    return (
-      <div className={cn("flex justify-center px-4 py-1", className)}>
-        <span className="text-xs text-destructive">{event.text}</span>
-      </div>
-    );
-  }
-
   if (event.type === "tool_start") {
     return (
       <ToolCallLabel

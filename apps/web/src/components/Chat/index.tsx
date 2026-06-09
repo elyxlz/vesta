@@ -77,7 +77,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         (m) =>
           m.type === "user" ||
           m.type === "chat" ||
-          m.type === "error" ||
           (showToolCalls &&
             m.type === "tool_start" &&
             !(m.tool === "Bash" && m.input.includes("app-chat"))),
