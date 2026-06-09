@@ -395,6 +395,24 @@ impl Client {
         }
     }
 
+    pub fn get_auto_update(&self) -> Result<bool, String> {
+        let resp = self.get("/settings/auto-update")?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value.get("auto_update").and_then(|v| v.as_bool()) {
+            Some(enabled) => Ok(enabled),
+            None => Err("response missing auto_update".into()),
+        }
+    }
+
+    pub fn set_auto_update(&self, enabled: bool) -> Result<bool, String> {
+        let resp = self.put_json("/settings/auto-update", &serde_json::json!({ "auto_update": enabled }))?;
+        let value: serde_json::Value = read_json(resp)?;
+        match value.get("auto_update").and_then(|v| v.as_bool()) {
+            Some(enabled) => Ok(enabled),
+            None => Err("response missing auto_update".into()),
+        }
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         read_json(resp)

@@ -65,6 +65,7 @@ interface GatewayContextValue {
   gatewayVersion: string;
   gatewayBranch: string | null;
   gatewayChannel: ReleaseChannel;
+  gatewayAutoUpdate: boolean;
   gatewayPort: number;
   versionChecked: boolean;
   updateAvailable: boolean;
@@ -84,6 +85,7 @@ const disconnectedValue: GatewayContextValue = {
   gatewayVersion: "",
   gatewayBranch: null,
   gatewayChannel: "stable",
+  gatewayAutoUpdate: true,
   gatewayPort: 0,
   versionChecked: true,
   updateAvailable: false,
@@ -110,6 +112,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
   const [gatewayChannel, setGatewayChannel] =
     useState<ReleaseChannel>("stable");
+  const [gatewayAutoUpdate, setGatewayAutoUpdate] = useState(true);
   const [gatewayPort, setGatewayPort] = useState(0);
 
   const [versionChecked, setVersionChecked] = useState(false);
@@ -147,6 +150,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       setUpdateAvailable(!!data.update_available);
       setLatestVersion(data.latest_version ?? null);
       setGatewayChannel(data.channel ?? "stable");
+      setGatewayAutoUpdate(data.auto_update ?? true);
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
@@ -179,6 +183,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         setGatewayVersion(data.version);
         setGatewayBranch(data.branch ?? null);
         setGatewayChannel(data.channel ?? "stable");
+        setGatewayAutoUpdate(data.auto_update ?? true);
         setUpdateAvailable(!!data.update_available);
         setLatestVersion(data.latest_version ?? null);
         setVersionChecked(true);
@@ -262,6 +267,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       setUpdateAvailable(!!data.update_available);
       setLatestVersion(data.latest_version ?? null);
       setGatewayChannel(data.channel ?? "stable");
+      setGatewayAutoUpdate(data.auto_update ?? true);
     };
 
     const timer = setInterval(pollVersion, VERSION_POLL_MS);
@@ -305,6 +311,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         gatewayVersion,
         gatewayBranch,
         gatewayChannel,
+        gatewayAutoUpdate,
         gatewayPort,
         versionChecked,
         updateAvailable,
