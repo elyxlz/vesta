@@ -276,6 +276,19 @@ class ClaudeSDKClient:
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
+    async def snapshot_pane(self) -> str | None:
+        """Raw text of the live claude TUI pane, or None if the session isn't running.
+
+        The silence watchdog uses this to surface what a wedged TUI is actually showing
+        (a frozen prompt, an unsubmitted paste, a modal) instead of only reporting silence.
+        """
+        if self._monitor_task is None or self._exit_code is not None:
+            return None
+        try:
+            return await tmux.capture_pane(self._tmux_socket, self._tmux_session)
+        except (OSError, RuntimeError):
+            return None
+
     async def compact(self, instructions: str = "") -> None:
         """Compact the conversation in place via `/compact` and wait for it to finish.
 
