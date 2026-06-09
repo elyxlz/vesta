@@ -1,4 +1,4 @@
-import { apiFetch, apiJson } from "@/api/client";
+import { apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
 
 const SAMPLE_RATE = 16000;
@@ -123,154 +123,88 @@ export const setTtsVoice = (n: string, voiceId: string) =>
   voicePost(n, "tts/set-voice", { voice_id: voiceId });
 
 // --- TTS playback ---
+//
+// Playback runs through a native <audio> element pointed at a streamed GET
+// rather than fetching bytes in JS and feeding MediaSource. The native media
+// stack streams progressively from the first byte on every webview (Android's
+// System WebView has no reliable MSE support for raw audio/mpeg and would
+// otherwise buffer the whole clip then dump it), and it owns audio routing
+// including Bluetooth A2DP cold-start. See issue #466.
+//
+// Because a media-element request can't carry an Authorization header and uses
+// GET (no body), the text is first registered via POST /tts/prepare, which
+// returns an id; the element then streams GET /tts/stream/{id}?token=...
 
-export function prefetchSpeech(
+export function prepareSpeech(
   text: string,
   agentName: string,
   signal?: AbortSignal,
-): Promise<Response> {
-  return apiFetch(`/agents/${encodeURIComponent(agentName)}/voice/tts/speak`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-    signal,
-  });
+): Promise<string> {
+  return apiJson<{ id: string }>(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/prepare`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal,
+    },
+  ).then((res) => res.id);
+}
+
+// Exported for testing: the token rides the query string because a media
+// element's request cannot carry an Authorization header.
+export function buildTtsStreamUrl(
+  baseUrl: string,
+  accessToken: string,
+  agentName: string,
+  id: string,
+): string {
+  const params = new URLSearchParams({ token: accessToken });
+  return `${baseUrl}/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}?${params.toString()}`;
+}
+
+function ttsStreamUrl(agentName: string, id: string): string {
+  const conn = getConnection();
+  if (!conn) throw new Error("not connected to vestad");
+  return buildTtsStreamUrl(conn.url, conn.accessToken, agentName, id);
 }
 
 export async function streamSpeech(
   text: string,
   agentName: string,
   signal?: AbortSignal,
-  prefetched?: Response,
+  preparedId?: string,
 ): Promise<void> {
-  const res = prefetched ?? (await prefetchSpeech(text, agentName, signal));
+  const id = preparedId ?? (await prepareSpeech(text, agentName, signal));
+  if (signal?.aborted) return;
 
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("audio/mpeg") || contentType.includes("audio/mp3")) {
-    return playStreamedAudio(res.body!, signal);
-  }
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  if (signal) {
-    signal.addEventListener("abort", () => {
-      audio.pause();
-      URL.revokeObjectURL(url);
-    });
-  }
-  await new Promise<void>((resolve, reject) => {
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      resolve();
-    };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Audio playback failed"));
-    };
-    audio.play().catch(reject);
-  });
-}
-
-async function playStreamedAudio(
-  body: ReadableStream<Uint8Array>,
-  signal?: AbortSignal,
-): Promise<void> {
-  const mediaSource = new MediaSource();
-  const audio = new Audio();
-  audio.src = URL.createObjectURL(mediaSource);
+  const audio = new Audio(ttsStreamUrl(agentName, id));
+  audio.preload = "auto";
 
   await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      audio.onended = null;
+      audio.onerror = null;
+    };
     if (signal) {
       // Resolve (not reject) on abort so the caller's await completes instead
-      // of hanging forever when playback is cancelled mid-stream.
+      // of hanging when playback is cancelled mid-stream.
       signal.addEventListener("abort", () => {
+        cleanup();
         audio.pause();
-        URL.revokeObjectURL(audio.src);
+        audio.src = "";
         resolve();
       });
     }
-
-    mediaSource.addEventListener(
-      "sourceopen",
-      async () => {
-        let sourceBuffer: SourceBuffer;
-        try {
-          sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
-        } catch {
-          URL.revokeObjectURL(audio.src);
-          const reader = body.getReader();
-          const chunks: Uint8Array[] = [];
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-          const blob = new Blob(chunks as BlobPart[], { type: "audio/mpeg" });
-          audio.src = URL.createObjectURL(blob);
-          audio.onended = () => {
-            URL.revokeObjectURL(audio.src);
-            resolve();
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(audio.src);
-            reject(new Error("Playback failed"));
-          };
-          audio.play().catch(reject);
-          return;
-        }
-
-        const reader = body.getReader();
-        const queue: Uint8Array[] = [];
-        let ended = false;
-
-        const appendNext = () => {
-          if (sourceBuffer.updating) return;
-          if (queue.length === 0) {
-            if (ended && mediaSource.readyState === "open")
-              mediaSource.endOfStream();
-            return;
-          }
-          try {
-            sourceBuffer.appendBuffer(queue.shift()!.buffer as ArrayBuffer);
-          } catch (err) {
-            // Without this the awaited Promise would hang: updateend never
-            // fires after a failed append, so nothing resolves it.
-            reject(
-              err instanceof Error ? err : new Error("appendBuffer failed"),
-            );
-          }
-        };
-
-        sourceBuffer.addEventListener("updateend", appendNext);
-        sourceBuffer.addEventListener("error", () =>
-          reject(new Error("audio decode failed")),
-        );
-
-        audio.onended = () => {
-          URL.revokeObjectURL(audio.src);
-          resolve();
-        };
-        audio.onerror = () => {
-          URL.revokeObjectURL(audio.src);
-          reject(new Error("Playback failed"));
-        };
-        audio.play().catch(reject);
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (signal?.aborted) break;
-          if (done) {
-            ended = true;
-            appendNext();
-            break;
-          }
-          queue.push(value);
-          appendNext();
-        }
-      },
-      { once: true },
-    );
+    audio.onended = () => {
+      cleanup();
+      resolve();
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error("Audio playback failed"));
+    };
+    audio.play().catch(reject);
   });
 }
 

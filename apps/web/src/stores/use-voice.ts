@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import {
   Transcriber,
-  prefetchSpeech,
+  prepareSpeech,
   streamSpeech,
   fetchSttStatus,
   fetchTtsStatus,
@@ -71,7 +71,9 @@ let ttsProcessing = false;
 // Bumped by stopSpeech to invalidate an in-flight processQueue loop, so a
 // stop-then-speak sequence never leaves two loops draining ttsQueue at once.
 let ttsEpoch = 0;
-const ttsPrefetchCache = new Map<string, Promise<Response>>();
+// Prepared TTS ids, warmed during the typing-pacing delay so playback can
+// start the streamed GET immediately when the message is shown.
+const ttsPrefetchCache = new Map<string, Promise<string>>();
 
 function clearIdleTimer() {
   if (idleTimer) {
@@ -104,10 +106,10 @@ export const useVoice = create<VoiceState>((set, get) => {
       try {
         const cached = ttsPrefetchCache.get(text);
         ttsPrefetchCache.delete(text);
-        const prefetched = cached
+        const preparedId = cached
           ? await cached.catch(() => undefined)
           : undefined;
-        await streamSpeech(text, agentName, controller.signal, prefetched);
+        await streamSpeech(text, agentName, controller.signal, preparedId);
       } catch (err) {
         if (!controller.signal.aborted) {
           console.warn("[tts] playback failed:", err);
@@ -232,7 +234,7 @@ export const useVoice = create<VoiceState>((set, get) => {
       if (!speechEnabled || !agentName) return;
       if (ttsPrefetchCache.has(text)) return;
       console.debug("[tts] prefetching:", text.slice(0, 60));
-      ttsPrefetchCache.set(text, prefetchSpeech(text, agentName));
+      ttsPrefetchCache.set(text, prepareSpeech(text, agentName));
     },
 
     speak: (text: string) => {
