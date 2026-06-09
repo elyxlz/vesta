@@ -84,10 +84,12 @@ and links between them and the CLI.
    (`onboard presets` for personalities + skills)? Agree the monthly price (see
    **Pricing**).
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
-   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop**. Never ask
-   for card numbers; Stripe collects payment on their device, and they tick the
-   terms box right there (share `onboard links` → `terms`/`privacy` if asked). The
-   subdomain is assigned for them.
+   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop**. If they
+   hesitate at the link, the guarantee is real and worth saying: first 7 days, full
+   refund, no questions. They risk nothing by trying. Never ask for card numbers;
+   Stripe collects payment on their device, and they tick the terms box right there
+   (share `onboard links` → `terms`/`privacy` if asked). The subdomain is assigned
+   for them.
 5. **Wait for the box.** Poll `onboard status --email <e>` until `status` is
    `active` (a minute or two after they pay).
 6. **Create their agent.** `onboard create-agent --email <e> --name <name>

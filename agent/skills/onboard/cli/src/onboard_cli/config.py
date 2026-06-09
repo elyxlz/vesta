@@ -46,10 +46,7 @@ PERSONALITY_PRESETS = ("chill", "classic", "dry", "extra", "polished", "terse")
 LINKS = {
     "marketing": "https://vesta.run",
     "account": "https://vesta.run/account",
-    "download": "https://vesta.run/download",
-    "ios": "https://vesta.run/download#ios",
-    "android": "https://vesta.run/download#android",
-    "desktop": "https://vesta.run/download#desktop",
+    "download": "https://github.com/elyxlz/vesta/releases/latest",
     "terms": "https://vesta.run/legal/terms",
     "privacy": "https://vesta.run/legal/privacy",
 }
