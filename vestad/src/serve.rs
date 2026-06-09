@@ -138,11 +138,10 @@ pub struct AppState {
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
-    /// Live refresh-token ids → their family id (rotation + reuse detection, see
-    /// `auth.rs`). In-memory: a vestad restart invalidates outstanding refresh
-    /// tokens, so clients re-auth (a silent re-login for hosted apps via the apex
-    /// session; a key re-paste for self-hosted). Persisting this is a follow-up.
-    pub(crate) refresh_live: Mutex<HashMap<String, String>>,
+    /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
+    /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
+    /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
+    pub(crate) refresh_live: Mutex<HashMap<String, crate::auth::RefreshFamily>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
@@ -162,12 +161,16 @@ pub struct AppState {
 impl AppState {
     fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool, https_port: u16) -> Self {
         let settings = load_settings();
+        // Restore the refresh-token registry from disk (dropping expired families)
+        // so a restart/self-update doesn't log everyone out. Read before `env_config`
+        // is moved into the struct below.
+        let refresh_live = crate::auth::load_refresh_live(&env_config.config_dir);
         Self {
             api_key,
             env_config,
             docker,
             auth_sessions: Mutex::new(HashMap::new()),
-            refresh_live: Mutex::new(HashMap::new()),
+            refresh_live: Mutex::new(refresh_live),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),

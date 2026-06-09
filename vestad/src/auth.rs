@@ -6,6 +6,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 
 use crate::jwt;
 use crate::serve::SharedState;
@@ -208,36 +210,108 @@ fn rand_id() -> String {
     (0..16).map(|_| format!("{:02x}", rand::random::<u8>())).collect()
 }
 
-/// The live refresh-token registry: `jti` → family id. (`AppState.refresh_live`.)
-type RefreshLive = tokio::sync::Mutex<std::collections::HashMap<String, String>>;
+/// One refresh-token family (one login). `live` is the only currently-valid jti;
+/// `prev` is the jti it was just rotated from, honored ONCE as a retry-grace so a
+/// client whose refresh response was lost can re-present it without self-revoking.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct RefreshFamily {
+    live: String,
+    prev: Option<String>,
+    /// Absolute family expiry (unix secs) for pruning — matches the refresh TTL.
+    exp: u64,
+}
 
-/// Start a new refresh-token family: register a fresh `jti` and return `(jti, fam)`
-/// for minting the first refresh token of a login.
-async fn register_refresh_family(live: &RefreshLive) -> (String, String) {
+/// Drop expired families (lazy GC on every access; n = active logins, tiny).
+fn prune_expired(map: &mut HashMap<String, RefreshFamily>, now: u64) {
+    map.retain(|_, f| f.exp > now);
+}
+
+/// Start a new family; returns `(jti, fam)` to mint the first refresh token with.
+/// Pure (no I/O/lock) so it's unit-testable; the async wrapper locks + persists.
+fn register_family(map: &mut HashMap<String, RefreshFamily>, now: u64) -> (String, String) {
+    prune_expired(map, now);
     let (jti, fam) = (rand_id(), rand_id());
-    live.lock().await.insert(jti.clone(), fam.clone());
+    map.insert(
+        fam.clone(),
+        RefreshFamily { live: jti.clone(), prev: None, exp: now + jwt::REFRESH_TOKEN_TTL },
+    );
     (jti, fam)
 }
 
-/// Rotate a presented refresh token (RFC 9700 §2.2.2/§4.14). If its `jti` is the
-/// live one for its family, consume it and return the next `(jti, fam)`. Otherwise
-/// (an unknown/already-spent `jti` — reuse, replay, or a legacy non-rotating
-/// token) return None AND revoke the entire family, so a stolen-and-replayed token
-/// invalidates the chain regardless of who refreshes first.
-async fn rotate_refresh(live: &RefreshLive, claims: &jwt::Claims) -> Option<(String, String)> {
-    let (Some(jti), Some(fam)) = (claims.jti.as_ref(), claims.fam.as_ref()) else {
-        return None;
-    };
-    let mut live = live.lock().await;
-    if live.get(jti) == Some(fam) {
-        live.remove(jti);
+/// Rotate a presented refresh token (RFC 9700 §2.2.2/§4.14). Returns the `(jti, fam)`
+/// to mint the next token with, or None to reject. Pure (testable):
+///   - jti == family.live: advance (prev := old live, live := new), return the new jti.
+///   - jti == family.prev: a retry of the just-superseded token — return the CURRENT
+///     live jti again WITHOUT advancing (idempotent, no revoke).
+///   - anything else for a known family: reuse/replay → REVOKE the whole family.
+///   - unknown/expired/legacy (no jti/fam): None (nothing to revoke).
+fn rotate(
+    map: &mut HashMap<String, RefreshFamily>,
+    claims: &jwt::Claims,
+    now: u64,
+) -> Option<(String, String)> {
+    prune_expired(map, now);
+    let jti = claims.jti.as_deref()?;
+    let fam = claims.fam.as_deref()?;
+    // Snapshot the small strings so we don't hold a borrow across the mutation.
+    let (live, prev) = map.get(fam).map(|f| (f.live.clone(), f.prev.clone()))?;
+    if live == jti {
         let new_jti = rand_id();
-        live.insert(new_jti.clone(), fam.clone());
-        Some((new_jti, fam.clone()))
+        let f = map.get_mut(fam).expect("family present");
+        f.prev = Some(std::mem::replace(&mut f.live, new_jti.clone()));
+        Some((new_jti, fam.to_string()))
+    } else if prev.as_deref() == Some(jti) {
+        Some((live, fam.to_string())) // retry grace: re-mint current, don't advance
     } else {
-        live.retain(|_, f| f != fam);
+        map.remove(fam); // reuse/replay → revoke the family
         None
     }
+}
+
+/// Path of the persisted registry (small JSON in the config dir).
+fn refresh_store_path(config_dir: &Path) -> std::path::PathBuf {
+    config_dir.join("refresh-tokens.json")
+}
+
+/// Load the persisted registry, dropping already-expired families. Best-effort: a
+/// missing/corrupt file just starts empty (clients re-auth).
+pub(crate) fn load_refresh_live(config_dir: &Path) -> HashMap<String, RefreshFamily> {
+    let now = crate::time_utils::now_epoch_secs();
+    let mut map: HashMap<String, RefreshFamily> = std::fs::read(refresh_store_path(config_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    prune_expired(&mut map, now);
+    map
+}
+
+/// Persist the registry atomically (temp + rename). Best-effort: a write failure
+/// only means a restart re-auths, never a request failure.
+async fn persist_refresh_live(config_dir: &Path, map: &HashMap<String, RefreshFamily>) {
+    let Ok(json) = serde_json::to_vec(map) else { return };
+    let path = refresh_store_path(config_dir);
+    let tmp = path.with_extension("json.tmp");
+    if tokio::fs::write(&tmp, json).await.is_ok() {
+        let _ = tokio::fs::rename(&tmp, &path).await;
+    }
+}
+
+/// Lock + register a new family, then persist. Returns `(jti, fam)`.
+async fn register_refresh_family(state: &SharedState) -> (String, String) {
+    let now = crate::time_utils::now_epoch_secs();
+    let mut map = state.refresh_live.lock().await;
+    let res = register_family(&mut map, now);
+    persist_refresh_live(&state.env_config.config_dir, &map).await;
+    res
+}
+
+/// Lock + rotate, then persist. None → reject the refresh.
+async fn rotate_refresh(state: &SharedState, claims: &jwt::Claims) -> Option<(String, String)> {
+    let now = crate::time_utils::now_epoch_secs();
+    let mut map = state.refresh_live.lock().await;
+    let res = rotate(&mut map, claims, now);
+    persist_refresh_live(&state.env_config.config_dir, &map).await;
+    res
 }
 
 /// Build a session response minting a fresh access token + the next rotating
@@ -260,7 +334,7 @@ pub async fn create_session_handler(
     }
 
     tracing::info!("client connected (new session)");
-    let (jti, fam) = register_refresh_family(&state.refresh_live).await;
+    let (jti, fam) = register_refresh_family(&state).await;
     Ok(Json(session_response(&state.api_key, &jti, &fam)))
 }
 
@@ -274,7 +348,7 @@ pub async fn exchange_session_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!("issued a rotating refresh token (hosted exchange)");
-    let (jti, fam) = register_refresh_family(&state.refresh_live).await;
+    let (jti, fam) = register_refresh_family(&state).await;
     Ok(Json(session_response(&state.api_key, &jti, &fam)))
 }
 
@@ -285,7 +359,7 @@ pub async fn refresh_session_handler(
     let claims = jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
         .map_err(|e| crate::serve::err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
 
-    match rotate_refresh(&state.refresh_live, &claims).await {
+    match rotate_refresh(&state, &claims).await {
         Some((jti, fam)) => Ok(Json(session_response(&state.api_key, &jti, &fam))),
         None => Err(crate::serve::err_response(
             StatusCode::UNAUTHORIZED,
@@ -298,93 +372,99 @@ pub async fn refresh_session_handler(
 mod refresh_rotation_tests {
     use super::*;
 
+    const NOW: u64 = 1_000_000;
+
     fn refresh_claims(jti: &str, fam: &str) -> jwt::Claims {
         jwt::Claims {
             sub: "vesta-app".into(),
             typ: "refresh".into(),
-            iat: 0,
-            exp: u64::MAX,
+            iat: NOW,
+            exp: NOW + jwt::REFRESH_TOKEN_TTL,
             jti: Some(jti.into()),
             fam: Some(fam.into()),
         }
     }
 
-    fn empty() -> RefreshLive {
-        tokio::sync::Mutex::new(std::collections::HashMap::new())
-    }
-
-    #[tokio::test]
-    async fn happy_path_chains_indefinitely() {
-        let live = empty();
-        let (mut jti, fam) = register_refresh_family(&live).await;
+    #[test]
+    fn happy_path_chains_indefinitely() {
+        let mut map = HashMap::new();
+        let (mut jti, fam) = register_family(&mut map, NOW);
         for _ in 0..5 {
-            let (next, f) = rotate_refresh(&live, &refresh_claims(&jti, &fam))
-                .await
-                .expect("a live token rotates");
+            let (next, f) =
+                rotate(&mut map, &refresh_claims(&jti, &fam), NOW).expect("live rotates");
             assert_eq!(f, fam);
             assert_ne!(next, jti);
             jti = next;
         }
-        // Exactly one live token remains after a chain of rotations.
-        assert_eq!(live.lock().await.len(), 1);
+        // One family, updated in place — the map does not grow per rotation.
+        assert_eq!(map.len(), 1);
     }
 
-    #[tokio::test]
-    async fn replaying_a_spent_token_revokes_the_whole_family() {
-        let live = empty();
-        let (jti0, fam) = register_refresh_family(&live).await;
-        let claims0 = refresh_claims(&jti0, &fam);
-
-        // First use rotates fine, yielding the next token.
-        let (jti1, _) = rotate_refresh(&live, &claims0).await.expect("first use ok");
-
-        // Replaying the now-spent token is reuse -> None, AND kills the family.
-        assert!(rotate_refresh(&live, &claims0).await.is_none());
-
-        // So even the legit *next* token is dead now (chain invalidated).
-        assert!(rotate_refresh(&live, &refresh_claims(&jti1, &fam))
-            .await
-            .is_none());
-        assert!(live.lock().await.is_empty());
+    #[test]
+    fn retry_of_the_prev_token_is_idempotent_grace() {
+        let mut map = HashMap::new();
+        let (jti0, fam) = register_family(&mut map, NOW);
+        let (jti1, _) = rotate(&mut map, &refresh_claims(&jti0, &fam), NOW).expect("0->1");
+        // A retry presenting the just-superseded jti0 returns the CURRENT live (jti1)
+        // WITHOUT advancing or revoking — a dropped-response retry isn't a logout.
+        let (again, _) = rotate(&mut map, &refresh_claims(&jti0, &fam), NOW).expect("grace");
+        assert_eq!(again, jti1);
+        assert_eq!(map.len(), 1);
+        // jti1 still rotates normally afterward.
+        assert!(rotate(&mut map, &refresh_claims(&jti1, &fam), NOW).is_some());
     }
 
-    #[tokio::test]
-    async fn legacy_token_without_jti_is_rejected() {
-        let live = empty();
+    #[test]
+    fn reuse_of_a_two_step_old_token_revokes_the_family() {
+        let mut map = HashMap::new();
+        let (jti0, fam) = register_family(&mut map, NOW);
+        let (jti1, _) = rotate(&mut map, &refresh_claims(&jti0, &fam), NOW).expect("0->1");
+        let (jti2, _) = rotate(&mut map, &refresh_claims(&jti1, &fam), NOW).expect("1->2");
+        // jti0 is now two steps back (neither live=jti2 nor prev=jti1) → reuse → revoke.
+        assert!(rotate(&mut map, &refresh_claims(&jti0, &fam), NOW).is_none());
+        assert!(map.is_empty());
+        // The whole chain is dead, including what was live.
+        assert!(rotate(&mut map, &refresh_claims(&jti2, &fam), NOW).is_none());
+    }
+
+    #[test]
+    fn legacy_token_without_jti_is_rejected() {
+        let mut map = HashMap::new();
         let claims = jwt::Claims {
             sub: "vesta-app".into(),
             typ: "refresh".into(),
-            iat: 0,
-            exp: u64::MAX,
+            iat: NOW,
+            exp: NOW + 1,
             jti: None,
             fam: None,
         };
-        assert!(rotate_refresh(&live, &claims).await.is_none());
+        assert!(rotate(&mut map, &claims, NOW).is_none());
     }
 
-    #[tokio::test]
-    async fn unknown_jti_or_family_is_rejected() {
-        let live = empty();
-        let (jti, _fam) = register_refresh_family(&live).await;
-        // Right jti, wrong family.
-        assert!(rotate_refresh(&live, &refresh_claims(&jti, "wrongfam"))
-            .await
-            .is_none());
-        // Entirely unknown.
-        assert!(rotate_refresh(&live, &refresh_claims("nope", "nofam"))
-            .await
-            .is_none());
+    #[test]
+    fn unknown_family_is_rejected_without_panicking() {
+        let mut map = HashMap::new();
+        assert!(rotate(&mut map, &refresh_claims("nope", "nofam"), NOW).is_none());
     }
 
-    #[tokio::test]
-    async fn two_families_are_independent() {
-        let live = empty();
-        let (a0, fam_a) = register_refresh_family(&live).await;
-        let (b0, fam_b) = register_refresh_family(&live).await;
-        // Reuse-revoke family A by replaying its first token after rotating it.
-        let _ = rotate_refresh(&live, &refresh_claims(&a0, &fam_a)).await.unwrap();
-        assert!(rotate_refresh(&live, &refresh_claims(&a0, &fam_a)).await.is_none());
-        // Family B is untouched and still rotates.
-        assert!(rotate_refresh(&live, &refresh_claims(&b0, &fam_b)).await.is_some());
+    #[test]
+    fn expired_family_is_pruned_and_rejected() {
+        let mut map = HashMap::new();
+        let (jti, fam) = register_family(&mut map, NOW);
+        let later = NOW + jwt::REFRESH_TOKEN_TTL + 1; // past the family exp
+        assert!(rotate(&mut map, &refresh_claims(&jti, &fam), later).is_none());
+        assert!(map.is_empty()); // pruned
+    }
+
+    #[test]
+    fn two_families_are_independent() {
+        let mut map = HashMap::new();
+        let (a0, fam_a) = register_family(&mut map, NOW);
+        let (b0, fam_b) = register_family(&mut map, NOW);
+        let (a1, _) = rotate(&mut map, &refresh_claims(&a0, &fam_a), NOW).unwrap();
+        let _ = rotate(&mut map, &refresh_claims(&a1, &fam_a), NOW).unwrap();
+        // Reuse a two-steps-old A token → revokes family A only.
+        assert!(rotate(&mut map, &refresh_claims(&a0, &fam_a), NOW).is_none());
+        assert!(rotate(&mut map, &refresh_claims(&b0, &fam_b), NOW).is_some());
     }
 }
