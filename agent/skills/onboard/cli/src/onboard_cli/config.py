@@ -1,10 +1,17 @@
 """Configuration for the onboard CLI.
 
-Everything is read from the environment: the control-plane base URL and (for
-hosted vestas) the non-secret referral code that attributes a completed signup to
-this account. The ONE bit of on-disk state is the buyer's short onboarding session
-token (see `state.py`) — needed because the agent drives the flow across separate
-CLI invocations.
+Everything is read from the environment:
+
+* the control-plane base URL and (for hosted vestas) the non-secret referral code
+  that attributes a completed signup to this account;
+* how to reach **this box's vestad** over the loopback (`VESTAD_PORT` +
+  `AGENT_NAME` + `AGENT_TOKEN`) so the CLI can mint a server-identity token. That
+  token authenticates the account pre-create (`POST /api/onboard/account`) as THIS
+  introducing vesta — the invite-only gate. The CLI never holds the box's api_key.
+
+The ONE bit of on-disk state is the buyer's short onboarding session token (see
+`state.py`) — needed because the agent drives the flow across separate CLI
+invocations.
 """
 
 from __future__ import annotations
@@ -54,13 +61,27 @@ class Config:
 
     base_url: str
     referral_code: str | None
+    vestad_base: str
+    agent_name: str
+    agent_token: str | None
 
     @classmethod
     def load(cls) -> Config:
         base = os.environ.get("VESTA_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
         # Non-secret per-server attribution id; absent on self-hosted boxes.
         ref = os.environ.get("VESTA_REFERRAL_CODE", "").strip() or None
-        return cls(base_url=base, referral_code=ref)
+        # vestad listens on the loopback with a self-signed cert (see the account /
+        # voice skills); the agent reaches it at https://localhost:<port> and mints
+        # a server-identity token there to authenticate the account pre-create.
+        port = os.environ.get("VESTAD_PORT", "").strip()
+        vestad_base = f"https://localhost:{port}" if port else ""
+        return cls(
+            base_url=base,
+            referral_code=ref,
+            vestad_base=vestad_base,
+            agent_name=os.environ.get("AGENT_NAME", "").strip(),
+            agent_token=os.environ.get("AGENT_TOKEN", "").strip() or None,
+        )
 
     @property
     def apex_host(self) -> str:

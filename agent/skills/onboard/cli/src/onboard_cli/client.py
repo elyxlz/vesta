@@ -17,15 +17,21 @@ Two tiers of calls:
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from .config import Config
 
 _TIMEOUT = 20
 # Creating an agent pulls/builds the container image — can take a couple minutes.
 _CREATE_TIMEOUT = 300
+
+# vestad serves a self-signed cert on the loopback; we reach it from inside the
+# same box, so TLS verification adds nothing and would just fail.
+warnings.simplefilter("ignore", InsecureRequestWarning)
 
 
 class OnboardError(Exception):
@@ -38,6 +44,41 @@ class Client:
 
     def _url(self, path: str) -> str:
         return f"{self._cfg.base_url}{path}"
+
+    # --- vestad: mint THIS (introducing) vesta's server-identity token -------
+
+    def mint_identity_token(self) -> str:
+        """POST <vestad>/agents/<name>/account-token -> our server-identity token.
+
+        Agent-token authed; vestad signs it locally with the box's `api_key` (a
+        pure crypto op, no network). Only a cloud-managed (hosted) box can mint
+        one, so this doubles as the invite-only gate: a self-hosted box (no
+        VESTAD_PORT / AGENT_TOKEN) can't mint a token, so it can't walk anyone in.
+        """
+        cfg = self._cfg
+        if not cfg.vestad_base or not cfg.agent_name:
+            raise OnboardError("not running inside an agent container (no VESTAD_PORT/AGENT_NAME) — only a hosted vesta can onboard")
+        if not cfg.agent_token:
+            raise OnboardError("missing AGENT_TOKEN — cannot authenticate to vestad")
+        url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
+        data = self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
+        token = data.get("token")
+        if not token:
+            # A non-cloud-managed box answers 404 {error}; surface it verbatim.
+            raise OnboardError(data.get("error") or "vestad did not return a server-identity token")
+        return token
+
+    # --- control plane: account pre-create (authed as THIS vesta) ------------
+
+    def create_account(self, email: str, identity_token: str) -> dict[str, Any]:
+        """POST /onboard/account -> {created, email}.
+
+        Pre-creates the invitee's account so the control plane will send them a
+        code (web signup is disabled — invite-only). Bearer is our server-identity
+        token. Idempotent: an existing email returns {created: false}. A 4xx body
+        carries a structured {error} (e.g. our vesta isn't active) to surface.
+        """
+        return self._json(self._post("/onboard/account", json={"email": email}, headers=self._auth(identity_token)))
 
     # --- control plane: auth -------------------------------------------------
 
@@ -200,9 +241,10 @@ class Client:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         timeout: int = _TIMEOUT,
+        verify: bool = True,
     ) -> requests.Response:
         try:
-            return requests.request(method, url, params=params, json=json, headers=headers, timeout=timeout)
+            return requests.request(method, url, params=params, json=json, headers=headers, timeout=timeout, verify=verify)
         except requests.RequestException as e:
             raise OnboardError(f"could not reach {url}: {e}") from e
 
