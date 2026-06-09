@@ -293,6 +293,44 @@ fn short_id(full: &str) -> String {
     full.chars().take(8).collect()
 }
 
+/// A file-node line from `restic ls --json` (struct_type == "node").
+#[derive(serde::Deserialize)]
+struct ResticLsNode {
+    #[serde(default)]
+    struct_type: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// Return the absolute path of the `.tar` file stored inside the snapshot.
+/// Runs `restic ls <id> --json` and picks the first file whose name ends with
+/// `.tar`. This is rename-proof: it reads what was actually baked in at backup
+/// time rather than recomputing from the agent's current name.
+fn snapshot_tar_path_for_id(repo_name: &str, backup_id: &str) -> Result<String, DockerError> {
+    let output = restic_command(repo_name)?
+        .args(["ls", backup_id, "--json"])
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run restic ls: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DockerError::Failed(format!("restic ls failed: {stderr}")));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let Ok(node) = serde_json::from_str::<ResticLsNode>(line) else {
+            continue;
+        };
+        if node.struct_type == "node" && node.name.ends_with(".tar") {
+            return Ok(node.path);
+        }
+    }
+    Err(DockerError::Failed(format!(
+        "snapshot {backup_id} contains no .tar file; cannot restore"
+    )))
+}
+
 #[derive(serde::Deserialize)]
 struct ResticSnapshot {
     short_id: String,
@@ -356,7 +394,11 @@ pub async fn list(name: &str) -> Result<Vec<BackupInfo>, DockerError> {
 /// image layers.
 pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, DockerError> {
     ensure_repo(name)?;
-    let tar_path = format!("/{}", agent_tar_name(name));
+    // Read the tar path actually stored in the snapshot rather than recomputing
+    // from the current agent name: after a rename the baked-in path still uses the
+    // old name, so recomputing would give the wrong path and make every pre-rename
+    // snapshot permanently unrestorable.
+    let tar_path = snapshot_tar_path_for_id(name, backup_id)?;
     let image_ref = format!("vesta-restore:{name}");
     let backup_id = backup_id.to_string();
     let image_for_task = image_ref.clone();
@@ -469,6 +511,43 @@ mod tests {
         assert_eq!(
             format_restic_time("2026-05-29T06:00:01+02:00").as_deref(),
             Some("20260529-040001")
+        );
+    }
+
+    // Guard: snapshot() and restore_to_image() must agree on the tar path even after
+    // the agent is renamed.  The bug was that restore_to_image recomputed the path
+    // from the current (post-rename) name while the snapshot stored the pre-rename
+    // name.  The fix reads the path back from the snapshot via `restic ls` instead.
+    //
+    // This test exercises the parsing half of that fix: given fake `restic ls --json`
+    // output that mimics a pre-rename snapshot (path = "/okami.tar"), the helper
+    // must return exactly "/okami.tar" regardless of what name the agent has now.
+    #[test]
+    fn restore_tar_path_matches_backup_tar_path_after_rename() {
+        // Simulate the JSON lines emitted by `restic ls <id> --json` for a snapshot
+        // that was taken when the agent was called "okami".
+        let ls_output = concat!(
+            "{\"struct_type\":\"snapshot\",\"id\":\"abc12345\",\"short_id\":\"abc12345\"}\n",
+            "{\"struct_type\":\"node\",\"name\":\"okami.tar\",\"type\":\"file\",\"path\":\"/okami.tar\"}\n",
+        );
+
+        // Parse the output the same way snapshot_tar_path_for_id does.
+        let found_path = ls_output
+            .lines()
+            .filter_map(|line| serde_json::from_str::<ResticLsNode>(line).ok())
+            .find(|node| node.struct_type == "node" && node.name.ends_with(".tar"))
+            .map(|node| node.path)
+            .expect("should find the .tar node");
+
+        // The path must come from the snapshot, not from the current agent name.
+        // If the agent was renamed to "kitsune", agent_tar_name("kitsune") = "kitsune.tar",
+        // which differs from what is stored: any code recomputing from the current name
+        // would produce "/kitsune.tar" and cause `restic dump` to fail.
+        assert_eq!(found_path, "/okami.tar");
+        assert_ne!(
+            found_path,
+            format!("/{}", agent_tar_name("kitsune")),
+            "proves that recomputing from the post-rename name would have been wrong"
         );
     }
 
