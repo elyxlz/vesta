@@ -1,5 +1,5 @@
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use vesta_tests::exec_in_container;
 
@@ -8,11 +8,39 @@ use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notifi
 /// Per-step timeout for the agent to make observable progress.
 const TASK_TIMEOUT: Duration = Duration::from_secs(240);
 
-/// How long the count must keep NOT reaching 10 after the redirect task completed.
-/// The counting task appends a number every ~5s, so if the interrupt failed (the counting
-/// turn survived, or an orphaned tool process kept running) it would reach 10 well inside
-/// this window.
-const POST_REDIRECT_GRACE: Duration = Duration::from_secs(45);
+/// Proving the count is dead: the counting task appends a number roughly every 5s, so once the
+/// file is unchanged for COUNT_STABLE_WINDOW (comfortably longer than that cadence) nothing is
+/// appending anymore. We poll at COUNT_POLL_INTERVAL, fail fast the instant the count reaches 10
+/// (the interrupt did not abort), and cap the whole check at COUNT_DEATH_TIMEOUT.
+const COUNT_POLL_INTERVAL: Duration = Duration::from_secs(3);
+const COUNT_STABLE_WINDOW: Duration = Duration::from_secs(15);
+const COUNT_DEATH_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Prove the negative: after the redirect ran, the counting task is dead. It must never reach 10
+/// (a surviving turn or an orphaned `sleep && echo` appender would get there), and its file must
+/// stop growing. Returns as soon as the file has been stable for COUNT_STABLE_WINDOW rather than
+/// always blocking for a fixed grace period.
+fn assert_counting_is_dead(container: &str, counting_file: &str) {
+    let read = || exec_in_container(container, &format!("cat {counting_file} 2>/dev/null || true")).unwrap_or_default();
+    let overall_deadline = Instant::now() + COUNT_DEATH_TIMEOUT;
+    let mut last = read();
+    let mut last_changed = Instant::now();
+    loop {
+        assert!(
+            !last.contains("10"),
+            "count reached 10 — the interrupt did not abort the counting task:\n{last}"
+        );
+        if last_changed.elapsed() >= COUNT_STABLE_WINDOW || Instant::now() >= overall_deadline {
+            return;
+        }
+        thread::sleep(COUNT_POLL_INTERVAL);
+        let current = read();
+        if current != last {
+            last = current;
+            last_changed = Instant::now();
+        }
+    }
+}
 
 /// The real interrupt path, end to end with real Claude:
 /// a slow multi-step task (count to 10 via file appends) is interrupted mid-flight by an
@@ -65,13 +93,6 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
     // The redirect task must complete.
     wait_for_file_contains(&container, &redirect_file, "interrupted", TASK_TIMEOUT).expect("redirect file written");
 
-    // Prove the negative: counting stays dead. If the interrupted turn (or an orphaned
-    // `sleep && echo` process) were still appending, it would hit 10 within this window.
-    thread::sleep(POST_REDIRECT_GRACE);
-
-    let count_content = exec_in_container(&container, &format!("cat {counting_file} 2>/dev/null || true")).unwrap_or_default();
-    assert!(
-        !count_content.contains("10"),
-        "count reached 10 — the interrupt did not abort the counting task:\n{count_content}"
-    );
+    // The counting task must stay dead: never reach 10, and stop growing.
+    assert_counting_is_dead(&container, &counting_file);
 }
