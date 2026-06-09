@@ -62,12 +62,14 @@ export function SettingsDialog({
     gatewayVersion,
     gatewayBranch,
     gatewayChannel,
+    gatewayAutoUpdate,
     updateAvailable,
     checkForUpdate,
   } = useGateway();
   const [checking, setChecking] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [channelSaving, setChannelSaving] = useState(false);
+  const [autoUpdateSaving, setAutoUpdateSaving] = useState(false);
 
   const onToggleBeta = async (enabled: boolean) => {
     setChannelSaving(true);
@@ -85,6 +87,23 @@ export function SettingsDialog({
       console.warn("[settings] failed to set release channel:", err);
     } finally {
       setChannelSaving(false);
+    }
+  };
+
+  const onToggleAutoUpdate = async (enabled: boolean) => {
+    setAutoUpdateSaving(true);
+    try {
+      await apiJson("/settings/auto-update", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_update: enabled }),
+      });
+      // Re-read so the toggle reflects the daemon's persisted value.
+      await checkForUpdate();
+    } catch (err) {
+      console.warn("[settings] failed to set auto-update:", err);
+    } finally {
+      setAutoUpdateSaving(false);
     }
   };
 
@@ -275,6 +294,26 @@ export function SettingsDialog({
                   checked={gatewayChannel === "beta"}
                   disabled={channelSaving}
                   onCheckedChange={onToggleBeta}
+                />
+              </Field>
+            )}
+            {reachable && (
+              <Field
+                orientation="horizontal"
+                className="mt-3 items-center justify-between"
+              >
+                <FieldContent>
+                  <FieldLabel className="text-sm">automatic updates</FieldLabel>
+                  <FieldDescription>
+                    apply new releases automatically in the background;
+                    switching off keeps you on the current version until you
+                    update manually
+                  </FieldDescription>
+                </FieldContent>
+                <Switch
+                  checked={gatewayAutoUpdate}
+                  disabled={autoUpdateSaving}
+                  onCheckedChange={onToggleAutoUpdate}
                 />
               </Field>
             )}

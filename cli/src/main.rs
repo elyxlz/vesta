@@ -226,6 +226,11 @@ enum Command {
         /// Channel to switch to: stable or beta. Omit to show the current channel.
         channel: Option<String>,
     },
+    /// Show or set whether vestad applies updates automatically
+    AutoUpdate {
+        /// Set to "on" or "off" (omit to show current status)
+        toggle: Option<Toggle>,
+    },
     /// Uninstall vesta CLI and remove config
     Uninstall,
     /// Print version information
@@ -1420,6 +1425,21 @@ fn run(cli: Cli) {
                 None => {
                     let current = c.get_channel().unwrap_or_else(|e| platform::die(&e));
                     println!("{current}");
+                }
+            }
+        }
+
+        Command::AutoUpdate { toggle } => {
+            let c = get_client(host_ref, token_ref);
+            match toggle {
+                Some(toggle) => {
+                    let enabled = matches!(toggle, Toggle::On);
+                    let set = c.set_auto_update(enabled).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("auto-update: {}", if set { "enabled" } else { "disabled" });
+                }
+                None => {
+                    let enabled = c.get_auto_update().unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("auto-update: {}", if enabled { "enabled" } else { "disabled" });
                 }
             }
         }

@@ -74,4 +74,5 @@ export interface GatewayVersionInfo {
   update_available: boolean | null;
   branch?: string | null;
   channel?: ReleaseChannel;
+  auto_update?: boolean;
 }

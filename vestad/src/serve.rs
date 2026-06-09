@@ -2688,6 +2688,7 @@ mod tests {
             "update_available": true,
             "dev_mode": false,
             "channel": "stable",
+            "auto_update": true,
         });
 
         serde_json::json!({
