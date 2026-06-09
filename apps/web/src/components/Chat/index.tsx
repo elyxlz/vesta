@@ -50,8 +50,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadingMore,
     loadMore,
     send,
-    sendEvent,
-    agentState,
     showToolCalls,
   } = useChatContext();
 
@@ -122,10 +120,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       if (ta) ta.style.height = "auto";
       requestAnimationFrame(scrollToBottom);
     }
-  };
-
-  const handleStop = () => {
-    sendEvent({ type: "interrupt" });
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -206,8 +200,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             onInputChange={handleInput}
             onKeyDown={handleKeyDown}
             onSend={handleSend}
-            isBusy={agentState === "thinking"}
-            onStop={handleStop}
             textareaRef={textareaRef}
           />
         </div>
