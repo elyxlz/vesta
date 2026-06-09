@@ -135,7 +135,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     response_iter = client.receive_response().__aiter__()
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
-    if state.interrupt_event and not state.interrupt_event.is_set():
+    # Arm the watcher whenever an interrupt_event exists, even if it is already set.
+    # An external interrupt (the WS stop button) can land before we reach this point,
+    # during the `await client.query()` above. Gating on `not is_set()` here would drop
+    # that interrupt entirely; a pre-set event instead resolves wait() on the first loop
+    # iteration so the interrupt fires immediately.
+    if state.interrupt_event:
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
     watchdog_stop = asyncio.Event()
@@ -145,7 +150,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         while True:
             anext_task = asyncio.create_task(anext(response_iter, _STOP))
             waitables: set[asyncio.Task[tp.Any]] = {anext_task}
-            if interrupt_task and not interrupt_task.done():
+            # Include interrupt_task even if already done: asyncio.wait returns a completed
+            # task immediately, so a pre-set interrupt is caught on this iteration.
+            if interrupt_task:
                 waitables.add(interrupt_task)
 
             done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
@@ -155,7 +162,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 await attempt_interrupt(state, config=config, reason="Response timeout")
                 raise TimeoutError
 
-            if interrupt_task and interrupt_task in done:
+            if interrupt_task and interrupt_task.done():
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
                 # Cancelling anext_task finalizes response_iter, so drain leftover

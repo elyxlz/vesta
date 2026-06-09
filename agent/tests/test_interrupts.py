@@ -440,6 +440,39 @@ async def test_converse_breaks_on_interrupt_event():
 
 
 @pytest.mark.anyio
+async def test_converse_interrupts_when_event_preset_before_arming():
+    """An interrupt set before converse arms its watcher (the WS stop button landing during
+    client.query()) still fires, rather than being silently lost while the turn runs to the end."""
+    from core.client import converse
+
+    async def response():
+        msg = MagicMock()
+        msg.content = []
+        for _ in range(3):
+            yield msg
+
+    config = vm.VestaConfig(interrupt_timeout=0.5)
+    state = vm.State()
+    state.interrupt_event = asyncio.Event()
+    state.interrupt_event.set()  # already set before converse runs
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(side_effect=lambda: response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    import time
+
+    start = time.monotonic()
+    await converse("test prompt", state=state, config=config, show_output=False)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0, f"converse should have exited promptly but took {elapsed:.1f}s"
+    assert mock_client.interrupt.called, "interrupt should have been called for a pre-set event"
+
+
+@pytest.mark.anyio
 async def test_converse_works_normally_without_interrupt():
     """converse processes all messages when no interrupt is set."""
     from core.client import converse
