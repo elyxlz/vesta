@@ -32,11 +32,13 @@ export function AgentIsland() {
   return (
     <div
       ref={islandRef}
-      onPointerEnter={(e) => {
-        if (e.pointerType === "mouse") setExpanded(true);
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setExpanded(false);
       }}
-      onPointerLeave={(e) => {
-        if (e.pointerType === "mouse") setExpanded(false);
+      onBlur={(e) => {
+        if (!islandRef.current?.contains(e.relatedTarget as Node)) {
+          setExpanded(false);
+        }
       }}
       className="relative z-[999999] flex h-10 justify-center overflow-visible"
     >
@@ -74,7 +76,14 @@ export function AgentIsland() {
                   error={error}
                 />
               ) : (
-                <AgentIslandCollapsed name={name} orbState={orbState} />
+                <AgentIslandCollapsed
+                  name={name}
+                  orbState={orbState}
+                  expanded={expanded}
+                  onExpand={() => setExpanded(true)}
+                  statusLabel={statusLabel}
+                  error={error}
+                />
               )}
             </div>
           </LayoutGroup>

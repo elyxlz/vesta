@@ -81,5 +81,5 @@ export const orbColors: Record<OrbVisualState, [string, string, string]> = {
   stopping: ["#c0d0e0", "#8a9eb0", "#6a8094"],
   starting: ["#c0d0e0", "#8a9eb0", "#6a8094"],
   deleting: ["#e0a0a0", "#c45050", "#a03030"],
-  dead: ["#c0d0e0", "#8a9eb0", "#6a8094"],
+  dead: ["#c2c0ba", "#8e8c84", "#66645e"],
 };
