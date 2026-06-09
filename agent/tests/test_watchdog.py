@@ -372,6 +372,60 @@ async def test_watchdog_stays_quiet_when_idle_between_turns(tmp_path):
     state.event_bus.close()
 
 
+@pytest.mark.anyio
+async def test_watchdog_stays_quiet_while_tool_runs(tmp_path):
+    """A turn in flight is benign while a tool is actively running: a long `sleep` or build
+    leaves the SDK silent without being hung, so log at debug and emit no error event."""
+    from unittest.mock import patch as _patch
+
+    import core.diagnostics as diagnostics_mod
+
+    state = vm.State()
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
+    state.interrupt_event = asyncio.Event()  # Turn in flight...
+    state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="sleep 180", started_at=time.monotonic() - 65)
+    stop = asyncio.Event()
+    warnings: list[str] = []
+
+    original_warning = diagnostics_mod.logger.warning
+
+    def capture_warning(msg):
+        warnings.append(str(msg))
+
+    diagnostics_mod.logger.warning = capture_warning  # ty: ignore[invalid-assignment]
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
+        return await original_wait_for(coro, timeout=0.01)
+
+    def error_events() -> list[tp.Any]:
+        events: list[tp.Any] = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if event["type"] == "error" and "SDK silent" in event["text"]:
+                events.append(event)
+        return events
+
+    try:
+
+        async def let_several_polls_run():
+            for _ in range(5):
+                await asyncio.sleep(0.02)
+            stop.set()
+
+        with _patch("core.diagnostics.asyncio.wait_for", fast_wait_for):
+            await asyncio.gather(sdk_watchdog(state, stop=stop), let_several_polls_run())
+    finally:
+        diagnostics_mod.logger.warning = original_warning
+
+    assert not [w for w in warnings if "SDK silent" in w], f"expected no warnings while a tool is running, got {warnings}"
+    assert error_events() == [], f"expected no error events while a tool is running, got {error_events()}"
+    state.event_bus.close()
+
+
 # --- Tool duration tracking via hooks ---
 
 

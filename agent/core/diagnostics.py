@@ -118,12 +118,17 @@ async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
                 alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
                 diag = format_hang_diagnostics(state)
                 msg = f"SDK silent for {threshold}s | {alive_str} | {diag}"
-                # Only escalate when something is actually wrong: a turn is in flight
-                # (so silence = stalled processing) OR the alive check returned False
-                # (verified subprocess death). Otherwise the SDK is just idle between
-                # turns; log at debug so quiet stretches don't spam the warning stream.
+                # Only escalate when something is actually wrong: the alive check returned
+                # False (verified subprocess death), OR a turn is in flight with no tool
+                # running. A tool actively executing (a long build, a `sleep`, a subagent)
+                # fully explains the silence: the SDK is busy doing real work, not hung,
+                # so a foreground `sleep 180` should not look like a stall. This mirrors
+                # attempt_interrupt (client.py), which likewise refuses to act while a tool
+                # is in flight. Otherwise the SDK is just idle; log at debug so quiet
+                # stretches (between turns, or mid-tool) don't spam the warning stream.
                 turn_in_flight = state.interrupt_event is not None
-                if turn_in_flight or alive is False:
+                tool_running = bool(state.active_tools)
+                if alive is False or (turn_in_flight and not tool_running):
                     pane_tail = await _capture_pane_tail(state)
                     if pane_tail:
                         msg = f"{msg} | pane_tail={pane_tail!r}"
