@@ -1471,7 +1471,16 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
     registry.values().flat_map(|services| services.values().map(|e| e.port)).collect()
 }
 
-const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
+/// Upper bound of the kernel's ephemeral source-port range
+/// (`net.ipv4.ip_local_port_range`). Service ports are allocated above this so
+/// the kernel never reuses a just-allocated service port as a transient
+/// outbound source port (which would make a later bind() of that port fail).
+fn ephemeral_port_high() -> u16 {
+    std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1).and_then(|h| h.parse::<u16>().ok()))
+        .unwrap_or(60999)
+}
 
 fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
     err_response(
@@ -1481,20 +1490,27 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 }
 
 /// Find a free port not used by any registered service or other process.
-/// Uses OS-assigned ports with retries to avoid races with other vestad instances.
+///
+/// Callers bind the returned port themselves, only later. The previous
+/// implementation asked the OS for a port via `bind(0)`, which hands back an
+/// *ephemeral* port; between allocation and the caller binding it, the kernel
+/// could reuse that same port as the source port of an outbound connection,
+/// producing a spurious `EADDRINUSE` (the port looks free to a LISTEN scan but
+/// bind() fails). To avoid that race we scan deterministically and prefer ports
+/// *above* the ephemeral range, which the kernel will not hand out as source
+/// ports.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
     let used = all_registered_ports(registry);
-    for _ in 0..SERVICE_PORT_ALLOC_RETRIES {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
-        let port = listener.local_addr().ok()?.port();
-        if port >= SERVICE_PORT_MIN && !used.contains(&port) {
-            return Some(port);
-        }
-    }
-    // Fallback: linear scan (slower but guaranteed if ports exist)
-    (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| {
-        !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()
-    })
+    let scan = |lo: u16| {
+        (lo..=SERVICE_PORT_MAX)
+            .find(|p| !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+    };
+    // Preferred: above the ephemeral range, where the port can't be reused as a
+    // transient outbound source port between allocation and the caller binding it.
+    let safe_min = ephemeral_port_high().saturating_add(1).max(SERVICE_PORT_MIN);
+    // Fallback: the full service range (may still race, but better than failing
+    // to allocate when the safe band is exhausted).
+    scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
 /// Bindable = reusable. A port that merely has a listener isn't enough:
