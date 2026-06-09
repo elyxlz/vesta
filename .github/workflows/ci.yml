@@ -1420,3 +1420,23 @@ jobs:
           done
           echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
           echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."
+
+  # ── Revert a failed release ───────────────────────────────────────────
+  # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
+  # test-live) leaves a published-but-asset-less release. Updaters that follow
+  # prereleases then pick it up and 404 on the missing binary. Delete the
+  # release and its tag so the version vanishes cleanly; re-run ./release.sh
+  # after fixing to retry the same version.
+  revert-failed-release:
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
+    if: ${{ failure() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete the failed release and its tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
