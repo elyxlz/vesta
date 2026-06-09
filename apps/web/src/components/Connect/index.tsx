@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
+import { LogoText } from "@/components/Logo/LogoText";
+import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
@@ -32,18 +34,18 @@ export function Connect() {
   const [apiKey, setApiKey] = useState("");
   const [host, setHost] = useState("");
   const [error, setError] = useState("");
-  const [details, setDetails] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
+  const hostRef = useRef<HTMLInputElement>(null);
+  const keyRef = useRef<HTMLInputElement>(null);
   // In the native app (and any vesta-account surface) we lead with "continue
   // with vesta account"; `selfHost` flips to the host+key form for people
-  // running their own box. Only ever set on Tauri (the web bundles know which
+  // running their own agent. Only ever set on Tauri (the web bundles know which
   // form they need from `managed`).
   const [selfHost, setSelfHost] = useState(false);
   // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
-  // box. Probe /info.managed: managed boxes log in via the vesta.run handoff
-  // (PKCE, issue #19) since the user never gets the api_key; self-hosted boxes
-  // keep the paste-key form. `null` = still probing.
+  // instance. Probe /info.managed: managed instances log in via the vesta.run
+  // handoff (PKCE, issue #19) since the user never gets the api_key; self-hosted
+  // ones keep the paste-key form. `null` = still probing.
   const [managed, setManaged] = useState<boolean | null>(
     needHostInput ? false : null,
   );
@@ -70,19 +72,23 @@ export function Connect() {
   if (connected) return <Navigate to="/" replace />;
 
   const handleConnect = async () => {
-    if (!apiKey.trim() || busy) return;
-    if (needHostInput && !host.trim()) return;
+    if (busy) return;
+    if (needHostInput && !host.trim()) {
+      hostRef.current?.focus();
+      return;
+    }
+    if (!apiKey.trim()) {
+      keyRef.current?.focus();
+      return;
+    }
     setBusy(true);
     setError("");
-    setDetails("");
 
     try {
       const url = needHostInput ? normalizeHost(host) : window.location.origin;
       await connect(url, apiKey.trim());
     } catch (e: unknown) {
-      const msg = errorMessage(e, "connection failed");
-      setError("could not reach server");
-      if (msg !== "could not reach server") setDetails(msg);
+      setError(errorMessage(e, "connection failed"));
       setBusy(false);
     }
   };
@@ -105,23 +111,27 @@ export function Connect() {
     });
   };
 
-  // Hosted (vesta.run) box: the user never has an api_key, so log in through the
-  // control plane. Render nothing while still probing /info to avoid flashing the
-  // wrong form.
+  // Still probing /info to avoid flashing the wrong form.
   if (managed === null) {
-    return <div className="flex h-full flex-col p-page" />;
+    return (
+      <div className="flex h-full flex-col p-page">
+        <div className="flex flex-1 items-center justify-center">
+          <div className="w-[240px] max-w-full px-4">
+            <ProgressBar />
+          </div>
+        </div>
+      </div>
+    );
   }
-  // Lead with the vesta account on a managed box (web) and in the native app,
-  // unless the native user chose self-hosting.
+  // Hosted (vesta.run): the user never has an api_key, so log in through the
+  // control plane. Lead with the vesta account on a managed instance (web) and
+  // in the native app, unless the native user chose self-hosting.
   if ((managed || isTauri) && !selfHost) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
-            <h1 className="text-base font-semibold">sign in</h1>
-            <FieldDescription className="text-center">
-              continue with your vesta account
-            </FieldDescription>
+            <LogoText className="mb-2" />
             <Button
               type="button"
               onClick={handleHostedSignIn}
@@ -136,7 +146,11 @@ export function Connect() {
             </Button>
             <AnimatePresence>
               {error && (
-                <motion.p {...fade} className="text-xs text-destructive">
+                <motion.p
+                  {...fade}
+                  role="alert"
+                  className="text-xs text-destructive"
+                >
                   {error}
                 </motion.p>
               )}
@@ -148,7 +162,7 @@ export function Connect() {
                   setError("");
                   setSelfHost(true);
                 }}
-                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
               >
                 self-hosting? connect with a key
               </button>
@@ -166,9 +180,7 @@ export function Connect() {
           onSubmit={handleSubmit}
           className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
         >
-          <div className="flex flex-col items-center gap-1 text-center">
-            <h1 className="text-base font-semibold">connect</h1>
-          </div>
+          <LogoText className="mb-2" />
 
           <FieldGroup className="gap-3">
             {needHostInput && (
@@ -177,17 +189,18 @@ export function Connect() {
                   Host
                 </FieldLabel>
                 <Input
+                  ref={hostRef}
                   id="host"
                   type="url"
-                  placeholder="host"
+                  placeholder="fox-mybox.example.com"
                   autoComplete="url"
+                  autoFocus
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   className="text-center"
                 />
                 <FieldDescription className="text-center">
-                  the tunnel url vestad printed on first run, e.g.
-                  https://name.trycloudflare.com
+                  the url vestad printed on first run
                 </FieldDescription>
               </Field>
             )}
@@ -196,26 +209,24 @@ export function Connect() {
                 Key
               </FieldLabel>
               <Input
+                ref={keyRef}
                 id="key"
                 name="password"
                 type="password"
                 placeholder="key"
                 autoComplete="current-password"
+                autoFocus={!needHostInput}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="text-center"
               />
               <FieldDescription className="text-center">
-                the api key from ~/.config/vesta/vestad/api-key
+                the key vestad printed (also at ~/.config/vesta/vestad/api-key)
               </FieldDescription>
             </Field>
           </FieldGroup>
 
-          <Button
-            type="submit"
-            disabled={!apiKey.trim() || (needHostInput && !host.trim()) || busy}
-            className="w-full"
-          >
+          <Button type="submit" disabled={busy} className="w-full">
             {busy ? "connecting..." : "connect"}
           </Button>
 
@@ -224,10 +235,9 @@ export function Connect() {
               type="button"
               onClick={() => {
                 setError("");
-                setDetails("");
                 setSelfHost(false);
               }}
-              className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+              className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
             >
               use a vesta account instead
             </button>
@@ -235,32 +245,13 @@ export function Connect() {
 
           <AnimatePresence>
             {error && (
-              <motion.div
+              <motion.p
                 {...fade}
-                className="flex flex-col items-center gap-1 text-center"
+                role="alert"
+                className="text-xs text-destructive text-center break-all"
               >
-                <p className="text-xs">
-                  <span className="text-destructive">{error}</span>
-                  {details && (
-                    <>
-                      <span className="text-foreground"> · </span>
-                      <button
-                        type="button"
-                        aria-expanded={showDetails}
-                        onClick={() => setShowDetails(!showDetails)}
-                        className="text-foreground underline-offset-4 hover:underline"
-                      >
-                        {showDetails ? "hide details" : "show details"}
-                      </button>
-                    </>
-                  )}
-                </p>
-                {showDetails && details && (
-                  <p className="text-xs text-muted-foreground break-all">
-                    {details}
-                  </p>
-                )}
-              </motion.div>
+                {error}
+              </motion.p>
             )}
           </AnimatePresence>
         </form>

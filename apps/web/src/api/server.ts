@@ -19,7 +19,7 @@ export async function connectToServer(
 
   if (!resp.ok) {
     throw new Error(
-      resp.status === 401 ? "invalid API key" : "session creation failed",
+      resp.status === 401 ? "invalid api key" : "session creation failed",
     );
   }
 
