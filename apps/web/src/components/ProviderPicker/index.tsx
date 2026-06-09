@@ -4,7 +4,6 @@ import { ChevronLeftIcon } from "lucide-react";
 import { stepTransition } from "@/lib/motion";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
-import { useClaudeModels } from "@/hooks/use-claude-models";
 
 type AuthStartResult = claudeProvider.OAuthStartResult;
 import { ChoiceStep } from "./ChoiceStep";
@@ -14,13 +13,9 @@ import { ContextStep } from "./ContextStep";
 import { AuthStep } from "./AuthStep";
 import type { ProviderMode } from "./types";
 
-type InternalStep =
-  | "choice"
-  | "auth"
-  | "claude-model"
-  | "key"
-  | "model"
-  | "context";
+const CLAUDE_DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000;
+
+type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
 export function ProviderPicker({
   onDone,
@@ -30,13 +25,8 @@ export function ProviderPicker({
   onBack?: () => void;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
-  const [mode, setMode] = useState<ProviderMode>("claude");
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
-  const [claudeModel, setClaudeModel] = useState("");
-  const [credentials, setCredentials] = useState("");
-  // Fetch only once the user is actually on the Claude path, not on mount.
-  const claudeModels = useClaudeModels(mode === "claude" && step !== "choice");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
 
@@ -64,13 +54,16 @@ export function ProviderPicker({
   }, [step, authStart, authStartError]);
 
   const handleChoice = (next: ProviderMode) => {
-    setMode(next);
     setStep(next === "claude" ? "auth" : "key");
   };
 
   const handleCredentialsReady = (creds: string) => {
-    setCredentials(creds);
-    setStep("claude-model");
+    onDone({
+      kind: "claude",
+      credentials: creds,
+      model: undefined,
+      maxContextTokens: CLAUDE_DEFAULT_MAX_CONTEXT_TOKENS,
+    });
   };
 
   const handleKeyNext = (newKey: string) => {
@@ -79,20 +72,11 @@ export function ProviderPicker({
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
-    if (mode === "claude") {
-      onDone({
-        kind: "claude",
-        credentials,
-        model: claudeModel || undefined,
-        maxContextTokens,
-      });
-    } else {
-      onDone({
-        kind: "openrouter",
-        config: { key, model },
-        maxContextTokens,
-      });
-    }
+    onDone({
+      kind: "openrouter",
+      config: { key, model },
+      maxContextTokens,
+    });
   };
 
   const resetAuth = () => {
@@ -103,13 +87,7 @@ export function ProviderPicker({
   const back = (() => {
     if (step === "choice") return onBack;
     if (step === "model") return () => setStep("key");
-    if (step === "context")
-      return () => setStep(mode === "claude" ? "claude-model" : "model");
-    if (step === "claude-model")
-      return () => {
-        resetAuth();
-        setStep("choice");
-      };
+    if (step === "context") return () => setStep("model");
     // auth and key both return to the choice screen.
     return () => {
       resetAuth();
@@ -141,18 +119,6 @@ export function ProviderPicker({
               onCancel={() => {
                 resetAuth();
                 setStep("choice");
-              }}
-            />
-          )}
-          {step === "claude-model" && (
-            <ModelStep
-              initialModel={claudeModel}
-              models={claudeModels}
-              allowCustom={false}
-              onModelChange={setClaudeModel}
-              onSubmit={(m) => {
-                setClaudeModel(m);
-                setStep("context");
               }}
             />
           )}
