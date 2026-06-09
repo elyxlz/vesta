@@ -63,26 +63,18 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
     if not client:
         return False
 
-    # Skip the interrupt entirely while a tool is running; the SDK is busy doing
-    # real work, and a 5s timeout against an actively-executing tool is a
-    # false-positive SIGTERM. The next notification is processed once the tool
-    # returns. See issue #737.
-    if state.active_tools:
-        logger.debug(f"Interrupt skipped (tool in flight): {reason}")
-        return False
-
     try:
         await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
         logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
-        # No tool in flight but the SDK didn't ack the interrupt within the
-        # window. Log + emit but don't SIGTERM the whole process: in practice
-        # this fires more often during heavy thinking than during a real hang,
+        # The SDK didn't ack the interrupt within the window. Log + emit but
+        # don't SIGTERM the whole process: in practice this fires more often
+        # during heavy thinking or a long-running tool than during a real hang,
         # and the watchdog in core/diagnostics.py SIGTERMs if the SDK is
         # genuinely stuck idle past its higher threshold.
         diag = diagnostics.format_hang_diagnostics(state)
-        msg = f"SDK interrupt timed out (no tool in flight) | reason={reason} | {diag}"
+        msg = f"SDK interrupt timed out | reason={reason} | {diag}"
         logger.warning(msg)
         # The event bus has no "warning" severity; like log_context_usage's warning-band
         # crossing (diagnostics.py), surface warn-level conditions as an "error" event.

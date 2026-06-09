@@ -334,8 +334,8 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
 @pytest.mark.anyio
 async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
-    """When client.interrupt() times out with no tool in flight, attempt_interrupt warns and
-    returns False instead of SIGTERMing the process.
+    """When client.interrupt() times out, attempt_interrupt warns and returns False
+    instead of SIGTERMing the process.
 
     The 5s timeout fires more often during heavy thinking than during a real hang, so a
     false-positive must not kill the whole container; the diagnostics watchdog owns the
@@ -371,7 +371,7 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
     ):
         result = await attempt_interrupt(state, config=config, reason="hung SDK")
 
-    assert result is False, "a timed-out interrupt with no tool in flight must report failure, not success"
+    assert result is False, "a timed-out interrupt must report failure, not success"
     assert kills == [], f"timed-out interrupt must not SIGTERM the process, got {kills}"
     assert exits == [], f"timed-out interrupt must not force-exit, got {exits}"
 
@@ -386,9 +386,10 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_attempt_interrupt_skips_while_tool_in_flight(tmp_path):
-    """While a tool is executing, attempt_interrupt is a no-op: the SDK is doing real work and a
-    5s timeout against it would be a false-positive interrupt (see issue #737)."""
+async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path):
+    """attempt_interrupt still asks the SDK to interrupt while a tool is executing. The SDK
+    services the request at its next yield point; a timeout no longer SIGTERMs (see issue #737),
+    so there is no reason to suppress the interrupt during tool work."""
     from core.client import attempt_interrupt
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
@@ -408,8 +409,8 @@ async def test_attempt_interrupt_skips_while_tool_in_flight(tmp_path):
 
     result = await attempt_interrupt(state, config=config, reason="notification")
 
-    assert result is False, "skipping the interrupt must report failure"
-    assert interrupted is False, "client.interrupt() must not be called while a tool is in flight"
+    assert result is True, "a serviced interrupt must report success"
+    assert interrupted is True, "client.interrupt() must be called even while a tool is in flight"
     state.event_bus.close()
 
 
