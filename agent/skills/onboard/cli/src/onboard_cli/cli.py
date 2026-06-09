@@ -42,8 +42,23 @@ def _email(args: argparse.Namespace) -> str:
 
 def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
+    # Invite-only: web signup is disabled, so the control plane only sends a code
+    # to an email that already has an account. Pre-create it first, authenticated
+    # as THIS introducing vesta via a server-identity token minted from our own
+    # vestad (a self-hosted box can't mint one, so it can't walk anyone in).
+    identity = client.mint_identity_token()
+    created = client.create_account(email, identity)
+    if "error" in created:
+        _print(created)  # e.g. our vesta isn't active, or a bad email
+        return 2
     client.send_otp(email)
-    _print({"sent": True, "email": email})
+    _print(
+        {
+            "sent": True,
+            "email": email,
+            "account": "created" if created.get("created") else "existing",
+        }
+    )
     return 0
 
 

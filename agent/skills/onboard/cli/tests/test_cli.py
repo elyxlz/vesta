@@ -63,13 +63,64 @@ def test_presets_has_models_and_floor(capsys):
 # --- verify -----------------------------------------------------------------
 
 
+def _mock_precreate(monkeypatch, result=None):
+    """Stub the mint + account pre-create that `verify-send` now does first."""
+    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", lambda self: "IDTOK")
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "create_account",
+        lambda self, email, tok: result if result is not None else {"created": True, "email": email},
+    )
+
+
 def test_verify_stores_session(capsys, monkeypatch):
+    _mock_precreate(monkeypatch)
     monkeypatch.setattr(cli_mod.Client, "send_otp", lambda self, email: {"success": True})
     monkeypatch.setattr(cli_mod.Client, "verify_otp", lambda self, email, code: "SESS")
     assert _run(["verify-send", "--email", E], capsys)[0] == 0
     rc, data = _run(["verify", "--email", E, "--code", "123456"], capsys)
     assert rc == 0 and data["verified"] is True
     assert state_mod.token_for(E) == "SESS"
+
+
+def test_verify_send_precreates_account_then_sends(capsys, monkeypatch):
+    calls: dict[str, object] = {}
+
+    def _create(self, email, tok):
+        calls["create"] = (email, tok)
+        return {"created": True, "email": email}
+
+    def _send(self, email):
+        calls["send"] = email
+        return {"success": True}
+
+    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", lambda self: "IDTOK")
+    monkeypatch.setattr(cli_mod.Client, "create_account", _create)
+    monkeypatch.setattr(cli_mod.Client, "send_otp", _send)
+    rc, data = _run(["verify-send", "--email", E], capsys)
+    assert rc == 0 and data["sent"] is True and data["account"] == "created"
+    assert calls["create"] == (E, "IDTOK")  # pre-create authed with our identity token
+    assert calls["send"] == E  # and only THEN the code is sent
+
+
+def test_verify_send_surfaces_precreate_error_without_sending(capsys, monkeypatch):
+    _mock_precreate(monkeypatch, result={"error": "unauthenticated"})
+
+    def _no_send(self, email):
+        raise AssertionError("send_otp must not run when pre-create fails")
+
+    monkeypatch.setattr(cli_mod.Client, "send_otp", _no_send)
+    rc, data = _run(["verify-send", "--email", E], capsys)
+    assert rc == 2 and data["error"] == "unauthenticated"
+
+
+def test_verify_send_non_hosted_box_exits_3(capsys, monkeypatch):
+    def _no_mint(self):
+        raise OnboardError("no VESTAD_PORT/AGENT_NAME — only a hosted vesta can onboard")
+
+    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", _no_mint)
+    rc, data = _run(["verify-send", "--email", E], capsys)
+    assert rc == 3 and "only a hosted vesta can onboard" in data["error"]
 
 
 def test_verify_rejects_bad_code(capsys, monkeypatch):
@@ -242,6 +293,8 @@ def test_claude_finish_clears_session_when_attach_fails(capsys, monkeypatch):
 
 
 def test_unreachable_control_plane_exits_3(capsys, monkeypatch):
+    _mock_precreate(monkeypatch)
+
     def boom(self, email):
         raise OnboardError("could not reach https://vesta.run/api")
 
