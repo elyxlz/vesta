@@ -10,9 +10,25 @@
 //     ← { access_token, expires_in }
 //
 // The token never rides in a URL; only the single-use, PKCE-bound code does.
+//
+// Native (Tauri) apps aren't served by a box, so they can't full-navigate to
+// /cb on their own origin. Desktop instead runs a transient loopback server
+// (tauri-plugin-oauth) and registers `http://127.0.0.1:<port>/cb` as the
+// redirect; the control plane returns the box `url` alongside the token, and we
+// upgrade that token to a rotating refresh at the box's `/auth/exchange`. See
+// `startNativeLogin` and the `vesta-app` native client in the control plane's
+// functions/api/oauth.ts.
+
+import { isTauri, buildPlatform } from "./env";
+import { setConnection } from "./connection";
 
 const VERIFIER_KEY = "vesta-pkce-verifier";
 const STATE_KEY = "vesta-pkce-state";
+
+/** Control-plane apex for native apps (which have no box-derived host). */
+const CONTROL_APEX = "https://vesta.run";
+/** Native OAuth client_id the control plane recognises (functions/api/oauth.ts). */
+const NATIVE_CLIENT_ID = "vesta-app";
 
 function base64url(bytes: Uint8Array): string {
   let bin = "";
@@ -49,6 +65,10 @@ export function tenantIdentity(): { apexOrigin: string; subdomain: string } {
  * browser leaves this page.
  */
 export async function startHostedLogin(): Promise<void> {
+  // Native apps can't redirect to their own origin — hand off to the loopback
+  // flow instead (desktop) or the in-app secure tab (mobile, not yet wired).
+  if (isTauri) return startNativeLogin();
+
   const { apexOrigin, subdomain } = tenantIdentity();
   const verifier = randomBase64url(32);
   const state = randomBase64url(16);
@@ -98,4 +118,132 @@ export async function completeHostedLogin(
   const data = await resp.json();
   if (!data.access_token) throw new Error("no token returned");
   return { accessToken: data.access_token, expiresIn: data.expires_in ?? 600 };
+}
+
+/**
+ * Native (Tauri) hosted login. Desktop spins up a loopback server
+ * (tauri-plugin-oauth), opens the system browser to the control plane's single
+ * sign-in page, and catches the redirect there — no box origin to bounce off.
+ *
+ *   loopback :<port>  →  open https://vesta.run/api/authorize?client_id=vesta-app
+ *                        &redirect_uri=http://127.0.0.1:<port>/cb&...
+ *     ← onUrl: http://127.0.0.1:<port>/cb?code=...&state=...
+ *     → POST https://vesta.run/api/token { code, code_verifier }
+ *     ← { access_token, url }                       (url = this user's box)
+ *     → POST <url>/auth/exchange  (Bearer access_token)
+ *     ← { access_token, refresh_token, expires_in } (rotating, on-box)
+ *
+ * Mobile (ios/android) needs an in-app secure tab (ASWebAuthenticationSession /
+ * Custom Tabs via tauri-plugin-web-auth); not wired yet — fail with a clear note
+ * rather than spawning a loopback server that the OS sandbox would block.
+ */
+export async function startNativeLogin(): Promise<void> {
+  if (buildPlatform === "ios" || buildPlatform === "android") {
+    throw new Error("mobile sign-in is coming soon — use the web app for now");
+  }
+
+  const { start, onUrl, cancel } =
+    await import("@fabianlars/tauri-plugin-oauth");
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+
+  const verifier = randomBase64url(32);
+  const state = randomBase64url(16);
+  const port = await start();
+  const params = new URLSearchParams({
+    client_id: NATIVE_CLIENT_ID,
+    redirect_uri: `http://127.0.0.1:${port}/cb`,
+    code_challenge: await s256(verifier),
+    code_challenge_method: "S256",
+    state,
+  });
+
+  // Bridge the loopback's onUrl callback (which fires when the browser redirects
+  // back, potentially much later) into this promise, so the caller can surface
+  // errors and reset its busy state. A success ends in a full navigation into the
+  // app. `settled` guards against double-firing — the loopback can see a stray
+  // favicon/preflight hit before the real callback.
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let unlisten: (() => void) | undefined;
+    const teardown = () => {
+      void cancel(port).catch(() => {});
+      unlisten?.();
+    };
+
+    onUrl(async (url: string) => {
+      if (settled) return;
+      const u = new URL(url);
+      const code = u.searchParams.get("code");
+      const returnedState = u.searchParams.get("state");
+      if (!code || !returnedState) return; // stray hit — keep waiting
+      settled = true;
+      try {
+        if (returnedState !== state) {
+          throw new Error("state mismatch, try again");
+        }
+        await completeNativeLogin(code, verifier);
+        teardown();
+        resolve();
+        // Full load so connection-reading providers re-init from storage.
+        window.location.assign("/");
+      } catch (e) {
+        teardown();
+        reject(e);
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(reject);
+
+    openUrl(`${CONTROL_APEX}/api/authorize?${params.toString()}`).catch((e) => {
+      if (settled) return;
+      settled = true;
+      teardown();
+      reject(e);
+    });
+  });
+}
+
+/**
+ * Finish a native login: code → control-plane access token + box url, then
+ * upgrade that token to a rotating refresh at the box's /auth/exchange and
+ * persist the connection. Throws on any failure (the caller surfaces it).
+ */
+async function completeNativeLogin(
+  code: string,
+  verifier: string,
+): Promise<void> {
+  const tokenResp = await fetch(`${CONTROL_APEX}/api/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, code_verifier: verifier }),
+  });
+  if (!tokenResp.ok) throw new Error("could not complete sign-in");
+  const tok = await tokenResp.json();
+  if (!tok.access_token || !tok.url) {
+    throw new Error("sign-in response missing token or box url");
+  }
+
+  const exchangeResp = await fetch(`${tok.url}/auth/exchange`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${tok.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  if (!exchangeResp.ok) {
+    throw new Error("could not finish connecting to your vesta");
+  }
+  const ex = await exchangeResp.json();
+  if (!ex.access_token || !ex.refresh_token) {
+    throw new Error("exchange returned no tokens");
+  }
+  setConnection(
+    tok.url,
+    ex.access_token,
+    ex.refresh_token,
+    ex.expires_in ?? 3600,
+  );
 }

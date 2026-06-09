@@ -12,6 +12,7 @@ import {
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
+import { isTauri } from "@/lib/env";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -34,6 +35,11 @@ export function Connect() {
   const [details, setDetails] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
+  // In the native app (and any vesta-account surface) we lead with "continue
+  // with vesta account"; `selfHost` flips to the host+key form for people
+  // running their own box. Only ever set on Tauri (the web bundles know which
+  // form they need from `managed`).
+  const [selfHost, setSelfHost] = useState(false);
   // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
   // box. Probe /info.managed: managed boxes log in via the vesta.run handoff
   // (PKCE, issue #19) since the user never gets the api_key; self-hosted boxes
@@ -90,7 +96,9 @@ export function Connect() {
     if (busy) return;
     setBusy(true);
     setError("");
-    // Navigates away to vesta.run/api/authorize; on failure we stay put.
+    // Web: full-navigates to vesta.run/api/authorize. Native: opens the system
+    // browser and waits on a loopback redirect (the promise resolves only after
+    // a successful exchange, which itself navigates). On failure we stay put.
     void startHostedLogin().catch(() => {
       setError("could not start sign-in");
       setBusy(false);
@@ -103,14 +111,16 @@ export function Connect() {
   if (managed === null) {
     return <div className="flex h-full flex-col p-page" />;
   }
-  if (managed) {
+  // Lead with the vesta account on a managed box (web) and in the native app,
+  // unless the native user chose self-hosting.
+  if ((managed || isTauri) && !selfHost) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
             <h1 className="text-base font-semibold">sign in</h1>
             <FieldDescription className="text-center">
-              continue with your vesta.run account to access this box
+              continue with your vesta account
             </FieldDescription>
             <Button
               type="button"
@@ -118,7 +128,11 @@ export function Connect() {
               disabled={busy}
               className="w-full"
             >
-              {busy ? "redirecting..." : "continue with vesta.run"}
+              {busy
+                ? isTauri
+                  ? "waiting for browser..."
+                  : "redirecting..."
+                : "continue with vesta account"}
             </Button>
             <AnimatePresence>
               {error && (
@@ -127,6 +141,18 @@ export function Connect() {
                 </motion.p>
               )}
             </AnimatePresence>
+            {isTauri && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setSelfHost(true);
+                }}
+                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+              >
+                self-hosting? connect with a key
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -192,6 +218,20 @@ export function Connect() {
           >
             {busy ? "connecting..." : "connect"}
           </Button>
+
+          {isTauri && selfHost && (
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setDetails("");
+                setSelfHost(false);
+              }}
+              className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+            >
+              use a vesta account instead
+            </button>
+          )}
 
           <AnimatePresence>
             {error && (
