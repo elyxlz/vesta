@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { Virtuoso, type Components } from "react-virtuoso";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -6,7 +7,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
@@ -16,8 +16,7 @@ import { cn } from "@/lib/utils";
 const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
-
-let lineId = 0;
+const START_INDEX = 1_000_000;
 
 const LOG_LEVEL_TAGS = new Set([
   "DEBUG",
@@ -62,28 +61,6 @@ const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
   },
 };
 
-// LEGACY-CLEANUP(#726): remove this map (and its use in extractTags / color
-// lookup) once the minimum supported agent emits the hierarchical
-// family/subfamily log format instead of these old flat tags.
-const LEGACY_TAG_TO_FAMILY: Record<string, string> = {
-  ASSISTANT: "AGENT",
-  THINKING: "AGENT",
-  "TOOL CALL": "AGENT",
-  TOOL: "AGENT",
-  SUBAGENT: "AGENT",
-  INIT: "SYSTEM",
-  STARTUP: "SYSTEM",
-  SHUTDOWN: "SYSTEM",
-  CLIENT: "SYSTEM",
-  DREAMER: "SYSTEM",
-  INTERRUPT: "SYSTEM",
-  PROACTIVE: "SYSTEM",
-  SDK: "SYSTEM",
-  USAGE: "SYSTEM",
-  USER: "USER",
-  NOTIFICATION: "EVENT",
-};
-
 function extractTags(line: string): string[] {
   return [...line.matchAll(/\[([A-Z ]+)\]/g)]
     .map((match) => match[1])
@@ -104,16 +81,72 @@ function lineColorClass(line: string): string | null {
     );
   }
 
-  const legacyTag = tags.find((tag) => tag in LEGACY_TAG_TO_FAMILY);
-  if (!legacyTag) return null;
+  return null;
+}
 
-  const family = LEGACY_TAG_TO_FAMILY[legacyTag];
+interface LogLine {
+  id: number;
+  colorClass: string | null;
+  html: string;
+}
+
+interface ConsoleContext {
+  fullscreen?: boolean;
+  navbarHeight: number;
+  ended: boolean;
+}
+
+const Scroller: Components<LogLine, ConsoleContext>["Scroller"] = forwardRef(
+  function Scroller({ context, style, ...props }, ref) {
+    const fullscreen = context?.fullscreen;
+    const navbarHeight = context?.navbarHeight ?? 0;
+    return (
+      <div
+        {...props}
+        ref={ref}
+        className={fullscreen ? "px-page pb-page" : "px-3 py-2"}
+        style={{
+          ...style,
+          ...(fullscreen
+            ? {
+                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
+                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+              }
+            : {}),
+        }}
+      />
+    );
+  },
+);
+
+function ReconnectingNotice() {
+  return <div className="text-center text-[#444] py-2">— reconnecting —</div>;
+}
+
+function Footer({ context }: { context?: ConsoleContext }) {
+  if (!context?.ended) return null;
+  return <ReconnectingNotice />;
+}
+
+function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
+  if (context?.ended) return <ReconnectingNotice />;
   return (
-    SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] ||
-    FAMILY_COLOR_CLASS[family] ||
-    null
+    <div className="min-h-full flex flex-col items-center justify-end gap-2 py-1">
+      <div className="flex items-center gap-1">
+        <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
+        <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
+        <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
+      </div>
+      <span className="text-xs text-[#666]">streaming logs...</span>
+    </div>
   );
 }
+
+const consoleComponents: Components<LogLine, ConsoleContext> = {
+  Scroller,
+  Footer,
+  EmptyPlaceholder,
+};
 
 interface ConsoleProps {
   name: string;
@@ -123,10 +156,9 @@ interface ConsoleProps {
 
 export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const [lines, setLines] = useState<{ id: number; text: string }[]>([]);
+  const [lines, setLines] = useState<LogLine[]>([]);
   const [ended, setEnded] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const { check, scroll } = useAutoScroll();
+  const idRef = useRef(0);
   const reconnectDelayRef = useRef(RECONNECT_BASE);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
@@ -146,7 +178,14 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
             reconnectDelayRef.current = RECONNECT_BASE;
             const stripped = stripAnsi(event.text);
             setLines((prev) => {
-              const next = [...prev, { id: lineId++, text: stripped }];
+              const next = [
+                ...prev,
+                {
+                  id: idRef.current++,
+                  colorClass: lineColorClass(stripped),
+                  html: linkify(stripped),
+                },
+              ];
               return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
             });
             break;
@@ -171,6 +210,7 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
 
   useEffect(() => {
     activeRef.current = true;
+    idRef.current = 0;
     setLines([]);
     startStream.current?.();
     return () => {
@@ -180,14 +220,6 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
     };
   }, [name]);
 
-  useLayoutEffect(() => {
-    scroll(scrollRef.current);
-  }, [lines, scroll]);
-
-  const handleScroll = () => {
-    check(scrollRef.current);
-  };
-
   useEffect(() => {
     if (!onClose) return;
     const handleEsc = (e: KeyboardEvent) => {
@@ -196,6 +228,13 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
   }, [onClose]);
+
+  const context = useMemo<ConsoleContext>(
+    () => ({ fullscreen, navbarHeight, ended }),
+    [fullscreen, navbarHeight, ended],
+  );
+  const firstItemIndex =
+    lines.length > 0 ? START_INDEX + lines[0].id : START_INDEX;
 
   return (
     <div
@@ -224,53 +263,25 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className={cn(
-          "flex-1 overflow-y-auto font-mono text-xs leading-[1.6] text-white/70",
-          fullscreen ? "px-page pb-page" : "px-3 py-2",
-        )}
-        style={
-          fullscreen
-            ? {
-                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
-              }
-            : undefined
-        }
-      >
-        <div className="min-h-full flex flex-col justify-end">
-          <div>
-            {lines.length === 0 && !ended && (
-              <div className="flex flex-col items-center gap-2 py-1">
-                <div className="flex items-center gap-1">
-                  <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
-                  <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
-                  <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
-                </div>
-                <span className="text-xs text-[#666]">streaming logs...</span>
-              </div>
-            )}
-
-            {lines.map((line) => (
-              <div
-                key={line.id}
-                className={cn(
-                  "break-words whitespace-pre-wrap",
-                  lineColorClass(line.text),
-                )}
-                dangerouslySetInnerHTML={{ __html: linkify(line.text) }}
-              />
-            ))}
-
-            {ended && (
-              <div className="text-center text-[#444] py-2">
-                — reconnecting —
-              </div>
-            )}
-          </div>
-        </div>
+      <div className="flex-1 min-h-0">
+        <Virtuoso<LogLine, ConsoleContext>
+          className="h-full font-mono text-xs leading-[1.6] text-white/70"
+          data={lines}
+          context={context}
+          components={consoleComponents}
+          firstItemIndex={firstItemIndex}
+          computeItemKey={(_index, line) => line.id}
+          alignToBottom
+          followOutput={(atBottom) => (atBottom ? "auto" : false)}
+          atBottomThreshold={80}
+          initialTopMostItemIndex={{ index: "LAST", align: "end" }}
+          itemContent={(_index, line) => (
+            <div
+              className={cn("break-words whitespace-pre-wrap", line.colorClass)}
+              dangerouslySetInnerHTML={{ __html: line.html }}
+            />
+          )}
+        />
       </div>
     </div>
   );

@@ -366,55 +366,6 @@ pub async fn cleanup_backups(
     }
 }
 
-/// Reclaim disk from the old docker-image backups: drop an agent's legacy
-/// `vesta-backup:<agent>_*` images once it has a restic snapshot (so a current
-/// backup always exists first). Idempotent; safe to call repeatedly.
-///
-/// LEGACY-CLEANUP(#726): remove this fn, `legacy_backup_images`, and the two
-/// `cleanup_legacy_backups` call sites in serve.rs once all agents have migrated
-/// off the pre-restic docker-image backup model.
-pub async fn cleanup_legacy_backups(docker: &Docker) {
-    for name in list_agent_names(docker).await {
-        let images = legacy_backup_images(&name).await;
-        if images.is_empty() {
-            continue;
-        }
-        let have_restic = matches!(crate::restic::list(&name).await, Ok(b) if !b.is_empty());
-        if !have_restic {
-            continue;
-        }
-        for image in &images {
-            tokio::process::Command::new("docker")
-                .args(["rmi", "-f", image])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .await
-                .ok();
-        }
-        tracing::info!(agent = %name, count = images.len(), "reclaimed legacy backup images");
-    }
-}
-
-/// List this agent's legacy `vesta-backup:<agent>_*` image tags, if any.
-async fn legacy_backup_images(name: &str) -> Vec<String> {
-    match tokio::process::Command::new("docker")
-        .args([
-            "images", "--format", "{{.Repository}}:{{.Tag}}",
-            "--filter", &format!("reference=vesta-backup:{name}_*"),
-        ])
-        .output()
-        .await
-    {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// List all agent names that have containers.
 pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
     crate::docker::list_managed_agents(docker)

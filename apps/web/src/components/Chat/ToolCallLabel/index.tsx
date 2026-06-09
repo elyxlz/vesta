@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ChevronRight, Wrench } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,7 @@ const TOOL_LABELS: Record<string, string> = {
   Task: "ran a subtask",
 };
 
-export function ToolCallLabel({
+export const ToolCallLabel = memo(function ToolCallLabel({
   tool,
   input,
   className,
@@ -61,4 +61,4 @@ export function ToolCallLabel({
       </AnimatePresence>
     </div>
   );
-}
+});

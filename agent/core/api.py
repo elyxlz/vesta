@@ -37,6 +37,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     Recv: clients can emit events (e.g. user messages, chat replies).
     On connect: sends recent history unless ?skip_history=1 is passed."""
     event_bus: EventBus = request.app["event_bus"]
+    state: State | None = request.app["state"]
     skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
@@ -51,7 +52,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
             events, cursor = event_bus.recent()
             if events:
                 await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
+        recv_task = asyncio.create_task(_recv_loop(ws, event_bus, state))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -66,7 +67,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
+async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, state: State | None) -> None:
     """Receive events from clients and emit to event bus."""
     async for msg in ws:
         if msg.type == web.WSMsgType.TEXT:
@@ -89,6 +90,14 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                         event_bus.emit(event)
                     else:
                         event_bus.emit(ChatEvent(type="chat", text=text))
+            elif msg_type == "interrupt":
+                # Pure stop: halt the in-flight turn without queueing a new message.
+                # The message processor owns the interrupt sequence (drain + return to
+                # idle) by waiting on state.interrupt_event; setting it here is a no-op
+                # when the agent is idle (interrupt_event is None between turns).
+                if state is not None and state.interrupt_event is not None and not state.interrupt_event.is_set():
+                    state.interrupt_event.set()
+                    logger.info("client interrupt received")
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
