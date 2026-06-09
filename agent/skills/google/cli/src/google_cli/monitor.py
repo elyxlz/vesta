@@ -13,6 +13,15 @@ from .gmail import _get_header
 _INVISIBLE = re.compile(r"[​-‏‪-‮⁠⁦-⁩﻿]")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
+# Cap how far back a first-run catch-up reaches. A long offline gap (e.g. the
+# daemon restarting with a fresh token after the old one expired) otherwise
+# replays weeks of unread email and past calendar events as notifications.
+MAX_CATCHUP_LOOKBACK = timedelta(hours=24)
+
+
+def clamp_catchup_start(last_check_dt: datetime, now: datetime) -> datetime:
+    return max(last_check_dt, now - MAX_CATCHUP_LOOKBACK)
+
 
 def clean_preview(text: str) -> str:
     return _WHITESPACE_RUN.sub(" ", _INVISIBLE.sub("", text)).strip()
@@ -85,12 +94,16 @@ def run(ctx: GoogleContext):
                     catching_up = True
             first_run = False
 
-            logger.info(f"Checking for updates since {last_check_str}")
+            query_since = clamp_catchup_start(last_check_dt, new_check_time)
+            if query_since != last_check_dt:
+                logger.info(f"Clamping catch-up window from {last_check_str} to {query_since.isoformat()}")
+
+            logger.info(f"Checking for updates since {query_since.isoformat()}")
 
             try:
                 gmail = api.gmail_service(config)
 
-                epoch_seconds = int(last_check_dt.timestamp())
+                epoch_seconds = int(query_since.timestamp())
                 query = f"after:{epoch_seconds}"
                 results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
                 messages = results["messages"] if "messages" in results else []
@@ -134,7 +147,7 @@ def run(ctx: GoogleContext):
                     cal.events()
                     .list(
                         calendarId="primary",
-                        timeMin=last_check_dt.isoformat(),
+                        timeMin=query_since.isoformat(),
                         timeMax=window_end.isoformat(),
                         singleEvents=True,
                         orderBy="startTime",
@@ -159,7 +172,7 @@ def run(ctx: GoogleContext):
 
                     for threshold_mins in config.get_calendar_notify_thresholds():
                         trigger_time = event_time - timedelta(minutes=threshold_mins)
-                        if not (last_check_dt <= trigger_time < new_check_time):
+                        if not (query_since <= trigger_time < new_check_time):
                             continue
 
                         label = _format_threshold_label(threshold_mins)
