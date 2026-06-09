@@ -1597,31 +1597,38 @@ async fn create_backup_handler(
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %name, "creating manual backup");
 
-    let stream = async_stream::stream! {
+    // Spawn the destructive pipeline so it runs to completion even if the SSE client
+    // disconnects mid-backup. Running it inline in the stream body would let hyper drop
+    // the future at the restic::snapshot await point, leaving the agent container stopped
+    // indefinitely (with_container_paused stops the container before the snapshot and
+    // only restarts it after — plain sequential code, not a Drop guard).
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
         let lock = state.agent_lock(&name).await;
         let _guard = lock.write().await;
-
         let _file_lock = match backup::agent_file_lock(&name) {
             Ok(l) => l,
             Err(e) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                let _ = tx.send(Err(e));
                 return;
             }
         };
         let result = backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await;
+        let _ = tx.send(result);
+    });
 
-        match result {
-            Ok(info) => {
-                tracing::info!(agent = %name, backup_id = %info.id, size = info.size, "backup created");
+    let stream = async_stream::stream! {
+        match rx.await {
+            Ok(Ok(info)) => {
+                tracing::info!(backup_id = %info.id, size = info.size, "backup created");
                 yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let (status, body) = map_docker_err(e);
                 let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
                 yield Ok(Event::default().event("error").data(err.to_string()));
             }
+            Err(_) => {} // pipeline task panicked; nothing to forward
         }
     };
 
@@ -1661,32 +1668,41 @@ async fn restore_backup_handler(
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
 
-    let stream = async_stream::stream! {
+    // Spawn the destructive pipeline so it runs to completion even if the SSE client
+    // disconnects mid-restore. Running it inline would let a disconnect cancel the future
+    // after remove_container_force but before create_container, leaving the agent with no
+    // container and making it unrecoverable via the API (restore_backup's NotFound guard
+    // rejects any retry because the container is gone).
+    let agent_name = path.name.clone();
+    let backup_id = path.backup_id.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
         let lock = state.agent_lock(&path.name).await;
         let _guard = lock.write().await;
-
         let _file_lock = match backup::agent_file_lock(&path.name) {
             Ok(l) => l,
             Err(e) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                let _ = tx.send(Err(e));
                 return;
             }
         };
         let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
         let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await;
+        let _ = tx.send(result);
+    });
 
-        match result {
-            Ok(()) => {
-                tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
+    let stream = async_stream::stream! {
+        match rx.await {
+            Ok(Ok(())) => {
+                tracing::info!(agent = %agent_name, backup_id = %backup_id, "backup restored");
                 yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let (status, body) = map_docker_err(e);
                 let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
                 yield Ok(Event::default().event("error").data(err.to_string()));
             }
+            Err(_) => {} // pipeline task panicked; nothing to forward
         }
     };
 
