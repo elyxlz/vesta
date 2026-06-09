@@ -62,28 +62,6 @@ const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
   },
 };
 
-// LEGACY-CLEANUP(#726): remove this map (and its use in extractTags / color
-// lookup) once the minimum supported agent emits the hierarchical
-// family/subfamily log format instead of these old flat tags.
-const LEGACY_TAG_TO_FAMILY: Record<string, string> = {
-  ASSISTANT: "AGENT",
-  THINKING: "AGENT",
-  "TOOL CALL": "AGENT",
-  TOOL: "AGENT",
-  SUBAGENT: "AGENT",
-  INIT: "SYSTEM",
-  STARTUP: "SYSTEM",
-  SHUTDOWN: "SYSTEM",
-  CLIENT: "SYSTEM",
-  DREAMER: "SYSTEM",
-  INTERRUPT: "SYSTEM",
-  PROACTIVE: "SYSTEM",
-  SDK: "SYSTEM",
-  USAGE: "SYSTEM",
-  USER: "USER",
-  NOTIFICATION: "EVENT",
-};
-
 function extractTags(line: string): string[] {
   return [...line.matchAll(/\[([A-Z ]+)\]/g)]
     .map((match) => match[1])
@@ -104,15 +82,7 @@ function lineColorClass(line: string): string | null {
     );
   }
 
-  const legacyTag = tags.find((tag) => tag in LEGACY_TAG_TO_FAMILY);
-  if (!legacyTag) return null;
-
-  const family = LEGACY_TAG_TO_FAMILY[legacyTag];
-  return (
-    SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] ||
-    FAMILY_COLOR_CLASS[family] ||
-    null
-  );
+  return null;
 }
 
 interface ConsoleProps {
