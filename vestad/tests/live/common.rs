@@ -5,28 +5,41 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
-use vesta_tests::{SERVER, TestAgent, docker_cmd, exec_in_container};
+use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in_container};
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
-/// Shared live agent: ONE real first-start for the whole live suite. First-start is by far
-/// the most expensive part of every live test (a multi-minute real-Claude setup conversation),
-/// and the tests only need an agent that is awake, settled, and processing notifications.
-/// Tests lock this agent and run serially against it, isolating themselves with unique
-/// file paths.
+/// The live suite runs against a POOL of two shared agents rather than one, so independent tests
+/// run in parallel. Each agent pays its own one-time first-start (the expensive multi-minute
+/// real-Claude setup), but the two first-starts run concurrently, so the pool's setup wall-clock
+/// stays ~= a single first-start while the test bodies overlap.
 ///
-/// Like SHARED_RO_AGENT in the server suite, the static never drops; the container is cleaned
-/// up on the next run (TestAgent::create destroys leftovers by name).
-static SHARED_LIVE_AGENT: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_shared_live_agent()));
+/// Tests are partitioned by agent and must NOT mix pools mid-test: notifications and interrupts
+/// are global to an agent's conversation, so two tests sharing one agent would corrupt each
+/// other. Each pool's Mutex serializes its own tests. The dreamer (which restarts and compacts
+/// its agent) gets pool B to itself; everything else shares pool A. The suite must run with
+/// enough `--test-threads` that both pools have a runner at once (see check.sh `live`).
+///
+/// Like SHARED_RO_AGENT in the server suite, the statics never drop; containers are cleaned up
+/// on the next run (TestAgent::create destroys leftovers by name).
+static LIVE_AGENT_A: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-a")));
+static LIVE_AGENT_B: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-b")));
 
-/// Lock the shared live agent for the duration of a test. Returns None (test skips) when
-/// Claude credentials are unavailable. Holding the guard serializes tests: notifications,
-/// and especially interrupts, are global to the agent's conversation, so concurrent tests
-/// would corrupt each other.
-pub fn lock_shared_live_agent() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
-    let guard = SHARED_LIVE_AGENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+fn lock_pool(pool: &'static LazyLock<Mutex<SharedAgent>>) -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    let guard = pool.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let container = guard.as_ref()?.1.clone();
     Some((guard, container))
+}
+
+/// Lock pool A (general tests: file ops, mcp tools, interrupt). Returns None (test skips) when
+/// Claude credentials are unavailable.
+pub fn lock_live_agent_a() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    lock_pool(&LIVE_AGENT_A)
+}
+
+/// Lock pool B (the dreamer's dedicated agent — it restarts and compacts, so it runs alone).
+pub fn lock_live_agent_b() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    lock_pool(&LIVE_AGENT_B)
 }
 
 const MEMORY_PATH: &str = "/root/agent/MEMORY.md";
@@ -118,6 +131,13 @@ fn wait_for_container_running(container: &str, timeout: Duration) -> Result<(), 
 /// first goes idle. First-start is several minutes; this only has to not be hit in practice.
 const FIRST_START_SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 const READY_MARKER: &str = "/root/agent/e2e-test/ready.txt";
+const FIRST_START_ALIVE_POLL: Duration = Duration::from_secs(2);
+
+/// Agent-log markers meaning the injected credentials are being rejected by the API (a dead or
+/// expired CLAUDE_CREDENTIALS). When this happens the agent idles in `setting_up` until the full
+/// timeout, so first-start setup bails fast and prints the agent's own diagnostics on sight of one
+/// rather than hanging for ten minutes on a generic timeout.
+const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Invalid authentication credentials", "Please run /login"];
 
 /// Block until the agent has fully finished first-start and is idle, using the product's own
 /// idle signal rather than a timer.
@@ -137,7 +157,7 @@ fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
     wait_for_file_contains(container, READY_MARKER, "READY", FIRST_START_SETTLE_TIMEOUT).map(|_| ())
 }
 
-fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
+fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     let Some(credentials_path) = host_credentials_path() else {
         eprintln!("skipping live e2e: ~/.claude/.credentials.json not found");
         return None;
@@ -149,7 +169,7 @@ fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
     // Follow the real user creation path: build the image, then discover
     // the container via the API (not by hardcoding the naming convention).
     let client = Box::leak(Box::new(SERVER.client()));
-    let agent = TestAgent::create(client, "test-e2e-shared").unwrap();
+    let agent = TestAgent::create(client, name).unwrap();
 
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
@@ -173,10 +193,32 @@ fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
     // already-running agent picks up the credentials but keeps the default (opus)
     // model for the whole first-start conversation.
     client.restart_agent(&agent.name).expect("restart agent to apply model + credentials");
-    client.wait_until_alive(&agent.name, 600).expect("wait until alive");
+
+    // wait_until_alive would block for the full timeout if the injected credentials are rejected.
+    // Poll the agent's own log alongside its status and fail fast with diagnostics the moment an
+    // auth error appears (a dead/expired CLAUDE_CREDENTIALS is the usual cause).
+    let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
+    loop {
+        if std::time::Instant::now() >= alive_deadline {
+            dump_agent_diagnostics(&agent.name);
+            panic!("timeout waiting for first-start to go alive");
+        }
+        if client.agent_status(&agent.name).map(|s| s.status).unwrap_or_default() == "alive" {
+            break;
+        }
+        let agent_log = exec_in_container(&container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
+        if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
+            dump_agent_diagnostics(&agent.name);
+            panic!("first-start hit an auth error — CLAUDE_CREDENTIALS is invalid/expired; re-seed the secret (agent diagnostics above)");
+        }
+        thread::sleep(FIRST_START_ALIVE_POLL);
+    }
 
     // First-start keeps going after the agent reports alive; wait (via the agent's own idle
     // signal) until it has fully settled before any test sends notifications.
-    wait_for_first_start_settled(&container).expect("agent settled after first-start");
+    if let Err(e) = wait_for_first_start_settled(&container) {
+        dump_agent_diagnostics(&agent.name);
+        panic!("agent did not settle after first-start: {e}");
+    }
     Some((agent, container))
 }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use vesta_tests::exec_in_container;
 
-use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{lock_live_agent_b, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// Poll a container shell command until its stdout contains `needle`, or time out.
 fn wait_for_exec_contains(container: &str, script: &str, needle: &str, timeout: Duration) -> Result<String, String> {
@@ -41,7 +41,7 @@ fn read_session_id(container: &str) -> String {
 /// than waking up on a blank slate. This is the behavior that replaced the old hard session reset.
 #[test]
 fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
+    let Some((_shared, container)) = lock_live_agent_b() else {
         return;
     };
 
