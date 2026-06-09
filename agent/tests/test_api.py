@@ -21,9 +21,10 @@ def _pick_port() -> int:
         return s.getsockname()[1]
 
 
-async def _start_server(event_bus):
+async def _start_server(event_bus, state=None):
     app = web.Application()
     app["event_bus"] = event_bus
+    app["state"] = state
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -80,6 +81,40 @@ async def test_ws_skip_history_omits_history_event(event_bus):
                 )
                 assert not any(e.get("type") == "history" for e in received)
                 assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_interrupt_sets_interrupt_event(event_bus):
+    """A {type: interrupt} message halts the in-flight turn by setting state.interrupt_event."""
+    state = vm.State()
+    interrupt_event = asyncio.Event()
+    state.interrupt_event = interrupt_event
+    runner, base = await _start_server(event_bus, state)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+                await ws.send_json({"type": "interrupt"})
+                await wait_for_condition(interrupt_event.is_set, message="interrupt_event never set")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_interrupt_is_noop_when_idle(event_bus):
+    """With no turn in flight (interrupt_event is None) the interrupt is ignored and the socket stays healthy."""
+    state = vm.State()
+    assert state.interrupt_event is None
+    runner, base = await _start_server(event_bus, state)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+                await ws.send_json({"type": "interrupt"})
+                event_bus.emit(ChatEvent(type="chat", text="alive"))
+                received = await _drain_until(ws, lambda r: any(e.get("text") == "alive" for e in r))
+                assert any(e.get("type") == "chat" and e.get("text") == "alive" for e in received)
+        assert state.interrupt_event is None
     finally:
         await runner.cleanup()
 

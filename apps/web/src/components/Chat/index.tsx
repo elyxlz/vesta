@@ -49,6 +49,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadingMore,
     loadMore,
     send,
+    sendEvent,
+    agentState,
     showToolCalls,
   } = useChatContext();
 
@@ -148,6 +150,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   };
 
+  const handleStop = () => {
+    sendEvent({ type: "interrupt" });
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -225,6 +231,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             onInputChange={handleInput}
             onKeyDown={handleKeyDown}
             onSend={handleSend}
+            isBusy={agentState === "thinking"}
+            onStop={handleStop}
             textareaRef={textareaRef}
           />
         </div>
