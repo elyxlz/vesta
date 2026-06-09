@@ -1,4 +1,5 @@
 import { getConnection, updateTokens, isTokenExpiringSoon } from "./connection";
+import { startHostedLogin } from "./pkce";
 
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -19,6 +20,14 @@ export async function ensureFreshToken(force = false): Promise<boolean> {
 async function doRefresh(): Promise<boolean> {
   const conn = getConnection();
   if (!conn) return false;
+
+  // Hosted (vesta.run) connections have no refresh token: re-run the PKCE
+  // authorize flow. With the apex session cookie still valid this is a silent
+  // full-page bounce that returns a fresh token; otherwise it lands on sign-in.
+  if (conn.hosted) {
+    void startHostedLogin();
+    return false;
+  }
 
   try {
     const resp = await fetch(`${conn.url}/auth/refresh`, {

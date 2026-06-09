@@ -1,3 +1,4 @@
+account
 browser
 claude-code
 dashboard

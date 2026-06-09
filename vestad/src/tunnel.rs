@@ -339,7 +339,7 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // seeded config as-is. This is the load-bearing half of removing the baked
     // fleet-wide token: a managed box can run its one tunnel but cannot touch the
     // zone or any other tunnel.
-    if std::env::var("VESTA_MANAGED").is_ok() {
+    if crate::is_cloud_managed() {
         return get_tunnel_config(config_dir).ok_or_else(|| {
             "managed mode: no tunnel.json seeded by the control plane".to_string()
         });

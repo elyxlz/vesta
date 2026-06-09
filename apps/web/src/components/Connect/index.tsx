@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/field";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
+import { startHostedLogin } from "@/lib/pkce";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -33,6 +34,32 @@ export function Connect() {
   const [details, setDetails] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
+  // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
+  // box. Probe /info.managed: managed boxes log in via the vesta.run handoff
+  // (PKCE, issue #19) since the user never gets the api_key; self-hosted boxes
+  // keep the paste-key form. `null` = still probing.
+  const [managed, setManaged] = useState<boolean | null>(
+    needHostInput ? false : null,
+  );
+
+  useEffect(() => {
+    if (managed !== null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await fetch(`${window.location.origin}/info`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await resp.json();
+        if (!cancelled) setManaged(data?.managed === true);
+      } catch {
+        if (!cancelled) setManaged(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [managed]);
 
   if (connected) return <Navigate to="/" replace />;
 
@@ -58,6 +85,53 @@ export function Connect() {
     e.preventDefault();
     handleConnect();
   };
+
+  const handleHostedSignIn = () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    // Navigates away to vesta.run/api/authorize; on failure we stay put.
+    void startHostedLogin().catch(() => {
+      setError("could not start sign-in");
+      setBusy(false);
+    });
+  };
+
+  // Hosted (vesta.run) box: the user never has an api_key, so log in through the
+  // control plane. Render nothing while still probing /info to avoid flashing the
+  // wrong form.
+  if (managed === null) {
+    return <div className="flex h-full flex-col p-page" />;
+  }
+  if (managed) {
+    return (
+      <div className="flex h-full flex-col p-page">
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
+            <h1 className="text-base font-semibold">sign in</h1>
+            <FieldDescription className="text-center">
+              continue with your vesta.run account to access this box
+            </FieldDescription>
+            <Button
+              type="button"
+              onClick={handleHostedSignIn}
+              disabled={busy}
+              className="w-full"
+            >
+              {busy ? "redirecting..." : "continue with vesta.run"}
+            </Button>
+            <AnimatePresence>
+              {error && (
+                <motion.p {...fade} className="text-xs text-destructive">
+                  {error}
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col p-page">
