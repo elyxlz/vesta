@@ -17,6 +17,14 @@ pub struct Claims {
     pub typ: String,
     pub iat: u64,
     pub exp: u64,
+    /// Refresh-token id (rotation): present only on `typ:"refresh"` tokens, so
+    /// each one is individually trackable + revocable. Absent on access/identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>,
+    /// Refresh-token family id: all rotations of one login share it, so reuse of a
+    /// spent token revokes the whole chain (RFC 9700 §4.14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fam: Option<String>,
 }
 
 pub fn create_token(api_key: &str, typ: &str, ttl_secs: u64) -> String {
@@ -26,6 +34,29 @@ pub fn create_token(api_key: &str, typ: &str, ttl_secs: u64) -> String {
         typ: typ.into(),
         iat: now,
         exp: now + ttl_secs,
+        jti: None,
+        fam: None,
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(api_key.as_bytes()),
+    )
+    .expect("HS256 encoding of a serializable struct is infallible")
+}
+
+/// Mint a ROTATING refresh token: `{ typ:"refresh", jti, fam }` signed with the
+/// `api_key`. The `jti`/`fam` let the issuer (this vestad) rotate it on use and
+/// revoke a whole family on reuse, satisfying RFC 9700 §2.2.2 for public clients.
+pub fn create_refresh_token(api_key: &str, jti: &str, fam: &str) -> String {
+    let now = crate::time_utils::now_epoch_secs();
+    let claims = Claims {
+        sub: "vesta-app".into(),
+        typ: "refresh".into(),
+        iat: now,
+        exp: now + REFRESH_TOKEN_TTL,
+        jti: Some(jti.into()),
+        fam: Some(fam.into()),
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -49,6 +80,8 @@ pub fn create_server_identity_token(api_key: &str, server_id: &str) -> String {
         typ: SERVER_IDENTITY_TYP.into(),
         iat: now,
         exp: now + SERVER_IDENTITY_TTL,
+        jti: None,
+        fam: None,
     };
     encode(
         &Header::new(Algorithm::HS256),

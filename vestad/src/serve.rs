@@ -138,6 +138,11 @@ pub struct AppState {
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
+    /// Live refresh-token ids → their family id (rotation + reuse detection, see
+    /// `auth.rs`). In-memory: a vestad restart invalidates outstanding refresh
+    /// tokens, so clients re-auth (a silent re-login for hosted apps via the apex
+    /// session; a key re-paste for self-hosted). Persisting this is a follow-up.
+    pub(crate) refresh_live: Mutex<HashMap<String, String>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
@@ -162,6 +167,7 @@ impl AppState {
             env_config,
             docker,
             auth_sessions: Mutex::new(HashMap::new()),
+            refresh_live: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
@@ -2023,6 +2029,11 @@ pub fn build_router(state: SharedState) -> Router {
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
     let vestad_protected_timed = Router::new()
+        // Hosted (vesta.run) login upgrade: the native app arrives with a control-
+        // plane-minted ACCESS token (verified by auth_middleware) and exchanges it
+        // for a registered, rotating refresh token — so the box never mints a
+        // refresh token for an unauthenticated caller.
+        .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/version", get(version))
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
