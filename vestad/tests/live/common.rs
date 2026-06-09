@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
-use vesta_tests::{SERVER, TestAgent, docker_cmd, exec_in_container};
+use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in_container};
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
@@ -118,6 +118,13 @@ fn wait_for_container_running(container: &str, timeout: Duration) -> Result<(), 
 /// first goes idle. First-start is several minutes; this only has to not be hit in practice.
 const FIRST_START_SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 const READY_MARKER: &str = "/root/agent/e2e-test/ready.txt";
+const FIRST_START_ALIVE_POLL: Duration = Duration::from_secs(2);
+
+/// Agent-log markers meaning the injected credentials are being rejected by the API (a dead or
+/// expired CLAUDE_CREDENTIALS). When this happens the agent idles in `setting_up` until the full
+/// timeout, so first-start setup bails fast and prints the agent's own diagnostics on sight of one
+/// rather than hanging for ten minutes on a generic timeout.
+const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Invalid authentication credentials", "Please run /login"];
 
 /// Block until the agent has fully finished first-start and is idle, using the product's own
 /// idle signal rather than a timer.
@@ -173,10 +180,32 @@ fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
     // already-running agent picks up the credentials but keeps the default (opus)
     // model for the whole first-start conversation.
     client.restart_agent(&agent.name).expect("restart agent to apply model + credentials");
-    client.wait_until_alive(&agent.name, 600).expect("wait until alive");
+
+    // wait_until_alive would block for the full timeout if the injected credentials are rejected.
+    // Poll the agent's own log alongside its status and fail fast with diagnostics the moment an
+    // auth error appears (a dead/expired CLAUDE_CREDENTIALS is the usual cause).
+    let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
+    loop {
+        if std::time::Instant::now() >= alive_deadline {
+            dump_agent_diagnostics(&agent.name);
+            panic!("timeout waiting for first-start to go alive");
+        }
+        if client.agent_status(&agent.name).map(|s| s.status).unwrap_or_default() == "alive" {
+            break;
+        }
+        let agent_log = exec_in_container(&container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
+        if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
+            dump_agent_diagnostics(&agent.name);
+            panic!("first-start hit an auth error — CLAUDE_CREDENTIALS is invalid/expired; re-seed the secret (agent diagnostics above)");
+        }
+        thread::sleep(FIRST_START_ALIVE_POLL);
+    }
 
     // First-start keeps going after the agent reports alive; wait (via the agent's own idle
     // signal) until it has fully settled before any test sends notifications.
-    wait_for_first_start_settled(&container).expect("agent settled after first-start");
+    if let Err(e) = wait_for_first_start_settled(&container) {
+        dump_agent_diagnostics(&agent.name);
+        panic!("agent did not settle after first-start: {e}");
+    }
     Some((agent, container))
 }
