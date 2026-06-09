@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{lock_live_agent_a, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// Basic file operations end to end against real claude. Create and modify share the same
 /// notification -> file mechanism, so one conversation exercises both: the agent creates a file
@@ -8,7 +8,7 @@ use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notifi
 /// notification without losing the original content.
 #[test]
 fn agent_notification_e2e_creates_then_modifies_file_via_vestad() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
+    let Some((_shared, container)) = lock_live_agent_a() else {
         return;
     };
 

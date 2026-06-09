@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use vesta_tests::exec_in_container;
 
-use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{lock_live_agent_a, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// Per-step timeout for the agent to make observable progress.
 const TASK_TIMEOUT: Duration = Duration::from_secs(240);
@@ -48,7 +48,7 @@ fn assert_counting_is_dead(container: &str, counting_file: &str) {
 /// task must be abandoned (count never reaches 10) and the new task must complete.
 #[test]
 fn interrupt_aborts_counting_and_runs_redirect_task() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
+    let Some((_shared, container)) = lock_live_agent_a() else {
         return;
     };
 

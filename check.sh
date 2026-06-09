@@ -94,7 +94,10 @@ check_integration() {
 check_live() {
   (
     cd vestad
-    cargo test -p vestad --test live -- --test-threads=2
+    # The live tests use a 2-agent pool (see tests/live/common.rs); run enough threads that
+    # every test starts and self-organizes onto its pool's mutex, so the two agents run in
+    # parallel instead of serializing on one.
+    cargo test -p vestad --test live -- --test-threads=8
   )
 }
 

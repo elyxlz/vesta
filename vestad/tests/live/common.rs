@@ -9,24 +9,37 @@ use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
-/// Shared live agent: ONE real first-start for the whole live suite. First-start is by far
-/// the most expensive part of every live test (a multi-minute real-Claude setup conversation),
-/// and the tests only need an agent that is awake, settled, and processing notifications.
-/// Tests lock this agent and run serially against it, isolating themselves with unique
-/// file paths.
+/// The live suite runs against a POOL of two shared agents rather than one, so independent tests
+/// run in parallel. Each agent pays its own one-time first-start (the expensive multi-minute
+/// real-Claude setup), but the two first-starts run concurrently, so the pool's setup wall-clock
+/// stays ~= a single first-start while the test bodies overlap.
 ///
-/// Like SHARED_RO_AGENT in the server suite, the static never drops; the container is cleaned
-/// up on the next run (TestAgent::create destroys leftovers by name).
-static SHARED_LIVE_AGENT: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_shared_live_agent()));
+/// Tests are partitioned by agent and must NOT mix pools mid-test: notifications and interrupts
+/// are global to an agent's conversation, so two tests sharing one agent would corrupt each
+/// other. Each pool's Mutex serializes its own tests. The dreamer (which restarts and compacts
+/// its agent) gets pool B to itself; everything else shares pool A. The suite must run with
+/// enough `--test-threads` that both pools have a runner at once (see check.sh `live`).
+///
+/// Like SHARED_RO_AGENT in the server suite, the statics never drop; containers are cleaned up
+/// on the next run (TestAgent::create destroys leftovers by name).
+static LIVE_AGENT_A: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-a")));
+static LIVE_AGENT_B: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-b")));
 
-/// Lock the shared live agent for the duration of a test. Returns None (test skips) when
-/// Claude credentials are unavailable. Holding the guard serializes tests: notifications,
-/// and especially interrupts, are global to the agent's conversation, so concurrent tests
-/// would corrupt each other.
-pub fn lock_shared_live_agent() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
-    let guard = SHARED_LIVE_AGENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+fn lock_pool(pool: &'static LazyLock<Mutex<SharedAgent>>) -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    let guard = pool.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let container = guard.as_ref()?.1.clone();
     Some((guard, container))
+}
+
+/// Lock pool A (general tests: file ops, mcp tools, interrupt). Returns None (test skips) when
+/// Claude credentials are unavailable.
+pub fn lock_live_agent_a() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    lock_pool(&LIVE_AGENT_A)
+}
+
+/// Lock pool B (the dreamer's dedicated agent — it restarts and compacts, so it runs alone).
+pub fn lock_live_agent_b() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+    lock_pool(&LIVE_AGENT_B)
 }
 
 const MEMORY_PATH: &str = "/root/agent/MEMORY.md";
@@ -144,7 +157,7 @@ fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
     wait_for_file_contains(container, READY_MARKER, "READY", FIRST_START_SETTLE_TIMEOUT).map(|_| ())
 }
 
-fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
+fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     let Some(credentials_path) = host_credentials_path() else {
         eprintln!("skipping live e2e: ~/.claude/.credentials.json not found");
         return None;
@@ -156,7 +169,7 @@ fn setup_shared_live_agent() -> Option<(TestAgent<'static>, String)> {
     // Follow the real user creation path: build the image, then discover
     // the container via the API (not by hardcoding the naming convention).
     let client = Box::leak(Box::new(SERVER.client()));
-    let agent = TestAgent::create(client, "test-e2e-shared").unwrap();
+    let agent = TestAgent::create(client, name).unwrap();
 
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
