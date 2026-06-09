@@ -32,8 +32,6 @@ interface ChatComposerProps {
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
   onSend: () => void;
-  isBusy: boolean;
-  onStop: () => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -51,8 +49,6 @@ export function ChatComposer({
   onInputChange,
   onKeyDown,
   onSend,
-  isBusy,
-  onStop,
   textareaRef,
 }: ChatComposerProps) {
   const activation = useVoiceActivation((s) => s.mode);
@@ -115,11 +111,11 @@ export function ChatComposer({
             <InputGroupButton
               size="icon-sm"
               variant="ghost"
-              aria-label={isBusy ? "stop agent" : "send message"}
+              aria-label="send message"
               disabled={!connected}
-              onClick={isBusy ? onStop : onSend}
+              onClick={onSend}
             >
-              {isBusy ? <Square fill="currentColor" /> : <SendHorizontal />}
+              <SendHorizontal />
             </InputGroupButton>
           </InputGroupAddon>
         )}
