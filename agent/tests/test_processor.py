@@ -15,7 +15,7 @@ async def _run_processor_test(
     *,
     message_side_effect,
     pre_state: vm.State | None = None,
-    initial_queue: list[tuple[str, bool]] | None = None,
+    initial_queue: list[tuple[str, bool, list[str]]] | None = None,
     extra_patches: dict | None = None,
 ):
     """Shared helper for message_processor tests."""
@@ -86,7 +86,7 @@ async def test_restarts_on_error(tmp_path):
         raise RuntimeError("Simulated SDK buffer overflow")
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True, [])]
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Simulated SDK buffer overflow"
@@ -108,7 +108,7 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
         tmp_path,
         message_side_effect=side_effect,
         pre_state=state,
-        initial_queue=[("will crash", True)],
+        initial_queue=[("will crash", True, [])],
     )
 
     assert state.persisted.last_restart_reason == "error: kaboom in the SDK"
@@ -128,7 +128,7 @@ async def test_restarts_on_timeout(tmp_path):
         raise TimeoutError()
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True, [])]
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
@@ -258,7 +258,7 @@ async def test_cancellation_triggers_restart(tmp_path):
 
     with patch("core.loops.process_message", side_effect=cancel_side_effect):
         with pytest.raises(asyncio.CancelledError):
-            await _run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config)
+            await _run_messages_with_interrupts("msg", is_user=True, file_paths=[], queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: processing cancelled"
@@ -290,7 +290,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
         task.cancel()
 
     with patch("core.loops.process_message", hang):
-        task = asyncio.create_task(_run_messages_with_interrupts("msg", is_user=True, queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_interrupts("msg", is_user=True, file_paths=[], queue=queue, state=state, config=config))
         canceller = asyncio.create_task(shutdown_and_cancel(task))
         with pytest.raises(asyncio.CancelledError):
             await task

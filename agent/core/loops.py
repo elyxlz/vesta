@@ -102,10 +102,18 @@ async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> 
     return notifications
 
 
+def _delete_paths(file_paths: list[str]) -> None:
+    for path_str in file_paths:
+        pl.Path(path_str).unlink(missing_ok=True)
+
+
 async def process_batch(
-    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool, list[str]]], state: vm.State, config: vm.VestaConfig
 ) -> None:
-    """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first."""
+    """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
+
+    File paths are carried in the queue item and deleted only after the message is processed,
+    so that a mid-compaction restart can recover unprocessed notifications from disk."""
     if not notifications:
         return
 
@@ -116,12 +124,12 @@ async def process_batch(
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
     if system:
-        await queue.put((format_notification_batch(system, suffix=""), False))
+        system_paths = [n.file_path for n in system if n.file_path]
+        await queue.put((format_notification_batch(system, suffix=""), False, system_paths))
     if external:
         suffix = load_prompt("notification_suffix", config) or ""
-        await queue.put((format_notification_batch(external, suffix=suffix), False))
-
-    await delete_notification_files(notifications)
+        external_paths = [n.file_path for n in external if n.file_path]
+        await queue.put((format_notification_batch(external, suffix=suffix), False, external_paths))
 
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
@@ -161,7 +169,13 @@ def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reaso
 
 
 async def _run_messages_with_interrupts(
-    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+    msg: str,
+    *,
+    is_user: bool,
+    file_paths: list[str],
+    queue: asyncio.Queue[tuple[str, bool, list[str]]],
+    state: vm.State,
+    config: vm.VestaConfig,
 ) -> None:
     """Run a message and any follow-ups; new queue items interrupt the current turn (deferred during compaction)."""
 
@@ -202,7 +216,7 @@ async def _run_messages_with_interrupts(
         finally:
             state.event_bus.set_state("idle")
 
-    pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+    pending: collections.deque[tuple[str, bool, list[str]]] = collections.deque([(msg, is_user, file_paths)])
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -212,12 +226,12 @@ async def _run_messages_with_interrupts(
                     await queue.put(remaining)
                 break
 
-            current_msg, current_is_user = pending.popleft()
+            current_msg, current_is_user, current_file_paths = pending.popleft()
             state.interrupt_event = asyncio.Event()
             process_task = asyncio.create_task(run_one(current_msg, user=current_is_user))
 
             while not process_task.done():
-                queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+                queue_task: asyncio.Task[tuple[str, bool, list[str]]] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
@@ -233,6 +247,7 @@ async def _run_messages_with_interrupts(
                     await _cancel_task(queue_task)
 
             await process_task
+            _delete_paths(current_file_paths)
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
@@ -265,7 +280,7 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     state.graceful_shutdown.set()
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
     if config.agent_provider == "openrouter":
         if state.openrouter_max_tokens is None:
@@ -291,13 +306,15 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                 try:
                     while not state.shutdown_event.is_set():
                         try:
-                            msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                            msg, is_user, file_paths = await asyncio.wait_for(queue.get(), timeout=1.0)
                         except TimeoutError:
                             continue
 
                         state.processor_busy = True
                         try:
-                            await _run_messages_with_interrupts(msg, is_user=is_user, queue=queue, state=state, config=config)
+                            await _run_messages_with_interrupts(
+                                msg, is_user=is_user, file_paths=file_paths, queue=queue, state=state, config=config
+                            )
                             await compact_then_restart_if_requested(state=state)
                         finally:
                             state.processor_busy = False
@@ -383,11 +400,14 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
         bridge_task.cancel()
 
 
-async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
     # Init one hour back so the first dreamer check runs on the first tick after boot.
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_passive: list[vm.Notification] = []
+    # Files sent to the queue but not yet processed (and thus not yet deleted from disk).
+    # Trimmed each tick to the paths that still exist; prevents re-queueing mid-compaction.
+    queued_paths: set[str] = set()
     notify = asyncio.Event()
 
     watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, shutdown=state.shutdown_event))
@@ -417,11 +437,17 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 process_nightly_memory(state=state, config=config)
                 last_dreamer_check = now
 
+            # Prune paths that were processed and deleted; this is how we know a queued item
+            # completed and its file is gone, preventing unbounded set growth.
+            queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
+
             notifications = await load_new_notifications(state=state, config=config)
-            interrupt_notifs = [n for n in notifications if n.interrupt]
-            # Passive files stay on disk until the batch flushes, so reloads would duplicate.
-            queued_paths = {n.file_path for n in pending_passive if n.file_path}
-            pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
+            interrupt_notifs = [n for n in notifications if n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
+            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
+
+            new_passive = [n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
+            queued_paths.update(n.file_path for n in new_passive if n.file_path)
+            pending_passive.extend(new_passive)
 
             if interrupt_notifs:
                 await process_batch(interrupt_notifs, queue=queue, state=state, config=config)

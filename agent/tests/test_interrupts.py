@@ -123,7 +123,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True))
+    await queue.put(("slow processing message", True, []))
 
     processed: list[str] = []
     original = slow_side_effect
@@ -138,7 +138,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True))
+        await queue.put(("urgent message", True, []))
         await interrupt_seen.wait()
         await wait_for_condition(lambda: "urgent message" in processed, message="urgent message never processed after interrupt")
         assert state.shutdown_event is not None
@@ -178,7 +178,7 @@ async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("message", True))
+    await queue.put(("message", True, []))
 
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -230,7 +230,7 @@ async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
 
     with patch("core.loops.process_message", hanging_process):
         interruptible_task = asyncio.create_task(
-            _run_messages_with_interrupts("test msg", is_user=True, queue=queue, state=state, config=config)
+            _run_messages_with_interrupts("test msg", is_user=True, file_paths=[], queue=queue, state=state, config=config)
         )
         await task_started.wait()
         interruptible_task.cancel()
@@ -263,9 +263,9 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(t
         return (["OK"], state)
 
     with patch("core.loops.process_message", fake_process):
-        task = asyncio.create_task(_run_messages_with_interrupts("first", is_user=True, queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_interrupts("first", is_user=True, file_paths=[], queue=queue, state=state, config=config))
         await first_started.wait()
-        await queue.put(("second", True))
+        await queue.put(("second", True, []))
         # Negative assertion: prove "second" does NOT run while compaction holds the interrupt.
         # Waiting for absence requires a real time window; this sleep is intentional.
         await asyncio.sleep(0.1)

@@ -193,7 +193,7 @@ async def test_watchdog_warning_includes_pane_tail():
     client = MagicMock()
     client.is_alive = MagicMock(return_value=True)
     client.snapshot_pane = AsyncMock(return_value="\x1b[34m●\x1b[0m wedged\n❯ yeah run it\n  ⏵⏵ bypass permissions on\n")
-    state.client = client  # ty: ignore[invalid-assignment]
+    state.client = client
     stop = asyncio.Event()
     warnings: list[str] = []
 
