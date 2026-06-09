@@ -3,6 +3,7 @@ import logging
 import os
 import pathlib as pl
 import ssl
+import time
 import typing as tp
 
 import aiohttp
@@ -10,10 +11,14 @@ from aiohttp import web
 
 from . import config as voice_config
 from . import providers
+from . import tts_pending
 
 logger = logging.getLogger("voice")
 
 DATA_DIR = pl.Path.home() / ".voice"
+
+# Pending TTS clips awaiting a streamed GET (see tts_pending / issue #466).
+_PENDING_TTS: tts_pending.PendingStore = {}
 
 _VESTAD_PORT = os.environ.get("VESTAD_PORT", "")
 _AGENT_NAME = os.environ.get("AGENT_NAME", "")
@@ -286,6 +291,16 @@ async def set_setting(request: web.Request) -> web.Response:
     return await tts_status(request)
 
 
+async def _synthesize(entry: dict, provider: tp.Any, creds: dict[str, str], text: str, request: web.Request) -> web.StreamResponse:
+    voice_id = entry.get("selected_voice_id")
+    if not voice_id:
+        voices = provider.premade_voices()
+        voice_id = voices[0]["id"] if voices else None
+    if not voice_id:
+        return web.json_response({"error": "no voice selected"}, status=500)
+    return await provider.speak(text, voice_id, creds, request)
+
+
 async def tts_speak(request: web.Request) -> web.StreamResponse:
     resolved = _resolve_domain("tts")
     if isinstance(resolved, web.Response):
@@ -299,11 +314,35 @@ async def tts_speak(request: web.Request) -> web.StreamResponse:
     if not text:
         return web.json_response({"error": "text required"}, status=400)
 
-    voice_id = entry.get("selected_voice_id")
-    if not voice_id:
-        voices = provider.premade_voices()
-        voice_id = voices[0]["id"] if voices else None
-    if not voice_id:
-        return web.json_response({"error": "no voice selected"}, status=500)
+    return await _synthesize(entry, provider, creds, text, request)
 
-    return await provider.speak(text, voice_id, creds, request)
+
+async def tts_prepare(request: web.Request) -> web.Response:
+    """Register text and return a short-lived id the app streams via GET (issue #466)."""
+    resolved = _resolve_domain("tts")
+    if isinstance(resolved, web.Response):
+        return resolved
+
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    text = body.get("text", "").strip()
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+
+    token = tts_pending.register(_PENDING_TTS, text, time.monotonic())
+    return web.json_response({"id": token})
+
+
+async def tts_stream(request: web.Request) -> web.StreamResponse:
+    """Stream the audio for a prepared id so a native <audio> element can play it."""
+    resolved = _resolve_domain("tts")
+    if isinstance(resolved, web.Response):
+        return resolved
+    entry, _name, provider, creds = resolved
+
+    text = tts_pending.resolve(_PENDING_TTS, request.match_info["id"], time.monotonic())
+    if text is None:
+        return web.json_response({"error": "unknown or expired tts id"}, status=404)
+
+    return await _synthesize(entry, provider, creds, text, request)
