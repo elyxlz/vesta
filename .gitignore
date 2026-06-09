@@ -22,8 +22,9 @@ target/
 vestad/vendored/
 
 # Claude Code
-.claude/
+.claude/*
 !.claude/skills/
+!.claude/workflows/
 
 # Cursor / editor config
 .cursor/
