@@ -351,6 +351,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
 
       # Hermetic: the agent image is built from THIS checkout (GHA layer cache keeps it
       # fast), so integration tests exercise the PR's agent code and Dockerfile — never
@@ -417,6 +420,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
 
       # Live tests must exercise the image being released, not the PREVIOUS release's
       # :latest — build it from this checkout (shares the GHA layer cache with
@@ -504,6 +510,9 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: |
             cli
@@ -574,6 +583,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: |
             cli
@@ -630,6 +642,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: vestad
           key: vestad-${{ matrix.target }}
@@ -697,6 +712,9 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
@@ -725,6 +743,9 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
@@ -788,6 +809,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
@@ -864,6 +888,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
@@ -941,6 +968,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: x86_64-pc-windows-msvc
@@ -1023,6 +1053,9 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/mobile/src-tauri
           key: android
@@ -1158,6 +1191,9 @@ jobs:
           targets: aarch64-apple-ios
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         if: env.SKIP_IOS != 'true'
         with:
           workspaces: apps/mobile/src-tauri
@@ -1420,3 +1456,23 @@ jobs:
           done
           echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
           echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."
+
+  # ── Revert a failed release ───────────────────────────────────────────
+  # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
+  # test-live) leaves a published-but-asset-less release. Updaters that follow
+  # prereleases then pick it up and 404 on the missing binary. Delete the
+  # release and its tag so the version vanishes cleanly; re-run ./release.sh
+  # after fixing to retry the same version.
+  revert-failed-release:
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
+    if: ${{ failure() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete the failed release and its tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
