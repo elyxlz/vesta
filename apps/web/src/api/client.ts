@@ -16,7 +16,7 @@ export async function apiFetch(
   // local clock thinks it is still valid, e.g. server-side rotation/revocation)
   if (resp.status === 401) {
     const refreshed = await ensureFreshToken(true);
-    if (refreshed) {
+    if (refreshed === "ok") {
       resp = await fetch(apiUrl(path), {
         ...init,
         headers: { ...authHeaders(), ...init?.headers },

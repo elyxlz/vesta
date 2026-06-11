@@ -28,7 +28,7 @@ function normalizeHost(input: string): string {
 }
 
 export function Connect() {
-  const { connected, connect } = useAuth();
+  const { connected, connect, sessionExpired } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [host, setHost] = useState("");
   const [error, setError] = useState("");
@@ -120,7 +120,9 @@ export function Connect() {
           <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
             <h1 className="text-base font-semibold">sign in</h1>
             <FieldDescription className="text-center">
-              continue with your vesta account
+              {sessionExpired
+                ? "your session expired — sign in again"
+                : "continue with your vesta account"}
             </FieldDescription>
             <Button
               type="button"
@@ -168,6 +170,11 @@ export function Connect() {
         >
           <div className="flex flex-col items-center gap-1 text-center">
             <h1 className="text-base font-semibold">connect</h1>
+            {sessionExpired && (
+              <FieldDescription className="text-center">
+                your session expired — connect again
+              </FieldDescription>
+            )}
           </div>
 
           <FieldGroup className="gap-3">
