@@ -549,7 +549,7 @@ fn set_executable(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("chmod failed: {}", e))
 }
 
-pub async fn start_tunnel(
+async fn start_tunnel(
     config_dir: &Path,
     port: u16,
 ) -> Result<(tokio::process::Child, String), String> {
@@ -609,6 +609,133 @@ pub async fn start_tunnel(
     Ok((child, url))
 }
 
+// --- Tunnel supervision ---
+//
+// cloudflared is the one long-running child vestad owns, and a dead tunnel is
+// invisible from the inside: vestad stays healthy, systemd sees nothing wrong,
+// and every request to the hostname gets Cloudflare error 1033 until someone
+// restarts vestad by hand. Two failure modes, two layers:
+//   - the process exits (crash, OOM, fatal give-up) -> respawn with capped backoff
+//   - the process wedges with its edge connections dead -> a periodic probe of
+//     the public hostname THROUGH the Cloudflare edge catches it; after
+//     consecutive failures the child is killed and respawned.
+
+const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 1;
+const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 60;
+/// Uptime past which a cloudflared run counts as healthy and the backoff resets.
+const TUNNEL_HEALTHY_UPTIME_SECS: u64 = 300;
+const EDGE_PROBE_INTERVAL_SECS: u64 = 120;
+const EDGE_PROBE_TIMEOUT_SECS: u64 = 10;
+/// Consecutive failed edge probes before cloudflared is restarted. Also bounds
+/// the restart rate when the box itself is offline (a restart then is useless
+/// but harmless: one per full probe-failure window).
+const EDGE_PROBE_MAX_FAILURES: u32 = 3;
+
+pub struct TunnelSupervisor {
+    shutdown: tokio::sync::watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl TunnelSupervisor {
+    /// Kill the current cloudflared and stop supervising (graceful shutdown).
+    pub async fn shutdown(self) {
+        self.shutdown.send(true).ok();
+        self.task.await.ok();
+    }
+}
+
+/// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
+/// on a failed edge probe streak, with capped exponential backoff between
+/// attempts that resets once a run stays healthy.
+pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(async move {
+        let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+        loop {
+            let started = tokio::time::Instant::now();
+            match start_tunnel(&config_dir, port).await {
+                Ok((mut child, url)) => {
+                    let reason = tokio::select! {
+                        _ = shutdown_rx.changed() => {
+                            child.kill().await.ok();
+                            return;
+                        }
+                        reason = run_until_unhealthy(&mut child, &url) => reason,
+                    };
+                    child.kill().await.ok();
+                    if started.elapsed().as_secs() >= TUNNEL_HEALTHY_UPTIME_SECS {
+                        respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+                    }
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel unhealthy ({reason}), restarting cloudflared");
+                }
+                Err(e) => {
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
+                }
+            }
+            tokio::select! {
+                _ = shutdown_rx.changed() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(respawn_delay_secs)) => {}
+            }
+            respawn_delay_secs = next_respawn_delay(respawn_delay_secs);
+        }
+    });
+    TunnelSupervisor { shutdown: shutdown_tx, task }
+}
+
+/// Watch one cloudflared run; returns the reason it must be replaced (process
+/// exit, or the edge probe failing EDGE_PROBE_MAX_FAILURES times in a row).
+async fn run_until_unhealthy(child: &mut tokio::process::Child, url: &str) -> String {
+    let probe_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(EDGE_PROBE_TIMEOUT_SECS))
+        .build()
+        .ok();
+    let probe_url = format!("{url}/health");
+    let probe_interval = std::time::Duration::from_secs(EDGE_PROBE_INTERVAL_SECS);
+    // First probe only after a full interval, so cloudflared has time to register.
+    let mut probe_ticks =
+        tokio::time::interval_at(tokio::time::Instant::now() + probe_interval, probe_interval);
+    let mut consecutive_failures = 0u32;
+    loop {
+        tokio::select! {
+            status = child.wait() => {
+                return match status {
+                    Ok(s) => format!("cloudflared exited: {s}"),
+                    Err(e) => format!("cloudflared wait failed: {e}"),
+                };
+            }
+            _ = probe_ticks.tick() => {
+                let Some(client) = &probe_client else { continue };
+                let ok = match client.get(&probe_url).send().await {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(_) => false,
+                };
+                let (failures, restart) = record_probe(consecutive_failures, ok);
+                consecutive_failures = failures;
+                if !ok {
+                    tracing::warn!(consecutive_failures, url = %probe_url, "tunnel edge probe failed");
+                }
+                if restart {
+                    return format!("edge unreachable for {consecutive_failures} consecutive probes");
+                }
+            }
+        }
+    }
+}
+
+/// Pure probe accounting: a success clears the failure streak; a failure
+/// extends it, demanding a restart at EDGE_PROBE_MAX_FAILURES.
+fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
+    if ok {
+        return (0, false);
+    }
+    let failures = consecutive_failures + 1;
+    (failures, failures >= EDGE_PROBE_MAX_FAILURES)
+}
+
+fn next_respawn_delay(delay_secs: u64) -> u64 {
+    (delay_secs * 2).min(TUNNEL_RESPAWN_MAX_DELAY_SECS)
+}
+
 fn which(name: &str) -> Result<PathBuf, ()> {
     let output = std::process::Command::new("which")
         .arg(name)
@@ -662,6 +789,33 @@ mod tests {
         assert_eq!(sanitize("Alice.Bob"), "alice-bob");
         assert_eq!(sanitize("--test--"), "test");
         assert_eq!(sanitize("a_b@c"), "a-b-c");
+    }
+
+    #[test]
+    fn respawn_delay_doubles_and_caps() {
+        assert_eq!(next_respawn_delay(TUNNEL_RESPAWN_BASE_DELAY_SECS), 2);
+        assert_eq!(next_respawn_delay(2), 4);
+        assert_eq!(next_respawn_delay(40), TUNNEL_RESPAWN_MAX_DELAY_SECS);
+        assert_eq!(next_respawn_delay(TUNNEL_RESPAWN_MAX_DELAY_SECS), TUNNEL_RESPAWN_MAX_DELAY_SECS);
+    }
+
+    #[test]
+    fn probe_success_clears_the_failure_streak() {
+        assert_eq!(record_probe(EDGE_PROBE_MAX_FAILURES - 1, true), (0, false));
+    }
+
+    #[test]
+    fn probe_failures_demand_restart_only_at_threshold() {
+        let mut failures = 0;
+        for expected in 1..EDGE_PROBE_MAX_FAILURES {
+            let (count, restart) = record_probe(failures, false);
+            assert_eq!(count, expected);
+            assert!(!restart, "no restart before the threshold");
+            failures = count;
+        }
+        let (count, restart) = record_probe(failures, false);
+        assert_eq!(count, EDGE_PROBE_MAX_FAILURES);
+        assert!(restart, "restart at the threshold");
     }
 }
 

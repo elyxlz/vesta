@@ -433,17 +433,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
             print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
-            let tunnel_child = if tunnel_url.is_some() {
-                match tunnel::start_tunnel(&config, port).await {
-                    Ok((child, _url)) => Some(child),
-                    Err(e) => {
-                        tracing::warn!("failed to start tunnel: {e}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            let tunnel_supervisor = tunnel_url
+                .is_some()
+                .then(|| tunnel::supervise_tunnel(config.clone(), port));
 
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
             serve::run_server(serve::ServerConfig {
@@ -458,8 +450,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 dev_mode,
             }).await;
 
-            if let Some(mut child) = tunnel_child {
-                child.kill().await.ok();
+            if let Some(supervisor) = tunnel_supervisor {
+                supervisor.shutdown().await;
             }
         });
 }
