@@ -549,10 +549,12 @@ fn set_executable(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("chmod failed: {}", e))
 }
 
+/// Spawn one cloudflared run for the configured tunnel. Returns the child and
+/// the loopback port of its metrics server (for /ready probing).
 async fn start_tunnel(
     config_dir: &Path,
     port: u16,
-) -> Result<(tokio::process::Child, String), String> {
+) -> Result<(tokio::process::Child, u16), String> {
     let tc = get_tunnel_config(config_dir)
         .ok_or("no tunnel configured — run `vestad tunnel setup <subdomain>` first")?;
 
@@ -574,17 +576,29 @@ async fn start_tunnel(
     std::fs::write(&cf_config_path, &cf_config)
         .map_err(|e| format!("failed to write cloudflared config: {}", e))?;
 
+    // Loopback metrics server: exposes cloudflared's /ready endpoint, which the
+    // supervisor probes for registered edge connections. Bind-and-drop to pick a
+    // free port; if something grabs it before cloudflared does, cloudflared exits
+    // and the supervisor respawns with a fresh port.
+    let metrics_port = alloc_loopback_port()?;
+    let metrics_addr = format!("127.0.0.1:{metrics_port}");
+
     // Force HTTP/2 over TCP instead of the QUIC/UDP default. Home and laptop NAT
     // devices aggressively time out idle UDP flows, which silently drops the
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
     let mut child = tokio::process::Command::new(cloudflared)
         .args([
-            "tunnel", "--protocol", "http2", "--config", cf_config_path.to_str().unwrap(),
+            "tunnel", "--protocol", "http2", "--metrics", &metrics_addr,
+            "--config", cf_config_path.to_str().unwrap(),
             "run", "--token", &tc.tunnel_token,
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
+        // SIGKILL the child if its handle is dropped without an explicit kill
+        // (supervisor task aborted, runtime torn down by a panic) so cloudflared
+        // is never orphaned holding the hostname.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("failed to start cloudflared: {}", e))?;
 
@@ -605,8 +619,17 @@ async fn start_tunnel(
         });
     }
 
-    let url = format!("https://{}", tc.hostname);
-    Ok((child, url))
+    Ok((child, metrics_port))
+}
+
+/// Bind-and-drop an ephemeral loopback port for cloudflared's metrics server.
+fn alloc_loopback_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("failed to allocate metrics port: {}", e))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("failed to read metrics port: {}", e))?;
+    Ok(addr.port())
 }
 
 // --- Tunnel supervision ---
@@ -616,20 +639,27 @@ async fn start_tunnel(
 // and every request to the hostname gets Cloudflare error 1033 until someone
 // restarts vestad by hand. Two failure modes, two layers:
 //   - the process exits (crash, OOM, fatal give-up) -> respawn with capped backoff
-//   - the process wedges with its edge connections dead -> a periodic probe of
-//     the public hostname THROUGH the Cloudflare edge catches it; after
-//     consecutive failures the child is killed and respawned.
+//   - the process wedges with its edge connections dead -> cloudflared's own
+//     /ready endpoint (loopback metrics port) reports no registered connection;
+//     after consecutive failures the child is killed and respawned.
+// The probe is deliberately LOCAL. Probing the public hostname through the
+// Cloudflare edge would conflate probe-path failures (host DNS/egress, an edge
+// incident) with a wedged connector and kill a healthy tunnel — dropping every
+// live session through it. /ready measures exactly the thing a restart fixes.
+// Config-level death (tunnel deleted server-side, token revoked) is NOT
+// self-healed here: cloudflared exits with the reason, which lands in
+// `vestad logs` via the stderr forwarder; recovery is `vestad connect`.
 
 const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 1;
 const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 60;
-/// Uptime past which a cloudflared run counts as healthy and the backoff resets.
+/// Uptime past which a cloudflared run counts as healthy and the backoff
+/// resets. Must exceed the worst-case probe-restart window (see the invariant
+/// test) or a born-wedged run would reset the backoff on every cycle.
 const TUNNEL_HEALTHY_UPTIME_SECS: u64 = 300;
-const EDGE_PROBE_INTERVAL_SECS: u64 = 120;
-const EDGE_PROBE_TIMEOUT_SECS: u64 = 10;
-/// Consecutive failed edge probes before cloudflared is restarted. Also bounds
-/// the restart rate when the box itself is offline (a restart then is useless
-/// but harmless: one per full probe-failure window).
-const EDGE_PROBE_MAX_FAILURES: u32 = 3;
+const READY_PROBE_INTERVAL_SECS: u64 = 30;
+const READY_PROBE_TIMEOUT_SECS: u64 = 5;
+/// Consecutive failed /ready probes before cloudflared is restarted.
+const READY_PROBE_MAX_FAILURES: u32 = 3;
 
 pub struct TunnelSupervisor {
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -650,17 +680,30 @@ impl TunnelSupervisor {
 pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(async move {
+        // One client for every probe across respawns. Build failure is
+        // near-impossible; if it happens, degrade to exit-only supervision and
+        // say so once instead of silently skipping every probe.
+        let probe_client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(READY_PROBE_TIMEOUT_SECS))
+            .build()
+        {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::warn!("tunnel ready probe disabled, supervising exits only: {e}");
+                None
+            }
+        };
         let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
         loop {
             let started = tokio::time::Instant::now();
             match start_tunnel(&config_dir, port).await {
-                Ok((mut child, url)) => {
+                Ok((mut child, metrics_port)) => {
                     let reason = tokio::select! {
                         _ = shutdown_rx.changed() => {
                             child.kill().await.ok();
                             return;
                         }
-                        reason = run_until_unhealthy(&mut child, &url) => reason,
+                        reason = run_until_unhealthy(&mut child, probe_client.as_ref(), metrics_port) => reason,
                     };
                     child.kill().await.ok();
                     if started.elapsed().as_secs() >= TUNNEL_HEALTHY_UPTIME_SECS {
@@ -683,17 +726,21 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
 }
 
 /// Watch one cloudflared run; returns the reason it must be replaced (process
-/// exit, or the edge probe failing EDGE_PROBE_MAX_FAILURES times in a row).
-async fn run_until_unhealthy(child: &mut tokio::process::Child, url: &str) -> String {
-    let probe_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(EDGE_PROBE_TIMEOUT_SECS))
-        .build()
-        .ok();
-    let probe_url = format!("{url}/health");
-    let probe_interval = std::time::Duration::from_secs(EDGE_PROBE_INTERVAL_SECS);
+/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row).
+async fn run_until_unhealthy(
+    child: &mut tokio::process::Child,
+    probe_client: Option<&reqwest::Client>,
+    metrics_port: u16,
+) -> String {
+    let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
+    let probe_interval = std::time::Duration::from_secs(READY_PROBE_INTERVAL_SECS);
     // First probe only after a full interval, so cloudflared has time to register.
     let mut probe_ticks =
         tokio::time::interval_at(tokio::time::Instant::now() + probe_interval, probe_interval);
+    // Don't burst queued ticks after a host suspend/resume: three instant
+    // probes would read as a failure streak and kill a tunnel that is still
+    // reconnecting on its own.
+    probe_ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut consecutive_failures = 0u32;
     loop {
         tokio::select! {
@@ -704,7 +751,8 @@ async fn run_until_unhealthy(child: &mut tokio::process::Child, url: &str) -> St
                 };
             }
             _ = probe_ticks.tick() => {
-                let Some(client) = &probe_client else { continue };
+                let Some(client) = probe_client else { continue };
+                // /ready is 200 iff cloudflared has a registered edge connection.
                 let ok = match client.get(&probe_url).send().await {
                     Ok(resp) => resp.status().is_success(),
                     Err(_) => false,
@@ -712,10 +760,10 @@ async fn run_until_unhealthy(child: &mut tokio::process::Child, url: &str) -> St
                 let (failures, restart) = record_probe(consecutive_failures, ok);
                 consecutive_failures = failures;
                 if !ok {
-                    tracing::warn!(consecutive_failures, url = %probe_url, "tunnel edge probe failed");
+                    tracing::warn!(consecutive_failures, "tunnel ready probe failed (no registered edge connection)");
                 }
                 if restart {
-                    return format!("edge unreachable for {consecutive_failures} consecutive probes");
+                    return format!("no ready edge connection for {consecutive_failures} consecutive probes");
                 }
             }
         }
@@ -723,13 +771,13 @@ async fn run_until_unhealthy(child: &mut tokio::process::Child, url: &str) -> St
 }
 
 /// Pure probe accounting: a success clears the failure streak; a failure
-/// extends it, demanding a restart at EDGE_PROBE_MAX_FAILURES.
+/// extends it, demanding a restart at READY_PROBE_MAX_FAILURES.
 fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     if ok {
         return (0, false);
     }
     let failures = consecutive_failures + 1;
-    (failures, failures >= EDGE_PROBE_MAX_FAILURES)
+    (failures, failures >= READY_PROBE_MAX_FAILURES)
 }
 
 fn next_respawn_delay(delay_secs: u64) -> u64 {
@@ -801,21 +849,38 @@ mod tests {
 
     #[test]
     fn probe_success_clears_the_failure_streak() {
-        assert_eq!(record_probe(EDGE_PROBE_MAX_FAILURES - 1, true), (0, false));
+        assert_eq!(record_probe(READY_PROBE_MAX_FAILURES - 1, true), (0, false));
     }
 
     #[test]
     fn probe_failures_demand_restart_only_at_threshold() {
         let mut failures = 0;
-        for expected in 1..EDGE_PROBE_MAX_FAILURES {
+        for expected in 1..READY_PROBE_MAX_FAILURES {
             let (count, restart) = record_probe(failures, false);
             assert_eq!(count, expected);
             assert!(!restart, "no restart before the threshold");
             failures = count;
         }
         let (count, restart) = record_probe(failures, false);
-        assert_eq!(count, EDGE_PROBE_MAX_FAILURES);
+        assert_eq!(count, READY_PROBE_MAX_FAILURES);
         assert!(restart, "restart at the threshold");
+    }
+
+    #[test]
+    fn probe_restart_window_stays_below_the_healthy_reset() {
+        // A born-wedged run must restart BEFORE the healthy-uptime threshold,
+        // or every probe-triggered restart would reset the backoff and the
+        // supervisor would churn at full rate forever. Worst case: one slipped
+        // interval per probe (MissedTickBehavior::Delay) plus a full timeout each.
+        let worst_case_secs = READY_PROBE_INTERVAL_SECS * (READY_PROBE_MAX_FAILURES as u64 + 1)
+            + READY_PROBE_TIMEOUT_SECS * READY_PROBE_MAX_FAILURES as u64;
+        assert!(worst_case_secs < TUNNEL_HEALTHY_UPTIME_SECS);
+    }
+
+    #[test]
+    fn alloc_loopback_port_returns_a_usable_port() {
+        let port = alloc_loopback_port().expect("allocation succeeds");
+        assert_ne!(port, 0);
     }
 }
 
