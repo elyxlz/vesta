@@ -2041,13 +2041,20 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
+    // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
+    // be the main concern). Best-effort — snapshot will still proceed if stop fails.
+    if info.status == ContainerStatus::Running {
+        tracing::info!(agent = %name, "[1/4] stopping container...");
+        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+    }
+
+    tracing::info!(agent = %name, "[2/4] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
 
-    tracing::info!(agent = %name, "[2/3] removing old container...");
+    tracing::info!(agent = %name, "[3/4] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
-    tracing::info!(agent = %name, "[3/3] creating container with new config...");
+    tracing::info!(agent = %name, "[4/4] creating container with new config...");
     create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None, None).await?;
 
     Ok(())
@@ -2502,6 +2509,35 @@ mod tests {
         let pats = patterns(&["app"]);
         assert!(!is_dockerignored("application", &pats));
         assert!(is_dockerignored("app/foo", &pats));
+    }
+
+    #[test]
+    fn rebuild_agent_stops_running_container_before_snapshot() {
+        // rebuild_agent must quiesce a running container before docker export, for the same
+        // reason rename_agent does: SQLite WAL + atomic state.json tmp+rename can be torn
+        // mid-export if the container is still running, causing silent data loss on rebuild.
+        // rename_agent carries the explicit comment and the stop call; rebuild_agent must too.
+        let src = include_str!("docker.rs");
+
+        let rebuild_start = src.find("pub async fn rebuild_agent").expect("rebuild_agent present");
+        let rename_start = src.find("pub async fn rename_agent").expect("rename_agent present");
+        assert!(rebuild_start < rename_start, "rebuild_agent must appear before rename_agent for this test to slice correctly");
+        let rebuild_body = &src[rebuild_start..rename_start];
+
+        let stop_pos = rebuild_body.find("stop_container");
+        let snapshot_pos = rebuild_body.find("snapshot_container").expect("snapshot_container must be called in rebuild_agent");
+
+        assert!(
+            stop_pos.is_some(),
+            "rebuild_agent does not call stop_container before snapshotting; \
+             a running container is exported live, tearing SQLite WAL and state.json writes \
+             (rename_agent stops first for exactly this reason)"
+        );
+        assert!(
+            stop_pos.unwrap() < snapshot_pos,
+            "rebuild_agent calls stop_container AFTER snapshot_container; \
+             stop must precede the docker export to quiesce the filesystem"
+        );
     }
 
     // --- Docker integration tests (require Docker daemon) ---
