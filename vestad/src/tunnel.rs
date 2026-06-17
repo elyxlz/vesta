@@ -638,7 +638,7 @@ fn alloc_loopback_port() -> Result<u16, String> {
 // invisible from the inside: vestad stays healthy, systemd sees nothing wrong,
 // and every request to the hostname gets Cloudflare error 1033 until someone
 // restarts vestad by hand. Two failure modes, two layers:
-//   - the process exits (crash, OOM, fatal give-up) -> respawn with capped backoff
+//   - the process exits (crash, OOM, fatal give-up) -> respawn after a fixed delay
 //   - the process wedges with its edge connections dead -> cloudflared's own
 //     /ready endpoint (loopback metrics port) reports no registered connection;
 //     after consecutive failures the child is killed and respawned.
@@ -650,12 +650,11 @@ fn alloc_loopback_port() -> Result<u16, String> {
 // self-healed here: cloudflared exits with the reason, which lands in
 // `vestad logs` via the stderr forwarder; recovery is `vestad connect`.
 
-const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 1;
-const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 60;
-/// Uptime past which a cloudflared run counts as healthy and the backoff
-/// resets. Must exceed the worst-case probe-restart window (see the invariant
-/// test) or a born-wedged run would reset the backoff on every cycle.
-const TUNNEL_HEALTHY_UPTIME_SECS: u64 = 300;
+/// Delay between cloudflared respawns. Fixed rather than exponential: the one
+/// child vestad owns rarely dies, and a constant delay recovers promptly
+/// without the backoff/healthy-reset bookkeeping. Permanent failure (a revoked
+/// token) loops at this cadence with cloudflared's reason in `vestad logs`.
+const TUNNEL_RESPAWN_DELAY_SECS: u64 = 15;
 const READY_PROBE_INTERVAL_SECS: u64 = 30;
 const READY_PROBE_TIMEOUT_SECS: u64 = 5;
 /// Consecutive failed /ready probes before cloudflared is restarted.
@@ -675,8 +674,7 @@ impl TunnelSupervisor {
 }
 
 /// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
-/// on a failed edge probe streak, with capped exponential backoff between
-/// attempts that resets once a run stays healthy.
+/// on a failed edge probe streak, after a fixed delay between attempts.
 pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(async move {
@@ -693,9 +691,7 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
                 None
             }
         };
-        let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
         loop {
-            let started = tokio::time::Instant::now();
             match start_tunnel(&config_dir, port).await {
                 Ok((mut child, metrics_port)) => {
                     let reason = tokio::select! {
@@ -706,20 +702,16 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
                         reason = run_until_unhealthy(&mut child, probe_client.as_ref(), metrics_port) => reason,
                     };
                     child.kill().await.ok();
-                    if started.elapsed().as_secs() >= TUNNEL_HEALTHY_UPTIME_SECS {
-                        respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
-                    }
-                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel unhealthy ({reason}), restarting cloudflared");
+                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel unhealthy ({reason}), restarting cloudflared");
                 }
                 Err(e) => {
-                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
+                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel start failed: {e}");
                 }
             }
             tokio::select! {
                 _ = shutdown_rx.changed() => return,
-                _ = tokio::time::sleep(std::time::Duration::from_secs(respawn_delay_secs)) => {}
+                _ = tokio::time::sleep(std::time::Duration::from_secs(TUNNEL_RESPAWN_DELAY_SECS)) => {}
             }
-            respawn_delay_secs = next_respawn_delay(respawn_delay_secs);
         }
     });
     TunnelSupervisor { shutdown: shutdown_tx, task }
@@ -780,10 +772,6 @@ fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     (failures, failures >= READY_PROBE_MAX_FAILURES)
 }
 
-fn next_respawn_delay(delay_secs: u64) -> u64 {
-    (delay_secs * 2).min(TUNNEL_RESPAWN_MAX_DELAY_SECS)
-}
-
 fn which(name: &str) -> Result<PathBuf, ()> {
     let output = std::process::Command::new("which")
         .arg(name)
@@ -840,14 +828,6 @@ mod tests {
     }
 
     #[test]
-    fn respawn_delay_doubles_and_caps() {
-        assert_eq!(next_respawn_delay(TUNNEL_RESPAWN_BASE_DELAY_SECS), 2);
-        assert_eq!(next_respawn_delay(2), 4);
-        assert_eq!(next_respawn_delay(40), TUNNEL_RESPAWN_MAX_DELAY_SECS);
-        assert_eq!(next_respawn_delay(TUNNEL_RESPAWN_MAX_DELAY_SECS), TUNNEL_RESPAWN_MAX_DELAY_SECS);
-    }
-
-    #[test]
     fn probe_success_clears_the_failure_streak() {
         assert_eq!(record_probe(READY_PROBE_MAX_FAILURES - 1, true), (0, false));
     }
@@ -864,17 +844,6 @@ mod tests {
         let (count, restart) = record_probe(failures, false);
         assert_eq!(count, READY_PROBE_MAX_FAILURES);
         assert!(restart, "restart at the threshold");
-    }
-
-    #[test]
-    fn probe_restart_window_stays_below_the_healthy_reset() {
-        // A born-wedged run must restart BEFORE the healthy-uptime threshold,
-        // or every probe-triggered restart would reset the backoff and the
-        // supervisor would churn at full rate forever. Worst case: one slipped
-        // interval per probe (MissedTickBehavior::Delay) plus a full timeout each.
-        let worst_case_secs = READY_PROBE_INTERVAL_SECS * (READY_PROBE_MAX_FAILURES as u64 + 1)
-            + READY_PROBE_TIMEOUT_SECS * READY_PROBE_MAX_FAILURES as u64;
-        assert!(worst_case_secs < TUNNEL_HEALTHY_UPTIME_SECS);
     }
 
     #[test]
