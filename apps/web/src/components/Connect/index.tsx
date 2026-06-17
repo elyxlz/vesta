@@ -30,7 +30,7 @@ function normalizeHost(input: string): string {
 }
 
 export function Connect() {
-  const { connected, connect } = useAuth();
+  const { connected, connect, sessionExpired } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [host, setHost] = useState("");
   const [error, setError] = useState("");
@@ -132,6 +132,11 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
             <LogoText className="mb-2" />
+            {sessionExpired && (
+              <FieldDescription className="text-center">
+                your session expired, sign in again
+              </FieldDescription>
+            )}
             <Button
               type="button"
               onClick={handleHostedSignIn}
@@ -181,6 +186,11 @@ export function Connect() {
           className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
         >
           <LogoText className="mb-2" />
+          {sessionExpired && (
+            <FieldDescription className="text-center">
+              your session expired, connect again
+            </FieldDescription>
+          )}
 
           <FieldGroup className="gap-3">
             {needHostInput && (

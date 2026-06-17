@@ -2,7 +2,9 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 
 pub const ACCESS_TOKEN_TTL: u64 = 3600; // 1 hour
-pub const REFRESH_TOKEN_TTL: u64 = 7 * 86400; // 7 days
+/// Idle window, not an absolute lifetime: every successful rotation slides the
+/// family expiry forward by this much, so only a client idle this long re-auths.
+pub const REFRESH_TOKEN_TTL: u64 = 30 * 86400; // 30 days
 
 /// `typ` of a server-identity token — the VM proving its OWN identity to the
 /// vesta-cloud control plane (issue #20), distinct from the `"access"` token the

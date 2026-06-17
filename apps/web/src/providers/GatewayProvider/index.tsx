@@ -105,7 +105,7 @@ function controlWsUrl(): string {
 }
 
 function ConnectedGateway({ children }: { children: ReactNode }) {
-  const { loading } = useAuth();
+  const { loading, expireSession } = useAuth();
   const [reachable, setReachable] = useState(false);
   const [managed, setManaged] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
@@ -166,7 +166,13 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       if (cancelled) return;
       setLastConnectAttempt(Date.now());
 
-      await ensureFreshToken();
+      // A dead session (refresh token expired/revoked) can never reconnect:
+      // bail out to the connect screen instead of retrying forever with a
+      // token vestad will keep rejecting. Transient failures keep the loop.
+      if ((await ensureFreshToken()) === "expired") {
+        if (!cancelled) expireSession();
+        return;
+      }
 
       let url: string;
       try {
@@ -255,7 +261,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }
       wsRef.current = null;
     };
-  }, [connectEpoch]);
+  }, [connectEpoch, expireSession]);
 
   useEffect(() => {
     if (!reachable) return;

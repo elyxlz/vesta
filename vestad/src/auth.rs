@@ -217,7 +217,9 @@ fn rand_id() -> String {
 pub(crate) struct RefreshFamily {
     live: String,
     prev: Option<String>,
-    /// Absolute family expiry (unix secs) for pruning — matches the refresh TTL.
+    /// Idle expiry (unix secs) for pruning: set to now + REFRESH_TOKEN_TTL at
+    /// registration and slid forward on every successful rotation, so an active
+    /// client never expires and an idle one re-auths after the TTL.
     exp: u64,
 }
 
@@ -259,9 +261,13 @@ fn rotate(
         let new_jti = rand_id();
         let f = map.get_mut(fam).expect("family present");
         f.prev = Some(std::mem::replace(&mut f.live, new_jti.clone()));
+        f.exp = now + jwt::REFRESH_TOKEN_TTL; // slide the idle window
         Some((new_jti, fam.to_string()))
     } else if prev.as_deref() == Some(jti) {
-        Some((live, fam.to_string())) // retry grace: re-mint current, don't advance
+        // Retry grace: re-mint current, don't advance. Slide too — the re-minted
+        // token's own exp is now + TTL, so the family must outlive it.
+        map.get_mut(fam).expect("family present").exp = now + jwt::REFRESH_TOKEN_TTL;
+        Some((live, fam.to_string()))
     } else {
         map.remove(fam); // reuse/replay → revoke the family
         None
@@ -445,6 +451,34 @@ mod refresh_rotation_tests {
     fn unknown_family_is_rejected_without_panicking() {
         let mut map = HashMap::new();
         assert!(rotate(&mut map, &refresh_claims("nope", "nofam"), NOW).is_none());
+    }
+
+    #[test]
+    fn rotation_slides_the_family_expiry() {
+        let mut map = HashMap::new();
+        let (jti0, fam) = register_family(&mut map, NOW);
+        // Rotate just before the original expiry...
+        let almost_expired = NOW + jwt::REFRESH_TOKEN_TTL - 1;
+        let (jti1, _) =
+            rotate(&mut map, &refresh_claims(&jti0, &fam), almost_expired).expect("live rotates");
+        // ...and the family survives past it: the expiry is an idle window, not
+        // an absolute clock started at login.
+        let past_original_expiry = NOW + jwt::REFRESH_TOKEN_TTL + 1;
+        assert!(rotate(&mut map, &refresh_claims(&jti1, &fam), past_original_expiry).is_some());
+    }
+
+    #[test]
+    fn retry_grace_slides_the_family_expiry() {
+        let mut map = HashMap::new();
+        let (jti0, fam) = register_family(&mut map, NOW);
+        let _ = rotate(&mut map, &refresh_claims(&jti0, &fam), NOW).expect("0->1");
+        // A grace retry of jti0 just before expiry re-mints the live token, whose
+        // own exp is now + TTL — the family must slide to outlive it.
+        let almost_expired = NOW + jwt::REFRESH_TOKEN_TTL - 1;
+        let (live, _) =
+            rotate(&mut map, &refresh_claims(&jti0, &fam), almost_expired).expect("grace");
+        let past_original_expiry = NOW + jwt::REFRESH_TOKEN_TTL + 1;
+        assert!(rotate(&mut map, &refresh_claims(&live, &fam), past_original_expiry).is_some());
     }
 
     #[test]
