@@ -433,17 +433,16 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
             print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
-            let tunnel_child = if tunnel_url.is_some() {
-                match tunnel::start_tunnel(&config, port).await {
-                    Ok((child, _url)) => Some(child),
-                    Err(e) => {
-                        tracing::warn!("failed to start tunnel: {e}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            // Supervise whenever a tunnel is INTENDED, not only when boot-time
+            // setup succeeded: a managed box whose tunnel.json the control plane
+            // is still seeding, or a transient ensure_tunnel failure, must not
+            // leave the daemon tunnel-less until a manual restart. The supervisor
+            // re-reads tunnel.json on every respawn, so late config is picked up.
+            let tunnel_intended = tunnel_url.is_some()
+                || (!no_tunnel
+                    && (is_cloud_managed() || tunnel::get_tunnel_config(&config).is_some()));
+            let tunnel_supervisor =
+                tunnel_intended.then(|| tunnel::supervise_tunnel(config.clone(), port));
 
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
             serve::run_server(serve::ServerConfig {
@@ -458,8 +457,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 dev_mode,
             }).await;
 
-            if let Some(mut child) = tunnel_child {
-                child.kill().await.ok();
+            if let Some(supervisor) = tunnel_supervisor {
+                supervisor.shutdown().await;
             }
         });
 }
