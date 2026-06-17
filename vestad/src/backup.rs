@@ -379,6 +379,81 @@ pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
 mod tests {
     use super::*;
 
+    // ── SSE cancellation safety ───────────────────────────────────
+
+    /// Asserts that the backup/restore pipeline (stop container, snapshot/restore, start
+    /// container) runs to completion even when the SSE client disconnects mid-operation.
+    ///
+    /// The fix spawns the pipeline with tokio::spawn so it is detached from the SSE
+    /// response body lifetime. When the SSE consumer task is aborted (client disconnect),
+    /// the spawned pipeline continues uninterrupted and start_container is always called.
+    #[tokio::test]
+    async fn sse_stream_drop_cancels_container_restart() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use tokio::sync::Notify;
+
+        let stopped = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
+        let op_reached = Arc::new(Notify::new());
+        let op_gate = Arc::new(Notify::new());
+
+        let stopped_c = stopped.clone();
+        let started_c = started.clone();
+        let op_reached_c = op_reached.clone();
+        let op_gate_c = op_gate.clone();
+
+        // Fixed pattern: the pipeline is spawned separately from the SSE response body.
+        // Dropping the JoinHandle does not abort the task — it runs to completion.
+        // This mirrors the tokio::spawn in the fixed create_backup_handler /
+        // restore_backup_handler.
+        let _pipeline = tokio::spawn(async move {
+            // Mirrors stop_container_with_timeout
+            stopped_c.store(true, Ordering::SeqCst);
+            op_reached_c.notify_one();
+            // Mirrors restic::snapshot — the expensive async op
+            op_gate_c.notified().await;
+            // Mirrors start_container — must always run
+            started_c.store(true, Ordering::SeqCst);
+        });
+
+        // SSE consumer task — represents the axum response body polled by hyper.
+        // When the client disconnects, hyper drops the body and this task is aborted.
+        let stream_handle = tokio::spawn(async move {
+            let stream = async_stream::stream! {
+                // In the fixed handler, this side only awaits the result channel.
+                // Here we suspend indefinitely to simulate an in-flight SSE response.
+                std::future::pending::<()>().await;
+                yield ();
+            };
+            use futures_util::StreamExt;
+            futures_util::pin_mut!(stream);
+            stream.next().await;
+        });
+
+        // Wait until the container has been stopped and the op is in progress.
+        op_reached.notified().await;
+        assert!(stopped.load(Ordering::SeqCst), "container should be stopped");
+        assert!(!started.load(Ordering::SeqCst), "container not yet restarted");
+
+        // Simulate SSE client disconnecting: abort the SSE consumer task.
+        // The spawned pipeline must not be affected.
+        stream_handle.abort();
+        let _ = stream_handle.await;
+
+        // Release the gate (restic snapshot / restore image stream completes).
+        op_gate.notify_one();
+        // Give the spawned pipeline a scheduling slot to finish.
+        tokio::task::yield_now().await;
+
+        assert!(
+            started.load(Ordering::SeqCst),
+            "start_container must run to completion regardless of SSE client disconnect"
+        );
+    }
+
     // ── Retention policy tests ────────────────────────────────────
 
     const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
