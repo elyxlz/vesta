@@ -1,5 +1,6 @@
 """Tests for nightly dreamer/memory scheduling."""
 
+import asyncio
 import datetime as dt
 import json
 import typing as tp
@@ -233,3 +234,60 @@ async def test_drain_restarts_even_when_compaction_fails():
 
     assert state.compacting is False
     assert state.graceful_shutdown.is_set()
+
+
+@pytest.mark.anyio
+async def test_notification_file_deleted_before_processing_is_lost_on_restart(tmp_path):
+    """BUG: A notification arriving while compaction runs is silently lost on restart.
+
+    process_batch deletes the file immediately after queue.put (loops.py line 124).
+    compact_then_restart_if_requested then calls client.compact() and sets graceful_shutdown.
+    run_vesta cancels all tasks and the in-memory asyncio.Queue is dropped with the process.
+    A restarted process finds an empty notifications dir and the message is gone with no trace.
+    """
+    from core.loops import process_batch, compact_then_restart_if_requested, load_notifications
+
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    # Simulate a user notification arriving while the dreamer's compaction is running.
+    notif_file = config.notifications_dir / "user-msg.json"
+    notif = vm.Notification(
+        timestamp=dt.datetime(2025, 1, 1),
+        source="telegram",
+        type="message",
+        interrupt=True,
+        body="urgent user message",
+    )
+    notif_file.write_text(notif.model_dump_json())
+    notif.file_path = str(notif_file)
+
+    dying_queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
+
+    # monitor_loop calls process_batch on the interrupt notification.
+    # process_batch queues the message and keeps the file on disk until processing completes.
+    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
+        await process_batch([notif], queue=dying_queue, state=state, config=config)
+
+    # File is preserved on disk until after the message is fully processed (the fix).
+    assert notif_file.exists(), "process_batch must not delete the file before processing completes"
+    # Message sits in the queue waiting to be processed.
+    assert dying_queue.qsize() == 1, "message is in the queue"
+
+    # Compaction finishes: compact_then_restart_if_requested sets graceful_shutdown.
+    state.compact_then_restart = True
+    client = AsyncMock()
+    state.client = tp.cast(ClaudeSDKClient, client)
+    await compact_then_restart_if_requested(state=state)
+    assert state.graceful_shutdown.is_set(), "graceful_shutdown fires after compaction"
+
+    # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.
+    # A restarted process can only recover messages that are still on disk.
+    recovered = await load_notifications(config=config)
+
+    # The file was kept on disk by process_batch, so the restarted process recovers it.
+    # The dying_queue (qsize=1) is dropped on restart, but the file provides durability.
+    assert len(recovered) == 1, (
+        f"Message queued mid-compact must survive restart (recovered {len(recovered)})."
+        f" dying_queue qsize={dying_queue.qsize()} is dropped on restart."
+    )

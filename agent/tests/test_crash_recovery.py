@@ -68,7 +68,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
     state.persisted.session_id = "stale-session-id-1234567890"
     state_store.save_state(state.persisted, config)
     state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
 
     enter_count = 0
     mock_client = MagicMock()
@@ -111,7 +111,7 @@ async def test_resume_fallback_raises_without_session(tmp_path):
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
 
     mock_client = MagicMock()
 
@@ -141,7 +141,7 @@ async def test_resume_fallback_raises_on_second_failure(tmp_path):
     state = vm.State()
     state.persisted.session_id = "stale-session-1234567890"
     state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
 
     mock_client = MagicMock()
 

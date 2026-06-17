@@ -327,7 +327,7 @@ async def test_process_batch_queues_prompt(tmp_path):
         await process_batch([notif], queue=queue, state=state, config=config)
 
     assert not queue.empty()
-    prompt, is_user = await queue.get()
+    prompt, is_user, file_paths = await queue.get()
     assert '<notification source="test" type="message">' in prompt
     assert is_user is False
 
@@ -343,20 +343,24 @@ async def test_process_batch_empty_is_noop():
 
 
 @pytest.mark.anyio
-async def test_process_batch_deletes_files(tmp_path):
+async def test_process_batch_keeps_files_until_processing(tmp_path):
+    """process_batch must NOT delete files at enqueue time; files stay on disk until the message
+    is fully processed so that a mid-compaction restart can recover unprocessed notifications."""
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
-    f = tmp_path / "to-delete.json"
+    f = tmp_path / "to-keep.json"
     f.write_text("x")
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
         await process_batch([notif], queue=queue, state=state, config=config)
 
-    assert not f.exists(), "notification file should be deleted after processing"
+    assert f.exists(), "notification file must stay on disk until the queued message is processed"
+    _, _, file_paths = await queue.get()
+    assert str(f) in file_paths, "file path is carried in the queue item for deferred deletion"
 
 
 # --- _is_new_json ---
@@ -425,7 +429,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
         _write_notif(config.notifications_dir, "urgent", interrupt=True)
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
-        prompt, is_user = await queue.get()
+        prompt, is_user, file_paths = await queue.get()
         assert '<notification source="test" type="message">' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
@@ -456,14 +460,14 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
         state.event_bus.set_state("idle")
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
-        prompt, is_user = await queue.get()
+        prompt, is_user, file_paths = await queue.get()
         assert '<notification source="test" type="message">' in prompt
         assert is_user is False
 
-        # Exactly once: the file is deleted and nothing else lands in the queue.
-        await wait_for_condition(lambda: not path.exists(), message="flushed passive file should be deleted")
+        # Exactly once: file stays on disk (deleted only after processing), but nothing re-queues.
         await asyncio.sleep(0.05)
         assert queue.empty(), "passive batch must flush exactly once"
+        assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
     finally:
         await runner.aclose()
 
@@ -495,11 +499,12 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
 
             state.event_bus.set_state("idle")
             await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed")
-            await wait_for_condition(lambda: not path.exists(), message="flushed file should be deleted")
             await asyncio.sleep(0.05)
 
             # Despite being observed on multiple ticks, the file produces a single queued batch.
+            # File stays on disk (deleted only after processing), but queued_paths dedup prevents re-queueing.
             assert queue.qsize() == 1, f"passive file must be queued once, got {queue.qsize()}"
+            assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
     finally:
         await runner.aclose()
 

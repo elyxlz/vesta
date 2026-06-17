@@ -26,7 +26,7 @@ from .migrations import drop_pending_migrations
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
-async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
+async def input_handler(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State) -> None:
     while not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
@@ -36,7 +36,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
                 continue
 
             logger.user(user_msg.strip())
-            await queue.put((user_msg.strip(), True))
+            await queue.put((user_msg.strip(), True, []))
         except KeyboardInterrupt:
             logger.shutdown("stdin: KeyboardInterrupt, shutting down")
             state.shutdown_event.set()
@@ -102,7 +102,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     logger.init(f"{config.agent_name.upper()} started")
 
-    message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    message_queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
 
     drop_pending_migrations(state=state, config=config, first_start=first_start)
     greeting_reason = "first_start" if first_start else restart_reason
