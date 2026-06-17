@@ -1,5 +1,5 @@
 import { RouterProvider } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
@@ -60,17 +60,19 @@ export default function App() {
         )}
       >
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <ErrorBoundary>
-            <TooltipProvider delayDuration={300}>
-              <AuthProvider>
-                <GatewayProvider>
-                  <NotificationProvider>
-                    <AppContent />
-                  </NotificationProvider>
-                </GatewayProvider>
-              </AuthProvider>
-            </TooltipProvider>
-          </ErrorBoundary>
+          <MotionConfig reducedMotion="user">
+            <ErrorBoundary>
+              <TooltipProvider delayDuration={300}>
+                <AuthProvider>
+                  <GatewayProvider>
+                    <NotificationProvider>
+                      <AppContent />
+                    </NotificationProvider>
+                  </GatewayProvider>
+                </AuthProvider>
+              </TooltipProvider>
+            </ErrorBoundary>
+          </MotionConfig>
         </div>
       </div>
     </div>

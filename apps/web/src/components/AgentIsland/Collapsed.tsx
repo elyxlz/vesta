@@ -37,7 +37,12 @@ export function AgentIslandCollapsed({
         className="flex shrink-0 items-center justify-center will-change-transform"
         transition={agentIslandContentTransition}
       >
-        <Orb state={orbState} size={28} suppressMotion />
+        <Orb
+          state={orbState}
+          size={28}
+          suppressMotion
+          label={`${name}: ${orbState}`}
+        />
       </motion.div>
       <div className="min-w-0 flex-1 flex items-center gap-1.5">
         <motion.span
