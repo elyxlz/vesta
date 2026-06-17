@@ -141,6 +141,7 @@ class ClaudeSDKClient:
         self._turn_index = 0
         self._stops_received = 0
         self._turn_started = 0.0
+        self._interrupt_lock = asyncio.Lock()
         self._last_usage: dict[str, tp.Any] | None = None
         self._exit_code: int | None = None
         self._stderr_read = 0
@@ -223,6 +224,13 @@ class ClaudeSDKClient:
         else:
             self._offset = 0
         self._turn_index += 1
+        # Clamp stops_received so it cannot pre-satisfy the new turn's threshold.
+        # interrupt() credits stops_received = turn_index, but a late Stop hook can
+        # still arrive in the 50-200ms window and push it one higher. Clamping here
+        # restores the invariant (stops_received < turn_index) before receive_response()
+        # runs, so the new turn always waits for its own Stop rather than being satisfied
+        # instantly by an over-credited count from the previous turn.
+        self._stops_received = min(self._stops_received, self._turn_index - 1)
         self._turn_started = time.monotonic()
         await tmux.submit_text(self._tmux_socket, self._tmux_session, prompt)
 
@@ -243,19 +251,27 @@ class ClaudeSDKClient:
             await asyncio.sleep(_POLL_S)
 
     async def interrupt(self) -> None:
-        # Skip if the current turn already completed: at idle, Escapes don't interrupt
-        # anything and a double-Escape opens the TUI's rewind dialog instead.
-        if self._stops_received >= self._turn_index:
-            return
-        # A single ESC byte never registers: the TUI's escape-sequence parser buffers it
-        # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
-        # where a lone Escape let generation run to completion). Sending Escape twice
-        # flushes the first as a real Escape keypress and reliably interrupts.
-        await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
-        # An interrupted turn never fires its Stop hook (verified: no late Stop arrives
-        # either), so account for the abandoned turn here. Without this, every turn after
-        # an interrupt waits for a Stop count that can never be reached and hangs.
-        self._stops_received = max(self._stops_received, self._turn_index)
+        # The lock serialises concurrent callers (monitor-loop vs processor) so the guard
+        # and credit are atomic: a second caller sees the updated stops_received after the
+        # first credits, rather than both passing the guard and sending four Escapes.
+        async with self._interrupt_lock:
+            # Skip if the current turn already completed: at idle, Escapes don't interrupt
+            # anything and a double-Escape opens the TUI's rewind dialog instead.
+            if self._stops_received >= self._turn_index:
+                return
+            # A single ESC byte never registers: the TUI's escape-sequence parser buffers it
+            # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
+            # where a lone Escape let generation run to completion). Sending Escape twice
+            # flushes the first as a real Escape keypress and reliably interrupts.
+            try:
+                await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
+            finally:
+                # Credit in finally so a cancelled send_double_escape still accounts for the
+                # abandoned turn and doesn't wedge receive_response until response_timeout.
+                # An interrupted turn never fires its Stop hook, so account for the abandoned
+                # turn here. Without this, every turn after an interrupt waits for a Stop
+                # count that can never be reached and hangs.
+                self._stops_received = max(self._stops_received, self._turn_index)
 
     async def get_context_usage(self) -> dict[str, tp.Any]:
         usage = self._last_usage or {}
@@ -332,7 +348,10 @@ class ClaudeSDKClient:
             self._ready.set()
 
         async def on_stop(payload: dict[str, tp.Any]) -> None:
-            self._stops_received += 1
+            # Clamp to turn_index: interrupt() already credits stops_received up to turn_index
+            # when it fires, so a late Stop that arrives in the 50-200ms window after interrupt()
+            # must not increment past the current turn's threshold and pre-satisfy the next turn.
+            self._stops_received = min(self._stops_received + 1, self._turn_index)
 
         async def on_precompact(payload: dict[str, tp.Any]) -> None:
             self._compaction_started.set()
