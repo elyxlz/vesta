@@ -229,7 +229,10 @@ def launch(
     if use_headless:
         args += ["--headless=new", "--disable-gpu"]
 
-    if no_sandbox or os.environ.get("VESTA_BROWSER_NO_SANDBOX") == "1":
+    # Chromium refuses to run as root without --no-sandbox, and these containers
+    # run as root, so auto-apply it when euid==0 (env/flag can still force it).
+    running_as_root = sys.platform.startswith("linux") and hasattr(os, "geteuid") and os.geteuid() == 0
+    if no_sandbox or os.environ.get("VESTA_BROWSER_NO_SANDBOX") == "1" or running_as_root:
         args += ["--no-sandbox", "--disable-setuid-sandbox"]
 
     if sys.platform.startswith("linux"):
