@@ -29,7 +29,12 @@ export function AgentIslandCollapsed({
         className="flex shrink-0 items-center justify-center will-change-transform"
         transition={agentIslandContentTransition}
       >
-        <Orb state={orbState} size={28} suppressMotion label={`${name}: ${orbState}`} />
+        <Orb
+          state={orbState}
+          size={28}
+          suppressMotion
+          label={`${name}: ${orbState}`}
+        />
       </motion.div>
       <motion.span
         layoutId="agent-island-name"

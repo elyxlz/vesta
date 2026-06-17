@@ -29,7 +29,12 @@ export function AgentIslandExpanded({
         className="flex shrink-0 items-center justify-center will-change-transform"
         transition={agentIslandContentTransition}
       >
-        <Orb state={orbState} size={100} enableTracking label={`${name}: ${orbState}`} />
+        <Orb
+          state={orbState}
+          size={100}
+          enableTracking
+          label={`${name}: ${orbState}`}
+        />
       </motion.div>
       <div className="-mt-2 flex flex-col items-center justify-center gap-1 text-center will-change-transform">
         <motion.div

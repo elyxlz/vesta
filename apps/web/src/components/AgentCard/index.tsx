@@ -32,7 +32,12 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
       onClick={() => navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)}
     >
       <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
-        <Orb state={orbState} size={112} enableTracking={enableTracking} label={`${agent.name}: ${orbState}`} />
+        <Orb
+          state={orbState}
+          size={112}
+          enableTracking={enableTracking}
+          label={`${agent.name}: ${orbState}`}
+        />
         <CardTitle className="font-serif text-center text-2xl -mt-3 font-medium tracking-tight text-foreground">
           {agent.name}
         </CardTitle>
