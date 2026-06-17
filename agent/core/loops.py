@@ -34,7 +34,16 @@ def _now() -> dt.datetime:
 def _load_notification_files(directory: pl.Path) -> list[tuple[pl.Path, str]]:
     if not directory.exists():
         return []
-    return [(f, f.read_text(encoding="utf-8")) for f in sorted(directory.glob("*.json"))]
+    results = []
+    for f in sorted(directory.glob("*.json")):
+        if not f.is_file():
+            logger.warning(f"skipping non-file notification entry {f.name}")
+            continue
+        try:
+            results.append((f, f.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError) as e:
+            logger.error(f"skipping unreadable notification {f.name}: {e}")
+    return results
 
 
 def drop_core_notification(*, type_: str, body: str, interrupt: bool, config: vm.VestaConfig, name: str | None = None) -> pl.Path:
