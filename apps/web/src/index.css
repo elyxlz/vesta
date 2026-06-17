@@ -183,6 +183,13 @@ html[data-platform="android"] {
   * {
     @apply border-border outline-ring/50;
   }
+  /* Tailwind v4 Preflight dropped the cursor:pointer that v3 applied to buttons.
+     Restore it for native buttons and role=button so every clickable control
+     shows the pointer; utilities still override, and disabled controls keep the default. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
   html {
     @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
   }
