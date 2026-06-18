@@ -68,6 +68,32 @@ class Client:
             raise OnboardError(data.get("error") or "vestad did not return a server-identity token")
         return token
 
+    # --- vestad: read-only reference data over the loopback ------------------
+
+    def _vestad_get(self, path: str) -> Any:
+        """GET a public reference endpoint on THIS box's vestad. The onboard skill is just
+        another frontend, so it reads personalities / models / defaults from vestad rather
+        than keeping its own copies."""
+        cfg = self._cfg
+        if not cfg.vestad_base:
+            raise OnboardError("not running inside an agent container (no VESTAD_PORT) — only a hosted vesta can onboard")
+        resp = self._send("GET", f"{cfg.vestad_base}{path}", verify=False)
+        if resp.status_code >= 400:
+            raise OnboardError(f"vestad {path} -> {resp.status_code}: {resp.text[:200]}")
+        try:
+            return resp.json()
+        except ValueError:
+            raise OnboardError(f"vestad {path} returned non-JSON ({resp.status_code})") from None
+
+    def fetch_agent_defaults(self) -> dict[str, Any]:
+        return self._vestad_get("/agent-defaults")
+
+    def fetch_personalities(self) -> list[dict[str, Any]]:
+        return self._vestad_get("/personalities")
+
+    def fetch_claude_models(self) -> list[dict[str, Any]]:
+        return self._vestad_get("/providers/claude/models")
+
     # --- control plane: account pre-create (authed as THIS vesta) ------------
 
     def create_account(self, email: str, identity_token: str) -> dict[str, Any]:

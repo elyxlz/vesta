@@ -26,7 +26,7 @@ from typing import Any
 
 from . import state
 from .client import Client, OnboardError
-from .config import DEFAULT_MODEL, LINKS, PERSONALITY_PRESETS, PLAN, PLAN_FLOOR_USD, Config
+from .config import LINKS, PLAN, PLAN_FLOOR_USD, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -221,7 +221,7 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         server_token=server_token,
         name=name,
         credentials=credentials,
-        model=(args.model or DEFAULT_MODEL),
+        model=(args.model or client.fetch_agent_defaults()["model"]),
     )
     if "error" in result:
         _print(
@@ -254,12 +254,17 @@ def _installable_skills() -> list[str]:
 
 
 def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    # Read the live reference data from this box's vestad (the one source of truth) rather
+    # than keeping hardcoded copies; skills still come from the on-box index.
+    defaults = client.fetch_agent_defaults()
     _print(
         {
-            "personalities": list(PERSONALITY_PRESETS),
+            "personalities": [p["name"] for p in client.fetch_personalities()],
             "skills": _installable_skills(),
             "plan_floor_usd": PLAN_FLOOR_USD,
-            "claude_models": ["opus", "sonnet", "haiku"],
+            "claude_models": [m["id"] for m in client.fetch_claude_models()],
+            "default_personality": defaults["personality"],
+            "default_model": defaults["model"],
         }
     )
     return 0
@@ -308,7 +313,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cfinish.add_argument("--email", required=True)
     p_cfinish.add_argument("--code", required=True, help="The code the buyer pasted from the auth page.")
     p_cfinish.add_argument("--name", help="Agent name (defaults to the one from create-agent).")
-    p_cfinish.add_argument("--model", help=f"Claude model (default {DEFAULT_MODEL}).")
+    p_cfinish.add_argument("--model", help="Claude model (defaults to the box's configured default).")
 
     sub.add_parser("presets", help="Personality presets + installable skills + models.")
     sub.add_parser("links", help="Marketing + desktop/mobile install URLs.")
