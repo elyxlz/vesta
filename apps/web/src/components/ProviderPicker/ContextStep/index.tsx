@@ -1,33 +1,22 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
+import type { ContextPreset } from "@/api/agent-defaults";
 
-interface ContextPreset {
-  tokens: number;
-  label: string;
-  note: string;
-}
-
-/// Context-window presets. 1M is the default (largest); smaller windows compact
-/// sooner and make prompt-cache reads cheaper.
-const CONTEXT_PRESETS: ContextPreset[] = [
-  { tokens: 1_000_000, label: "1M", note: "most context (default)" },
-  { tokens: 500_000, label: "500K", note: "balanced" },
-  { tokens: 200_000, label: "200K", note: "cheapest, compacts soonest" },
-];
-
+// Presets + the default come from vestad (GET /agent-defaults), passed in by the parent,
+// so this step holds no copy of either.
 export function ContextStep({
+  presets,
   initial,
   onSubmit,
   submitLabel = "continue",
 }: {
-  initial?: number;
+  presets: ContextPreset[];
+  initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
 }) {
-  const [selected, setSelected] = useState<number>(
-    initial ?? CONTEXT_PRESETS[0].tokens,
-  );
+  const [selected, setSelected] = useState<number>(initial);
 
   return (
     <form
@@ -46,7 +35,7 @@ export function ContextStep({
       </div>
 
       <div className="flex w-full flex-col gap-1.5">
-        {CONTEXT_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <button
             key={preset.tokens}
             type="button"

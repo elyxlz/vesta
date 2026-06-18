@@ -12,8 +12,8 @@ import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
 import { AuthStep } from "./AuthStep";
 import type { ProviderMode } from "./types";
-
-const CLAUDE_DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000;
+import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
@@ -29,6 +29,8 @@ export function ProviderPicker({
   const [model, setModel] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
+  // Creation defaults (context window + presets) come from vestad, not a local copy.
+  const defaults = useAgentDefaults();
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
@@ -53,6 +55,16 @@ export function ProviderPicker({
     };
   }, [step, authStart, authStartError]);
 
+  // Wait for vestad's defaults before rendering any step that needs the context window.
+  // The user reaches this picker after the personality step, so it is loaded in practice.
+  if (!defaults) {
+    return (
+      <div className="flex w-[380px] max-w-full flex-col items-center gap-4 px-4">
+        <Skeleton className="h-40 w-full rounded-2xl" />
+      </div>
+    );
+  }
+
   const handleChoice = (next: ProviderMode) => {
     setStep(next === "claude" ? "auth" : "key");
   };
@@ -62,7 +74,7 @@ export function ProviderPicker({
       kind: "claude",
       credentials: creds,
       model: undefined,
-      maxContextTokens: CLAUDE_DEFAULT_MAX_CONTEXT_TOKENS,
+      maxContextTokens: defaults.context_tokens,
     });
   };
 
@@ -135,7 +147,13 @@ export function ProviderPicker({
               }}
             />
           )}
-          {step === "context" && <ContextStep onSubmit={handleContextSubmit} />}
+          {step === "context" && (
+            <ContextStep
+              presets={defaults.context_presets}
+              initial={defaults.context_tokens}
+              onSubmit={handleContextSubmit}
+            />
+          )}
         </motion.div>
       </AnimatePresence>
     </div>

@@ -14,6 +14,7 @@ mod backup;
 mod channel;
 mod cloudflared_embed;
 mod control_ws;
+mod defaults;
 mod docker;
 mod jwt;
 mod paths;

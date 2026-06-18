@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchPersonalities, type Personality } from "@/api/personalities";
+import { useAgentDefaults } from "@/hooks/use-agent-defaults";
 
 export function PersonalityStep({
   onPicked,
@@ -13,7 +14,11 @@ export function PersonalityStep({
     null,
   );
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string>("dry");
+  // The default preset comes from vestad (GET /agent-defaults), not a hardcoded copy.
+  // Until the user picks, fall through to vestad's default once it loads.
+  const defaults = useAgentDefaults();
+  const [picked, setPicked] = useState<string | null>(null);
+  const selected = picked ?? defaults?.personality ?? "";
 
   useEffect(() => {
     fetchPersonalities()
@@ -46,7 +51,7 @@ export function PersonalityStep({
             return (
               <button
                 key={p.name}
-                onClick={() => setSelected(p.name)}
+                onClick={() => setPicked(p.name)}
                 aria-pressed={isSelected}
                 className={`group flex h-full flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all cursor-pointer ${
                   isSelected
@@ -75,7 +80,7 @@ export function PersonalityStep({
       <Button
         className="w-full"
         onClick={() => onPicked(selected)}
-        disabled={personalities === null && !loadError}
+        disabled={(personalities === null && !loadError) || !selected}
       >
         continue
       </Button>
