@@ -25,6 +25,13 @@ env:
   # the usual trigger for those mid-download curl errors on CI runners.
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
+  # Same hardening for npm: the registry (and the GitHub-hosted tarballs some
+  # deps pull) intermittently 403/502 or drop mid-download. Retry well past
+  # npm's default of 2 so a single transient blip doesn't fail an install.
+  # Honored by every `npm ci` / `npm install` in this workflow.
+  npm_config_fetch_retries: "5"
+  npm_config_fetch_retry_mintimeout: "20000"
+  npm_config_fetch_retry_maxtimeout: "120000"
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
@@ -188,7 +195,13 @@ jobs:
       # The cc_sdk e2e transport tests (tests/test_e2e_transport.py) drive a fake
       # claude TUI inside a real tmux server.
       - name: Install tmux
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 15
+          shell: bash
+          command: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
 
       - name: Run agent checks
         run: ./check.sh agent
@@ -1069,8 +1082,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # sdkmanager streams the NDK zip with no internal retry, so a single
+      # corrupted download ("Error reading Zip content from a SeekableByteChannel")
+      # fails the whole job. Retry the download instead of one-shotting it.
       - name: Install Android NDK
-        run: sdkmanager "ndk;27.0.12077973"
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: sdkmanager "ndk;27.0.12077973"
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -1082,8 +1104,13 @@ jobs:
         run: npm install
 
       - name: Initialize Android project
-        working-directory: apps/mobile
-        run: npx tauri android init
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: cd apps/mobile && npx tauri android init
 
       # Tauri's AndroidManifest template only declares INTERNET. Add the
       # microphone permissions the web app's getUserMedia call needs.
@@ -1237,8 +1264,13 @@ jobs:
 
       - name: Initialize iOS project
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/mobile
-        run: npx tauri ios init
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: cd apps/mobile && npx tauri ios init
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
