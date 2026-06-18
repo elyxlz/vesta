@@ -61,7 +61,7 @@ screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cl
 
 ## 6. Register the service
 
-Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+So the watcher comes back after a container restart, register it for restart (see [skills-registry](../skills-registry/SKILL.md#registering-a-background-service)) with this startup command:
 
 ```
 screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve

@@ -64,11 +64,7 @@ The webhook reaches the local FastAPI service through the public vestad
 tunnel; that's why the service must be registered with `"public": true`.
 
 ```bash
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H "X-Agent-Token: $AGENT_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"agentmail","public":true}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/skills-registry/scripts/register-service agentmail --public)
 
 screen -dmS agentmail agentmail serve --port $PORT
 ```

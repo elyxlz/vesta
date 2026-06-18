@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Build or modify the user's dashboard: widgets, pages, layouts, or custom UI.
-serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+serve: PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard
@@ -129,8 +129,7 @@ Rebuild, re-register with vestad, restart the preview server, and notify the Ves
 ```bash
 # First build only: node_modules is not baked into the image, so install deps once.
 cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public)
 screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 # Wait for the server to be ready

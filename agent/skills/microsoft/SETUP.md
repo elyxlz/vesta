@@ -13,7 +13,7 @@
    ```
 4. Install: `uv tool install ~/agent/skills/microsoft/cli`
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
-6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+6. Register it for restart (see [skills-registry](../skills-registry/SKILL.md#registering-a-background-service)) with this startup command:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```

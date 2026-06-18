@@ -16,9 +16,7 @@ The server binds to localhost, so it needs a public route. Register a public ves
 mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 
 # 2. register a public service (idempotent: returns the same port each time)
-PORT=$(curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services" \
-  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"file-host","public":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/skills-registry/scripts/register-service file-host --public)
 
 # 3. serve it (run in a screen so it persists)
 screen -dmS file-host python3 ~/agent/skills/file-host/serve.py --dir ~/.file-host --port "$PORT"
