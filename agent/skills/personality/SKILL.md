@@ -5,7 +5,7 @@ description: The agent's voice. Shared rules true for every preset, plus one fil
 
 # Personality
 
-Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds. The active one is whichever matches `$AGENT_PERSONALITY` in `/run/vestad-env`, picked at agent creation. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md, not a step that can be skipped. Drifting the voice means editing these files; the load itself lives in read-only core and cannot be removed.
+Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds, the active one matching `$AGENT_PERSONALITY` in `/run/vestad-env`. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md. To drift the voice, edit these files.
 
 ## Shared voice (all presets)
 
