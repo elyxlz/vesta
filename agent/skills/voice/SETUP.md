@@ -2,14 +2,14 @@
 
 ## 1. Start the voice server
 
-1. Register with vestad to get a port (see [skills-registry](../skills-registry/SKILL.md#registering-a-background-service)), then start the server in a background screen session:
+1. Register with vestad to get a port (see [service](../service/SKILL.md)), then start the server in a background screen session:
    ```bash
-   PORT=$(~/agent/skills/skills-registry/scripts/register-service voice)
+   PORT=$(~/agent/skills/service/scripts/register-service voice)
    SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
 2. Add this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
-   PORT=$(~/agent/skills/skills-registry/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+   PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
 
 ## 2. API keys

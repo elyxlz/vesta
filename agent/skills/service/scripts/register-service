@@ -7,8 +7,8 @@ set -euo pipefail
 # same port for a given name on every call.
 #
 # Usage: register-service <name> [--public]
-#   PORT=$(~/agent/skills/skills-registry/scripts/register-service tasks)
-#   PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public)
+#   PORT=$(~/agent/skills/service/scripts/register-service tasks)
+#   PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 PUBLIC="false"

@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Build or modify the user's dashboard: widgets, pages, layouts, or custom UI.
-serve: PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+serve: PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard
@@ -129,7 +129,7 @@ Rebuild, re-register with vestad, restart the preview server, and notify the Ves
 ```bash
 # First build only: node_modules is not baked into the image, so install deps once.
 cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public)
+PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
 screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 # Wait for the server to be ready

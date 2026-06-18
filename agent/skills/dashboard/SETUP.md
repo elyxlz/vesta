@@ -16,9 +16,9 @@ cd ~/agent/skills/dashboard/app && npx vite build
 
 ## 3. Start the dashboard server
 
-Register with vestad to get a port (see [skills-registry](../skills-registry/SKILL.md#registering-a-background-service)), then start the server:
+Register with vestad to get a port (see [service](../service/SKILL.md)), then start the server:
 ```bash
-PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public)
+PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
 screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
 
@@ -26,5 +26,5 @@ screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview
 
 Add this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/skills-registry/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
