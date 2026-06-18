@@ -2058,7 +2058,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/health", get(health))
         .route("/info", get(info))
         .route("/auth/session", post(auth::create_session_handler))
-        .route("/auth/refresh", post(auth::refresh_session_handler));
+        .route("/auth/refresh", post(auth::refresh_session_handler))
+        // Reference data: read-only and non-sensitive (static per version, already shown in the
+        // public onboarding UI). Unauthenticated so every frontend reads it the same way — the
+        // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
+        // over the loopback), none of which then need to keep a hardcoded copy.
+        .route("/personalities", get(list_personalities_handler))
+        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
+        .route("/agent-defaults", get(crate::defaults::agent_defaults_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
@@ -2073,11 +2080,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))
-        .route("/personalities", get(list_personalities_handler))
-        .route("/agent-defaults", get(crate::defaults::agent_defaults_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
         .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
-        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
