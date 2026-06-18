@@ -51,13 +51,20 @@ def test_links(capsys):
     assert rc == 0 and data["marketing"] == "https://vesta.run"
 
 
-def test_presets_has_models_and_floor(capsys):
+def test_presets_lists_live_reference_data(capsys, monkeypatch):
+    # `onboard presets` now reads personalities / models / defaults from the box's vestad
+    # instead of hardcoding them, so the command is a pure consumer of that one source.
+    monkeypatch.setattr(cli_mod.Client, "fetch_personalities", lambda self: [{"name": "dry"}, {"name": "chill"}])
+    monkeypatch.setattr(cli_mod.Client, "fetch_claude_models", lambda self: [{"id": "opus"}, {"id": "sonnet"}, {"id": "haiku"}])
+    monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"personality": "dry", "model": "opus"})
     rc, data = _run(["presets"], capsys)
     assert rc == 0
     assert "dry" in data["personalities"]
     assert data["plan_floor_usd"] == 24
     assert "plans" not in data  # single plan — no tier list
     assert data["claude_models"] == ["opus", "sonnet", "haiku"]
+    assert data["default_personality"] == "dry"
+    assert data["default_model"] == "opus"
 
 
 # --- verify -----------------------------------------------------------------
@@ -252,9 +259,11 @@ def test_claude_finish_connects_and_clears(capsys, monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(cli_mod.Client, "set_provider", fake_set)
+    # No --model: the default is read from the box's vestad, not a hardcoded onboard constant.
+    monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"model": "opus"})
     rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
     assert rc == 0 and data["connected"] is True and data["name"] == "Ada"
-    assert captured == {"name": "Ada", "credentials": "CREDS", "model": "sonnet"}
+    assert captured == {"name": "Ada", "credentials": "CREDS", "model": "opus"}
     # onboarding complete -> session forgotten
     assert state_mod.token_for(E) is None
 
@@ -275,6 +284,7 @@ def test_claude_finish_clears_session_when_attach_fails(capsys, monkeypatch):
         "claude_oauth_complete",
         lambda self, *, subdomain, server_token, session_id, code: "CREDS",
     )
+    monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"model": "opus"})
     # The attach (set_provider) fails after OAuth was consumed on the VM.
     monkeypatch.setattr(
         cli_mod.Client,

@@ -23,10 +23,6 @@ from urllib.parse import urlparse
 # Production control plane. Override with VESTA_CONTROL_URL for staging/testing.
 DEFAULT_CONTROL_URL = "https://vesta.run/api"
 
-# Default Claude model for a freshly onboarded agent (the buyer can switch later
-# in the app). Anthropic's curated picker is opus / sonnet / haiku.
-DEFAULT_MODEL = "sonnet"
-
 # Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (4 vCPU /
 # 8 GB). The control plane also defines starter/power for admin provisioning and
 # upgrades, but onboarding only ever sells this one.
@@ -37,10 +33,6 @@ PLAN = "pro"
 # this is for the agent's UX + a friendly local error. Keep in sync with the
 # control plane's listMonthlyCents("pro").
 PLAN_FLOOR_USD = 24
-
-# Personality presets shipped by the `personality` skill (presets/<name>.md).
-# Listed here so `onboard presets` works even if that skill isn't installed yet.
-PERSONALITY_PRESETS = ("chill", "classic", "dry", "extra", "polished", "terse")
 
 # Public marketing + install links surfaced by `onboard links`.
 LINKS = {
