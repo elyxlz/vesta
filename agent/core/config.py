@@ -22,9 +22,10 @@ class VestaConfig(pyd_settings.BaseSettings):
     Set in ~/.bashrc and run restart_vesta to apply.
 
     Key overrides:
-        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (default: "opus")
+        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (required from env; vestad
+                        seeds the default and the provider file overrides it)
         AGENT_NAME    - agent name (default: "vesta")
-        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key) (default: "claude")
+        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key) (required from env, as AGENT_MODEL)
         LOG_LEVEL     - DEBUG | INFO | WARNING | ERROR (default: "INFO")
         THINKING      - adaptive | enabled | disabled (default: "adaptive")
         PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
@@ -131,8 +132,12 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "dreamer"
 
     agent_name: str = "vesta"
-    agent_model: str = "opus"
-    agent_provider: tp.Literal["claude", "openrouter"] = "claude"
+    # Model and provider are required from the env, not defaulted here: vestad is the single
+    # source of truth (vestad/src/defaults.rs) and seeds AGENT_MODEL / AGENT_PROVIDER into the
+    # agent env at creation, while the provider file (vesta-provider.env, sourced after) overrides
+    # them once a provider is configured. Keeping a Python default would duplicate that default.
+    agent_model: str = pyd.Field(init=False)
+    agent_provider: tp.Literal["claude", "openrouter"] = pyd.Field(init=False)
     # Active personality preset, read on every boot (a live selector, not consumed once at creation).
     # build_client_options loads the shared personality SKILL.md plus presets/<value>.md into
     # the system prompt. Required from the env: vestad always writes AGENT_PERSONALITY, and the

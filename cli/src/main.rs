@@ -460,7 +460,7 @@ fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_tok
 /// defaults (Opus, 1M window).
 fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_flag: Option<u64>, yes: bool) -> ClaudeOptions {
     let model = model_flag.or_else(|| (!yes).then(|| prompt_claude_model(c)));
-    let max_context_tokens = ctx_flag.or_else(|| (!yes).then(prompt_context_window));
+    let max_context_tokens = ctx_flag.or_else(|| if yes { None } else { prompt_context_window(c) });
     ClaudeOptions { model, max_context_tokens }
 }
 
@@ -496,18 +496,22 @@ fn prompt_claude_model(c: &client::Client) -> String {
     models[prompt_indexed_choice(&labels, 0)].id.clone()
 }
 
-/// Context-window presets (tokens, label). 1M is the default (largest).
-const CONTEXT_PRESETS: [(u64, &str); 3] = [
-    (200_000, "200K — cheapest prompt-cache reads, compacts soonest"),
-    (500_000, "500K — balanced"),
-    (1_000_000, "1M — most context"),
-];
-
-/// Prompt for a context-window preset. Default = 1M (the largest, last entry).
-fn prompt_context_window() -> u64 {
+/// Prompt for a context-window preset. The presets and the default come from vestad
+/// (GET /agent-defaults), so the CLI keeps no copy. Returns None if they can't be
+/// fetched, letting the server apply its own default.
+fn prompt_context_window(c: &client::Client) -> Option<u64> {
+    let defaults = c.fetch_agent_defaults().ok()?;
+    if defaults.context_presets.is_empty() {
+        return None;
+    }
     eprintln!("context window?");
-    let labels: Vec<String> = CONTEXT_PRESETS.iter().map(|(_, label)| label.to_string()).collect();
-    CONTEXT_PRESETS[prompt_indexed_choice(&labels, CONTEXT_PRESETS.len() - 1)].0
+    let labels: Vec<String> = defaults.context_presets.iter().map(|p| format!("{} — {}", p.label, p.note)).collect();
+    let default_idx = defaults
+        .context_presets
+        .iter()
+        .position(|p| p.tokens == defaults.context_tokens)
+        .unwrap_or(0);
+    Some(defaults.context_presets[prompt_indexed_choice(&labels, default_idx)].tokens)
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
