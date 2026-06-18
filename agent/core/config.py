@@ -14,6 +14,12 @@ _THINKING_ENABLED_BUDGET_TOKENS = 10000
 # when the user hasn't explicitly chosen a context window.
 DEFAULT_CONTEXT_WINDOW = 200_000
 
+# The 1M-context beta and the window it unlocks. These are Anthropic-API facts the agent
+# owns: build_client_options decides whether to enable the beta and passes both windows to
+# cc_sdk for usage reporting, so the transport keeps no model-specific constants of its own.
+CONTEXT_1M_BETA = "context-1m-2025-08-07"
+EXPANDED_CONTEXT_WINDOW = 1_000_000
+
 
 class VestaConfig(pyd_settings.BaseSettings):
     """Vesta agent configuration.

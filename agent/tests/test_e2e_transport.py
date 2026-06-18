@@ -186,7 +186,8 @@ async def test_sidechain_lines_are_skipped(sandbox: Sandbox) -> None:
 
 @pytest.mark.anyio
 async def test_usage_flows_to_result_and_context_usage(sandbox: Sandbox) -> None:
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd))
+    # The caller supplies the reporting window; cc_sdk no longer assumes one.
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), context_window=200_000)
     async with ClaudeSDKClient(options=options) as client:
         await client.query("hello")
         messages = await collect_with_timeout(client)
