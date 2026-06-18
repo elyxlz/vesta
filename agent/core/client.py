@@ -18,7 +18,7 @@ from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, Too
 from . import logger
 from . import models as vm
 from . import state_store
-from .config import DEFAULT_CONTEXT_WINDOW
+from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, EXPANDED_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_constitution_path, get_memory_path
@@ -300,7 +300,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         # Unset (existing agents) keeps the historical default: 1M beta on, no explicit cap.
         chosen = config.max_context_tokens
         if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
-            betas = ["context-1m-2025-08-07"]
+            betas = [CONTEXT_1M_BETA]
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
 
@@ -315,6 +315,12 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         model=config.agent_model,
         betas=betas,
         max_context_tokens=effective_max_context,
+        # Windows for the context-usage %: the conservative fallback and the larger window it
+        # may unlock. cc_sdk reports against context_window until usage proves the expanded one
+        # is really active (the 1M beta is silently ignored on some auth modes), so the values
+        # live here, not in the transport.
+        context_window=DEFAULT_CONTEXT_WINDOW,
+        expanded_context_window=EXPANDED_CONTEXT_WINDOW if CONTEXT_1M_BETA in betas else None,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,

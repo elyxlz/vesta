@@ -104,9 +104,16 @@ class ClaudeAgentOptions:
     model: str | None = None
     betas: list[str] = dc.field(default_factory=list)
     # Effective context window, when the user has chosen one. Drives the context-usage
-    # percentage; None falls back to the 200k/1M heuristic. claude-code itself is told
-    # via CLAUDE_CODE_MAX_CONTEXT_TOKENS in the launch env (see client.build_client_options).
+    # percentage. claude-code itself is told via CLAUDE_CODE_MAX_CONTEXT_TOKENS in the launch
+    # env (see client.build_client_options).
     max_context_tokens: int | None = None
+    # Windows for the context-usage percentage when `max_context_tokens` is unset, supplied by
+    # the caller so cc_sdk holds no model-specific constants. `context_window` is the
+    # conservative fallback; `expanded_context_window`, when set, is the larger window usage may
+    # unlock once it exceeds `context_window` (proving the larger window is really active). Both
+    # None -> usage reports a 0 window (nothing to report against).
+    context_window: int | None = None
+    expanded_context_window: int | None = None
     hooks: dict[HookEvent, list[HookMatcher]] = dc.field(default_factory=dict)
     permission_mode: str = "default"
     can_use_tool: tp.Callable[..., tp.Any] | None = None

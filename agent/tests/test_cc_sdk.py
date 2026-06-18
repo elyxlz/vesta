@@ -284,7 +284,7 @@ async def test_interrupt_at_idle_is_noop(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_context_usage_conservative_without_proof(tmp_path):
-    client = _new_client(tmp_path, betas=["context-1m-2025-08-07"])
+    client = _new_client(tmp_path, context_window=200_000, expanded_context_window=1_000_000)
     client._last_usage = {"input_tokens": 160_000, "output_tokens": 10_000}
     usage = await client.get_context_usage()
     # 170k of a presumed 200k window -> already >80%, so the overflow warning can fire.
@@ -294,7 +294,7 @@ async def test_context_usage_conservative_without_proof(tmp_path):
 
 @pytest.mark.anyio
 async def test_context_usage_unlocks_1m_when_exceeded(tmp_path):
-    client = _new_client(tmp_path, betas=["context-1m-2025-08-07"])
+    client = _new_client(tmp_path, context_window=200_000, expanded_context_window=1_000_000)
     client._last_usage = {"input_tokens": 300_000, "output_tokens": 10_000}
     usage = await client.get_context_usage()
     # Past 200k proves the 1M window is really active.

@@ -51,8 +51,6 @@ _POST_STOP_DRAIN_S = 2.5
 _COMPACT_START_TIMEOUT_S = 60.0
 _COMPACT_TIMEOUT_S = 900.0
 _ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
-_DEFAULT_MAX_TOKENS = 200_000
-_BETA_1M = "context-1m-2025-08-07"
 
 
 def _preseed_config(cwd: str) -> None:
@@ -115,8 +113,8 @@ def _claude_args(
         args += ["--mcp-config", str(mcp_file)]
     for d in options.add_dirs:
         args += ["--add-dir", d]
-    if _BETA_1M in options.betas:
-        args += ["--betas", _BETA_1M]
+    for beta in options.betas:
+        args += ["--betas", beta]
     return args
 
 
@@ -282,13 +280,15 @@ class ClaudeSDKClient:
             # The user pinned a window; report usage against exactly that.
             max_tokens = configured
         else:
-            # Don't assume the 1M beta took effect (it is silently ignored on some auth modes).
-            # Stay on the conservative 200k ceiling until usage actually exceeds it — which can
-            # only happen if the larger window is really active — so the overflow warning in
-            # diagnostics.log_context_usage still fires near the real limit instead of never.
-            max_tokens = _DEFAULT_MAX_TOKENS
-            if _BETA_1M in self._options.betas and total > _DEFAULT_MAX_TOKENS:
-                max_tokens = 1_000_000
+            # The caller supplies both windows (no model constants here). Stay on the conservative
+            # `context_window` until usage actually exceeds it — which can only happen if the larger
+            # `expanded_context_window` is really active (the 1M beta is silently ignored on some
+            # auth modes) — so the overflow warning in diagnostics.log_context_usage still fires
+            # near the real limit instead of never.
+            max_tokens = self._options.context_window or 0
+            expanded = self._options.expanded_context_window
+            if expanded and max_tokens and total > max_tokens:
+                max_tokens = expanded
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
