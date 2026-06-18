@@ -157,14 +157,14 @@ class Client:
         server_token: str,
         name: str,
         personality: str | None,
-        skills: list[str] | None,
+        context: str | None,
     ) -> dict[str, Any]:
         """POST <tenant>/agents — create the buyer's first (empty) agent."""
         body: dict[str, Any] = {"name": name}
         if personality:
-            body["seed_personality"] = personality
-        if skills:
-            body["seed_skills"] = ",".join(skills)  # vestad wants a comma string
+            body["personality"] = personality
+        if context:
+            body["seed_context"] = context  # freeform setup notes, incl. any skills to install
         url = f"{self._cfg.tenant_base(subdomain)}/agents"
         return self._json(self._raw_post(url, json=body, token=server_token, timeout=_CREATE_TIMEOUT))
 

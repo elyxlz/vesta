@@ -200,19 +200,19 @@ def test_create_agent_passes_seed(capsys, monkeypatch):
     _active_server(monkeypatch)
     captured = {}
 
-    def fake_create(self, *, subdomain, server_token, name, personality, skills):
-        captured.update(subdomain=subdomain, server_token=server_token, name=name, personality=personality, skills=skills)
+    def fake_create(self, *, subdomain, server_token, name, personality, context):
+        captured.update(subdomain=subdomain, server_token=server_token, name=name, personality=personality, context=context)
         # vestad normalizes the name and returns the actual created name.
         return {"name": "ada"}
 
     monkeypatch.setattr(cli_mod.Client, "create_agent", fake_create)
     rc, data = _run(
-        ["create-agent", "--email", E, "--name", "Ada", "--personality", "Dry", "--skills", "email, calendar ,"],
+        ["create-agent", "--email", E, "--name", "Ada", "--personality", "Dry", "--context", "designer in NYC; set up email and calendar"],
         capsys,
     )
     assert rc == 0 and data["created"] is True and data["name"] == "ada"
     assert captured["subdomain"] == "ada" and captured["server_token"] == "VTOK"
-    assert captured["personality"] == "dry" and captured["skills"] == ["email", "calendar"]
+    assert captured["personality"] == "dry" and captured["context"] == "designer in NYC; set up email and calendar"
     # the NORMALIZED name vestad returned is stored, so claude-finish addresses a
     # path vestad's validate_name accepts (not the raw "Ada").
     assert state_mod.load(E)["agent_name"] == "ada"

@@ -144,14 +144,14 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
         return 2
 
     name = args.name.strip()
-    skills = [s.strip() for s in args.skills.split(",") if s.strip()] if args.skills else None
+    context = args.context.strip() if args.context else None
     server_token = client.server_token(token, server["id"])
     result = client.create_agent(
         subdomain=server["subdomain"],
         server_token=server_token,
         name=name,
         personality=(args.personality.strip().lower() if args.personality else None),
-        skills=skills,
+        context=context,
     )
     if "error" in result:
         _print(result)
@@ -297,7 +297,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("--email", required=True)
     p_agent.add_argument("--name", required=True, help="What they want their vesta called.")
     p_agent.add_argument("--personality", help="Personality preset (see `onboard presets`).")
-    p_agent.add_argument("--skills", help="Comma-separated starting skills.")
+    p_agent.add_argument(
+        "--context", help="Freeform setup notes for the new agent (what you learned about the user, skills/services to set up)."
+    )
 
     p_cstart = sub.add_parser("claude-start", help="Begin connecting the buyer's Claude -> an auth link.")
     p_cstart.add_argument("--email", required=True)

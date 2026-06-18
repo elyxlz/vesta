@@ -93,7 +93,7 @@ and links between them and the CLI.
 5. **Wait for the box.** Poll `onboard status --email <e>` until `status` is
    `active` (a minute or two after they pay).
 6. **Create their agent.** `onboard create-agent --email <e> --name <name>
-   [--personality <preset>] [--skills a,b,c]`.
+   [--personality <preset>] [--context "notes"]`.
 7. **Connect their Claude, in chat.** `onboard claude-start --email <e>` returns an
    `auth_url`. Send it; they open it, approve, and read back the code shown. Then
    `onboard claude-finish --email <e> --code <pasted>` wakes the agent on their
@@ -144,7 +144,7 @@ onboard verify       --email <e> --code <c>            # the code they read back
 onboard checkout     --email <e> [--price <usd/mo>] [--code <code>]
                                                        # -> { url, subdomain }  (auto subdomain)
 onboard status       --email <e>                       # -> { status: reserved|active|... }
-onboard create-agent --email <e> --name <n> [--personality <preset>] [--skills a,b,c]
+onboard create-agent --email <e> --name <n> [--personality <preset>] [--context "notes"]
 onboard claude-start  --email <e>                      # -> { auth_url }  (send it to them)
 onboard claude-finish --email <e> --code <pasted> [--model opus|sonnet|haiku]
 onboard presets                                        # personalities + skills + models
@@ -180,7 +180,7 @@ onboard status --email ada@example.com
 # { "status": "active", "subdomain": "ada", "url": "https://ada.vesta.run" }   (box is up)
 
 # Once active: create the agent, then connect their Claude.
-onboard create-agent --email ada@example.com --name Ada --personality dry --skills email,calendar
+onboard create-agent --email ada@example.com --name Ada --personality dry --context "designer in NYC; set up email and calendar"
 # { "created": true, "name": "Ada" }
 onboard claude-start --email ada@example.com
 # { "auth_url": "https://claude.ai/oauth/authorize?...", "next": "..." }
