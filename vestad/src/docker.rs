@@ -943,7 +943,12 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
-    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or("dry")));
+    // Seed the creation-time defaults the Python agent now requires from the env (it no
+    // longer re-defines them). vesta-provider.env is sourced after this file, so once a
+    // provider is configured its AGENT_PROVIDER/AGENT_MODEL override these defaults.
+    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or(crate::defaults::DEFAULT_PERSONALITY)));
+    append_optional("AGENT_PROVIDER", Some(crate::defaults::DEFAULT_PROVIDER));
+    append_optional("AGENT_MODEL", Some(crate::defaults::DEFAULT_MODEL));
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }

@@ -2074,6 +2074,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/personalities", get(list_personalities_handler))
+        .route("/agent-defaults", get(crate::defaults::agent_defaults_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
         .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
         .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))

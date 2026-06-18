@@ -7,9 +7,13 @@ from core.events import EventBus
 
 os.environ.pop("CLAUDECODE", None)
 os.environ.setdefault("WS_PORT", "17865")
-# vestad always writes AGENT_PERSONALITY into the agent's env; mirror that for the suite
-# so VestaConfig (which now requires it) constructs without each test having to set it.
+# vestad always writes AGENT_PERSONALITY / AGENT_PROVIDER / AGENT_MODEL into the agent's env;
+# mirror that for the suite so VestaConfig (which now requires them) constructs without each
+# test having to set them. These are test scaffolding, not the product defaults (those live in
+# vestad/src/defaults.rs); a test that cares sets its own value via monkeypatch.setenv.
 os.environ.setdefault("AGENT_PERSONALITY", "dry")
+os.environ.setdefault("AGENT_PROVIDER", "claude")
+os.environ.setdefault("AGENT_MODEL", "opus")
 
 
 @pytest.fixture

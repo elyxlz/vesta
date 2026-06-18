@@ -249,6 +249,21 @@ pub struct ClaudeModel {
     pub note: String,
 }
 
+#[derive(serde::Deserialize)]
+pub struct ContextPreset {
+    pub tokens: u64,
+    pub label: String,
+    pub note: String,
+}
+
+/// Creation-time defaults vestad owns (vestad/src/defaults.rs), fetched so the CLI keeps
+/// no copy of the context-window presets or default.
+#[derive(serde::Deserialize)]
+pub struct AgentDefaults {
+    pub context_tokens: u64,
+    pub context_presets: Vec<ContextPreset>,
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Result<Self, String> {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -619,6 +634,11 @@ impl Client {
 
     pub fn fetch_claude_models(&self) -> Result<Vec<ClaudeModel>, String> {
         let resp = self.get("/providers/claude/models")?;
+        read_json(resp)
+    }
+
+    pub fn fetch_agent_defaults(&self) -> Result<AgentDefaults, String> {
+        let resp = self.get("/agent-defaults")?;
         read_json(resp)
     }
 
