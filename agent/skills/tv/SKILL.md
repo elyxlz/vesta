@@ -274,11 +274,8 @@ asyncio.run(play_youtube_video("VIDEO_ID"))
 ```
 
 **Notes on auth persistence:**
-- `screen_id` is stable as long as YouTube stays running on the TV. If YouTube restarts, a new screen_id is fetched via DIAL automatically.
-- `refresh_auth()` only needs `screen_id`. It's a server-side call, no TV popup.
-- The popup only fires when `connect()` creates a brand-new session with an unknown device.
-- Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()` which has a key naming bug in v3.2.0).
-- If saved auth fails, the code gracefully falls back to full pairing.
+- Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()`, which has a key naming bug in v3.2.0).
+- If YouTube restarts on the TV the `screen_id` changes, but the code re-fetches it via DIAL automatically; the pairing popup only fires when `connect()` opens a brand-new session with an unknown device.
 
 Additional pyytlounge commands (after connect):
 

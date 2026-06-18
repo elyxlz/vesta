@@ -5,11 +5,11 @@
   },
   {
     "name": "account",
-    "description": "Use when the OWNER asks about their Vesta hosting plan, billing, subscription, or account. Triggers like \"what plan am I on\", \"how much am I paying\", \"when does it renew\", \"upgrade my plan\", \"cancel my account\", \"change my card\", \"manage my billing\". Reads the plan directly, and for any change (upgrade, cancel, payment) hands back a secure link the owner opens to confirm. Hosted (vesta.run) boxes only; a self-hosted box has no plan. NOT for buying a new vesta for someone else (that is `onboard`), and NOT for paying a third-party invoice (that is `stripe-pay`)."
+    "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
   },
   {
     "name": "agentmail",
-    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently."
+    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent, free tier). Use for \"email\", \"send email\", or \"agent inbox\" without a custom domain; inbound mail arrives as a notification."
   },
   {
     "name": "browser",
@@ -29,11 +29,11 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Use to read an inbox, send/reply/forward mail, save drafts, manage messages (read/flag/answered/draft/categories, move/archive/delete), create/rename/delete folders, check folder counts, handle attachments, or get paged on new mail in real time (IMAP IDLE) from chosen folders. OAuth2 where supported, app-password fallback otherwise. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications."
   },
   {
     "name": "essay-iter",
-    "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
+    "description": "Iterate academic writing through a four-reviewer loop: rubric alignment, in-distribution fit, citation accuracy, AI-text detection. For coursework essays, dissertations, journal submissions, or conference papers."
   },
   {
     "name": "exa",
@@ -77,7 +77,7 @@
   },
   {
     "name": "onboard",
-    "description": "Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY: you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) set them up end-to-end IN CHAT: verify their email by a code they read back, confirm they have a paid Claude account, agree a price, send a private Stripe link, then once they've paid create their agent and connect their Claude (an auth link + a code they paste back), and only then hand them the app to talk to it. Never asks for card details. Do NOT use on the owner (they already have one)."
+    "description": "Use when someone who doesn't have their own vesta asks what it is, how to get one, or hints they want in. Vesta is invite-only: you gatekeep and create desire rather than sell, then (if they earn it) set them up end-to-end in chat. Not for the owner, who already has one."
   },
   {
     "name": "onedrive",
@@ -141,7 +141,7 @@
   },
   {
     "name": "video-use",
-    "description": "Use for \"edit video\", \"video editing\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", \"launch video\", or whenever the user wants footage turned into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor that handles filler removal, auto color grading, 30ms audio fades, burned subtitles, and Manim/Remotion/PIL overlays."
+    "description": "Use for \"edit video\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", or turning raw footage into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor."
   },
   {
     "name": "voice",

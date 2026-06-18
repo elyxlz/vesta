@@ -24,11 +24,7 @@ Invoke this skill when:
 
 ## Skip
 
-Do not use this skill for:
-- Sending money to people (this is for paying merchants, not P2P transfers)
-- Recurring subscriptions the user already has elsewhere
-- Anything where the user has not run `stripe-pay authorize` yet: tell them to set up first
-- Generic "log this expense" requests: use the `finance` skill for read-only bank data
+Not for sending money to people (merchants only, not P2P) or read-only expense logging (use the `finance` skill). If `stripe-pay authorize` has not run, `charge` errors clearly and you tell the user to set up first.
 
 ## Setup
 
