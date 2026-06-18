@@ -69,6 +69,19 @@ def test_drop_writes_one_notification_per_migration(tmp_path):
     assert "[Migration: 001-first]" in payload["body"]
 
 
+def test_drop_appends_mark_applied_step_with_correct_name(tmp_path):
+    """The runner appends the mark_migration_applied step so authors never hand-write the name."""
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("do the thing")
+    state = _make_state()
+
+    drop_pending_migrations(state=state, config=config)
+
+    payload = json.loads((config.notifications_dir / "migration-001-first.json").read_text())
+    assert 'Call `mark_migration_applied` with `name="001-first"`.' in payload["body"]
+
+
 def test_drop_no_pending_returns_zero(tmp_path):
     config = _make_config(tmp_path)
     state = _make_state()

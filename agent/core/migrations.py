@@ -3,8 +3,9 @@
 Each migration is a markdown file under `agent/core/migrations/`. The file's
 stem is the migration name. On boot we drop every unapplied migration as a
 passive notification under `~/agent/notifications/` (source `core`, type
-`migration`). The migration prompt's last step instructs the agent to call
-`mark_migration_applied(name)`, which records it in `state.json`. If the
+`migration`). The runner appends a final step instructing the agent to call
+`mark_migration_applied(name)` — authors do not write it per file — which
+records it in `state.json`. If the
 agent never calls the tool — rate limit, crash, hallucinated success — the
 migration runs again on the next boot. Migration prompts must therefore be
 idempotent.
@@ -52,7 +53,11 @@ def drop_pending_migrations(*, state: vm.State, config: vm.VestaConfig, first_st
             logger.startup(f"Pre-marked {len(pending)} migration(s) as applied (fresh agent)")
         return 0
     for name, content in pending:
-        body = f"[Migration: {name}]\n\n{content.strip()}"
+        # Append the completion step here so migration authors never hand-write the name
+        # (a typo would mark the wrong name and loop the migration forever). The canonical
+        # name is known here, so it is always correct by construction.
+        mark_step = f'## Final step\n\nCall `mark_migration_applied` with `name="{name}"`.'
+        body = f"[Migration: {name}]\n\n{content.strip()}\n\n{mark_step}"
         drop_core_notification(type_=vm.TYPE_MIGRATION, body=body, interrupt=False, config=config, name=f"{vm.TYPE_MIGRATION}-{name}")
         logger.startup(f"Dropped migration notification: {name}")
     return len(pending)
