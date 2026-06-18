@@ -99,17 +99,7 @@ Notification format:
 
 - **Auth method**: RS256 JWT, self-signed. JWTs generated fresh per request, no OAuth token refresh needed
 - **Consent duration**: 90 days
-- **Re-auth**: when expired, run `finance auth login`, visit the URL in browser, authorize your bank
-
-**Re-auth process:**
-```bash
-finance auth login
-# Prints URL - open in browser
-# Bank authorization screen
-# Callback caught automatically at https://localhost:7866/callback
-# If SSL error in browser: copy the full URL from address bar, run:
-finance auth callback --url '<full-redirect-url-from-browser>'
-```
+- **Re-auth**: when consent expires, run `finance auth login` and authorize your bank in the browser. The callback is caught automatically at `https://localhost:7866/callback`; on a browser SSL error, copy the full redirect URL from the address bar and pass it to `finance auth callback --url '<url>'`.
 
 ## Configuration
 

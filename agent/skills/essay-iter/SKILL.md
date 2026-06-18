@@ -1,6 +1,6 @@
 ---
 name: essay-iter
-description: Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available.
+description: Iterate academic writing through a four-reviewer loop: rubric alignment, in-distribution fit, citation accuracy, AI-text detection. For coursework essays, dissertations, journal submissions, or conference papers.
 ---
 
 # Essay Iteration Loop
@@ -107,18 +107,7 @@ for round = 1, 2, 3, ...:
 
 ### Step 1: approach session
 
-Agent gathers what's available, then surfaces a plan to the user covering:
-
-. essay / piece title and operative question
-. structure (sections + word allocation)
-. core thesis / argument / contribution
-. references corpus (where they came from + count)
-. rubric (verbatim, or scaffolded)
-. citation style
-. AI-detection threshold
-. anything risky or ambiguous
-
-Wait for user OK before drafting. If user wants to edit the plan, iterate the plan first.
+Run the approach session described in Phase 1 above: gather what's available, surface the plan, and wait for user OK before drafting. If the user wants to edit the plan, iterate the plan first.
 
 ### Step 2: initial draft
 

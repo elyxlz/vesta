@@ -1,6 +1,6 @@
 ---
 name: email-client
-description: Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Use to read an inbox, send/reply/forward mail, save drafts, manage messages (read/flag/answered/draft/categories, move/archive/delete), create/rename/delete folders, check folder counts, handle attachments, or get paged on new mail in real time (IMAP IDLE) from chosen folders. OAuth2 where supported, app-password fallback otherwise. Requires the poll daemon for notifications.
+description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications.
 ---
 
 # Email Client
@@ -11,11 +11,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-Do not use it when:
-
-- The user wants the full Gmail API surface (labels, threads, drafts as Google models them) → use the `google` skill.
-- The user has an M365 *work* account with IMAP/SMTP disabled, or wants calendar/contacts/Graph → use the `microsoft` skill. (M365 work accounts *with* IMAP enabled work here; see "Microsoft 365 with a custom domain".)
-- The user wants an agent-owned inbox rather than their personal mail → use `agentmail`.
+Do not use it when the user wants the full Gmail API surface (use the `google` skill), calendar/contacts/Graph or an M365 *work* account with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 

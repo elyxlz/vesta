@@ -1,6 +1,6 @@
 ---
 name: account
-description: Use when the OWNER asks about their Vesta hosting plan, billing, subscription, or account. Triggers like "what plan am I on", "how much am I paying", "when does it renew", "upgrade my plan", "cancel my account", "change my card", "manage my billing". Reads the plan directly, and for any change (upgrade, cancel, payment) hands back a secure link the owner opens to confirm. Hosted (vesta.run) boxes only; a self-hosted box has no plan. NOT for buying a new vesta for someone else (that is `onboard`), and NOT for paying a third-party invoice (that is `stripe-pay`).
+description: Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices).
 ---
 
 # account, CLI: `account`
@@ -40,9 +40,7 @@ Invoke when the **owner** asks about *their own* hosting:
 
 ## Skip
 
-- A **self-hosted** box (no `managed` flag, no plan). `account plan` will say so.
-- Buying a vesta for **someone else**, that is `onboard`.
-- Paying an external invoice or a third party, that is `stripe-pay`.
+Self-hosted boxes have no plan (`account plan` says so). Buying a vesta for someone else is `onboard`; paying an external invoice or third party is `stripe-pay`.
 
 ## Commands
 

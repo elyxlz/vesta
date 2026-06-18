@@ -226,8 +226,7 @@ To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORT
 - **Duffel does NOT support Wizz Air or Ryanair.** Use Trip.com for these
 - **Duffel balance**: must be funded before live bookings. Check balance before attempting
 - Prices from Google Flights are in USD; Trip.com and Duffel prices depend on currency/locale
-- **Trip.com browser sessions**: always use `--stealth` mode. Regular browser gets blocked by Cloudflare
-- **Trip.com payment timer**: ~13 min. Don't browse around on the payment page
+- Trip.com quirks (stealth requirement, ~13 min payment timer, etc.) are in "Trip.com Known Quirks" above
 
 ## Saved Profiles
 
