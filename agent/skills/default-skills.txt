@@ -8,6 +8,7 @@ onboard
 personality
 proactive-check
 restart
+service
 skills-registry
 tasks
 timezone

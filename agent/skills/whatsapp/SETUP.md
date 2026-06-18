@@ -89,9 +89,7 @@ A QR code image is saved to `~/.whatsapp/<instance>/qr-code.png` (or `~/.whatsap
 The page binds to localhost, so it needs a public route to be shareable. On vesta, register a public vestad service and bind the page to the port it hands back:
 
 ```bash
-PORT=$(curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services" \
-  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"wa-link","public":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/service/scripts/register-service wa-link --public)
 python3 ~/agent/skills/whatsapp/qr-link-server.py --instance <name> --port "$PORT" &
 ```
 
@@ -140,7 +138,7 @@ whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
 
 ## 6. Register the service
 
-Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+So the daemon comes back after a container restart, register it for restart (see [service](../service/SKILL.md)) with this startup command:
 
 ```
 screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications

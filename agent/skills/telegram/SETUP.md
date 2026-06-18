@@ -24,7 +24,7 @@
    screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
    ```
 5. **Important**: The user must `/start` the bot from their Telegram account before Vesta can send them messages. After that first interaction, Vesta can message them anytime (including autonomously, e.g., morning reports).
-6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+6. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
    screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
    ```
