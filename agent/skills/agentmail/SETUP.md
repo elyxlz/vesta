@@ -69,8 +69,11 @@ PORT=$(~/agent/skills/skills-registry/scripts/register-service agentmail --publi
 screen -dmS agentmail agentmail serve --port $PORT
 ```
 
-Append the same two-line block to `~/agent/prompts/restart.md` so the
-service comes back up after a container restart.
+Register it for restart (see [skills-registry](../skills-registry/SKILL.md#registering-a-background-service)) by adding this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+
+```
+PORT=$(~/agent/skills/skills-registry/scripts/register-service agentmail --public) && screen -dmS agentmail agentmail serve --port $PORT
+```
 
 **Verify**: `curl http://127.0.0.1:$PORT/health` should return
 `{"ok": true, "address": "<your-address>"}`.
