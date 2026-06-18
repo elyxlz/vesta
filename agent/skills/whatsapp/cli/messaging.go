@@ -45,28 +45,32 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, qu
 		wac.logger.Warnf("Failed to set online status: %v", err)
 	}
 
-	// Skip presence simulation for rapid successive messages
+	// Always simulate typing so a burst of back-to-back messages reads as natural
+	// human texting (each message shows a "typing…" indicator and lands after a
+	// length-scaled pause) instead of an instant dump. The only rapid-send
+	// concession is skipping the "reading" beat for follow-on messages: you don't
+	// re-read the conversation before continuing your own thought.
 	wac.presenceMutex.RLock()
 	timeSinceLastMessage := time.Since(wac.lastMessageSentAt)
 	wac.presenceMutex.RUnlock()
 
 	if timeSinceLastMessage >= RapidMessageThreshold {
 		time.Sleep(randomDelay(ReactionDelayMin, ReactionDelayMax))
-
-		err = wac.client.SendChatPresence(context.Background(), jid, types.ChatPresenceComposing, types.ChatPresenceMediaText)
-		if err != nil {
-			wac.logger.Warnf("Failed to send typing indicator: %v", err)
-		}
-
-		time.Sleep(humanDelay(TypingDelayMin, TypingDelayPerChar, len(message), TypingDelayMax))
-
-		err = wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
-		if err != nil {
-			wac.logger.Debugf("Failed to stop typing indicator: %v", err)
-		}
-
-		time.Sleep(randomDelay(PreSendDelayMin, PreSendDelayMax))
 	}
+
+	err = wac.client.SendChatPresence(context.Background(), jid, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+	if err != nil {
+		wac.logger.Warnf("Failed to send typing indicator: %v", err)
+	}
+
+	time.Sleep(humanDelay(TypingDelayMin, TypingDelayPerChar, len(message), TypingDelayMax))
+
+	err = wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
+	if err != nil {
+		wac.logger.Debugf("Failed to stop typing indicator: %v", err)
+	}
+
+	time.Sleep(randomDelay(PreSendDelayMin, PreSendDelayMax))
 
 	resolvedText, mentionedJIDs := wac.parseMentions(message)
 
