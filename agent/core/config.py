@@ -133,6 +133,11 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_name: str = "vesta"
     agent_model: str = "opus"
     agent_provider: tp.Literal["claude", "openrouter"] = "claude"
+    # Active personality preset, read on every boot (a live selector, not consumed once at creation).
+    # build_client_options loads the shared personality SKILL.md plus presets/<value>.md into
+    # the system prompt. Required from the env: vestad always writes AGENT_PERSONALITY, and the
+    # legacy AGENT_SEED_PERSONALITY name is still accepted for agents whose env file predates the rename.
+    agent_personality: str = pyd.Field(init=False, validation_alias=pyd.AliasChoices("AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"))
 
 
 def load_config() -> tuple[VestaConfig, list[str]]:

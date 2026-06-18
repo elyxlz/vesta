@@ -254,9 +254,6 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}, cannot start agent without it")
     system_prompt = memory_path.read_text()
 
-    name = config.agent_name
-    system_prompt = f"Your name is {name}.\n\n{system_prompt}"
-
     # Constitution: a user-authored charter set from vestad and bind-mounted read-only,
     # so the agent cannot edit it. Prepend it ahead of MEMORY.md when non-empty.
     constitution_path = get_constitution_path(config)
@@ -265,6 +262,16 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if constitution:
             header = "# Constitution\n\nThe following was set by your user and is immutable. You cannot edit it.\n\n"
             system_prompt = f"{header}{constitution}\n\n{system_prompt}"
+
+    # Personality voice: the shared rules + the active preset live in the personality skill
+    # (agent-editable, the single source of truth for how the agent sounds). Loading them here,
+    # in read-only core, makes the voice as unskippable as MEMORY.md: the agent drifts the
+    # content by editing the skill files, but cannot remove this load. Picked up on next boot.
+    personality_dir = config.skills_dir / "personality"
+    voice_files = [personality_dir / "SKILL.md", personality_dir / "presets" / f"{config.agent_personality}.md"]
+    voice = "\n\n".join(path.read_text().strip() for path in voice_files if path.exists())
+    if voice:
+        system_prompt = f"{system_prompt}\n\n# Active voice\n\nThis is how you sound.\n\n{voice}"
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 

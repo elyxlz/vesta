@@ -508,16 +508,15 @@ struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
-    seed_personality: Option<String>,
-    /// Comma-separated skill names to install at first boot (in addition to the
-    /// default skill set). Exported as AGENT_SEED_SKILLS; consumed by the agent's
-    /// first-wake setup. Unset means "default skills only".
-    seed_skills: Option<String>,
-    /// Freeform, unstructured context the creator wants the new agent to start
-    /// with (e.g. what it learned about the user during an onboarding chat).
-    /// Written to ~/agent/data/seed-context.md in the container; the agent folds
-    /// the useful parts into its memory at first wake. Treated as untrusted data,
-    /// never as instructions.
+    /// Active personality preset (e.g. "dry"). Exported as AGENT_PERSONALITY; the
+    /// agent loads the matching preset into its system prompt on every boot. The
+    /// old `seed_personality` field name is still accepted from older clients.
+    #[serde(alias = "seed_personality")]
+    personality: Option<String>,
+    /// Freeform setup notes the creator wants the new agent to start with: what it
+    /// learned about the user during onboarding, plus any skills or services to set
+    /// up. Written to ~/agent/data/seed-context.md in the container; the agent folds
+    /// the background into its memory and acts on the setup it asks for at first wake.
     seed_context: Option<String>,
 }
 
@@ -569,7 +568,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref(), body.seed_skills.as_deref(), body.seed_context.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.personality.as_deref(), body.seed_context.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 

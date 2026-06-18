@@ -7,6 +7,9 @@ from core.events import EventBus
 
 os.environ.pop("CLAUDECODE", None)
 os.environ.setdefault("WS_PORT", "17865")
+# vestad always writes AGENT_PERSONALITY into the agent's env; mirror that for the suite
+# so VestaConfig (which now requires it) constructs without each test having to set it.
+os.environ.setdefault("AGENT_PERSONALITY", "dry")
 
 
 @pytest.fixture

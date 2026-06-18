@@ -86,13 +86,13 @@ export async function setContextWindow(
 /// at create time (the agent owns its own auth state).
 export async function createAgent(
   name: string,
-  seedPersonality?: string,
+  personality?: string,
 ): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone, seed_personality: seedPersonality }),
+    body: JSON.stringify({ name, timezone, personality }),
   });
 }
 
