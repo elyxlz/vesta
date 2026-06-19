@@ -17,9 +17,11 @@ import asyncio
 import json
 import logging
 import sqlite3
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
+import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
@@ -231,41 +233,49 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
     )
 
 
+class _ProviderUpdate(pyd.BaseModel):
+    """POST /provider body: exactly one of `{credentials}` (Claude OAuth blob) or
+    `{openrouter_key, openrouter_model}`."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    credentials: str | None = None
+    openrouter_key: str | None = None
+    openrouter_model: str | None = None
+
+    @pyd.model_validator(mode="after")
+    def _exactly_one_provider(self) -> "_ProviderUpdate":
+        if (self.credentials is None) == (self.openrouter_key is None):
+            raise ValueError("provide exactly one of credentials or openrouter_key")
+        if self.openrouter_key is not None and not self.openrouter_model:
+            raise ValueError("openrouter_model is required with openrouter_key")
+        return self
+
+
 async def _provider_set_handler(request: web.Request) -> web.Response:
-    """Set the LLM provider's credentials. Mutually exclusive body shapes:
-    - `{credentials}`                      -> set Claude (OAuth blob)
-    - `{openrouter_key, openrouter_model}` -> set OpenRouter (model recorded in the config store,
-                                              since OpenRouter is non-functional without one)
-    Model / context / personality are preferences, set via PUT /config, not here. Vestad
-    orchestrates the container restart that picks up the change."""
+    """Set the provider credentials: `{credentials}` for Claude or `{openrouter_key, openrouter_model}`
+    for OpenRouter. Vestad restarts the agent to apply it."""
     state = request.app["state"]
     config: VestaConfig = request.app["config"]
     if state.provider_status is None:
         return web.json_response({"error": "provider not initialized"}, status=503)
     try:
-        data = await request.json()
+        body = _ProviderUpdate.model_validate(await request.json())
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider config: {e.errors(include_url=False)}"}, status=400)
 
-    has_creds = "credentials" in data and isinstance(data["credentials"], str)
-    has_or = "openrouter_key" in data and isinstance(data["openrouter_key"], str)
-    if has_creds and has_or:
-        return web.json_response({"error": "credentials and openrouter_key are mutually exclusive"}, status=400)
-    if not has_creds and not has_or:
-        return web.json_response({"error": "must provide credentials or openrouter_key"}, status=400)
-
-    if has_creds:
+    if body.credentials is not None:
         try:
-            state.provider_status = set_claude(data["credentials"], config=config, persisted=state.persisted)
+            state.provider_status = set_claude(body.credentials, config=config, persisted=state.persisted)
         except (json.JSONDecodeError, TypeError) as e:
             return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
         except OSError as e:
             return web.json_response({"error": f"set_claude failed: {e}"}, status=500)
-    else:
-        if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
-            return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
+    elif body.openrouter_key is not None and body.openrouter_model is not None:
         try:
-            state.provider_status = set_openrouter(data["openrouter_key"], data["openrouter_model"], config=config, persisted=state.persisted)
+            state.provider_status = set_openrouter(body.openrouter_key, body.openrouter_model, config=config, persisted=state.persisted)
         except OSError as e:
             return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
 
@@ -286,39 +296,32 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     )
 
 
+class _ConfigUpdate(pyd.BaseModel):
+    """PUT /config body: any of model/max_context_tokens/personality/thinking. An omitted field is
+    left unchanged; a null clears it. Field names are the config-store keys; the client-facing
+    aliases populate them."""
+
+    model_config = pyd.ConfigDict(extra="forbid", populate_by_name=True)
+
+    agent_model: tp.Annotated[str, pyd.StringConstraints(min_length=1)] | None = pyd.Field(default=None, alias="model")
+    agent_personality: tp.Annotated[str, pyd.StringConstraints(min_length=1)] | None = pyd.Field(default=None, alias="personality")
+    # strict so bool is rejected (a lax int would coerce True -> 1).
+    max_context_tokens: tp.Annotated[int, pyd.Field(strict=True, gt=0)] | None = None
+    thinking: tp.Literal["adaptive", "enabled", "disabled"] | None = None
+
+
 async def _config_put_handler(request: web.Request) -> web.Response:
-    """Update editable preferences in the writable config store (sparse merge). Accepts any of
-    `{model, max_context_tokens, personality, thinking}`; omitted keys are left unchanged, and a
-    null clears a key back to its default. Applies on the next restart (which the provider/OAuth
-    step triggers anyway), so the response advertises restart_required."""
+    """Update preferences in the config store. Vestad restarts the agent to apply them."""
     try:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if not isinstance(data, dict):
-        return web.json_response({"error": "body must be a json object"}, status=400)
+    try:
+        update = _ConfigUpdate.model_validate(data)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
 
-    # For every field, None clears the key (reverts to default) — update_config_store deletes it.
-    updates: dict[str, object] = {}
-    if "model" in data:
-        if data["model"] is not None and (not isinstance(data["model"], str) or not data["model"]):
-            return web.json_response({"error": "model must be a non-empty string or null"}, status=400)
-        updates["agent_model"] = data["model"]
-    if "personality" in data:
-        if data["personality"] is not None and (not isinstance(data["personality"], str) or not data["personality"]):
-            return web.json_response({"error": "personality must be a non-empty string or null"}, status=400)
-        updates["agent_personality"] = data["personality"]
-    if "max_context_tokens" in data:
-        ctx = data["max_context_tokens"]
-        # bool is an int subclass; reject True/False.
-        if ctx is not None and (not isinstance(ctx, int) or isinstance(ctx, bool) or ctx <= 0):
-            return web.json_response({"error": "max_context_tokens must be a positive integer or null"}, status=400)
-        updates["max_context_tokens"] = ctx
-    if "thinking" in data:
-        if data["thinking"] is not None and data["thinking"] not in ("adaptive", "enabled", "disabled"):
-            return web.json_response({"error": "thinking must be adaptive|enabled|disabled or null"}, status=400)
-        updates["thinking"] = data["thinking"]
-
+    updates = update.model_dump(exclude_unset=True)
     if not updates:
         return web.json_response({"error": "must provide at least one of model, max_context_tokens, personality, thinking"}, status=400)
     try:

@@ -18,13 +18,13 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Switch (or refresh) an existing agent's provider auth: the Claude OAuth blob or the
-/// OpenRouter key (+ the OpenRouter model, which the agent records in its config store, since
-/// OpenRouter needs a valid model). Model/context are preferences, applied via setConfig, not
-/// here. The agent owns the file writes; vestad proxies the call and restarts.
+/// Set an agent's provider credentials (Claude OAuth blob or OpenRouter key + model), then apply
+/// the chosen preferences (personality, Claude model, context window) to the config store. Vestad
+/// restarts the agent to apply both.
 export async function setProvider(
   name: string,
   result: ProviderResult,
+  personality?: string,
 ): Promise<void> {
   const body: Record<string, unknown> =
     result.kind === "claude"
@@ -38,9 +38,10 @@ export async function setProvider(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  // Claude model + context window are preferences; apply them through the config store. (For
-  // OpenRouter the model rode along in openrouter_model above; the context window still applies.)
+  // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
+  // preference applied here in one PUT.
   const config: Record<string, unknown> = {};
+  if (personality) config.personality = personality;
   if (result.kind === "claude" && result.model) config.model = result.model;
   if (result.maxContextTokens != null) {
     config.max_context_tokens = result.maxContextTokens;
@@ -105,18 +106,14 @@ export async function setContextWindow(
   await setConfig(name, { max_context_tokens: maxContextTokens });
 }
 
-/// Create an empty agent container. Provider config is sent separately via
-/// `setProvider` once the agent is up — vestad no longer accepts credentials
-/// at create time (the agent owns its own auth state).
-export async function createAgent(
-  name: string,
-  personality?: string,
-): Promise<void> {
+/// Create an empty agent container. Credentials and preferences (provider, model, personality,
+/// context) are sent once it's up, via `setProvider`.
+export async function createAgent(name: string): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone, personality }),
+    body: JSON.stringify({ name, timezone }),
   });
 }
 

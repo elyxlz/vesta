@@ -87,21 +87,14 @@ _LEGACY_ENV_FOR_STORE = (
 
 
 def migrate_legacy_config_to_store() -> None:
-    """One-time fleet convergence onto the config store.
+    """Copy preferences carried in the env (AGENT_MODEL, AGENT_PERSONALITY, MAX_CONTEXT_TOKENS) into
+    the config store, so every agent holds its preferences in ~/agent/data/config.json. Seeds a key
+    only when it is set in the env and not already in the store: never overwrites a PUT /config value
+    and never writes a default. Idempotent.
 
-    Before the store existed, preferences lived in the env (AGENT_MODEL / AGENT_PERSONALITY in the
-    agent env, MAX_CONTEXT_TOKENS in vesta-provider.env). This copies any such value that is actually
-    present in the environment into the store, so every existing agent ends up holding its
-    preferences in ~/agent/data/config.json and the LEGACY env layer can later be retired. It seeds
-    a key only when it (a) is genuinely set in the env and (b) isn't already in the store, so it
-    never overwrites a PUT /config choice and never locks in a default — safe even if it runs before
-    vestad renames AGENT_SEED_PERSONALITY (that legacy name is left untouched until the rename, so
-    personality is simply not converged that boot rather than reset). Idempotent: a no-op once the
-    store holds the keys.
-
-    LEGACY(remove-when: every fleet agent has a config.json carrying its preferences, i.e. one
-    release after this convergence has rolled out): this function, its boot call site, and the env
-    layer in settings_customise_sources can all be removed together.
+    LEGACY(remove-when: every fleet agent has a config.json carrying its preferences, i.e. one release
+    after this has rolled out): this function, its boot call site, and the env layer in
+    settings_customise_sources.
     """
     store = read_config_store()
     updates: dict[str, tp.Any] = {}
@@ -285,11 +278,9 @@ class VestaConfig(pyd_settings.BaseSettings):
                 logger.error(f"config store {store} unreadable ({exc}); ignoring it (preferences fall back to env/defaults)")
             else:
                 sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
-        # LEGACY(remove-when: every fleet agent has written a config.json via PUT /config, i.e. the
-        # release after this one has rolled out): env_settings carrying agent_model / agent_personality.
-        # New agents get these from the config store; only agents whose env predates the store still
-        # read them here. Once none do, env stays purely for identity (WS_PORT/AGENT_TOKEN) and the
-        # auth-bound agent_provider, and this note can drop the legacy framing.
+        # LEGACY(remove-when: every fleet agent has a config.json, i.e. one release after this): env as
+        # a source of agent_model / agent_personality. They are config-store preferences; env carries
+        # them only for agents that predate the store.
         sources.extend([env_settings, dotenv_settings, file_secret_settings])
         sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=CONFIG_DEFAULTS_PATH))
         return tuple(sources)

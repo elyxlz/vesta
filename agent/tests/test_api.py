@@ -134,3 +134,56 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
             await cleanup_task
 
     assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING)
+
+
+# --- Request-body validation models (PUT /config, POST /provider) ---
+
+
+def test_config_update_aliases_and_sparse_dump():
+    from core.api import _ConfigUpdate
+
+    # Client-facing aliases populate the store-key fields; only provided keys come back.
+    assert _ConfigUpdate.model_validate({"model": "sonnet"}).model_dump(exclude_unset=True) == {"agent_model": "sonnet"}
+    assert _ConfigUpdate.model_validate({"personality": "warm"}).model_dump(exclude_unset=True) == {"agent_personality": "warm"}
+
+
+def test_config_update_null_clears_a_key():
+    from core.api import _ConfigUpdate
+
+    # A null value is preserved (not dropped) so the handler can clear that key in the store.
+    assert _ConfigUpdate.model_validate({"model": None}).model_dump(exclude_unset=True) == {"agent_model": None}
+
+
+def test_config_update_rejects_bad_values():
+    import pydantic as pyd
+
+    from core.api import _ConfigUpdate
+
+    for bad in [
+        {"max_context_tokens": 0},
+        {"max_context_tokens": True},
+        {"max_context_tokens": "500"},
+        {"model": ""},
+        {"thinking": "x"},
+        {"bogus": 1},
+    ]:
+        with pytest.raises(pyd.ValidationError):
+            _ConfigUpdate.model_validate(bad)
+
+
+def test_provider_update_accepts_each_provider():
+    from core.api import _ProviderUpdate
+
+    assert _ProviderUpdate.model_validate({"credentials": "{}"}).credentials == "{}"
+    parsed = _ProviderUpdate.model_validate({"openrouter_key": "k", "openrouter_model": "m"})
+    assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
+
+
+def test_provider_update_requires_exactly_one_provider():
+    import pydantic as pyd
+
+    from core.api import _ProviderUpdate
+
+    for bad in [{}, {"credentials": "c", "openrouter_key": "k"}, {"openrouter_key": "k"}, {"bogus": 1}]:
+        with pytest.raises(pyd.ValidationError):
+            _ProviderUpdate.model_validate(bad)

@@ -1,15 +1,11 @@
-"""Per-agent LLM-provider authentication state.
+"""Per-agent LLM-provider authentication: the agent's relationship with its upstream provider
+(Claude OAuth or OpenRouter API key).
 
-This is the agent's relationship with its upstream LLM provider (Claude OAuth or
-OpenRouter API key), NOT the agent's own HTTP API auth (that's the X-Agent-Token
-middleware in `api.py`), and NOT the agent's editable preferences (model, context
-window, personality), which live in the writable config store (`config.py`, PUT /config).
-
-`vesta-provider.env` holds only the provider CHOICE and credentials: AGENT_PROVIDER,
-the OpenRouter key, and the OpenRouter small-fast model. The selected model and context
-window live in the config store; the Claude OAuth blob lives in `.credentials.json`. Each
-mutation persists the auth state to PersistedState so a runtime failure isn't silently
-forgotten across a container restart (e.g. dreamer).
+`vesta-provider.env` holds the provider choice and credentials (AGENT_PROVIDER, the OpenRouter
+key, the OpenRouter small-fast model); the Claude OAuth blob lives in `.credentials.json`. Each
+mutation persists the auth state to PersistedState so it survives a restart. The model and context
+window are preferences in the config store (`config.py`); the agent's own HTTP API auth is the
+X-Agent-Token middleware in `api.py`.
 """
 
 import dataclasses as dc
@@ -64,11 +60,8 @@ def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderSta
 
 
 def set_claude(credentials_json: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Write Claude OAuth credentials + the Claude provider file and return the new
-    (authenticated) status. The provider file records AGENT_PROVIDER=claude and clears the
-    OpenRouter exports, so switching OpenRouter->Claude leaves no stale token/base-url behind.
-    The model and context window are not touched here; they live in the config store and the
-    shipped default (a Claude model) applies until a PUT /config changes them."""
+    """Write the Claude OAuth credentials and the Claude provider file (AGENT_PROVIDER=claude,
+    OpenRouter exports cleared), and return the authenticated status."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -84,14 +77,8 @@ def set_claude(credentials_json: str, *, config: VestaConfig, persisted: Persist
 
 
 def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Write the OpenRouter provider env file (key only) and record the selected model in the
-    config store. OpenRouter is non-functional without a valid model, so switching to it sets
-    the model in one call rather than risking a boot on a Claude default. The agent must be
-    restarted by vestad for the provider env vars to take effect. Context window is unchanged
-    here (a PUT /config sets it)."""
-    # Two non-atomic writes (store model, then provider file). A crash between them leaves a
-    # provider/model mismatch that surfaces as not-authenticated or a rejected first call, which
-    # re-provisioning (the app's normal retry) repairs; full atomicity isn't worth a second store.
+    """Write the OpenRouter provider file (the key) and record the model in the config store
+    (OpenRouter needs a valid model). Vestad restarts the agent to apply it."""
     update_config_store({"agent_model": model})
     _write_provider_file(_openrouter_provider_file(key))
     status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
@@ -120,9 +107,8 @@ def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: Persiste
 
 
 def _derive_kind() -> ProviderKind:
-    """The provider CHOICE: the provider file's AGENT_PROVIDER wins; otherwise bare Claude
-    credentials count as claude; otherwise none. The model is no longer read here (it lives in
-    the config store), so a legacy/empty provider file still resolves the right kind."""
+    """The provider choice: the provider file's AGENT_PROVIDER, else bare Claude credentials count
+    as claude, else none."""
     if PROVIDER_ENV_PATH.exists():
         provider = _parse_first_export(PROVIDER_ENV_PATH.read_text(), "AGENT_PROVIDER")
         if provider in ("openrouter", "claude"):
