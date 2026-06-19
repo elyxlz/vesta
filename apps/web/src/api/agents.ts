@@ -18,10 +18,10 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Switch (or refresh) an existing agent's provider. Body is either `credentials`
-/// (Claude OAuth blob) or the `openrouter_*` pair, plus an optional `model` (Claude)
-/// and `max_context_tokens`. The agent owns the file writes and clears the obsolete
-/// provider config; vestad proxies the call and restarts.
+/// Switch (or refresh) an existing agent's provider auth: the Claude OAuth blob or the
+/// OpenRouter key (+ the OpenRouter model, which the agent records in its config store, since
+/// OpenRouter needs a valid model). Model/context are preferences, applied via setConfig, not
+/// here. The agent owns the file writes; vestad proxies the call and restarts.
 export async function setProvider(
   name: string,
   result: ProviderResult,
@@ -33,15 +33,19 @@ export async function setProvider(
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  if (result.kind === "claude" && result.model) body.model = result.model;
-  if (result.maxContextTokens != null) {
-    body.max_context_tokens = result.maxContextTokens;
-  }
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // Claude model + context window are preferences; apply them through the config store. (For
+  // OpenRouter the model rode along in openrouter_model above; the context window still applies.)
+  const config: Record<string, unknown> = {};
+  if (result.kind === "claude" && result.model) config.model = result.model;
+  if (result.maxContextTokens != null) {
+    config.max_context_tokens = result.maxContextTokens;
+  }
+  if (Object.keys(config).length > 0) await setConfig(name, config);
 }
 
 export interface ProviderInfo {
@@ -57,28 +61,48 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// Change only the model, keeping the current provider (and, for OpenRouter, the
-/// stored key). Works for both Claude and OpenRouter. Vestad restarts the agent
-/// so the new model takes effect.
-export async function setModel(name: string, model: string): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
+/// An agent's editable preferences (the config-store bucket), proxied from the agent.
+export interface AgentConfig {
+  model: string;
+  max_context_tokens: number | null;
+  personality: string;
+  thinking: string;
+}
+
+/// Update an agent's editable preferences via its config store (PUT /config). Any subset of
+/// model/context/personality/thinking; vestad restarts the agent so the change takes effect.
+export async function setConfig(
+  name: string,
+  config: {
+    model?: string;
+    max_context_tokens?: number | null;
+    personality?: string;
+    thinking?: string;
+  },
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(config),
   });
 }
 
-/// Change only the context window (tokens), keeping the provider, key, and model.
-/// Vestad restarts the agent so the new window takes effect.
+/// Read an agent's current editable preferences, proxied from the agent.
+export async function getConfig(name: string): Promise<AgentConfig> {
+  return apiJson<AgentConfig>(`/agents/${encodeURIComponent(name)}/config`);
+}
+
+/// Change only the model preference. Vestad restarts the agent so it takes effect.
+export async function setModel(name: string, model: string): Promise<void> {
+  await setConfig(name, { model });
+}
+
+/// Change only the context window (tokens). Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_context_tokens: maxContextTokens }),
-  });
+  await setConfig(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Provider config is sent separately via
