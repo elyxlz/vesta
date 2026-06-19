@@ -216,8 +216,8 @@ enum Command {
     },
     /// Connect to a remote server (paste the connect link vestad printed)
     Connect {
-        /// The connect link vestad printed, or a server URL with the key after #
-        host: String,
+        /// The connect link vestad printed, e.g. https://host/app#k=key
+        link: String,
     },
     /// Update vesta to the latest version
     Update,
@@ -1349,11 +1349,9 @@ fn run(cli: Cli) {
             eprintln!("{name}: ready");
         }
 
-        Command::Connect { host } => {
-            let (url, key) = match common::parse_connect_arg(&host) {
-                (url, Some(key)) => (url, key),
-                (url, None) => (url, prompt("API key")),
-            };
+        Command::Connect { link } => {
+            let (url, key) = common::parse_connect_link(&link)
+                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {

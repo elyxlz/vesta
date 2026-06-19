@@ -154,25 +154,15 @@ pub fn normalize_url(host: &str) -> String {
     }
 }
 
-/// Split a `vesta connect` argument into the server URL and an optional key.
-/// Accepts both the bare `https://host#apikey` form and the connect link that
-/// vestad prints, `https://host/app#k=apikey`: the trailing `/app` path is
-/// dropped and a `k=` fragment param is unwrapped, while a raw fragment is
-/// still taken as the key. A key of `None` means the arg carried no fragment,
-/// so the caller should prompt for one.
-pub fn parse_connect_arg(input: &str) -> (String, Option<String>) {
-    match input.split_once('#') {
-        Some((url, fragment)) => {
-            let base = url.trim_end_matches('/');
-            let base = base.strip_suffix("/app").unwrap_or(base);
-            let key = fragment
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("k="))
-                .unwrap_or(fragment);
-            (base.to_string(), Some(key.to_string()))
-        }
-        None => (input.to_string(), None),
-    }
+/// Parse the connect link vestad prints, `https://host/app#k=key`, into the
+/// server URL and key: drop the trailing `/app` path and unwrap the `k=`
+/// fragment. Returns None when the input isn't a connect link.
+pub fn parse_connect_link(input: &str) -> Option<(String, String)> {
+    let (url, fragment) = input.trim().split_once('#')?;
+    let key = fragment.strip_prefix("k=")?;
+    let base = url.trim_end_matches('/');
+    let base = base.strip_suffix("/app").unwrap_or(base);
+    Some((base.to_string(), key.to_string()))
 }
 
 pub fn version_less_than(a: &str, b: &str) -> bool {
@@ -240,23 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_connect_arg_cases() {
+    fn parse_connect_link_cases() {
         assert_eq!(
-            parse_connect_arg("https://fox.vesta.run/app#k=abc123"),
-            ("https://fox.vesta.run".to_string(), Some("abc123".to_string())),
+            parse_connect_link("https://fox.vesta.run/app#k=abc123"),
+            Some(("https://fox.vesta.run".to_string(), "abc123".to_string())),
         );
         assert_eq!(
-            parse_connect_arg("http://localhost:39566/app#k=abc123"),
-            ("http://localhost:39566".to_string(), Some("abc123".to_string())),
+            parse_connect_link("http://localhost:39566/app#k=abc123"),
+            Some(("http://localhost:39566".to_string(), "abc123".to_string())),
         );
-        assert_eq!(
-            parse_connect_arg("https://fox.vesta.run#abc123"),
-            ("https://fox.vesta.run".to_string(), Some("abc123".to_string())),
-        );
-        assert_eq!(
-            parse_connect_arg("https://fox.vesta.run"),
-            ("https://fox.vesta.run".to_string(), None),
-        );
+        // Not a connect link: the fragment must be a `k=` param, not a raw key.
+        assert_eq!(parse_connect_link("https://fox.vesta.run#abc123"), None);
+        assert_eq!(parse_connect_link("https://fox.vesta.run"), None);
     }
 
     #[test]

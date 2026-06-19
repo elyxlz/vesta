@@ -60,29 +60,23 @@ export function Connect() {
   if (connected) return <Navigate to="/" replace />;
 
   // One brain-dead field: paste the whole connect link `vestad` printed and we
-  // pull out both the host and the key. A vestad-served bundle already knows
-  // its own origin, so there a bare key (or a link) is enough; the native app
-  // has no origin to assume, so it needs the full link.
+  // pull out both the host and the key. A vestad-served bundle uses its own
+  // origin (the link's host is irrelevant there); the native app has no origin
+  // to assume, so it relies on the host from the link.
   const handleConnect = async () => {
     if (busy) return;
-    const raw = value.trim();
-    if (!raw) {
-      inputRef.current?.focus();
-      return;
-    }
-    const link = parseConnectLink(raw);
-    const url = needHostInput ? link?.host : window.location.origin;
-    const key = link ? link.key : raw;
-    if (!url) {
+    const link = parseConnectLink(value);
+    if (!link) {
       setError("paste your connect link");
       inputRef.current?.focus();
       return;
     }
+    const url = needHostInput ? link.host : window.location.origin;
     setBusy(true);
     setError("");
 
     try {
-      await connect(url, key);
+      await connect(url, link.key);
     } catch (e: unknown) {
       setError(errorMessage(e, "connection failed"));
       setBusy(false);
