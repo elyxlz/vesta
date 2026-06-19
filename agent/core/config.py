@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib as pl
 import typing as tp
@@ -9,6 +10,29 @@ from core.cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, Th
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
+
+# Single source of truth for new-agent defaults, shipped with the agent. vestad reads this same
+# file from the embedded agent source to serve GET /agent-defaults, so the default model/provider/
+# personality live in exactly one place across the whole system (no Rust/Python duplication).
+CONFIG_DEFAULTS_PATH = pl.Path(__file__).parent / "defaults.json"
+
+
+def _resolve_agent_dir() -> pl.Path:
+    """Agent dir resolved straight from the env, mirroring the agent_dir field. Needed before
+    the config is built so the writable settings store path can be located."""
+    if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
+        return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
+    return _DEFAULT_AGENT_DIR
+
+
+def config_store_path() -> pl.Path:
+    """Writable per-agent settings store (sparse overrides), written only by PUT /config.
+    Holds the live, user-editable preferences (model, context window, personality, thinking)."""
+    return _resolve_agent_dir() / "data" / "config.json"
+
+
+def _shipped_defaults() -> dict[str, tp.Any]:
+    return json.loads(CONFIG_DEFAULTS_PATH.read_text())
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback
 # when the user hasn't explicitly chosen a context window.
@@ -138,17 +162,42 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "dreamer"
 
     agent_name: str = "vesta"
-    # Model and provider are required from the env, not defaulted here: vestad is the single
-    # source of truth (vestad/src/defaults.rs) and seeds AGENT_MODEL / AGENT_PROVIDER into the
-    # agent env at creation, while the provider file (vesta-provider.env, sourced after) overrides
-    # them once a provider is configured. Keeping a Python default would duplicate that default.
+    # model, provider, and personality have no inline default: their values come from the layered
+    # sources in settings_customise_sources (the writable config store, then env, then the shipped
+    # defaults.json floor). agent_provider is auth-bound and is never written to the config
+    # store; it comes from the env (vesta-provider.env, set by /provider) or the shipped default.
+    # agent_model and agent_personality are live preferences edited via PUT /config; build_client_options
+    # loads the personality preset (SKILL.md + presets/<value>.md) into the system prompt on every boot.
+    # init=False: not constructor args, always populated by the settings sources below (the shipped
+    # defaults.json floor guarantees a value, so they can never be unset).
     agent_model: str = pyd.Field(init=False)
     agent_provider: tp.Literal["claude", "openrouter"] = pyd.Field(init=False)
-    # Active personality preset, read on every boot (a live selector, not consumed once at creation).
-    # build_client_options loads the shared personality SKILL.md plus presets/<value>.md into
-    # the system prompt. Required from the env: vestad always writes AGENT_PERSONALITY, and the
-    # legacy AGENT_SEED_PERSONALITY name is still accepted for agents whose env file predates the rename.
-    agent_personality: str = pyd.Field(init=False, validation_alias=pyd.AliasChoices("AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"))
+    agent_personality: str = pyd.Field(init=False)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[pyd_settings.BaseSettings],
+        init_settings: pyd_settings.PydanticBaseSettingsSource,
+        env_settings: pyd_settings.PydanticBaseSettingsSource,
+        dotenv_settings: pyd_settings.PydanticBaseSettingsSource,
+        file_secret_settings: pyd_settings.PydanticBaseSettingsSource,
+    ) -> tuple[pyd_settings.PydanticBaseSettingsSource, ...]:
+        # Precedence high -> low: explicit init args, the writable config store (PUT /config),
+        # the env, then the shipped defaults floor. The config store wins over env so a PUT takes
+        # effect on an agent whose env still carries the old value.
+        sources: list[pyd_settings.PydanticBaseSettingsSource] = [init_settings]
+        store = config_store_path()
+        if store.is_file():
+            sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
+        # LEGACY(remove-when: every fleet agent has written a config.json via PUT /config, i.e. the
+        # release after this one has rolled out): env_settings carrying agent_model / agent_personality.
+        # New agents get these from the config store; only agents whose env predates the store still
+        # read them here. Once none do, env stays purely for identity (WS_PORT/AGENT_TOKEN) and the
+        # auth-bound agent_provider, and this note can drop the legacy framing.
+        sources.extend([env_settings, dotenv_settings, file_secret_settings])
+        sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=CONFIG_DEFAULTS_PATH))
+        return tuple(sources)
 
 
 def load_config() -> tuple[VestaConfig, list[str]]:
@@ -179,7 +228,9 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     dropped.add(env_name)
                     progressed = True
             if not progressed:
-                # No offending env var to drop (would mean an invalid field default — a bug, not
-                # bad config). Fall back to pure defaults rather than crash-loop the boot.
+                # No offending env var to drop (a bad value in the config store, or an invalid field
+                # default — a bug, not bad env). Fall back rather than crash-loop the boot. Seed the
+                # shipped defaults explicitly so model/provider/personality (which have no inline
+                # default) are populated; the remaining fields fall back to their field defaults.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                return VestaConfig.model_construct(), issues
+                return VestaConfig.model_construct(**_shipped_defaults()), issues
