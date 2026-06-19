@@ -24,6 +24,12 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 
+// Agent create and rebuild build (or pull) the agent image, which legitimately takes minutes on a
+// cold cache or slow network. The 120s control deadline would 408 such a request even though the
+// build is progressing (clients track progress via GET /agents/{name}/build-phase), so these get a
+// generous deadline that still bounds a truly-hung build instead of holding a connection forever.
+const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
+
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -2094,6 +2100,10 @@ fn control_timeout_layer() -> tower_http::timeout::TimeoutLayer {
     request_timeout_layer(std::time::Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS))
 }
 
+fn longrun_timeout_layer() -> tower_http::timeout::TimeoutLayer {
+    request_timeout_layer(std::time::Duration::from_secs(LONGRUN_REQUEST_TIMEOUT_SECS))
+}
+
 pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
@@ -2127,7 +2137,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
-        .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/build-phase", get(build_phase_handler))
@@ -2135,7 +2144,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
@@ -2162,6 +2170,16 @@ pub fn build_router(state: SharedState) -> Router {
             state.clone(),
             auth::auth_middleware,
         ));
+
+    // Long-running mutations: agent create and rebuild build/pull the image (minutes on a cold
+    // cache). Same auth as the control routes but a generous deadline instead of 120s, so a real
+    // build isn't 408'd mid-flight while still bounding a hung one. Clients show progress via
+    // GET /agents/{name}/build-phase.
+    let vestad_protected_longrun = Router::new()
+        .route("/agents", post(create_agent_handler))
+        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
+        .layer(longrun_timeout_layer())
+        .layer(middleware::from_fn_with_state(state.clone(), auth::auth_middleware));
 
     // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
     // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
@@ -2217,6 +2235,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected_timed)
+        .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
         .merge(agents_services)
         .merge(agents_services_read)
@@ -2641,6 +2660,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn longrun_layer_allows_a_request_past_the_control_deadline() {
+        // A handler slower than a control-class deadline must survive under the longrun layer —
+        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            "ok"
+        };
+        let control_deadline = std::time::Duration::from_millis(100);
+        let longrun_deadline = std::time::Duration::from_millis(2000);
+        let router = axum::Router::new()
+            .route("/control", axum::routing::post(slow))
+            .layer(super::request_timeout_layer(control_deadline))
+            .merge(
+                axum::Router::new()
+                    .route("/longrun", axum::routing::post(slow))
+                    .layer(super::request_timeout_layer(longrun_deadline)),
+            );
+        let (port, handle) = serve_router(router).await;
+        let client = reqwest::Client::new();
+
+        let timed = client.post(format!("http://127.0.0.1:{}/control", port)).send().await.unwrap();
+        assert_eq!(timed.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
+        let long = client.post(format!("http://127.0.0.1:{}/longrun", port)).send().await.unwrap();
+        assert_eq!(long.status(), reqwest::StatusCode::OK);
+
+        assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS);
         handle.abort();
     }
 
