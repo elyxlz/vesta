@@ -3,6 +3,14 @@ import type { VestaEvent } from "@/lib/types";
 
 const STORAGE_KEY = "vesta-connection";
 
+/** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
+ * `vestad status` embeds so opening the link connects without pasting the key.
+ * Pure (takes the raw hash) so it unit-tests without a DOM. Null when absent. */
+export function parseConnectKey(hash: string): string | null {
+  if (!hash.startsWith("#")) return null;
+  return new URLSearchParams(hash.slice(1)).get("k");
+}
+
 export interface ConnectionConfig {
   url: string;
   accessToken: string;

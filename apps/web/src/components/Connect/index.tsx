@@ -231,7 +231,8 @@ export function Connect() {
                 className="text-center"
               />
               <FieldDescription className="text-center">
-                the key vestad printed (also at ~/.config/vesta/vestad/api-key)
+                the key from your connect link (also at
+                ~/.config/vesta/vestad/api-key)
               </FieldDescription>
             </Field>
           </FieldGroup>

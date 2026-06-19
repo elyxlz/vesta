@@ -2,6 +2,7 @@
 compile_error!("vestad only supports Linux");
 
 use clap::Parser;
+use qrcode::{render::unicode, QrCode};
 
 mod agent_provider;
 mod agent_code;
@@ -309,34 +310,64 @@ async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time
     }
 }
 
+/// Build the one-click connect link: the app reads the key from the URL
+/// fragment (`#k=...`), which browsers never send to the server, so the key
+/// stays out of vestad's and Cloudflare's request logs. Opening the link
+/// connects automatically, no copy-pasting the key.
+fn connect_link(base_url: &str, api_key: &str) -> String {
+    format!("{base_url}/app#k={api_key}")
+}
+
+/// Render `data` as a QR code of half-block characters, inverted (light
+/// modules on a dark glyph) so it scans correctly against a dark terminal.
+/// Silently skips on the rare encode failure rather than failing the command.
+fn print_qr(data: &str) {
+    if let Ok(code) = QrCode::new(data.as_bytes()) {
+        let rendered = code
+            .render::<unicode::Dense1x2>()
+            .dark_color(unicode::Dense1x2::Light)
+            .light_color(unicode::Dense1x2::Dark)
+            .quiet_zone(true)
+            .build();
+        for line in rendered.lines() {
+            eprintln!("  {line}");
+        }
+    }
+}
+
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
     match tunnel_url {
-        Some(url) => eprintln!("  {} {}", paint("36", "public "), paint("1", url)),
+        Some(url) => {
+            let link = connect_link(url, api_key);
+            eprintln!("  {} {}", paint("36", "connect"), paint("1", &link));
+            eprintln!("          {}", paint("2", "open this link to connect the app; the key is built in"));
+            eprintln!();
+            print_qr(&link);
+            eprintln!("  {}", paint("2", "or scan to connect your phone"));
+        }
         // A missing tunnel is a first-class, visible state — never a silent
         // "local only". Tell the user the exact command to fix it.
-        None => eprintln!(
-            "  {} {} — run {} to get a public URL",
-            paint("36", "public "),
-            paint("33", "not connected"),
-            paint("1", "vestad connect"),
-        ),
+        None => {
+            eprintln!(
+                "  {} {}  {}",
+                paint("36", "connect"),
+                paint("1", &connect_link(local_url, api_key)),
+                paint("2", "(same machine only)"),
+            );
+            eprintln!(
+                "          run {} for a public URL + a phone QR code",
+                paint("1", "vestad connect"),
+            );
+            eprintln!();
+            return;
+        }
     }
-    eprintln!("  {} {}", paint("36", "key    "), paint("33", api_key));
     eprintln!();
-    eprintln!("  open the app and paste the key:");
-    if let Some(url) = tunnel_url {
-        eprintln!(
-            "    {} {}  {}",
-            paint("36", "remote"),
-            paint("1", &format!("{url}/app")),
-            paint("32", "(recommended)"),
-        );
-    }
     eprintln!(
-        "    {} {}  {}",
-        paint("36", "local "),
-        paint("1", &format!("{local_url}/app")),
+        "  {} {}  {}",
+        paint("36", "local  "),
+        paint("1", &connect_link(local_url, api_key)),
         paint("2", "(same machine only)"),
     );
     eprintln!();
