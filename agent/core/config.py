@@ -36,9 +36,10 @@ def _shipped_defaults() -> dict[str, tp.Any]:
     return json.loads(CONFIG_DEFAULTS_PATH.read_text())
 
 
-# The editable preference keys PUT /config may write to the store. Identity (token/port) and
-# auth (provider/credentials) are owned elsewhere and are intentionally not writable here.
-CONFIG_STORE_KEYS = ("agent_model", "max_context_tokens", "agent_personality", "thinking")
+# Keys the config store may hold (the source of truth for everything except identity, which vestad
+# assigns via env). Preferences are set through PUT /config; agent_provider + openrouter_key are set
+# through /provider (its own endpoint for the multi-step credential flow) but land in this same store.
+CONFIG_STORE_KEYS = ("agent_model", "agent_provider", "openrouter_key", "max_context_tokens", "agent_personality", "thinking")
 
 
 def read_config_store() -> dict[str, tp.Any]:
@@ -77,38 +78,67 @@ def update_config_store(updates: dict[str, tp.Any]) -> None:
     tmp.replace(path)
 
 
-# Legacy env vars that carried preferences before the config store existed. The convergence below
-# drains genuine values from these into the store so the whole fleet ends up on the store.
-_LEGACY_ENV_FOR_STORE = (
-    ("agent_model", "AGENT_MODEL"),
-    ("agent_personality", "AGENT_PERSONALITY"),
-    ("max_context_tokens", "MAX_CONTEXT_TOKENS"),
-)
+_LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"
+
+
+def _parse_legacy_export(content: str, key: str) -> str | None:
+    """Read a `[export ]KEY=value` line from a legacy shell env file, stripping one layer of single
+    quotes; returns None when absent or empty."""
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line.startswith("export "):
+            line = line[len("export ") :]
+        if "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        if name.strip() != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
+            value = value[1:-1]
+        return value or None
+    return None
 
 
 def migrate_legacy_config_to_store() -> None:
-    """Copy preferences carried in the env (AGENT_MODEL, AGENT_PERSONALITY, MAX_CONTEXT_TOKENS) into
-    the config store, so every agent holds its preferences in ~/agent/data/config.json. Seeds a key
-    only when it is set in the env and not already in the store: never overwrites a PUT /config value
-    and never writes a default. Idempotent.
+    """Drain a legacy agent's config into the store so the whole fleet lands on it: preferences from
+    the agent env (AGENT_MODEL, AGENT_PERSONALITY, MAX_CONTEXT_TOKENS) and provider choice + key from
+    the old vesta-provider.env file, which is then deleted. Seeds a key only when it's set and not
+    already in the store, so it never overwrites a live value or writes a default. Idempotent.
 
-    LEGACY(remove-when: every fleet agent has a config.json carrying its preferences, i.e. one release
+    LEGACY(remove-when: every fleet agent has a config.json and no vesta-provider.env, i.e. one release
     after this has rolled out): this function, its boot call site, and the env layer in
     settings_customise_sources.
     """
     store = read_config_store()
     updates: dict[str, tp.Any] = {}
-    for store_key, env_name in _LEGACY_ENV_FOR_STORE:
-        if store_key in store or env_name not in os.environ or not os.environ[env_name]:
-            continue
-        raw = os.environ[env_name]
-        if store_key == "max_context_tokens":
-            if raw.isdigit():
-                updates[store_key] = int(raw)
-        else:
-            updates[store_key] = raw
+
+    def seed(key: str, value: tp.Any) -> None:
+        if value is not None and key not in store and key not in updates:
+            updates[key] = value
+
+    if "AGENT_MODEL" in os.environ:
+        seed("agent_model", os.environ["AGENT_MODEL"] or None)
+    if "AGENT_PERSONALITY" in os.environ:
+        seed("agent_personality", os.environ["AGENT_PERSONALITY"] or None)
+    if "MAX_CONTEXT_TOKENS" in os.environ and os.environ["MAX_CONTEXT_TOKENS"].isdigit():
+        seed("max_context_tokens", int(os.environ["MAX_CONTEXT_TOKENS"]))
+
+    if _LEGACY_PROVIDER_ENV.is_file():
+        content = _LEGACY_PROVIDER_ENV.read_text()
+        provider = _parse_legacy_export(content, "AGENT_PROVIDER")
+        if provider in ("claude", "openrouter"):
+            seed("agent_provider", provider)
+        seed("agent_model", _parse_legacy_export(content, "AGENT_MODEL"))
+        if provider == "openrouter":
+            seed("openrouter_key", _parse_legacy_export(content, "ANTHROPIC_AUTH_TOKEN"))
+        legacy_ctx = _parse_legacy_export(content, "MAX_CONTEXT_TOKENS")
+        if legacy_ctx is not None and legacy_ctx.isdigit():
+            seed("max_context_tokens", int(legacy_ctx))
+        _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
+
     if updates:
-        logger.startup(f"migrated legacy env preferences into the config store: {sorted(updates)}")
+        logger.startup(f"migrated legacy config into the store: {sorted(updates)}")
         update_config_store(updates)
 
 
@@ -164,7 +194,8 @@ class VestaConfig(pyd_settings.BaseSettings):
         type="adaptive", display="summarized"
     )
     ws_port: int = 0
-    agent_token: str | None = None
+    # SecretStr so it's redacted in GET /config dumps; the auth middleware reads its real value.
+    agent_token: pyd.SecretStr | None = None
 
     agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
 
@@ -243,17 +274,15 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "dreamer"
 
     agent_name: str = "vesta"
-    # model, provider, and personality have no inline default: their values come from the layered
-    # sources in settings_customise_sources (the writable config store, then env, then the shipped
-    # defaults.json floor). agent_provider is auth-bound and is never written to the config
-    # store; it comes from the env (vesta-provider.env, set by /provider) or the shipped default.
-    # agent_model and agent_personality are live preferences edited via PUT /config; build_client_options
-    # loads the personality preset (SKILL.md + presets/<value>.md) into the system prompt on every boot.
-    # init=False: not constructor args, always populated by the settings sources below (the shipped
-    # defaults.json floor guarantees a value, so they can never be unset).
+    # model, provider, and personality come from the layered sources (config store, then env, then
+    # the defaults.json floor); init=False since the floor guarantees a value, so they're never
+    # unset. build_client_options loads the personality preset into the system prompt every boot.
     agent_model: str = pyd.Field(init=False)
     agent_provider: tp.Literal["claude", "openrouter"] = pyd.Field(init=False)
     agent_personality: str = pyd.Field(init=False)
+    # The OpenRouter API key (None for Claude). SecretStr so it's redacted in GET /config dumps;
+    # client.py injects its real value into the SDK subprocess env for OpenRouter mode.
+    openrouter_key: pyd.SecretStr | None = None
 
     @classmethod
     def settings_customise_sources(

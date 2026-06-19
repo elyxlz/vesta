@@ -98,15 +98,10 @@ const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 10] = [
+    let steps: [String; 9] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
-        // file; absent for Claude agents. Guard with `[ -f ]`: `.` is a POSIX special
-        // built-in, so sourcing a missing file makes dash exit the whole script (and
-        // `|| true` does NOT catch it), which would crash-loop every Claude agent.
-        "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
         // recreates a container from a `docker export|import` snapshot and never re-runs the
@@ -942,8 +937,8 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
-    // The env carries only identity; the agent owns model/provider/personality (config store +
-    // defaults.json) and provider auth (vesta-provider.env).
+    // The env carries only identity; the agent owns model/provider/personality and provider auth
+    // in its config store (preferences) and .credentials.json (Claude OAuth blob).
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }

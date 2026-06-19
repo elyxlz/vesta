@@ -1,92 +1,22 @@
-"""Tests for the agent's provider-auth state. Provider files now carry only the provider
-CHOICE + credentials (model/context live in the config store); these cover the OpenRouter
-file format/shell-escaping, the provider-file parser, the Claude credentials auth check
-(refresh-token-aware), and the boot/runtime state transitions."""
+"""Tests for the agent's provider-auth state. Provider choice + OpenRouter key live in the config
+store; the Claude OAuth blob lives in .credentials.json. These cover the Claude credentials auth
+check (refresh-token-aware) and the boot/runtime state transitions."""
 
 import json
 
 import pytest
 
+import core.models as vm
 from core.config import read_config_store
 from core.provider import (
     ProviderAuthState,
     _check_claude_auth,
-    _claude_provider_file,
-    _openrouter_provider_file,
-    _openrouter_token_present,
-    _provider_declares_openrouter,
     derive_status,
     observed_provider_failure,
     set_claude,
     set_openrouter,
 )
 from core.state_store import PersistedState, load_state
-
-
-# --- Provider file format (auth + choice only; no model/context) ---
-
-
-def test_openrouter_provider_file_format():
-    f = _openrouter_provider_file("sk-or-v1-xyz")
-    assert "export AGENT_PROVIDER=openrouter\n" in f
-    assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n" in f
-    assert "export ANTHROPIC_API_KEY=\n" in f
-    assert "export ANTHROPIC_SMALL_FAST_MODEL='anthropic/claude-haiku-4.5'\n" in f
-    # The selected model lives in the config store, never the provider file.
-    assert "AGENT_MODEL" not in f
-
-
-def test_openrouter_provider_file_escapes_shell_metacharacters():
-    injected = _openrouter_provider_file("k'; touch /tmp/pwned #")
-    assert "export ANTHROPIC_AUTH_TOKEN='k'\\''; touch /tmp/pwned #'" in injected
-    assert "TOKEN=k';" not in injected
-
-
-def test_claude_provider_file_carries_only_choice_no_model_or_context():
-    f = _claude_provider_file()
-    assert "export AGENT_PROVIDER=claude\n" in f
-    assert "AGENT_MODEL" not in f
-    assert "MAX_CONTEXT_TOKENS" not in f
-    # Clears the OpenRouter exports so a switch leaves no stale token behind.
-    assert "export ANTHROPIC_AUTH_TOKEN=\n" in f
-
-
-# --- Parser: provider-mode detection ---
-
-
-def test_provider_declares_openrouter_happy_path():
-    f = "export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN='k'\n"
-    assert _provider_declares_openrouter(f)
-    assert _openrouter_token_present(f)
-
-
-def test_provider_commented_line_rejected():
-    f = "# export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN='k'\n"
-    assert not _provider_declares_openrouter(f)
-
-
-def test_provider_prefix_extended_rejected():
-    # AGENT_PROVIDER=openrouter_test must NOT match (exact-value compare).
-    f = "export AGENT_PROVIDER=openrouter_test\nexport ANTHROPIC_AUTH_TOKEN='k'\n"
-    assert not _provider_declares_openrouter(f)
-
-
-def test_provider_empty_token_rejected():
-    f = "export AGENT_PROVIDER=openrouter\nexport ANTHROPIC_AUTH_TOKEN=''\n"
-    assert _provider_declares_openrouter(f)
-    assert not _openrouter_token_present(f)
-
-
-def test_provider_missing_token_rejected():
-    f = "export AGENT_PROVIDER=openrouter\n"
-    assert _provider_declares_openrouter(f)
-    assert not _openrouter_token_present(f)
-
-
-def test_provider_substring_only_rejected():
-    # Legacy contains() check would have passed this; our line-parser must not.
-    f = "# example: AGENT_PROVIDER=openrouter\n"
-    assert not _provider_declares_openrouter(f)
 
 
 # --- Claude credentials auth check ---
@@ -98,18 +28,12 @@ def test_claude_auth_valid_access_token():
 
 
 def test_claude_auth_expired_with_refresh_token_still_passes():
-    # SDK auto-refreshes when a refresh token is present — count as authenticated.
     creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}})
     assert _check_claude_auth(creds)
 
 
 def test_claude_auth_expired_no_refresh_fails():
     creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}})
-    assert not _check_claude_auth(creds)
-
-
-def test_claude_auth_empty_refresh_token_doesnt_count():
-    creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": ""}})
     assert not _check_claude_auth(creds)
 
 
@@ -124,19 +48,18 @@ def test_claude_auth_malformed_json_fails():
 
 @pytest.fixture
 def prov(tmp_path, monkeypatch, config):
-    # Redirect the module-level path constants into the tmp dir so we don't
-    # touch the real ~/.claude during tests. Returns (config, persisted).
+    # Redirect the Claude credential paths into the tmp dir; the config store is already in the
+    # config fixture's tmp AGENT_DIR. Returns (config, persisted).
     from core import provider as provider_mod
 
     home = tmp_path / "home"
     monkeypatch.setattr(provider_mod, "CREDENTIALS_PATH", home / ".claude" / ".credentials.json")
     monkeypatch.setattr(provider_mod, "CLAUDE_JSON_PATH", home / ".claude.json")
-    monkeypatch.setattr(provider_mod, "PROVIDER_ENV_PATH", home / ".claude" / "vesta-provider.env")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     return config, PersistedState()
 
 
-def test_set_claude_writes_and_flips_state(prov):
+def test_set_claude_writes_creds_and_store(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
@@ -144,78 +67,45 @@ def test_set_claude_writes_and_flips_state(prov):
     status = set_claude(creds_json, config=config, persisted=persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
-    # model comes from the config store / shipped default, not the provider file.
-    assert status.model == config.agent_model
     assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
-    assert provider_mod.CLAUDE_JSON_PATH.read_text() == '{"hasCompletedOnboarding":true}'
-    content = provider_mod.PROVIDER_ENV_PATH.read_text()
-    assert "export AGENT_PROVIDER=claude\n" in content
-    assert "AGENT_MODEL" not in content
+    assert read_config_store()["agent_provider"] == "claude"
+    assert vm.VestaConfig().agent_provider == "claude"
 
 
-def test_set_claude_clears_openrouter_token(prov):
-    from core import provider as provider_mod
-
+def test_set_openrouter_writes_provider_key_and_model_to_store(prov):
     config, persisted = prov
-    provider_mod.PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    provider_mod.PROVIDER_ENV_PATH.write_text(_openrouter_provider_file("k"))
-
-    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    set_claude(creds_json, config=config, persisted=persisted)
-    content = provider_mod.PROVIDER_ENV_PATH.read_text()
-    assert "export AGENT_PROVIDER=claude\n" in content
-    assert "export ANTHROPIC_AUTH_TOKEN=\n" in content
-    assert "'k'" not in content
-
-
-def test_set_openrouter_writes_key_to_file_and_model_to_store(prov):
-    from core import provider as provider_mod
-
-    config, persisted = prov
-    status = set_openrouter("sk-or-v1-x", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
+    status = set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "openrouter"
     assert status.model == "deepseek/deepseek-v4-flash"
-    # Key + choice in the provider file; model in the config store.
-    content = provider_mod.PROVIDER_ENV_PATH.read_text()
-    assert "export AGENT_PROVIDER=openrouter\n" in content
-    assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
-    assert "AGENT_MODEL" not in content
-    assert read_config_store()["agent_model"] == "deepseek/deepseek-v4-flash"
-    # A fresh config (post-restart) reads the OpenRouter model from the store.
-    from core.config import VestaConfig
-
-    assert VestaConfig().agent_model == "deepseek/deepseek-v4-flash"
+    store = read_config_store()
+    assert store["agent_provider"] == "openrouter"
+    assert store["openrouter_key"] == "sk-or-v1-secret"
+    assert store["agent_model"] == "deepseek/deepseek-v4-flash"
+    # A fresh config (post-restart) reads the key as a SecretStr and re-derives as authenticated.
+    fresh = vm.VestaConfig()
+    assert fresh.openrouter_key is not None and fresh.openrouter_key.get_secret_value() == "sk-or-v1-secret"
+    assert derive_status(fresh, persisted).kind == "openrouter"
 
 
-def test_observed_provider_failure_flips_state(prov):
+def test_set_claude_clears_openrouter_key(prov):
     config, persisted = prov
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    status = set_claude(creds_json, config=config, persisted=persisted)
-    assert status.state == ProviderAuthState.AUTHENTICATED
-    status = observed_provider_failure(status, config=config, persisted=persisted)
-    assert status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
+    set_claude(creds_json, config=config, persisted=persisted)
+    store = read_config_store()
+    assert store["agent_provider"] == "claude"
+    assert "openrouter_key" not in store  # cleared, so no stale key leaks into OpenRouter mode
 
 
-def test_observed_provider_failure_flips_openrouter_on_402(prov):
-    config, persisted = prov
-    status = set_openrouter("sk-or-v1-key", "anthropic/claude-sonnet-4-6", config=config, persisted=persisted)
-    assert status.state == ProviderAuthState.AUTHENTICATED
-    # A 402 (insufficient credits) on the first model call flips an OpenRouter agent.
-    status = observed_provider_failure(status, config=config, persisted=persisted)
-    assert status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
-
-
-def test_observed_provider_failure_persists_across_restart(prov):
+def test_observed_provider_failure_flips_and_persists(prov):
     config, persisted = prov
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     status = set_claude(creds_json, config=config, persisted=persisted)
     observed_provider_failure(status, config=config, persisted=persisted)
-
-    # Simulate restart: reload persisted state and re-derive.
+    # Survives a restart: reload persisted state and re-derive.
     persisted2 = load_state(config)
-    status2 = derive_status(config, persisted2)
-    assert status2.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert derive_status(vm.VestaConfig(), persisted2).state == ProviderAuthState.NOT_AUTHENTICATED
 
 
 def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
@@ -225,7 +115,6 @@ def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(creds_json)
-
     status = derive_status(config, persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"

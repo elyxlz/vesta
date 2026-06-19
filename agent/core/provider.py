@@ -1,10 +1,9 @@
 """Per-agent LLM-provider authentication: the agent's relationship with its upstream provider
 (Claude OAuth or OpenRouter API key).
 
-`vesta-provider.env` holds the provider choice and credentials (AGENT_PROVIDER, the OpenRouter
-key, the OpenRouter small-fast model); the Claude OAuth blob lives in `.credentials.json`. Each
-mutation persists the auth state to PersistedState so it survives a restart. The model and context
-window are preferences in the config store (`config.py`); the agent's own HTTP API auth is the
+The provider choice and the OpenRouter key live in the config store (`config.py`); the Claude OAuth
+blob lives in `.credentials.json`, which the `claude` CLI reads directly. Each mutation persists the
+auth state to PersistedState so it survives a restart. The agent's own HTTP API auth is the
 X-Agent-Token middleware in `api.py`.
 """
 
@@ -21,11 +20,10 @@ from .state_store import PersistedState, save_state
 
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
-PROVIDER_ENV_PATH = pl.Path.home() / ".claude" / "vesta-provider.env"
 
 # Cheap haiku-class model the SDK reaches for on background work (compaction probes,
-# summarization, intent classification). Hardcoded so picking an expensive primary
-# model doesn't silently 5–10× background spend. Editable in the provider file post-create.
+# summarization, intent classification). Hardcoded so picking an expensive primary model
+# doesn't silently 5–10× background spend.
 OPENROUTER_SMALL_FAST_MODEL = "anthropic/claude-haiku-4.5"
 
 
@@ -46,28 +44,27 @@ class ProviderStatus:
 
 
 def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Re-derive provider status at boot. The provider CHOICE comes from disk (the provider
-    file or bare credentials); the model and context window come from the config store via
-    VestaConfig, so the auth subsystem no longer carries them."""
-    kind = _derive_kind()
+    """Re-derive provider status at boot from the config store (provider + key) and
+    `.credentials.json`. The model and context window come from the config store via VestaConfig."""
+    kind = _derive_kind(config)
     # If we recorded a 401 in a prior boot, honor it — otherwise derive from disk.
     if persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value:
         state = ProviderAuthState.NOT_AUTHENTICATED
     else:
-        state = _derive_state_from_disk(kind)
+        state = _derive_state_from_disk(kind, config)
     model = config.agent_model if kind != "none" else None
     return ProviderStatus(state=state, kind=kind, model=model, max_context_tokens=config.max_context_tokens)
 
 
 def set_claude(credentials_json: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Write the Claude OAuth credentials and the Claude provider file (AGENT_PROVIDER=claude,
-    OpenRouter exports cleared), and return the authenticated status."""
+    """Write the Claude OAuth credentials, set the provider to claude in the config store, and clear
+    any OpenRouter key, returning the authenticated status."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    _write_provider_file(_claude_provider_file())
+    update_config_store({"agent_provider": "claude", "openrouter_key": None})
     status = ProviderStatus(
         state=ProviderAuthState.AUTHENTICATED, kind="claude", model=config.agent_model, max_context_tokens=config.max_context_tokens
     )
@@ -77,10 +74,9 @@ def set_claude(credentials_json: str, *, config: VestaConfig, persisted: Persist
 
 
 def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Write the OpenRouter provider file (the key) and record the model in the config store
-    (OpenRouter needs a valid model). Vestad restarts the agent to apply it."""
-    update_config_store({"agent_model": model})
-    _write_provider_file(_openrouter_provider_file(key))
+    """Record the OpenRouter provider, key, and model in the config store (OpenRouter needs a valid
+    model). Vestad restarts the agent to apply it."""
+    update_config_store({"agent_provider": "openrouter", "openrouter_key": key, "agent_model": model})
     status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
     _persist(status, config=config, persisted=persisted)
     logger.startup(f"Provider set to openrouter model={model}")
@@ -88,11 +84,9 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
 
 
 def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
-    """Called by the SDK response-stream handler on a terminal upstream auth/billing
-    error (401 invalid auth, 402 insufficient credits). Returns the status flipped to
-    NOT_AUTHENTICATED (persisted so it survives a restart), or the input unchanged when
-    there's nothing to flip. A flipped provider needs re-provisioning to recover (a 402
-    won't clear on its own until the key has credits and the agent is re-provisioned)."""
+    """Called by the SDK response-stream handler on a terminal upstream auth/billing error (401
+    invalid auth, 402 insufficient credits). Returns the status flipped to NOT_AUTHENTICATED
+    (persisted so it survives a restart), or the input unchanged when there's nothing to flip."""
     if status is None or status.state == ProviderAuthState.NOT_AUTHENTICATED:
         return status
     new_status = dc.replace(status, state=ProviderAuthState.NOT_AUTHENTICATED)
@@ -106,22 +100,19 @@ def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: Persiste
     save_state(persisted, config)
 
 
-def _derive_kind() -> ProviderKind:
-    """The provider choice: the provider file's AGENT_PROVIDER, else bare Claude credentials count
-    as claude, else none."""
-    if PROVIDER_ENV_PATH.exists():
-        provider = _parse_first_export(PROVIDER_ENV_PATH.read_text(), "AGENT_PROVIDER")
-        if provider in ("openrouter", "claude"):
-            return tp.cast(ProviderKind, provider)
+def _derive_kind(config: VestaConfig) -> ProviderKind:
+    """The usable provider: openrouter when chosen and a key is present, claude when the OAuth blob
+    is on disk, else none (e.g. a fresh agent that hasn't been provisioned)."""
+    if config.agent_provider == "openrouter" and config.openrouter_key is not None:
+        return "openrouter"
     if CREDENTIALS_PATH.exists():
         return "claude"
     return "none"
 
 
-def _derive_state_from_disk(kind: ProviderKind) -> ProviderAuthState:
+def _derive_state_from_disk(kind: ProviderKind, config: VestaConfig) -> ProviderAuthState:
     if kind == "openrouter":
-        content = PROVIDER_ENV_PATH.read_text()
-        ok = _provider_declares_openrouter(content) and _openrouter_token_present(content)
+        ok = config.openrouter_key is not None and bool(config.openrouter_key.get_secret_value())
     elif kind == "claude":
         ok = CREDENTIALS_PATH.exists() and _check_claude_auth(CREDENTIALS_PATH.read_text())
     else:
@@ -129,80 +120,9 @@ def _derive_state_from_disk(kind: ProviderKind) -> ProviderAuthState:
     return ProviderAuthState.AUTHENTICATED if ok else ProviderAuthState.NOT_AUTHENTICATED
 
 
-# --- File-format helpers (mirror of vestad/src/providers/openrouter.rs) ---
-
-
-def _shell_single_quote(value: str) -> str:
-    """Single-quote a value for safe shell sourcing; escapes embedded quotes."""
-    escaped = value.replace("'", "'\\''")
-    return f"'{escaped}'"
-
-
-def _write_provider_file(content: str) -> None:
-    PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROVIDER_ENV_PATH.write_text(content)
-
-
-def _claude_provider_file() -> str:
-    """The sourced shell file for Claude mode. Records only the provider choice and explicitly
-    clears the OpenRouter exports so an OpenRouter->Claude switch leaves no stale token behind
-    (Claude auth itself lives in .credentials.json; the model lives in the config store)."""
-    return "export AGENT_PROVIDER=claude\nexport ANTHROPIC_AUTH_TOKEN=\nexport ANTHROPIC_API_KEY=\nexport ANTHROPIC_SMALL_FAST_MODEL=\n"
-
-
-def _openrouter_provider_file(key: str) -> str:
-    """The sourced shell file that puts an agent into OpenRouter mode: the provider choice, the
-    key, and the small-fast background model. The selected model lives in the config store."""
-    return (
-        "export AGENT_PROVIDER=openrouter\n"
-        f"export ANTHROPIC_AUTH_TOKEN={_shell_single_quote(key)}\n"
-        "export ANTHROPIC_API_KEY=\n"
-        f"export ANTHROPIC_SMALL_FAST_MODEL={_shell_single_quote(OPENROUTER_SMALL_FAST_MODEL)}\n"
-    )
-
-
-def _parse_shell_export(line: str, key: str) -> str | None:
-    """Parse a `[export ]KEY=value` shell line, returning the unquoted value if
-    `key` matches. Skips blanks and `#`-comments. Strips one layer of single quotes."""
-    line = line.strip()
-    if not line or line.startswith("#"):
-        return None
-    if line.startswith("export "):
-        line = line[len("export ") :]
-    if "=" not in line:
-        return None
-    k, _, v = line.partition("=")
-    if k.strip() != key:
-        return None
-    v = v.strip()
-    if len(v) >= 2 and v.startswith("'") and v.endswith("'"):
-        v = v[1:-1]
-    return v
-
-
-def _parse_first_export(content: str, key: str) -> str | None:
-    for line in content.splitlines():
-        parsed = _parse_shell_export(line, key)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _provider_declares_openrouter(content: str) -> bool:
-    return any(_parse_shell_export(line, "AGENT_PROVIDER") == "openrouter" for line in content.splitlines())
-
-
-def _openrouter_token_present(content: str) -> bool:
-    for line in content.splitlines():
-        v = _parse_shell_export(line, "ANTHROPIC_AUTH_TOKEN")
-        if v is not None and v:
-            return True
-    return False
-
-
 def _check_claude_auth(content: str) -> bool:
-    """A refresh token lets the SDK mint a fresh access token on demand, so an
-    expired expiresAt isn't a problem — the SDK refreshes transparently."""
+    """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt
+    isn't a problem — the SDK refreshes transparently."""
     try:
         creds = json.loads(content)
     except (json.JSONDecodeError, TypeError):

@@ -6,6 +6,7 @@ import socket
 import time
 import weakref
 
+import pydantic as pyd
 import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
@@ -92,7 +93,7 @@ SHUTDOWN_BUDGET_SEC = 3.0
 
 @pytest.mark.anyio
 async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -118,7 +119,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
 @pytest.mark.anyio
 async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -155,7 +156,6 @@ def test_config_update_null_clears_a_key():
 
 
 def test_config_update_rejects_bad_values():
-    import pydantic as pyd
 
     from core.api import _ConfigUpdate
 
@@ -180,7 +180,6 @@ def test_provider_update_accepts_each_provider():
 
 
 def test_provider_update_requires_exactly_one_provider():
-    import pydantic as pyd
 
     from core.api import _ProviderUpdate
 

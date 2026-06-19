@@ -283,17 +283,17 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
 
 
 async def _config_get_handler(request: web.Request) -> web.Response:
-    """Current editable preferences (the config-store bucket), as the agent is running them.
-    The app reads this to render the settings screen. Provider/auth state is GET /provider/status."""
+    """The full live config as the agent is running it — every key, with secrets (agent_token,
+    openrouter_key) redacted by SecretStr. The client picks what to show/edit; GET /config/schema
+    describes the shape."""
     config: VestaConfig = request.app["config"]
-    return web.json_response(
-        {
-            "model": config.agent_model,
-            "max_context_tokens": config.max_context_tokens,
-            "personality": config.agent_personality,
-            "thinking": config.thinking["type"],
-        }
-    )
+    return web.json_response(config.model_dump(mode="json"))
+
+
+async def _config_schema_handler(request: web.Request) -> web.Response:
+    """The JSON schema of the config (types, enums, defaults), so the client renders/filters the
+    settings UI off the single model definition."""
+    return web.json_response(VestaConfig.model_json_schema())
 
 
 class _ConfigUpdate(pyd.BaseModel):
@@ -382,7 +382,7 @@ async def start_ws_server(
 ) -> web.AppRunner:
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus
-    app["agent_token"] = config.agent_token
+    app["agent_token"] = config.agent_token.get_secret_value() if config.agent_token is not None else None
     app["config"] = config
     app["state"] = state
     app["websockets"] = weakref.WeakSet()
@@ -394,6 +394,7 @@ async def start_ws_server(
     app.router.add_get("/provider/status", _provider_status_handler)
     app.router.add_post("/provider", _provider_set_handler)
     app.router.add_get("/config", _config_get_handler)
+    app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)

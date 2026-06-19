@@ -159,11 +159,11 @@ def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
 def test_update_rejects_non_writable_keys(agentdir):
     from core.config import update_config_store
 
-    # Identity/auth must not be smuggled in through the settings path.
-    with pytest.raises(ValueError):
-        update_config_store({"agent_provider": "openrouter"})
+    # Identity (vestad-assigned) must not be smuggled in through the store.
     with pytest.raises(ValueError):
         update_config_store({"agent_token": "x"})
+    with pytest.raises(ValueError):
+        update_config_store({"ws_port": 1})
 
 
 def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
@@ -223,3 +223,42 @@ def test_migrate_ignores_nonnumeric_context(agentdir, monkeypatch):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "lots")
     migrate_legacy_config_to_store()
     assert "max_context_tokens" not in read_config_store()
+
+
+def test_migrate_drains_legacy_provider_file_and_deletes_it(agentdir, monkeypatch, tmp_path):
+    from core import config as config_mod
+
+    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS"):
+        monkeypatch.delenv(key, raising=False)
+    legacy = tmp_path / "vesta-provider.env"
+    legacy.write_text(
+        "export AGENT_PROVIDER=openrouter\n"
+        "export AGENT_MODEL='deepseek/deepseek-v4-flash'\n"
+        "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n"
+        "export MAX_CONTEXT_TOKENS=200000\n"
+    )
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
+
+    config_mod.migrate_legacy_config_to_store()
+    store = config_mod.read_config_store()
+    assert store["agent_provider"] == "openrouter"
+    assert store["agent_model"] == "deepseek/deepseek-v4-flash"
+    assert store["openrouter_key"] == "sk-or-v1-secret"
+    assert store["max_context_tokens"] == 200000
+    assert not legacy.exists()  # the legacy file is retired after draining
+
+
+def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_path):
+    from core import config as config_mod
+
+    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS"):
+        monkeypatch.delenv(key, raising=False)
+    legacy = tmp_path / "vesta-provider.env"
+    legacy.write_text("export AGENT_PROVIDER=claude\nexport ANTHROPIC_AUTH_TOKEN=\n")
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
+
+    config_mod.migrate_legacy_config_to_store()
+    store = config_mod.read_config_store()
+    assert store["agent_provider"] == "claude"
+    assert "openrouter_key" not in store
+    assert not legacy.exists()
