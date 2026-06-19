@@ -2485,10 +2485,19 @@ pub async fn run_server(cfg: ServerConfig) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
     let agent_settings = load_settings().agents.clone();
-    docker::reconcile_containers(&docker, &env_config, &|name| {
-        agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-    }).await;
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
+    // Reconcile existing containers in the background so the API starts serving immediately.
+    // Reconcile can rebuild containers (a multi-minute filesystem snapshot each) when an upgrade
+    // changes the entrypoint or mounts; awaiting it here would leave vestad unreachable for the
+    // whole rebuild. Agents keep running under `unless-stopped` while the rebuild swaps them.
+    let reconcile_docker = docker.clone();
+    let reconcile_env = state.env_config.clone();
+    tokio::spawn(async move {
+        docker::reconcile_containers(&reconcile_docker, &reconcile_env, &move |name| {
+            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+        })
+        .await;
+    });
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
