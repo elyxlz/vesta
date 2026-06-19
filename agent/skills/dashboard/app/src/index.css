@@ -82,21 +82,21 @@ html[data-platform="android"] {
 }
 
 [data-platform="linux"].vibrancy {
-  --background: oklch(0.995 0.005 80 / 85%);
-  --card: oklch(0.995 0.005 80 / 85%);
-  --muted: oklch(0.97 0.006 80 / 90%);
-  --accent: oklch(0.97 0.006 80 / 85%);
-  --sidebar: oklch(0.985 0.006 80 / 85%);
-  --sidebar-accent: oklch(0.97 0.006 80 / 85%);
+  --background: oklch(0.995 0.005 80 / 92.5%);
+  --card: oklch(0.995 0.005 80 / 92.5%);
+  --muted: oklch(0.97 0.006 80 / 95%);
+  --accent: oklch(0.97 0.006 80 / 92.5%);
+  --sidebar: oklch(0.985 0.006 80 / 92.5%);
+  --sidebar-accent: oklch(0.97 0.006 80 / 92.5%);
 }
 
 [data-platform="linux"].vibrancy.dark {
-  --background: oklch(0.147 0.005 80 / 85%);
-  --card: oklch(0.216 0.007 80 / 85%);
-  --muted: oklch(0.19 0.007 80 / 90%);
-  --accent: oklch(0.268 0.008 80 / 85%);
-  --sidebar: oklch(0.216 0.007 80 / 85%);
-  --sidebar-accent: oklch(0.268 0.008 80 / 85%);
+  --background: oklch(0.147 0.005 80 / 92.5%);
+  --card: oklch(0.216 0.007 80 / 92.5%);
+  --muted: oklch(0.19 0.007 80 / 95%);
+  --accent: oklch(0.268 0.008 80 / 92.5%);
+  --sidebar: oklch(0.216 0.007 80 / 92.5%);
+  --sidebar-accent: oklch(0.268 0.008 80 / 92.5%);
 }
 
 .dark {
