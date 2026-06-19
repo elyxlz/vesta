@@ -83,10 +83,10 @@ Use `vestad serve --standalone` to run in the foreground without systemd (for CI
 
 ### 2. Client
 
-Copy the host URL and API key from the server output:
+Copy the connect link from the server output:
 
 ```bash
-vesta connect https://<host>#<api-key>
+vesta connect <connect-link>
 vesta setup
 ```
 
