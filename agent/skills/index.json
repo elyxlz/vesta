@@ -97,7 +97,7 @@
   },
   {
     "name": "restart",
-    "description": "What to do after a container restart. Holds the per-skill service startup commands."
+    "description": "What to do after a container restart. Holds the per-skill daemon startup commands."
   },
   {
     "name": "service",

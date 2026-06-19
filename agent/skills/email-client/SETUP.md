@@ -140,7 +140,11 @@ email-client notify add --folder Archive --account personal
 
 Without this the daemon watches `INBOX` only. Note that `--all` includes folders like Sent/Drafts/Spam/Trash, which can be noisy; drop any the user doesn't want with `email-client notify remove --folder <name>`.
 
-## 5. Add to restart.md
+## 5. Register for restart
+
+Add this to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`. The poller only
+connects out to IMAP and writes notification files, so it needs no inbound port: it is a
+daemon, not a vestad service.
 
 ```
 screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
