@@ -7,7 +7,7 @@
    PORT=$(~/agent/skills/service/scripts/register-service voice)
    SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
-2. Add this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+2. Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
    PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
