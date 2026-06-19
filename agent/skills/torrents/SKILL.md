@@ -1,9 +1,9 @@
 ---
-name: media-server
-description: This skill should be used when the user asks about their home media server: searching trackers, adding torrents, monitoring downloads, or browsing the media library.
+name: torrents
+description: This skill should be used when the user asks about their torrent box: searching trackers, adding torrents to qBittorrent, monitoring downloads, or browsing the media library on the server.
 ---
 
-# Media Server
+# Torrents
 
 A home server running qBittorrent on a Linux box, accessed over SSH, with a media library on disk for a downstream player (Plex, Jellyfin, Emby, etc.). Use the `qb` wrapper for download-client and library operations; use `plugins/<tracker>/` for search; see `integrations/<backend>/` for media-server-specific layouts and conventions.
 
@@ -30,17 +30,17 @@ Vesta's SSH key should be pre-installed; no password needed. Tracker traffic mus
 ## CLI
 
 ```bash
-~/agent/skills/media-server/qb status                          # Active/incomplete torrents with progress, speed, ETA
-~/agent/skills/media-server/qb ls [filter]                     # List all torrents (filter by name/path keyword)
-~/agent/skills/media-server/qb add <url> [--path PATH]         # Add by magnet or .torrent URL (default save: MEDIA_LIBRARY_PATH)
-~/agent/skills/media-server/qb search <query> [movies|tv|all]  # Search via qBittorrent plugin
-~/agent/skills/media-server/qb pause <hash>
-~/agent/skills/media-server/qb resume <hash>
-~/agent/skills/media-server/qb delete <hash> [--files]         # --files also removes the data
-~/agent/skills/media-server/qb info <hash>                     # Properties for a single torrent
-~/agent/skills/media-server/qb disk                            # Free space + per-subdir usage on MEDIA_LIBRARY_PATH
-~/agent/skills/media-server/qb ls-library [SUBPATH]            # List MEDIA_LIBRARY_PATH (or a subpath of it)
-~/agent/skills/media-server/qb find <keyword>                  # Find files in MEDIA_LIBRARY_PATH by name
+~/agent/skills/torrents/qb status                          # Active/incomplete torrents with progress, speed, ETA
+~/agent/skills/torrents/qb ls [filter]                     # List all torrents (filter by name/path keyword)
+~/agent/skills/torrents/qb add <url> [--path PATH]         # Add by magnet or .torrent URL (default save: MEDIA_LIBRARY_PATH)
+~/agent/skills/torrents/qb search <query> [movies|tv|all]  # Search via qBittorrent plugin
+~/agent/skills/torrents/qb pause <hash>
+~/agent/skills/torrents/qb resume <hash>
+~/agent/skills/torrents/qb delete <hash> [--files]         # --files also removes the data
+~/agent/skills/torrents/qb info <hash>                     # Properties for a single torrent
+~/agent/skills/torrents/qb disk                            # Free space + per-subdir usage on MEDIA_LIBRARY_PATH
+~/agent/skills/torrents/qb ls-library [SUBPATH]            # List MEDIA_LIBRARY_PATH (or a subpath of it)
+~/agent/skills/torrents/qb find <keyword>                  # Find files in MEDIA_LIBRARY_PATH by name
 ```
 
 `qb add` accepts URLs (magnets, http(s) `.torrent` URLs) only. For a `.torrent` already on disk, see "Adding a local .torrent" below.
@@ -85,22 +85,22 @@ Most plugin `search` scripts do this for you with `--add <n> --path <dir>`.
 
 ```bash
 # What's downloading right now?
-~/agent/skills/media-server/qb status
+~/agent/skills/torrents/qb status
 
 # Search via the built-in plugin
-~/agent/skills/media-server/qb search "dune part two" movies
+~/agent/skills/torrents/qb search "dune part two" movies
 
 # Search and add directly via the TorrentLeech scraper
-~/agent/skills/media-server/plugins/torrentleech/search "Dune 2024" --cat movies --add 1 --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
+~/agent/skills/torrents/plugins/torrentleech/search "Dune 2024" --cat movies --add 1 --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
 
 # Add a magnet to a specific path
-~/agent/skills/media-server/qb add "magnet:?xt=urn:btih:..." --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
+~/agent/skills/torrents/qb add "magnet:?xt=urn:btih:..." --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
 
 # Browse the library
-~/agent/skills/media-server/qb ls-library mike/Movies
+~/agent/skills/torrents/qb ls-library mike/Movies
 
 # How much space is left?
-~/agent/skills/media-server/qb disk
+~/agent/skills/torrents/qb disk
 ```
 
 ## Troubleshooting

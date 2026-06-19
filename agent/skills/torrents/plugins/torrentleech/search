@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # search — Search TorrentLeech and optionally add results to qBittorrent
 #
-# Invoke as: ~/agent/skills/media-server/plugins/torrentleech/search <query> [options]
+# Invoke as: ~/agent/skills/torrents/plugins/torrentleech/search <query> [options]
 #
 # Options:
 #   --cat <id|name>     Category filter (movies, tv, all, or numeric ID)
@@ -269,7 +269,7 @@ usage() {
 search — Search TorrentLeech and add torrents to qBittorrent
 
 Usage:
-  ~/agent/skills/media-server/plugins/torrentleech/search <query> [options]
+  ~/agent/skills/torrents/plugins/torrentleech/search <query> [options]
 
 Options:
   --cat <category>    Category: movies, tv, all (default: all)

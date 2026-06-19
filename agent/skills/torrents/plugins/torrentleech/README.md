@@ -17,7 +17,7 @@ Confirm the proxy is up before searching:
 
 ```bash
 ~/agent/skills/vpn/vpn test
-~/agent/skills/media-server/plugins/torrentleech/search "Dune 2024" --cat movies
+~/agent/skills/torrents/plugins/torrentleech/search "Dune 2024" --cat movies
 ```
 
 (The `search` script auto-detects `SOCKS5_HOST` and routes through it. A future change should make it pull the URL from the `vpn` skill instead of reading the env vars directly.)
@@ -42,7 +42,7 @@ Confirm the proxy is up before searching:
 QB_PORT=${QB_PORT:-8888}
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \
   "curl -s -X POST 'http://localhost:'$QB_PORT'/api/v2/search/installPlugin' \
-   -d 'sources=file:///home/'$MEDIA_SERVER_USER'/agent/skills/media-server/plugins/torrentleech/torrentleech.py'"
+   -d 'sources=file:///home/'$MEDIA_SERVER_USER'/agent/skills/torrents/plugins/torrentleech/torrentleech.py'"
 ```
 
 Plugin may show `enabled: false` in the API listing but still works when called by name. Verify with `qb search "test" --plugin torrentleech`.

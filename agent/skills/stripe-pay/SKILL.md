@@ -24,7 +24,7 @@ Invoke this skill when:
 
 ## Skip
 
-Not for sending money to people (merchants only, not P2P) or read-only expense logging (use the `finance` skill). If `stripe-pay authorize` has not run, `charge` errors clearly and you tell the user to set up first.
+Not for sending money to people (merchants only, not P2P) or read-only expense logging (use the `enable-banking` skill). If `stripe-pay authorize` has not run, `charge` errors clearly and you tell the user to set up first.
 
 ## Setup
 

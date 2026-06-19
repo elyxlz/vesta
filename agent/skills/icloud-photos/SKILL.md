@@ -1,5 +1,5 @@
 ---
-name: icloud
+name: icloud-photos
 description: iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone.
 ---
 
@@ -84,4 +84,4 @@ Creates one subfolder per shared album. Same `--quality` and `--include-videos` 
 
 ## Installed via
 
-`uv tool install ~/agent/skills/icloud/cli`
+`uv tool install ~/agent/skills/icloud-photos/cli`

@@ -1,9 +1,9 @@
 ---
-name: finance
-description: Personal finance, spending, transactions, bank balances, budgets via Enable Banking.
+name: enable-banking
+description: Personal bank spending, transactions, balances via Enable Banking open banking (EU/EEA only, no UK).
 ---
 
-# Finance - CLI: finance / finance-watcher
+# Enable Banking - CLI: finance / finance-watcher
 
 Tracks personal bank spending via Enable Banking open banking API (restricted mode, own accounts only, no commercial contract required).
 
