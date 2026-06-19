@@ -34,6 +34,47 @@ def config_store_path() -> pl.Path:
 def _shipped_defaults() -> dict[str, tp.Any]:
     return json.loads(CONFIG_DEFAULTS_PATH.read_text())
 
+
+# The editable preference keys PUT /config may write to the store. Identity (token/port) and
+# auth (provider/credentials) are owned elsewhere and are intentionally not writable here.
+CONFIG_STORE_KEYS = ("agent_model", "max_context_tokens", "agent_personality", "thinking")
+
+
+def read_config_store() -> dict[str, tp.Any]:
+    """The raw sparse overrides in the writable settings store, or {} when absent/corrupt.
+    Never raises: a broken store must not crash the boot path that reads it."""
+    path = config_store_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def update_config_store(updates: dict[str, tp.Any]) -> None:
+    """Merge sparse preference updates into the writable settings store, atomically (tmp+rename
+    so a crash never leaves a half-written file the boot path would choke on). A None value
+    clears the key (reverts that preference to the default/env). Rejects keys outside
+    CONFIG_STORE_KEYS so identity/auth can't be smuggled in through the settings path."""
+    for key in updates:
+        if key not in CONFIG_STORE_KEYS:
+            raise ValueError(f"{key!r} is not a writable config key")
+    current = read_config_store()
+    for key, value in updates.items():
+        if value is None:
+            if key in current:
+                del current[key]
+        else:
+            current[key] = value
+    path = config_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(current, indent=2))
+    tmp.replace(path)
+
+
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback
 # when the user hasn't explicitly chosen a context window.
 DEFAULT_CONTEXT_WINDOW = 200_000
@@ -51,11 +92,14 @@ class VestaConfig(pyd_settings.BaseSettings):
     Every field can be overridden via env var (uppercased field name, no prefix).
     Set in ~/.bashrc and run restart_vesta to apply.
 
+    Defaults come from the shipped defaults.json; the writable config store (~/agent/data/config.json,
+    PUT /config) overrides them and wins over env. See settings_customise_sources.
+
     Key overrides:
-        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (required from env; vestad
-                        seeds the default and the provider file overrides it)
+        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (config-store preference;
+                        default from defaults.json)
         AGENT_NAME    - agent name (default: "vesta")
-        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key) (required from env, as AGENT_MODEL)
+        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key); set by /provider, default from defaults.json
         LOG_LEVEL     - DEBUG | INFO | WARNING | ERROR (default: "INFO")
         THINKING      - adaptive | enabled | disabled (default: "adaptive")
         PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
@@ -188,8 +232,15 @@ class VestaConfig(pyd_settings.BaseSettings):
         # effect on an agent whose env still carries the old value.
         sources: list[pyd_settings.PydanticBaseSettingsSource] = [init_settings]
         store = config_store_path()
+        # Only layer the store in when it parses; a corrupt store must fall back to env/defaults,
+        # not crash the boot (JsonConfigSettingsSource would raise on malformed JSON).
         if store.is_file():
-            sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
+            try:
+                json.loads(store.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+            else:
+                sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
         # LEGACY(remove-when: every fleet agent has written a config.json via PUT /config, i.e. the
         # release after this one has rolled out): env_settings carrying agent_model / agent_personality.
         # New agents get these from the config store; only agents whose env predates the store still

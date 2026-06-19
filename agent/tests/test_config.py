@@ -106,3 +106,72 @@ def test_report_config_issues_noop_without_issues(config):
 
     _report_config_issues([], config=config)
     assert not config.notifications_dir.exists() or list(config.notifications_dir.glob("*.json")) == []
+
+
+# --- Config store + layered sources (writable store > env > shipped defaults floor) ---
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def agentdir(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    (tmp_path / "agent" / "data").mkdir(parents=True)
+    return tmp_path / "agent"
+
+
+def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch):
+    # The crash class: none of model/provider/personality in env, no store -> defaults, no raise.
+    import core.models as vm
+    from core.config import load_config
+
+    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"):
+        monkeypatch.delenv(key, raising=False)
+    config, issues = load_config()
+    assert (config.agent_model, config.agent_provider, config.agent_personality) == ("opus", "claude", "dry")
+    assert issues == []
+    assert isinstance(config, vm.VestaConfig)
+
+
+def test_store_overrides_env(agentdir, monkeypatch):
+    import core.models as vm
+    from core.config import update_config_store
+
+    monkeypatch.setenv("AGENT_MODEL", "haiku")  # legacy env value
+    update_config_store({"agent_model": "sonnet"})  # a PUT /config write
+    assert vm.VestaConfig().agent_model == "sonnet"
+
+
+def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
+    import core.models as vm
+    from core.config import read_config_store, update_config_store
+
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    update_config_store({"agent_model": "sonnet", "max_context_tokens": 500_000})
+    assert read_config_store() == {"agent_model": "sonnet", "max_context_tokens": 500_000}
+    # A None clears just that key; the other override stays.
+    update_config_store({"max_context_tokens": None})
+    assert read_config_store() == {"agent_model": "sonnet"}
+    assert vm.VestaConfig().max_context_tokens is None
+
+
+def test_update_rejects_non_writable_keys(agentdir):
+    from core.config import update_config_store
+
+    # Identity/auth must not be smuggled in through the settings path.
+    with pytest.raises(ValueError):
+        update_config_store({"agent_provider": "openrouter"})
+    with pytest.raises(ValueError):
+        update_config_store({"agent_token": "x"})
+
+
+def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
+    from core.config import config_store_path, load_config, read_config_store
+
+    config_store_path().write_text("{ not json")
+    assert read_config_store() == {}
+    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY"):
+        monkeypatch.delenv(key, raising=False)
+    config, _ = load_config()
+    assert config.agent_model == "opus"

@@ -1,12 +1,13 @@
-"""Tests for the agent's provider-auth state. Mirror of the Rust tests in
-vestad/src/providers/openrouter.rs — covers OpenRouter file format/shell-escaping,
-provider-file parser (commented/partial/prefix-extended), Claude credentials auth
-check (refresh-token-aware), and the boot/runtime state transitions."""
+"""Tests for the agent's provider-auth state. Provider files now carry only the provider
+CHOICE + credentials (model/context live in the config store); these cover the OpenRouter
+file format/shell-escaping, the provider-file parser, the Claude credentials auth check
+(refresh-token-aware), and the boot/runtime state transitions."""
 
 import json
 
 import pytest
 
+from core.config import read_config_store
 from core.provider import (
     ProviderAuthState,
     _check_claude_auth,
@@ -17,50 +18,37 @@ from core.provider import (
     derive_status,
     observed_provider_failure,
     set_claude,
-    set_model,
     set_openrouter,
 )
 from core.state_store import PersistedState, load_state
 
 
-# --- OpenRouter file format ---
+# --- Provider file format (auth + choice only; no model/context) ---
 
 
 def test_openrouter_provider_file_format():
-    f = _openrouter_provider_file("sk-or-v1-xyz", "anthropic/claude-sonnet-4-6")
+    f = _openrouter_provider_file("sk-or-v1-xyz")
     assert "export AGENT_PROVIDER=openrouter\n" in f
-    assert "export AGENT_MODEL='anthropic/claude-sonnet-4-6'\n" in f
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-xyz'\n" in f
     assert "export ANTHROPIC_API_KEY=\n" in f
     assert "export ANTHROPIC_SMALL_FAST_MODEL='anthropic/claude-haiku-4.5'\n" in f
+    # The selected model lives in the config store, never the provider file.
+    assert "AGENT_MODEL" not in f
 
 
 def test_openrouter_provider_file_escapes_shell_metacharacters():
-    injected = _openrouter_provider_file("k'; touch /tmp/pwned #", "m")
+    injected = _openrouter_provider_file("k'; touch /tmp/pwned #")
     assert "export ANTHROPIC_AUTH_TOKEN='k'\\''; touch /tmp/pwned #'" in injected
     assert "TOKEN=k';" not in injected
 
 
-# --- Context window (MAX_CONTEXT_TOKENS) in provider files ---
-
-
-def test_claude_provider_file_includes_context_window_when_set():
-    f = _claude_provider_file("opus", 500_000)
-    assert "export AGENT_MODEL='opus'\n" in f
-    assert "export MAX_CONTEXT_TOKENS=500000\n" in f
-
-
-def test_claude_provider_file_omits_context_window_when_unset():
-    assert "MAX_CONTEXT_TOKENS" not in _claude_provider_file("opus")
-
-
-def test_openrouter_provider_file_includes_context_window_when_set():
-    f = _openrouter_provider_file("sk-or-v1-xyz", "anthropic/claude-sonnet-4-6", 200_000)
-    assert "export MAX_CONTEXT_TOKENS=200000\n" in f
-
-
-def test_openrouter_provider_file_omits_context_window_when_unset():
-    assert "MAX_CONTEXT_TOKENS" not in _openrouter_provider_file("k", "m")
+def test_claude_provider_file_carries_only_choice_no_model_or_context():
+    f = _claude_provider_file()
+    assert "export AGENT_PROVIDER=claude\n" in f
+    assert "AGENT_MODEL" not in f
+    assert "MAX_CONTEXT_TOKENS" not in f
+    # Clears the OpenRouter exports so a switch leaves no stale token behind.
+    assert "export ANTHROPIC_AUTH_TOKEN=\n" in f
 
 
 # --- Parser: provider-mode detection ---
@@ -156,42 +144,31 @@ def test_set_claude_writes_and_flips_state(prov):
     status = set_claude(creds_json, config=config, persisted=persisted)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
+    # model comes from the config store / shipped default, not the provider file.
     assert status.model == config.agent_model
     assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
     assert provider_mod.CLAUDE_JSON_PATH.read_text() == '{"hasCompletedOnboarding":true}'
-    # Provider file declares claude + the model (single source of truth).
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
     assert "export AGENT_PROVIDER=claude\n" in content
-    assert f"export AGENT_MODEL='{config.agent_model}'\n" in content
+    assert "AGENT_MODEL" not in content
 
 
 def test_set_claude_clears_openrouter_token(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
-    # Pre-existing OpenRouter file.
     provider_mod.PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    provider_mod.PROVIDER_ENV_PATH.write_text(_openrouter_provider_file("k", "m"))
+    provider_mod.PROVIDER_ENV_PATH.write_text(_openrouter_provider_file("k"))
 
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     set_claude(creds_json, config=config, persisted=persisted)
-    # Switching to Claude rewrites the file to claude mode with the token cleared,
-    # so a stale OpenRouter key can't leak into the SDK env at next boot.
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
     assert "export AGENT_PROVIDER=claude\n" in content
     assert "export ANTHROPIC_AUTH_TOKEN=\n" in content
     assert "'k'" not in content
 
 
-def test_set_claude_honors_explicit_model(prov):
-    config, persisted = prov
-    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    status = set_claude(creds_json, "sonnet", config=config, persisted=persisted)
-    assert status.kind == "claude"
-    assert status.model == "sonnet"
-
-
-def test_set_openrouter_writes_and_flips_state(prov):
+def test_set_openrouter_writes_key_to_file_and_model_to_store(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
@@ -199,45 +176,16 @@ def test_set_openrouter_writes_and_flips_state(prov):
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "openrouter"
     assert status.model == "deepseek/deepseek-v4-flash"
+    # Key + choice in the provider file; model in the config store.
     content = provider_mod.PROVIDER_ENV_PATH.read_text()
     assert "export AGENT_PROVIDER=openrouter\n" in content
     assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-x'\n" in content
+    assert "AGENT_MODEL" not in content
+    assert read_config_store()["agent_model"] == "deepseek/deepseek-v4-flash"
+    # A fresh config (post-restart) reads the OpenRouter model from the store.
+    from core.config import VestaConfig
 
-
-def test_set_model_preserves_openrouter_key(prov):
-    from core import provider as provider_mod
-
-    config, persisted = prov
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
-    status = set_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
-    assert status.kind == "openrouter"
-    assert status.model == "anthropic/claude-sonnet-4.6"
-    content = provider_mod.PROVIDER_ENV_PATH.read_text()
-    # New model, same key.
-    assert "export AGENT_MODEL='anthropic/claude-sonnet-4.6'\n" in content
-    assert "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n" in content
-
-
-def test_set_model_changes_claude_model(prov):
-    from core import provider as provider_mod
-
-    config, persisted = prov
-    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    set_claude(creds_json, "opus", config=config, persisted=persisted)
-    status = set_model("haiku", config=config, persisted=persisted)
-    assert status.kind == "claude"
-    assert status.model == "haiku"
-    # Creds untouched; only the model line changes.
-    assert provider_mod.CREDENTIALS_PATH.read_text() == creds_json
-    assert "export AGENT_MODEL='haiku'\n" in provider_mod.PROVIDER_ENV_PATH.read_text()
-    # And it re-derives as claude/haiku at boot.
-    assert derive_status(config, persisted).model == "haiku"
-
-
-def test_set_model_without_provider_raises(prov):
-    config, persisted = prov
-    with pytest.raises(ValueError):
-        set_model("anthropic/claude-sonnet-4.6", config=config, persisted=persisted)
+    assert VestaConfig().agent_model == "deepseek/deepseek-v4-flash"
 
 
 def test_observed_provider_failure_flips_state(prov):
@@ -274,7 +222,6 @@ def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
     from core import provider as provider_mod
 
     config, persisted = prov
-    # Pre-seed disk with valid Claude creds, no persisted auth state.
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(creds_json)
