@@ -943,12 +943,15 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
-    // Seed the creation-time defaults the Python agent now requires from the env (it no
-    // longer re-defines them). vesta-provider.env is sourced after this file, so once a
-    // provider is configured its AGENT_PROVIDER/AGENT_MODEL override these defaults.
-    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or(crate::defaults::DEFAULT_PERSONALITY)));
-    append_optional("AGENT_PROVIDER", Some(crate::defaults::DEFAULT_PROVIDER));
-    append_optional("AGENT_MODEL", Some(crate::defaults::DEFAULT_MODEL));
+    // Seed the env keys the Python agent now requires (it no longer re-defines their defaults).
+    // Keys and defaults live once in defaults::REQUIRED_AGENT_ENV_DEFAULTS, shared with
+    // backfill_agent_env_file. vesta-provider.env is sourced after this file, so once a provider is
+    // configured its AGENT_PROVIDER/AGENT_MODEL override these defaults; AGENT_PERSONALITY honors the
+    // creation-time choice when one was passed.
+    for entry in crate::defaults::REQUIRED_AGENT_ENV_DEFAULTS {
+        let value = if entry.key == "AGENT_PERSONALITY" { personality.unwrap_or(entry.default) } else { entry.default };
+        append_optional(entry.key, Some(value));
+    }
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -960,6 +963,42 @@ pub fn write_agent_env_file(
         std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
     Ok(env_path)
+}
+
+/// Append any required env key missing from an existing agent env file, using the canonical
+/// defaults in `defaults::REQUIRED_AGENT_ENV_DEFAULTS`. Legacy files written before a key became
+/// required (notably AGENT_MODEL/AGENT_PROVIDER) would otherwise crash-loop the agent on boot.
+/// Existing values, the generated token, the allocated port, and legacy aliases are left untouched,
+/// so a restart only adds what is missing and never resets a user's choice. Returns the keys added.
+fn backfill_agent_env_file(env_path: &std::path::Path) -> Result<Vec<&'static str>, DockerError> {
+    let existing = std::fs::read_to_string(env_path)
+        .map_err(|e| DockerError::Failed(format!("failed to read agent env file: {e}")))?;
+    let has_key = |key: &str| {
+        existing.lines().any(|line| {
+            let assignment = line.trim_start().strip_prefix("export ").unwrap_or(line);
+            assignment.split('=').next() == Some(key)
+        })
+    };
+    let mut added = Vec::new();
+    let mut appended = String::new();
+    for entry in crate::defaults::REQUIRED_AGENT_ENV_DEFAULTS {
+        let satisfied = has_key(entry.key) || entry.aliases.iter().any(|alias| has_key(alias));
+        if !satisfied {
+            appended.push_str(&format!("export {}={}\n", entry.key, entry.default));
+            added.push(entry.key);
+        }
+    }
+    if added.is_empty() {
+        return Ok(added);
+    }
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(&appended);
+    std::fs::write(env_path, &updated)
+        .map_err(|e| DockerError::Failed(format!("failed to backfill agent env file: {e}")))?;
+    Ok(added)
 }
 
 fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
@@ -1811,7 +1850,14 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
         if env_path.is_file() {
-            tracing::info!(agent = %name, "env file ok");
+            // Backfill required keys a legacy env file predates (e.g. AGENT_MODEL/AGENT_PROVIDER),
+            // so agents created by an older vestad stop crash-looping on the next restart. Phase 3
+            // restarts running agents, which re-sources the updated file.
+            match backfill_agent_env_file(&env_path) {
+                Ok(added) if !added.is_empty() => tracing::info!(agent = %name, keys = ?added, "backfilled missing required env keys"),
+                Ok(_) => tracing::info!(agent = %name, "env file ok"),
+                Err(e) => tracing::error!(agent = %name, error = %e, "failed to backfill agent env file"),
+            }
         } else {
             if env_path.exists() {
                 tracing::warn!(agent = %name, path = %env_path.display(), "env path is not a file, removing");
@@ -2203,6 +2249,74 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
         assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
+    }
+
+    #[test]
+    fn backfill_adds_required_keys_missing_from_legacy_env() {
+        // A pre-0.1.160 env file: generated token + allocated port + legacy personality alias,
+        // but no AGENT_MODEL / AGENT_PROVIDER (the keys that crash-loop the agent on boot).
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export WS_PORT=49169\nexport AGENT_TOKEN=secret123\nexport AGENT_SEED_PERSONALITY=warm\n").expect("write");
+
+        let added = backfill_agent_env_file(&env_path).expect("backfill");
+        assert_eq!(added, vec!["AGENT_PROVIDER", "AGENT_MODEL"]);
+
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains(&format!("export AGENT_PROVIDER={}", crate::defaults::DEFAULT_PROVIDER)));
+        assert!(content.contains(&format!("export AGENT_MODEL={}", crate::defaults::DEFAULT_MODEL)));
+        // The legacy alias satisfies personality, so AGENT_PERSONALITY is NOT added and the
+        // non-default "warm" stays authoritative (no silent reset).
+        assert!(!content.contains("export AGENT_PERSONALITY="));
+        assert!(content.contains("export AGENT_SEED_PERSONALITY=warm"));
+        // Identity/state preserved untouched.
+        assert!(content.contains("export AGENT_TOKEN=secret123"));
+        assert!(content.contains("export WS_PORT=49169"));
+    }
+
+    #[test]
+    fn backfill_is_noop_when_all_required_keys_present() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        let original = "export AGENT_TOKEN=t\nexport AGENT_PERSONALITY=dry\nexport AGENT_PROVIDER=openrouter\nexport AGENT_MODEL=sonnet\n";
+        std::fs::write(&env_path, original).expect("write");
+
+        let added = backfill_agent_env_file(&env_path).expect("backfill");
+        assert!(added.is_empty());
+        // File is byte-for-byte unchanged: existing non-default values are never rewritten.
+        assert_eq!(std::fs::read_to_string(&env_path).expect("read"), original);
+    }
+
+    #[test]
+    fn backfill_adds_personality_when_no_alias_present() {
+        // An ancient file with neither AGENT_PERSONALITY nor its legacy alias gets the default.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_TOKEN=t\nexport AGENT_PROVIDER=claude\nexport AGENT_MODEL=opus\n").expect("write");
+
+        let added = backfill_agent_env_file(&env_path).expect("backfill");
+        assert_eq!(added, vec!["AGENT_PERSONALITY"]);
+        assert!(std::fs::read_to_string(&env_path).expect("read").contains(&format!("export AGENT_PERSONALITY={}", crate::defaults::DEFAULT_PERSONALITY)));
+    }
+
+    #[test]
+    fn write_agent_env_file_seeds_all_required_keys() {
+        // Regression for the refactor to the canonical list: a freshly written file must carry
+        // every required key, and honor the creation-time personality override.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 39565,
+            vestad_tunnel: None,
+        };
+        let env_path = write_agent_env_file(&env_config, "vesta", 49169, "tok", None, Some("warm")).expect("write");
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=warm"));
+        assert!(content.contains(&format!("export AGENT_PROVIDER={}", crate::defaults::DEFAULT_PROVIDER)));
+        assert!(content.contains(&format!("export AGENT_MODEL={}", crate::defaults::DEFAULT_MODEL)));
+        // A fresh file already has every required key, so backfill is a no-op on it.
+        assert!(backfill_agent_env_file(&env_path).expect("backfill").is_empty());
     }
 
     #[test]

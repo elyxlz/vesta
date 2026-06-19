@@ -13,6 +13,28 @@ pub const DEFAULT_PROVIDER: &str = "claude";
 pub const DEFAULT_MODEL: &str = "opus";
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 1_000_000;
 
+/// An env key the Python agent now requires, its canonical default, and the legacy env
+/// names the agent still accepts for it.
+///
+/// This is the single list both env paths read from: `write_agent_env_file` seeds these
+/// into a brand-new agent's env, and `backfill_agent_env_file` adds any that are missing
+/// from a legacy env file written before the key became required (notably AGENT_MODEL /
+/// AGENT_PROVIDER, added when the agent stopped re-defining their defaults). If any
+/// `alias` is already present, the key counts as satisfied and is not backfilled, so a
+/// non-default legacy value (e.g. AGENT_SEED_PERSONALITY) is never silently reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequiredEnvDefault {
+    pub key: &'static str,
+    pub default: &'static str,
+    pub aliases: &'static [&'static str],
+}
+
+pub const REQUIRED_AGENT_ENV_DEFAULTS: &[RequiredEnvDefault] = &[
+    RequiredEnvDefault { key: "AGENT_PERSONALITY", default: DEFAULT_PERSONALITY, aliases: &["AGENT_SEED_PERSONALITY"] },
+    RequiredEnvDefault { key: "AGENT_PROVIDER", default: DEFAULT_PROVIDER, aliases: &[] },
+    RequiredEnvDefault { key: "AGENT_MODEL", default: DEFAULT_MODEL, aliases: &[] },
+];
+
 /// Selectable context-window presets, largest first. The first entry is the default
 /// (`DEFAULT_CONTEXT_TOKENS` points at it). Smaller windows give cheaper prompt-cache
 /// reads and compact sooner.
