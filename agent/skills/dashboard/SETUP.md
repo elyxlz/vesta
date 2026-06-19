@@ -24,7 +24,7 @@ screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview
 
 ## 4. Register the service
 
-Add this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
