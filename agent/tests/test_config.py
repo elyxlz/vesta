@@ -175,3 +175,51 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     config, _ = load_config()
     assert config.agent_model == "opus"
+
+
+# --- Legacy fleet convergence onto the config store ---
+
+
+def test_migrate_drains_genuine_env_values_into_store(agentdir, monkeypatch):
+    from core.config import migrate_legacy_config_to_store, read_config_store
+
+    monkeypatch.setenv("AGENT_MODEL", "sonnet")
+    monkeypatch.setenv("AGENT_PERSONALITY", "warm")
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "500000")
+    migrate_legacy_config_to_store()
+    assert read_config_store() == {"agent_model": "sonnet", "agent_personality": "warm", "max_context_tokens": 500000}
+
+
+def test_migrate_skips_keys_absent_from_env_no_default_lock_in(agentdir, monkeypatch):
+    # Only the legacy AGENT_SEED_PERSONALITY is set (pre-rename); the alias is gone, so personality
+    # must NOT be converged (else the default would be locked into the store).
+    from core.config import migrate_legacy_config_to_store, read_config_store
+
+    monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
+    monkeypatch.setenv("AGENT_SEED_PERSONALITY", "warm")
+    monkeypatch.setenv("AGENT_MODEL", "opus")
+    migrate_legacy_config_to_store()
+    store = read_config_store()
+    assert "agent_personality" not in store
+    assert store["agent_model"] == "opus"
+
+
+def test_migrate_does_not_overwrite_existing_store_and_is_idempotent(agentdir, monkeypatch):
+    from core.config import migrate_legacy_config_to_store, read_config_store, update_config_store
+
+    update_config_store({"agent_model": "haiku"})  # a prior PUT /config choice
+    monkeypatch.setenv("AGENT_MODEL", "sonnet")  # legacy env says otherwise
+    migrate_legacy_config_to_store()
+    assert read_config_store()["agent_model"] == "haiku"  # PUT choice preserved
+    migrate_legacy_config_to_store()  # second run is a no-op
+    assert read_config_store()["agent_model"] == "haiku"
+
+
+def test_migrate_ignores_nonnumeric_context(agentdir, monkeypatch):
+    from core.config import migrate_legacy_config_to_store, read_config_store
+
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "lots")
+    migrate_legacy_config_to_store()
+    assert "max_context_tokens" not in read_config_store()

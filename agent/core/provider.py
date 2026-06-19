@@ -89,6 +89,9 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
     the model in one call rather than risking a boot on a Claude default. The agent must be
     restarted by vestad for the provider env vars to take effect. Context window is unchanged
     here (a PUT /config sets it)."""
+    # Two non-atomic writes (store model, then provider file). A crash between them leaves a
+    # provider/model mismatch that surfaces as not-authenticated or a rejected first call, which
+    # re-provisioning (the app's normal retry) repairs; full atomicity isn't worth a second store.
     update_config_store({"agent_model": model})
     _write_provider_file(_openrouter_provider_file(key))
     status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)

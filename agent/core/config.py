@@ -5,6 +5,7 @@ import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
+from core import logger
 from core.cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
@@ -48,7 +49,8 @@ def read_config_store() -> dict[str, tp.Any]:
         return {}
     try:
         data = json.loads(path.read_text())
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        logger.error(f"config store {path} is corrupt ({exc}); ignoring it (preferences fall back to env/defaults)")
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -73,6 +75,48 @@ def update_config_store(updates: dict[str, tp.Any]) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(current, indent=2))
     tmp.replace(path)
+
+
+# Legacy env vars that carried preferences before the config store existed. The convergence below
+# drains genuine values from these into the store so the whole fleet ends up on the store.
+_LEGACY_ENV_FOR_STORE = (
+    ("agent_model", "AGENT_MODEL"),
+    ("agent_personality", "AGENT_PERSONALITY"),
+    ("max_context_tokens", "MAX_CONTEXT_TOKENS"),
+)
+
+
+def migrate_legacy_config_to_store() -> None:
+    """One-time fleet convergence onto the config store.
+
+    Before the store existed, preferences lived in the env (AGENT_MODEL / AGENT_PERSONALITY in the
+    agent env, MAX_CONTEXT_TOKENS in vesta-provider.env). This copies any such value that is actually
+    present in the environment into the store, so every existing agent ends up holding its
+    preferences in ~/agent/data/config.json and the LEGACY env layer can later be retired. It seeds
+    a key only when it (a) is genuinely set in the env and (b) isn't already in the store, so it
+    never overwrites a PUT /config choice and never locks in a default — safe even if it runs before
+    vestad renames AGENT_SEED_PERSONALITY (that legacy name is left untouched until the rename, so
+    personality is simply not converged that boot rather than reset). Idempotent: a no-op once the
+    store holds the keys.
+
+    LEGACY(remove-when: every fleet agent has a config.json carrying its preferences, i.e. one
+    release after this convergence has rolled out): this function, its boot call site, and the env
+    layer in settings_customise_sources can all be removed together.
+    """
+    store = read_config_store()
+    updates: dict[str, tp.Any] = {}
+    for store_key, env_name in _LEGACY_ENV_FOR_STORE:
+        if store_key in store or env_name not in os.environ or not os.environ[env_name]:
+            continue
+        raw = os.environ[env_name]
+        if store_key == "max_context_tokens":
+            if raw.isdigit():
+                updates[store_key] = int(raw)
+        else:
+            updates[store_key] = raw
+    if updates:
+        logger.startup(f"migrated legacy env preferences into the config store: {sorted(updates)}")
+        update_config_store(updates)
 
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback
@@ -237,8 +281,8 @@ class VestaConfig(pyd_settings.BaseSettings):
         if store.is_file():
             try:
                 json.loads(store.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.error(f"config store {store} unreadable ({exc}); ignoring it (preferences fall back to env/defaults)")
             else:
                 sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
         # LEGACY(remove-when: every fleet agent has written a config.json via PUT /config, i.e. the

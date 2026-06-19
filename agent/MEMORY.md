@@ -90,7 +90,7 @@ All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_
 
 ### Self-Modification
 - Edit skills, prompts, MEMORY.md freely.
-- **Config setting**: read `core/config.py` for options and their env var names, set the env var in `~/.bashrc`, then call the `restart_vesta` MCP tool.
+- **Config (model, context window, personality, thinking)**: these are preferences in your config store, not env vars. Change them through the vestad endpoint, which writes the store and restarts you to apply: `curl -sk -X PUT https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/config -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"model":"sonnet"}'`. Any subset of `model` / `max_context_tokens` / `personality` / `thinking`; a `null` value clears a key back to its default. Provider + credentials are the separate `/provider` endpoint. Other persistent env (skill secrets, PATH) still goes in `~/.bashrc` (`restart_vesta` to apply).
 - `agent/core/` may be read-only (depends on agent config); if so, PR changes through the upstream skill.
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, entry in the `restart` skill's `## Services` section).
 - Changes take effect on next restart, or call `restart_vesta` to apply immediately.

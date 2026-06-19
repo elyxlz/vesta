@@ -298,24 +298,25 @@ async def _config_put_handler(request: web.Request) -> web.Response:
     if not isinstance(data, dict):
         return web.json_response({"error": "body must be a json object"}, status=400)
 
+    # For every field, None clears the key (reverts to default) — update_config_store deletes it.
     updates: dict[str, object] = {}
     if "model" in data:
-        if not isinstance(data["model"], str) or not data["model"]:
-            return web.json_response({"error": "model must be a non-empty string"}, status=400)
+        if data["model"] is not None and (not isinstance(data["model"], str) or not data["model"]):
+            return web.json_response({"error": "model must be a non-empty string or null"}, status=400)
         updates["agent_model"] = data["model"]
     if "personality" in data:
-        if not isinstance(data["personality"], str) or not data["personality"]:
-            return web.json_response({"error": "personality must be a non-empty string"}, status=400)
+        if data["personality"] is not None and (not isinstance(data["personality"], str) or not data["personality"]):
+            return web.json_response({"error": "personality must be a non-empty string or null"}, status=400)
         updates["agent_personality"] = data["personality"]
     if "max_context_tokens" in data:
         ctx = data["max_context_tokens"]
-        # bool is an int subclass; reject True/False. None clears the override (revert to default).
+        # bool is an int subclass; reject True/False.
         if ctx is not None and (not isinstance(ctx, int) or isinstance(ctx, bool) or ctx <= 0):
             return web.json_response({"error": "max_context_tokens must be a positive integer or null"}, status=400)
         updates["max_context_tokens"] = ctx
     if "thinking" in data:
-        if data["thinking"] not in ("adaptive", "enabled", "disabled"):
-            return web.json_response({"error": "thinking must be adaptive|enabled|disabled"}, status=400)
+        if data["thinking"] is not None and data["thinking"] not in ("adaptive", "enabled", "disabled"):
+            return web.json_response({"error": "thinking must be adaptive|enabled|disabled or null"}, status=400)
         updates["thinking"] = data["thinking"]
 
     if not updates:

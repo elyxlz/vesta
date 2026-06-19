@@ -70,10 +70,10 @@ impl<'a> AgentProvider<'a> {
         resp.json().await.map_err(|e| format!("agent status parse failed: {e}"))
     }
 
-    /// POST the agent's /provider with the given JSON body. Body shape (one of):
-    /// `{ "credentials": "...", "model"?: "..." }` (Claude),
-    /// `{ "openrouter_key": "...", "openrouter_model": "..." }` (OpenRouter), or
-    /// `{ "model": "..." }` (change model only, keep current provider).
+    /// POST the agent's /provider with the given JSON body (auth only). Body shape (one of):
+    /// `{ "credentials": "..." }` (Claude OAuth blob) or
+    /// `{ "openrouter_key": "...", "openrouter_model": "..." }` (OpenRouter).
+    /// Model / context / personality are preferences, set via put_config, not here.
     pub async fn set(&self, body: &serde_json::Value) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client
