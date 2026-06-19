@@ -90,4 +90,5 @@ vesta connect https://<host>#<api-key>
 vesta setup
 ```
 
-Or in the desktop app, enter the host URL and API key on the onboarding screen.
+Or in the desktop app, paste the connect link from the server output on the
+onboarding screen.

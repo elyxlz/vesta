@@ -3,18 +3,14 @@ import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  FieldGroup,
-  Field,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { LogoText } from "@/components/Logo/LogoText";
 import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
 import { isTauri } from "@/lib/env";
+import { parseConnectLink } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -23,29 +19,21 @@ import { useAuth } from "@/providers/AuthProvider";
 // the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
-function normalizeHost(input: string): string {
-  const trimmed = input.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
-  return trimmed;
-}
-
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
-  const [apiKey, setApiKey] = useState("");
-  const [host, setHost] = useState("");
+  const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const hostRef = useRef<HTMLInputElement>(null);
-  const keyRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // In the native app (and any vesta-account surface) we lead with "continue
-  // with vesta account"; `selfHost` flips to the host+key form for people
+  // with vesta account"; `selfHost` flips to the connect-link form for people
   // running their own agent. Only ever set on Tauri (the web bundles know which
   // form they need from `managed`).
   const [selfHost, setSelfHost] = useState(false);
   // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
   // instance. Probe /info.managed: managed instances log in via the vesta.run
   // handoff (PKCE, issue #19) since the user never gets the api_key; self-hosted
-  // ones keep the paste-key form. `null` = still probing.
+  // ones keep the connect-link form. `null` = still probing.
   const [managed, setManaged] = useState<boolean | null>(
     needHostInput ? false : null,
   );
@@ -71,22 +59,30 @@ export function Connect() {
 
   if (connected) return <Navigate to="/" replace />;
 
+  // One brain-dead field: paste the whole connect link `vestad` printed and we
+  // pull out both the host and the key. A vestad-served bundle already knows
+  // its own origin, so there a bare key (or a link) is enough; the native app
+  // has no origin to assume, so it needs the full link.
   const handleConnect = async () => {
     if (busy) return;
-    if (needHostInput && !host.trim()) {
-      hostRef.current?.focus();
+    const raw = value.trim();
+    if (!raw) {
+      inputRef.current?.focus();
       return;
     }
-    if (!apiKey.trim()) {
-      keyRef.current?.focus();
+    const link = parseConnectLink(raw);
+    const url = needHostInput ? link?.host : window.location.origin;
+    const key = link ? link.key : raw;
+    if (!url) {
+      setError("paste your connect link");
+      inputRef.current?.focus();
       return;
     }
     setBusy(true);
     setError("");
 
     try {
-      const url = needHostInput ? normalizeHost(host) : window.location.origin;
-      await connect(url, apiKey.trim());
+      await connect(url, key);
     } catch (e: unknown) {
       setError(errorMessage(e, "connection failed"));
       setBusy(false);
@@ -169,7 +165,7 @@ export function Connect() {
                 }}
                 className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
               >
-                self-hosting? connect with a key
+                self-hosting? connect with a link
               </button>
             )}
           </div>
@@ -192,50 +188,25 @@ export function Connect() {
             </FieldDescription>
           )}
 
-          <FieldGroup className="gap-3">
-            {needHostInput && (
-              <Field>
-                <FieldLabel htmlFor="host" className="sr-only">
-                  Host
-                </FieldLabel>
-                <Input
-                  ref={hostRef}
-                  id="host"
-                  type="url"
-                  placeholder="fox-mybox.example.com"
-                  autoComplete="url"
-                  autoFocus
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  className="text-center"
-                />
-                <FieldDescription className="text-center">
-                  the url vestad printed on first run
-                </FieldDescription>
-              </Field>
-            )}
-            <Field>
-              <FieldLabel htmlFor="key" className="sr-only">
-                Key
-              </FieldLabel>
-              <Input
-                ref={keyRef}
-                id="key"
-                name="password"
-                type="password"
-                placeholder="key"
-                autoComplete="current-password"
-                autoFocus={!needHostInput}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="text-center"
-              />
-              <FieldDescription className="text-center">
-                the key from your connect link (also at
-                ~/.config/vesta/vestad/api-key)
-              </FieldDescription>
-            </Field>
-          </FieldGroup>
+          <Field className="w-full">
+            <FieldLabel htmlFor="connect-link" className="sr-only">
+              Connect link
+            </FieldLabel>
+            <Input
+              ref={inputRef}
+              id="connect-link"
+              type="text"
+              placeholder="paste your connect link"
+              autoComplete="off"
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="text-center"
+            />
+            <FieldDescription className="text-center">
+              paste the connect link vestad printed
+            </FieldDescription>
+          </Field>
 
           <Button type="submit" disabled={busy} className="w-full">
             {busy ? "connecting..." : "connect"}
