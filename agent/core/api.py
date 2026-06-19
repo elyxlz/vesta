@@ -340,7 +340,10 @@ async def start_ws_server(
     config: VestaConfig,
     state: State | None = None,
     *,
-    host: str = "0.0.0.0",
+    # Loopback only: the container runs with host networking and vestad's proxy
+    # reaches this server via localhost, so binding 127.0.0.1 keeps the agent API
+    # off the LAN (and, behind the cloud firewall, off every external interface).
+    host: str = "127.0.0.1",
 ) -> web.AppRunner:
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus

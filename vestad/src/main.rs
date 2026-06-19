@@ -170,10 +170,10 @@ fn paint(code: &str, s: &str) -> String {
 }
 
 fn find_available_port() -> Option<u16> {
-    // serve.rs binds HTTPS on 0.0.0.0:N and HTTP on 127.0.0.1:N+1, so both must be free.
+    // serve.rs binds HTTPS on 127.0.0.1:N and HTTP on 127.0.0.1:N+1, so both must be free.
     const MAX_ATTEMPTS: u8 = 16;
     for _ in 0..MAX_ATTEMPTS {
-        let port = std::net::TcpListener::bind(("0.0.0.0", 0))
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
             .ok()
             .and_then(|l| l.local_addr().ok())
             .map(|addr| addr.port())?;
@@ -194,7 +194,7 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
         .ok()
         .and_then(|s| s.trim().parse::<u16>().ok())
     {
-        if std::net::TcpListener::bind(("0.0.0.0", stored)).is_ok()
+        if std::net::TcpListener::bind(("127.0.0.1", stored)).is_ok()
             && std::net::TcpListener::bind(("127.0.0.1", stored + 1)).is_ok()
         {
             return stored;
