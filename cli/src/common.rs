@@ -154,6 +154,17 @@ pub fn normalize_url(host: &str) -> String {
     }
 }
 
+/// Parse the connect link vestad prints, `https://host/app#k=key`, into the
+/// server URL and key: drop the trailing `/app` path and unwrap the `k=`
+/// fragment. Returns None when the input isn't a connect link.
+pub fn parse_connect_link(input: &str) -> Option<(String, String)> {
+    let (url, fragment) = input.trim().split_once('#')?;
+    let key = fragment.strip_prefix("k=")?;
+    let base = url.trim_end_matches('/');
+    let base = base.strip_suffix("/app").unwrap_or(base);
+    Some((base.to_string(), key.to_string()))
+}
+
 pub fn version_less_than(a: &str, b: &str) -> bool {
     let parse = |v: &str| -> Vec<u64> {
         v.split('.').filter_map(|s| s.parse().ok()).collect()
@@ -216,6 +227,21 @@ mod tests {
         ] {
             assert_eq!(normalize_url(input), expected, "normalize_url({input:?})");
         }
+    }
+
+    #[test]
+    fn parse_connect_link_cases() {
+        assert_eq!(
+            parse_connect_link("https://fox.vesta.run/app#k=abc123"),
+            Some(("https://fox.vesta.run".to_string(), "abc123".to_string())),
+        );
+        assert_eq!(
+            parse_connect_link("http://localhost:39566/app#k=abc123"),
+            Some(("http://localhost:39566".to_string(), "abc123".to_string())),
+        );
+        // Not a connect link: the fragment must be a `k=` param, not a raw key.
+        assert_eq!(parse_connect_link("https://fox.vesta.run#abc123"), None);
+        assert_eq!(parse_connect_link("https://fox.vesta.run"), None);
     }
 
     #[test]

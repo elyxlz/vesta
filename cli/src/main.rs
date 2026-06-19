@@ -214,10 +214,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Connect to a remote server (e.g. vesta connect https://host#apikey)
+    /// Connect to a remote server (paste the connect link vestad printed)
     Connect {
-        /// Server URL, optionally with API key after #
-        host: String,
+        /// The connect link vestad printed, e.g. https://host/app#k=key
+        link: String,
     },
     /// Update vesta to the latest version
     Update,
@@ -1349,13 +1349,9 @@ fn run(cli: Cli) {
             eprintln!("{name}: ready");
         }
 
-        Command::Connect { host } => {
-            let (url, key) = if let Some((url, key)) = host.split_once('#') {
-                (url.to_string(), key.to_string())
-            } else {
-                let key = prompt("API key");
-                (host, key)
-            };
+        Command::Connect { link } => {
+            let (url, key) = common::parse_connect_link(&link)
+                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {
