@@ -6,7 +6,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Sse,
     },
-    routing::{any, get, post},
+    routing::{any, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -846,6 +846,48 @@ async fn set_provider_handler(
 
     // TODO: poke agent_status_cache so the web sees the change inside ~50ms
     // instead of waiting for the next 3s poll.
+    Ok(ok_json())
+}
+
+/// Read an agent's editable preferences, proxied from the agent's `GET /config`. The agent owns
+/// these (model, context window, personality, thinking); vestad just relays them to the app.
+async fn get_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .get_config()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
+/// Update an agent's editable preferences. Body is forwarded verbatim to the agent's
+/// `PUT /config` (the agent owns the writable config store and its validation). After the write
+/// succeeds vestad restarts the container so the change takes effect on next boot — the same
+/// model as the provider write, since preferences also apply at boot.
+async fn set_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.put_config(&body).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -2096,6 +2138,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
+        .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))

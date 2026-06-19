@@ -943,12 +943,15 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
-    // Seed the creation-time defaults the Python agent now requires from the env (it no
-    // longer re-defines them). vesta-provider.env is sourced after this file, so once a
-    // provider is configured its AGENT_PROVIDER/AGENT_MODEL override these defaults.
-    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or(crate::defaults::DEFAULT_PERSONALITY)));
-    append_optional("AGENT_PROVIDER", Some(crate::defaults::DEFAULT_PROVIDER));
-    append_optional("AGENT_MODEL", Some(crate::defaults::DEFAULT_MODEL));
+    // Seed the agent's defaults into the env from the single source (agent/core/defaults.json,
+    // read via the embedded agent source). The agent treats env as the LEGACY config layer: its
+    // writable config store (PUT /config) overrides these, and the provider file overrides
+    // AGENT_PROVIDER once a provider is configured. We still seed them so an agent that never
+    // writes a config store boots on the same defaults the wizard pre-selected.
+    let defaults = crate::defaults::shipped_defaults();
+    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or(defaults.personality.as_str())));
+    append_optional("AGENT_PROVIDER", Some(defaults.provider.as_str()));
+    append_optional("AGENT_MODEL", Some(defaults.model.as_str()));
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -1016,15 +1019,28 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY anymore, i.e. one
+        // release after this normalization has run across the fleet): the agent dropped the
+        // AGENT_SEED_PERSONALITY env alias, so rename the pre-rename var to AGENT_PERSONALITY here
+        // (value-preserving) or a legacy agent's chosen voice would silently reset to the default.
+        let has_new_personality = content
+            .lines()
+            .any(|line| line.strip_prefix("export ").unwrap_or(line).starts_with("AGENT_PERSONALITY="));
         let mut new_lines: Vec<String> = content
             .lines()
-            .filter(|line| {
+            .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                !stripped.starts_with("VESTAD_PORT=")
-                    && !stripped.starts_with("VESTAD_TUNNEL=")
-                    && !stripped.starts_with("VESTA_UPSTREAM_REF=")
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
+                    return None; // re-appended below with the current values
+                }
+                if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
+                    if has_new_personality {
+                        return None; // already migrated; drop the stale duplicate
+                    }
+                    return Some(line.replacen("AGENT_SEED_PERSONALITY=", "AGENT_PERSONALITY=", 1));
+                }
+                Some(line.to_string())
             })
-            .map(|l| l.to_string())
             .collect();
         new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
         if let Some(url) = vestad_tunnel {
@@ -2203,6 +2219,33 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
         assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
+    }
+
+    #[test]
+    fn update_env_renames_legacy_personality_var_preserving_value() {
+        // The agent dropped the AGENT_SEED_PERSONALITY env alias; the startup normalizer must
+        // rename it to AGENT_PERSONALITY in existing files so a legacy non-default voice survives.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_TOKEN=t\nexport AGENT_SEED_PERSONALITY=warm\nexport VESTAD_PORT=1\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=warm"), "renamed, value preserved: {content}");
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"), "legacy var removed: {content}");
+        assert!(content.contains("export AGENT_TOKEN=t"), "identity preserved");
+    }
+
+    #[test]
+    fn update_env_drops_legacy_personality_when_new_one_present() {
+        // If a file already has the new var, the stale legacy duplicate is dropped, not re-added.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_PERSONALITY=dry\nexport AGENT_SEED_PERSONALITY=warm\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=dry"));
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"));
+        assert!(!content.contains("warm"));
     }
 
     #[test]

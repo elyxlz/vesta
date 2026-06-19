@@ -92,6 +92,43 @@ impl<'a> AgentProvider<'a> {
         Err(format!("agent /provider returned HTTP {status}: {body_text}"))
     }
 
+    /// GET the agent's /config: its current editable preferences (model, context, personality,
+    /// thinking). The agent owns these; vestad just relays them to the app.
+    pub async fn get_config(&self) -> Result<serde_json::Value, String> {
+        let (port, token) = self.port_and_token()?;
+        let resp = self.http_client
+            .get(format!("http://127.0.0.1:{port}/config"))
+            .header("X-Agent-Token", token)
+            .timeout(STATUS_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| format!("agent /config request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("agent /config returned HTTP {}", resp.status()));
+        }
+        resp.json().await.map_err(|e| format!("agent /config parse failed: {e}"))
+    }
+
+    /// PUT the agent's /config with a sparse preferences body, any of
+    /// `{ "model", "max_context_tokens", "personality", "thinking" }`. Applies on next restart.
+    pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
+        let (port, token) = self.port_and_token()?;
+        let resp = self.http_client
+            .put(format!("http://127.0.0.1:{port}/config"))
+            .header("X-Agent-Token", token)
+            .json(body)
+            .timeout(SET_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| format!("agent /config request failed: {e}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body_text = resp.text().await.unwrap_or_default();
+        Err(format!("agent /config returned HTTP {status}: {body_text}"))
+    }
+
     fn port_and_token(&self) -> Result<(u16, String), String> {
         let (port, token) = read_agent_port_and_token(&self.name, self.agents_dir);
         match (port, token) {
