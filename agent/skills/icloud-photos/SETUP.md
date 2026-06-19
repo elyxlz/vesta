@@ -1,4 +1,4 @@
-# iCloud Skill Setup
+# iCloud Photos Setup
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@
 ## Step 1: Install the CLI
 
 ```bash
-uv tool install --force --reinstall ~/agent/skills/icloud/cli
+uv tool install --force --reinstall ~/agent/skills/icloud-photos/cli
 ```
 
 ## Step 2: Provide credentials

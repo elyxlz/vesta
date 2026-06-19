@@ -1,5 +1,5 @@
 ---
-name: tv
+name: samsung-tv
 description: Samsung Smart TV: watch, volume, power, YouTube, playback control.
 ---
 

@@ -20,8 +20,8 @@ Per-user Movies/TVShows folders is the convention Plex uses when configured with
 The generic `qb add` saves to `$MEDIA_LIBRARY_PATH` by default. For Plex's per-user layout, pass `--path` explicitly:
 
 ```bash
-~/agent/skills/media-server/qb add "magnet:?xt=..." --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
-~/agent/skills/media-server/qb add "magnet:?xt=..." --path "$MEDIA_LIBRARY_PATH/Sarah/TVShows"
+~/agent/skills/torrents/qb add "magnet:?xt=..." --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
+~/agent/skills/torrents/qb add "magnet:?xt=..." --path "$MEDIA_LIBRARY_PATH/Sarah/TVShows"
 ```
 
 `plugins/<tracker>/search --add N --path <dir>` also takes a save path; same pattern applies.
@@ -29,9 +29,9 @@ The generic `qb add` saves to `$MEDIA_LIBRARY_PATH` by default. For Plex's per-u
 ## Browsing
 
 ```bash
-~/agent/skills/media-server/qb ls-library             # top of library: list users
-~/agent/skills/media-server/qb ls-library mike        # what Mike has
-~/agent/skills/media-server/qb ls-library mike/Movies # Mike's movies
+~/agent/skills/torrents/qb ls-library             # top of library: list users
+~/agent/skills/torrents/qb ls-library mike        # what Mike has
+~/agent/skills/torrents/qb ls-library mike/Movies # Mike's movies
 ```
 
 ## Adding a new media-server backend
