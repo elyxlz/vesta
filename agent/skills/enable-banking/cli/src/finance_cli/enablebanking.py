@@ -144,8 +144,7 @@ def exchange_code(conf: dict, code: str) -> dict:
     POST /sessions with the code received from the OAuth callback.
     Returns session data including session_id and accounts list.
     """
-    data = _post(conf, "/sessions", {"code": code})
-    return data
+    return _post(conf, "/sessions", {"code": code})
 
 
 def get_session(conf: dict) -> dict:
@@ -163,14 +162,6 @@ def revoke_session(conf: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Account & balance endpoints
 # ---------------------------------------------------------------------------
-
-
-def list_aspsps(conf: dict, country: str = "GB") -> list[dict]:
-    """GET /aspsps — list available banks."""
-    data = _get(conf, "/aspsps", params={"country": country, "psu_type": "personal"})
-    if isinstance(data, list):
-        return data
-    return data.get("aspsps", data)
 
 
 def get_balances(conf: dict, account_uid: str) -> list[dict]:
@@ -353,7 +344,6 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
     request, extract the `code` query parameter, return it.
     Uses a self-signed cert for localhost (browser will show warning but works).
     """
-    import os
     import ssl
     import urllib.parse
     from http.server import BaseHTTPRequestHandler, HTTPServer

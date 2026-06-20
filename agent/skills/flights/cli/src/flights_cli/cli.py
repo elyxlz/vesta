@@ -199,6 +199,14 @@ def _search_dates(
 # ===========================================================================
 
 
+def _sort_by_price(results: list[dict], max_results: int) -> list[dict]:
+    """Sort valid results cheapest-first, keeping any error entries at the end."""
+    valid = [r for r in results if "error" not in r]
+    errors = [r for r in results if "error" in r]
+    valid.sort(key=lambda x: x.get("price_usd", float("inf")))
+    return valid[:max_results] + errors
+
+
 def cmd_search(args):
     """flights search — search specific date(s)."""
     origins = args.origin if isinstance(args.origin, list) else [args.origin]
@@ -209,7 +217,7 @@ def cmd_search(args):
             origin=origin.upper(),
             destination=args.destination.upper(),
             date=args.date,
-            return_date=getattr(args, "return_date", None),
+            return_date=args.return_date,
             stops=args.stops,
             cabin=args.cabin,
             sort=args.sort,
@@ -219,12 +227,9 @@ def cmd_search(args):
             r["origin"] = origin.upper()
         all_results.extend(results)
 
-    # If multiple origins and no errors, sort combined results by price
+    # If multiple origins, sort combined results by price
     if len(origins) > 1:
-        valid = [r for r in all_results if "error" not in r]
-        errors = [r for r in all_results if "error" in r]
-        valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[: args.max_results] + errors
+        all_results = _sort_by_price(all_results, args.max_results)
 
     print(json.dumps(all_results, indent=2))
 
@@ -252,10 +257,7 @@ def cmd_dates(args):
 
     # Sort combined results by price
     if len(origins) > 1:
-        valid = [r for r in all_results if "error" not in r]
-        errors = [r for r in all_results if "error" in r]
-        valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[: args.max_results] + errors
+        all_results = _sort_by_price(all_results, args.max_results)
 
     print(json.dumps(all_results, indent=2))
 
