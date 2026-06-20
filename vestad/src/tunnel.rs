@@ -12,12 +12,6 @@ pub struct TunnelConfig {
     pub dns_record_id: Option<String>,
 }
 
-struct CloudflareEnv {
-    api_token: String,
-    account_id: String,
-    zone_id: String,
-}
-
 /// Self-hosted (BYOK) Cloudflare credentials, persisted to `cloudflare.json`.
 ///
 /// The public vestad binary ships **no** Cloudflare token — a self-hoster brings
@@ -62,14 +56,10 @@ fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), Strin
 /// Order: the saved `cloudflare.json` (written by `vestad connect` /
 /// first-run setup), then env vars (power users + CI). There is NO baked
 /// build-time token anymore — the public binary carries no shared credential.
-fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
+fn cf_env(config_dir: &Path) -> Result<CloudflareCreds, String> {
     if let Ok(data) = std::fs::read_to_string(cf_creds_path(config_dir)) {
-        if let Ok(c) = serde_json::from_str::<CloudflareCreds>(&data) {
-            return Ok(CloudflareEnv {
-                api_token: c.api_token,
-                account_id: c.account_id,
-                zone_id: c.zone_id,
-            });
+        if let Ok(creds) = serde_json::from_str::<CloudflareCreds>(&data) {
+            return Ok(creds);
         }
     }
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
@@ -79,7 +69,7 @@ fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
         std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
     let zone_id =
         std::env::var("CLOUDFLARE_ZONE_ID").map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
-    Ok(CloudflareEnv { api_token, account_id, zone_id })
+    Ok(CloudflareCreds { api_token, account_id, zone_id })
 }
 
 fn prompt(label: &str) -> Result<String, String> {
@@ -202,7 +192,7 @@ fn cf_request(
     Ok(resp)
 }
 
-fn get_zone_domain(env: &CloudflareEnv) -> Result<String, String> {
+fn get_zone_domain(env: &CloudflareCreds) -> Result<String, String> {
     let url = format!("{}/zones/{}", CF_API_BASE, env.zone_id);
     let resp = cf_request("GET", &url, &env.api_token, None)?;
     resp["result"]["name"]
@@ -211,7 +201,7 @@ fn get_zone_domain(env: &CloudflareEnv) -> Result<String, String> {
         .ok_or_else(|| "failed to get domain name from zone".to_string())
 }
 
-fn delete_tunnel_if_exists(env: &CloudflareEnv, tunnel_name: &str) {
+fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
     let list_url = format!(
         "{}/accounts/{}/cfd_tunnel?name={}",
         CF_API_BASE, env.account_id, tunnel_name
@@ -233,7 +223,7 @@ fn delete_tunnel_if_exists(env: &CloudflareEnv, tunnel_name: &str) {
     }
 }
 
-fn delete_dns_record_if_exists(env: &CloudflareEnv, subdomain: &str) {
+fn delete_dns_record_if_exists(env: &CloudflareCreds, subdomain: &str) {
     let domain = match get_zone_domain(env) {
         Ok(d) => d,
         Err(_) => return,
