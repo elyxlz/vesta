@@ -122,8 +122,6 @@ DEFAULT_HEADERS = {
 def _load_cache() -> dict | None:
     try:
         return json.loads(CACHE_FILE.read_text())
-    except FileNotFoundError:
-        return None
     except Exception:
         return None
 
@@ -240,13 +238,7 @@ def _fetch_free_proxies(timeout: float = 8) -> list[str]:
         if len(out) > 200:
             break
     # dedupe, keep order
-    seen = set()
-    uniq = []
-    for p in out:
-        if p not in seen:
-            seen.add(p)
-            uniq.append(p)
-    return uniq[:200]
+    return list(dict.fromkeys(out))[:200]
 
 
 def _proxy_chain(use_free: bool = True) -> list[str | None]:
@@ -301,10 +293,6 @@ def _mark_proxy_bad(p: str | None, reason: str) -> None:
     # also drop from good
     state["good"] = [g for g in state.get("good", []) if g != label]
     _save_proxy_state(state)
-
-
-def _good_to_url(label: str) -> str | None:
-    return None if label == "DIRECT" else label
 
 
 # ---------------------------------------------------------------------------
@@ -726,9 +714,8 @@ def _new_scan_one(access_token: str, proxy: str | None, cookies: dict | None = N
         raise GPTZeroRateLimited(f"429 on /v3/scan: {r.text[:200]}")
     r.raise_for_status()
     # capture any new cookies the server sets (e.g. anonymousUserId, csrf)
-    new_cookies = {k: v for k, v in r.cookies.items()}
     if cookies is not None:
-        cookies.update(new_cookies)
+        cookies.update(r.cookies.items())
     return r.json()["data"]["id"]
 
 

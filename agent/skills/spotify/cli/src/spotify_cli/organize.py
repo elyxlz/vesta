@@ -187,11 +187,16 @@ def _load_config() -> dict:
     return {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
 
 
+def _write_json(path: Path, data: dict) -> None:
+    """Write data as pretty JSON, creating parent dirs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 def _save_config(cfg: dict) -> None:
     """Save organize config to disk."""
-    ORGANIZE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    with open(ORGANIZE_CONFIG, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    _write_json(ORGANIZE_CONFIG, cfg)
 
 
 def _chunks(lst, n):
@@ -268,10 +273,8 @@ def _match_genre(genres: list[str], rules: list[dict]) -> str | None:
     """Match artist genres against rules, return target playlist name or None."""
     genres_lower = [g.lower() for g in genres]
     for rule in rules:
-        for kw in rule["keywords"]:
-            for g in genres_lower:
-                if kw in g:
-                    return rule["playlist"]
+        if any(kw in g for kw in rule["keywords"] for g in genres_lower):
+            return rule["playlist"]
     return None
 
 
@@ -285,19 +288,14 @@ def _load_watch_state() -> dict:
 
 def _save_watch_state(state: dict) -> None:
     """Save the watch daemon state file."""
-    WATCH_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(WATCH_STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    _write_json(WATCH_STATE_FILE, state)
 
 
 def _write_notification(data: dict) -> None:
     """Write a notification JSON file to the notifications directory."""
-    NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
     data.setdefault("source", "spotify")
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    filename = NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json"
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    _write_json(NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json", data)
 
 
 def _log(msg: str) -> None:
