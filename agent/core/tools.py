@@ -56,9 +56,8 @@ def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        if state.graceful_shutdown and state.graceful_shutdown.is_set():
-            if state.shutdown_event:
-                state.shutdown_event.set()
+        if state.graceful_shutdown.is_set():
+            state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
         logger.shutdown("Container restart requested")
         os.kill(os.getpid(), signal.SIGTERM)

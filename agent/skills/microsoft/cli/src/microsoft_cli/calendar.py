@@ -51,18 +51,7 @@ def _get_calendar_id_by_name(
     calendar_name: str,
 ) -> str:
     settings = _get_settings()
-    calendars = list(
-        graph.request_paginated(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "/me/calendars",
-            account_id,
-            params={"$select": "id,name"},
-        )
-    )
+    calendars = list(graph.paginate_cfg(config, client, settings, "/me/calendars", account_id, params={"$select": "id,name"}))
     name_lower = calendar_name.lower()
     for cal in calendars:
         if cal["name"].lower() == name_lower:
@@ -112,19 +101,7 @@ def list_events(
             }
             endpoint = "/me/calendarView"
 
-        events = list(
-            graph.request_paginated(
-                client,
-                config.cache_file,
-                config.scopes,
-                settings,
-                config.base_url,
-                endpoint,
-                account_id,
-                params=params,
-                extra_prefer=extra_prefer,
-            )
-        )
+        events = list(graph.paginate_cfg(config, client, settings, endpoint, account_id, params=params, extra_prefer=extra_prefer))
 
         return events
 
@@ -142,16 +119,7 @@ def list_calendars(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
     calendars = list(
-        graph.request_paginated(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "/me/calendars",
-            account_id,
-            params={"$select": "id,name,color,isDefaultCalendar"},
-        )
+        graph.paginate_cfg(config, client, settings, "/me/calendars", account_id, params={"$select": "id,name,color,isDefaultCalendar"})
     )
     return calendars
 
@@ -172,17 +140,7 @@ def get_event(
     _validate_timezone(user_timezone)
     extra_prefer = [f'outlook.timezone="{user_timezone}"']
 
-    result = graph.request(
-        client,
-        config.cache_file,
-        config.scopes,
-        settings,
-        config.base_url,
-        "GET",
-        f"/me/events/{event_id}",
-        account_id,
-        extra_prefer=extra_prefer,
-    )
+    result = graph.request_cfg(config, client, settings, "GET", f"/me/events/{event_id}", account_id, extra_prefer=extra_prefer)
     if not result:
         raise ValueError(f"Event '{event_id}' not found")
     return result
@@ -270,17 +228,7 @@ def create_event(
 
     endpoint = f"/me/calendars/{calendar_id}/events" if calendar_id else "/me/events"
 
-    result = graph.request(
-        client,
-        config.cache_file,
-        config.scopes,
-        settings,
-        config.base_url,
-        "POST",
-        endpoint,
-        account_id,
-        json=event,
-    )
+    result = graph.request_cfg(config, client, settings, "POST", endpoint, account_id, json=event)
     if not result:
         raise ValueError("Failed to create event")
     return result
@@ -322,17 +270,7 @@ def update_event(
     if not formatted_updates:
         raise ValueError("Must specify at least one field to update")
 
-    result = graph.request(
-        client,
-        config.cache_file,
-        config.scopes,
-        settings,
-        config.base_url,
-        "PATCH",
-        f"/me/events/{event_id}",
-        account_id,
-        json=formatted_updates,
-    )
+    result = graph.request_cfg(config, client, settings, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
     return result or {"status": "updated"}
 
 
@@ -348,28 +286,9 @@ def delete_event(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
     if send_cancellation:
-        graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "POST",
-            f"/me/events/{event_id}/cancel",
-            account_id,
-            json={},
-        )
+        graph.request_cfg(config, client, settings, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
-        graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "DELETE",
-            f"/me/events/{event_id}",
-            account_id,
-        )
+        graph.request_cfg(config, client, settings, "DELETE", f"/me/events/{event_id}", account_id)
     return {"status": "deleted", "event_id": event_id}
 
 
@@ -388,15 +307,5 @@ def respond_event(
     if message:
         payload["comment"] = message
 
-    graph.request(
-        client,
-        config.cache_file,
-        config.scopes,
-        settings,
-        config.base_url,
-        "POST",
-        f"/me/events/{event_id}/{response}",
-        account_id,
-        json=payload,
-    )
+    graph.request_cfg(config, client, settings, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
     return {"status": response}

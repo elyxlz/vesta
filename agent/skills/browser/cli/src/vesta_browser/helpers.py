@@ -86,22 +86,21 @@ def reload() -> dict:
     return cdp("Page.reload")
 
 
-def back() -> dict:
+def _go_history(step: int) -> dict:
     hist = cdp("Page.getNavigationHistory")
     entries = hist["entries"]
-    idx = hist["currentIndex"]
-    if idx <= 0:
+    target = hist["currentIndex"] + step
+    if not 0 <= target < len(entries):
         return {}
-    return cdp("Page.navigateToHistoryEntry", entryId=entries[idx - 1]["id"])
+    return cdp("Page.navigateToHistoryEntry", entryId=entries[target]["id"])
+
+
+def back() -> dict:
+    return _go_history(-1)
 
 
 def forward() -> dict:
-    hist = cdp("Page.getNavigationHistory")
-    entries = hist["entries"]
-    idx = hist["currentIndex"]
-    if idx >= len(entries) - 1:
-        return {}
-    return cdp("Page.navigateToHistoryEntry", entryId=entries[idx + 1]["id"])
+    return _go_history(1)
 
 
 def new_tab(url: str = "about:blank") -> str:
@@ -194,11 +193,7 @@ def type_text(text: str) -> None:
 def press_key(key: str, modifiers: int | list[str] = 0) -> None:
     """Press a key. `modifiers` can be the CDP bitfield int or a list like ['Control', 'Shift']."""
     if isinstance(modifiers, list):
-        mods = 0
-        for m in modifiers:
-            if m in MODIFIER_BITS:
-                mods |= MODIFIER_BITS[m]
-        modifiers = mods
+        modifiers = sum(MODIFIER_BITS[m] for m in set(modifiers) if m in MODIFIER_BITS)
     if key in SPECIAL_KEYS:
         vk, code, text = SPECIAL_KEYS[key]
     elif len(key) == 1:
@@ -228,21 +223,12 @@ def scroll(x: float, y: float, dy: float = -300, dx: float = 0) -> None:
 
 def click_ref(ref: str, button: str = "left", clicks: int = 1) -> None:
     """Click an element by ref (e.g. 'e5') from the most recent snapshot."""
-    from .snapshot import read_ref
-
-    info = read_ref(_current_target_id(), ref)
-    backend = info["backend_node_id"]
-    _scroll_into_view(backend)
-    box = _center_box(backend)
+    box = _center_box(_resolve_ref(ref))
     click(box[0], box[1], button=button, clicks=clicks)
 
 
 def type_ref(ref: str, text: str, submit: bool = False, slowly: bool = False) -> None:
-    from .snapshot import read_ref
-
-    info = read_ref(_current_target_id(), ref)
-    backend = info["backend_node_id"]
-    _scroll_into_view(backend)
+    backend = _resolve_ref(ref)
     cdp("DOM.focus", backendNodeId=backend)
     if slowly:
         for ch in text:
@@ -255,13 +241,18 @@ def type_ref(ref: str, text: str, submit: bool = False, slowly: bool = False) ->
 
 
 def hover_ref(ref: str) -> None:
+    box = _center_box(_resolve_ref(ref))
+    cdp("Input.dispatchMouseEvent", type="mouseMoved", x=box[0], y=box[1])
+
+
+def _resolve_ref(ref: str) -> int:
+    """Look up a ref in the latest snapshot, scroll it into view, return its backend node id."""
     from .snapshot import read_ref
 
     info = read_ref(_current_target_id(), ref)
     backend = info["backend_node_id"]
     _scroll_into_view(backend)
-    box = _center_box(backend)
-    cdp("Input.dispatchMouseEvent", type="mouseMoved", x=box[0], y=box[1])
+    return backend
 
 
 def _current_target_id() -> str:
@@ -462,7 +453,6 @@ def recipe_banner(url: str) -> str:
     if not files:
         return ""
     lines = [f"📝 Recipes for {urlparse(url).hostname}:"]
-    for f in files:
-        lines.append(f"  - {f}")
+    lines += [f"  - {name}" for name in files]
     lines.append(f"  Read via: cat {_skills_root()}/<path>")
     return "\n".join(lines)

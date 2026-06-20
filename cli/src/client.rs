@@ -97,10 +97,6 @@ fn cert_fingerprint(der: &[u8]) -> String {
     )
 }
 
-pub fn make_ws_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
-    make_rustls_config(fingerprint)
-}
-
 fn ws_base_url(url: &str) -> String {
     url.replace("https://", "wss://")
         .replace("http://", "ws://")
@@ -143,6 +139,14 @@ fn status_error_message(status: u16, error_msg: Option<String>) -> String {
 
 fn read_json<T: serde::de::DeserializeOwned>(resp: Response<Body>) -> Result<T, String> {
     resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+}
+
+fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String> {
+    value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
+}
+
+fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
+    value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
 
 fn map_error(host: &str, e: ureq::Error) -> String {
@@ -393,39 +397,25 @@ impl Client {
     }
 
     pub fn get_channel(&self) -> Result<String, String> {
-        let resp = self.get("/settings/channel")?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        let value: serde_json::Value = read_json(self.get("/settings/channel")?)?;
+        require_str(&value, "channel")
     }
 
     pub fn set_channel(&self, channel: &str) -> Result<String, String> {
         let resp = self.put_json("/settings/channel", &serde_json::json!({ "channel": channel }))?;
         let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        require_str(&value, "channel")
     }
 
     pub fn get_auto_update(&self) -> Result<bool, String> {
-        let resp = self.get("/settings/auto-update")?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("auto_update").and_then(|v| v.as_bool()) {
-            Some(enabled) => Ok(enabled),
-            None => Err("response missing auto_update".into()),
-        }
+        let value: serde_json::Value = read_json(self.get("/settings/auto-update")?)?;
+        require_bool(&value, "auto_update")
     }
 
     pub fn set_auto_update(&self, enabled: bool) -> Result<bool, String> {
         let resp = self.put_json("/settings/auto-update", &serde_json::json!({ "auto_update": enabled }))?;
         let value: serde_json::Value = read_json(resp)?;
-        match value.get("auto_update").and_then(|v| v.as_bool()) {
-            Some(enabled) => Ok(enabled),
-            None => Err("response missing auto_update".into()),
-        }
+        require_bool(&value, "auto_update")
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
@@ -806,7 +796,7 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
         .try_clone()
         .map_err(|e| format!("failed to clone ws socket: {e}"))?;
     let connector =
-        tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
+        tungstenite::Connector::Rustls(make_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
         .map_err(|e| format!("ws connect failed: {e}"))?;
     timeout_handle

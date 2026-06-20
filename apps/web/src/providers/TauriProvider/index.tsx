@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { isTauri } from "@/lib/env";
 import { detectPlatform, type Platform } from "@/lib/platform";
 
@@ -33,10 +32,6 @@ const info: TauriInfo = {
     isTauri &&
     (platform === "macos" || platform === "windows" || platform === "linux"),
 };
-
-export function TauriProvider({ children }: { children: ReactNode }) {
-  return <>{children}</>;
-}
 
 export function useTauri(): TauriInfo {
   return info;

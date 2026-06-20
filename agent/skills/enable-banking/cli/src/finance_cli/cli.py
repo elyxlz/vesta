@@ -72,6 +72,28 @@ def _fmt_date(dt: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _persist_session(conf: dict, session_data: dict) -> dict:
+    """Normalise accounts from a session response, store them, return the auth result."""
+    session_id = session_data.get("session_id", "")
+    accounts = [
+        {
+            "uid": acc.get("uid", acc.get("account_uid", "")),
+            "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
+            "currency": acc.get("currency", ""),
+        }
+        for acc in session_data.get("accounts", [])
+    ]
+    conf["session_id"] = session_id
+    conf["accounts"] = accounts
+    cfg.save(conf)
+    return {
+        "status": "authenticated",
+        "session_id": session_id,
+        "accounts": accounts,
+        "consent_days": eb.CONSENT_DAYS,
+    }
+
+
 def cmd_config_set(args) -> dict:
     conf = cfg.load()
     if args.app_id:
@@ -127,31 +149,7 @@ def cmd_auth_login(args) -> dict:
     print(json.dumps({"status": "code_received", "message": "Authorization code received, creating session..."}), flush=True)
 
     session_data = eb.exchange_code(conf, code)
-
-    session_id = session_data.get("session_id", "")
-    raw_accounts = session_data.get("accounts", [])
-
-    # Normalise account list for storage
-    accounts = []
-    for acc in raw_accounts:
-        accounts.append(
-            {
-                "uid": acc.get("uid", acc.get("account_uid", "")),
-                "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
-                "currency": acc.get("currency", ""),
-            }
-        )
-
-    conf["session_id"] = session_id
-    conf["accounts"] = accounts
-    cfg.save(conf)
-
-    return {
-        "status": "authenticated",
-        "session_id": session_id,
-        "accounts": accounts,
-        "consent_days": eb.CONSENT_DAYS,
-    }
+    return _persist_session(conf, session_data)
 
 
 def cmd_auth_callback(args) -> dict:
@@ -172,30 +170,7 @@ def cmd_auth_callback(args) -> dict:
         return {"error": "No 'code' parameter found in URL"}
 
     session_data = eb.exchange_code(conf, code)
-
-    session_id = session_data.get("session_id", "")
-    raw_accounts = session_data.get("accounts", [])
-
-    accounts = []
-    for acc in raw_accounts:
-        accounts.append(
-            {
-                "uid": acc.get("uid", acc.get("account_uid", "")),
-                "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
-                "currency": acc.get("currency", ""),
-            }
-        )
-
-    conf["session_id"] = session_id
-    conf["accounts"] = accounts
-    cfg.save(conf)
-
-    return {
-        "status": "authenticated",
-        "session_id": session_id,
-        "accounts": accounts,
-        "consent_days": eb.CONSENT_DAYS,
-    }
+    return _persist_session(conf, session_data)
 
 
 def cmd_auth_status(args) -> dict:

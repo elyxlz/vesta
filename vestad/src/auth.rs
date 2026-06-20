@@ -154,15 +154,12 @@ pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, api_key))
-        .unwrap_or(false);
-    if bearer_ok {
-        return true;
-    }
-    uri.query()
+        .is_some_and(|token| verify_token(token, api_key));
+    let query_ok = uri
+        .query()
         .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-        .map(|t| verify_token(t, api_key))
-        .unwrap_or(false)
+        .is_some_and(|token| verify_token(token, api_key));
+    bearer_ok || query_ok
 }
 
 fn extract_agent_name(path: &str) -> Option<String> {

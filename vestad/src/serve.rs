@@ -319,13 +319,8 @@ async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Val
 
 async fn version_json(state: &SharedState) -> serde_json::Value {
     let update = state.update_info.lock().await;
-    let (latest, update_available) = match update.as_ref() {
-        Some(info) => (
-            Some(info.latest.clone()),
-            Some(info.update_available),
-        ),
-        None => (None, None),
-    };
+    let latest = update.as_ref().map(|info| info.latest.clone());
+    let update_available = update.as_ref().map(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -1628,6 +1623,14 @@ async fn list_services_handler(
 
 // --- Backup/Restore ---
 
+/// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
+/// carrying the same `{status, error}` shape clients parse from both endpoints.
+fn sse_error_event(e: docker::DockerError) -> Event {
+    let (status, body) = map_docker_err(e);
+    let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+    Event::default().event("error").data(err.to_string())
+}
+
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1661,9 +1664,7 @@ async fn create_backup_handler(
                 yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
@@ -1735,9 +1736,7 @@ async fn restore_backup_handler(
                 yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
@@ -2321,10 +2320,6 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
-                let today = today_date.to_string();
-                let week_ago = seven_days_ago.clone();
-                let month_ago = thirty_days_ago.clone();
-
                 if let Some(age) = backup::container_age_secs(&state.docker, name).await {
                     if age < backup::MIN_AGE_FOR_BACKUP_SECS {
                         tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
@@ -2344,21 +2339,21 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && b.created_at.starts_with(&today)
+                        && b.created_at.starts_with(today_date)
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
                 }
 
                 let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
+                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= seven_days_ago
                 });
                 if !has_recent_weekly {
                     needed.push(crate::types::BackupType::Weekly);
                 }
 
                 let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
+                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= thirty_days_ago
                 });
                 if !has_recent_monthly {
                     needed.push(crate::types::BackupType::Monthly);

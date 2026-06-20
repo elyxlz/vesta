@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -129,6 +130,13 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
 
+  const applyUpdateInfo = useCallback((data: GatewayVersionInfo) => {
+    setUpdateAvailable(!!data.update_available);
+    setLatestVersion(data.latest_version ?? null);
+    setGatewayChannel(data.channel ?? "stable");
+    setGatewayAutoUpdate(data.auto_update ?? true);
+  }, []);
+
   const triggerGatewayUpdate = async (): Promise<boolean> => {
     try {
       await apiFetch("/gateway/update", { method: "POST" });
@@ -147,10 +155,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         method: "POST",
         signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
       });
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
-      setGatewayAutoUpdate(data.auto_update ?? true);
+      applyUpdateInfo(data);
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
@@ -188,10 +193,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       if (!cancelled && data?.version) {
         setGatewayVersion(data.version);
         setGatewayBranch(data.branch ?? null);
-        setGatewayChannel(data.channel ?? "stable");
-        setGatewayAutoUpdate(data.auto_update ?? true);
-        setUpdateAvailable(!!data.update_available);
-        setLatestVersion(data.latest_version ?? null);
+        applyUpdateInfo(data);
         setVersionChecked(true);
         if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
           return;
@@ -261,7 +263,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }
       wsRef.current = null;
     };
-  }, [connectEpoch, expireSession]);
+  }, [connectEpoch, expireSession, applyUpdateInfo]);
 
   useEffect(() => {
     if (!reachable) return;
@@ -270,10 +272,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     const pollVersion = async () => {
       const data = await fetchVersionInfo();
       if (cancelled || !data) return;
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
-      setGatewayAutoUpdate(data.auto_update ?? true);
+      applyUpdateInfo(data);
     };
 
     const timer = setInterval(pollVersion, VERSION_POLL_MS);
@@ -281,7 +280,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reachable]);
+  }, [reachable, applyUpdateInfo]);
 
   // Surface a blocking overlay once the gateway has been unreachable past a
   // brief grace period, and dismiss it the moment it reconnects. The grace

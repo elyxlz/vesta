@@ -29,6 +29,3 @@ class Config:
     @property
     def cache_file(self) -> Path:
         return self.data_dir / "auth_cache.bin"
-
-    def get_calendar_notify_thresholds(self) -> list[int]:
-        return self.calendar_notify_thresholds or [10080, 60, 15]
