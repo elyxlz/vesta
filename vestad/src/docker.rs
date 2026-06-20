@@ -1411,12 +1411,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
 pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
     // dest is a full path like "/root/.claude.json" — split into dir and filename
     let path = std::path::Path::new(dest);
-    let parent = path.parent()
-        .map(|p| p.to_str().unwrap_or("/"))
-        .unwrap_or("/");
-    let file_name = path.file_name()
-        .map(|f| f.to_str().unwrap_or("file"))
-        .unwrap_or("file");
+    let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("/");
+    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("file");
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
 }
 

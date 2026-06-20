@@ -1585,6 +1585,14 @@ async fn list_services_handler(
 
 // --- Backup/Restore ---
 
+/// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
+/// carrying the same `{status, error}` shape clients parse from both endpoints.
+fn sse_error_event(e: docker::DockerError) -> Event {
+    let (status, body) = map_docker_err(e);
+    let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+    Event::default().event("error").data(err.to_string())
+}
+
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1618,9 +1626,7 @@ async fn create_backup_handler(
                 yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
@@ -1692,9 +1698,7 @@ async fn restore_backup_handler(
                 yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
