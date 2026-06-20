@@ -275,26 +275,6 @@ def _match_genre(genres: list[str], rules: list[dict]) -> str | None:
     return None
 
 
-def _match_all_genres(genres: list[str], rules: list[dict]) -> list[str]:
-    """Match artist genres against rules, return ALL matching playlist names."""
-    genres_lower = [g.lower() for g in genres]
-    matched = []
-    seen = set()
-    for rule in rules:
-        playlist = rule["playlist"]
-        if playlist in seen:
-            continue
-        for kw in rule["keywords"]:
-            for g in genres_lower:
-                if kw in g:
-                    matched.append(playlist)
-                    seen.add(playlist)
-                    break
-            if playlist in seen:
-                break
-    return matched
-
-
 def _load_watch_state() -> dict:
     """Load the watch daemon state file."""
     if WATCH_STATE_FILE.exists():
@@ -477,9 +457,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
         if tid in playlist_existing.get(pid, set()):
             continue
 
-        if match not in additions:
-            additions[match] = []
-        additions[match].append((tid, turi, tname))
+        additions.setdefault(match, []).append((tid, turi, tname))
 
     if dry_run:
         return {
@@ -529,20 +507,7 @@ def init_watch(config: Config) -> dict:
     sp = get_client(config)
     _log("Initializing watch state — fetching current liked songs...")
 
-    resp = sp.current_user_saved_tracks(limit=50, offset=0)
-    liked_ids = []
-    total = resp.get("total", 0)
-    offset = 0
-    while True:
-        for item in resp.get("items", []):
-            t = item.get("track")
-            if t and t.get("id"):
-                liked_ids.append(t["id"])
-        offset += 50
-        if offset >= total:
-            break
-        time.sleep(0.1)
-        resp = sp.current_user_saved_tracks(limit=50, offset=offset)
+    liked_ids = [item["track"]["id"] for item in _paginate_saved(sp) if item.get("track") and item["track"].get("id")]
 
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
