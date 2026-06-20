@@ -261,10 +261,7 @@ class Daemon:
 
 async def _serve(daemon: Daemon) -> None:
     sock = socket_path()
-    try:
-        os.unlink(sock)
-    except FileNotFoundError:
-        pass
+    Path(sock).unlink(missing_ok=True)
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -327,10 +324,7 @@ def run() -> int:
         return 1
     finally:
         for p in (socket_path(), pid_path()):
-            try:
-                os.unlink(p)
-            except FileNotFoundError:
-                pass
+            Path(p).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

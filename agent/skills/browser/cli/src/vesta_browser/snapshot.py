@@ -103,10 +103,7 @@ def read_ref(target_id: str, ref: str) -> dict:
 
 def clear_refs(target_id: str | None = None) -> None:
     if target_id is None:
-        try:
-            refs_path().unlink()
-        except FileNotFoundError:
-            pass
+        refs_path().unlink(missing_ok=True)
         return
     store = _load_refs_store()
     if target_id in store:

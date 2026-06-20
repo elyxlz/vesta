@@ -107,10 +107,7 @@ def restart_daemon(name: str | None = None) -> None:
         _terminate_pid(pid)
 
     for p in (sock, pid_file):
-        try:
-            os.unlink(p)
-        except FileNotFoundError:
-            pass
+        Path(p).unlink(missing_ok=True)
 
 
 def launch_chrome(
@@ -158,10 +155,7 @@ def stop_chrome(name: str | None = None) -> None:
     if pid:
         _terminate_pid(pid)
     for p in (_session_file(session, "chrome-pid"), _session_file(session, "cdp-port")):
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
+        p.unlink(missing_ok=True)
 
 
 def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
@@ -265,7 +259,4 @@ def shutdown(name: str | None = None) -> None:
     restart_daemon(session)
     stop_chrome(session)
     for path in (Path(log_path(session)), _session_file(session, "refs.json")):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        path.unlink(missing_ok=True)
