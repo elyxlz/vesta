@@ -2,7 +2,6 @@
 compile_error!("vestad only supports Linux");
 
 use clap::Parser;
-use qrcode::{render::unicode, QrCode};
 
 mod agent_provider;
 mod agent_code;
@@ -25,10 +24,13 @@ mod restic_embed;
 mod time_utils;
 mod self_update;
 mod serve;
+mod status;
 mod systemd;
 mod tunnel;
 mod types;
 mod update_check;
+
+use status::{Status, TunnelStatus};
 
 
 #[derive(Parser)]
@@ -175,13 +177,13 @@ fn docker_exec_inherit(args: &[&str]) {
 /// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
 /// is unset. Without this, `vestad status > file` / piping captures raw escape
 /// codes.
-fn color_on() -> bool {
+pub(crate) fn color_on() -> bool {
     use std::io::IsTerminal;
     std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
 
 /// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
-fn paint(code: &str, s: &str) -> String {
+pub(crate) fn paint(code: &str, s: &str) -> String {
     if color_on() {
         format!("\x1b[{code}m{s}\x1b[0m")
     } else {
@@ -231,6 +233,14 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
 fn config_dir() -> std::path::PathBuf {
     paths::config_dir()
         .unwrap_or_else(|| die("couldn't find your home directory ($HOME) — vestad stores its config there"))
+}
+
+/// Read the stored API key from `<config>/api-key`, if present and non-empty.
+fn read_api_key(config: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(config.join("api-key"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// True iff this VM is managed by the vesta-cloud control plane.
@@ -333,336 +343,6 @@ async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time
 /// fragment (`#k=...`), which browsers never send to the server, so the key
 /// stays out of vestad's and Cloudflare's request logs. Opening the link
 /// connects automatically, no copy-pasting the key.
-fn connect_link(base_url: &str, api_key: &str) -> String {
-    format!("{base_url}/app#k={api_key}")
-}
-
-/// Render `data` as QR rows of half-block characters, inverted (light modules on
-/// a dark glyph) so it scans correctly against a dark terminal. Empty on the rare
-/// encode failure.
-fn qr_lines(data: &str) -> Vec<String> {
-    let Ok(code) = QrCode::new(data.as_bytes()) else {
-        return Vec::new();
-    };
-    code.render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .quiet_zone(true)
-        .build()
-        .lines()
-        .map(str::to_string)
-        .collect()
-}
-
-/// Print a QR code with a small left margin (used by the status / systemd path).
-fn print_qr(data: &str) {
-    for line in qr_lines(data) {
-        eprintln!("  {line}");
-    }
-}
-
-// --- Startup banner ---
-
-const BANNER_ACCENT: &str = "38;2;231;186;140"; // light orange #e7ba8c (24-bit truecolor)
-const BANNER_DIM: &str = "2";
-const BANNER_MARGIN: usize = 3; // spaces between the border and content
-const BANNER_LABEL_W: usize = 9; // config label column width
-const BANNER_ART_W: usize = 46; // fixed width of every VESTA_ART line
-
-/// "VESTA" in an ANSI-shadow block font. Every line is exactly BANNER_ART_W wide
-/// (a unit test enforces this, since the box geometry centers on that width).
-const VESTA_ART: [&str; 6] = [
-    "██╗   ██╗ ███████╗ ███████╗ ████████╗  █████╗ ",
-    "██║   ██║ ██╔════╝ ██╔════╝ ╚══██╔══╝ ██╔══██╗",
-    "██║   ██║ █████╗   ███████╗    ██║    ███████║",
-    "╚██╗ ██╔╝ ██╔══╝   ╚════██║    ██║    ██╔══██║",
-    " ╚████╔╝  ███████╗ ███████║    ██║    ██║  ██║",
-    "  ╚═══╝   ╚══════╝ ╚══════╝    ╚═╝    ╚═╝  ╚═╝",
-];
-
-/// One row of the startup box. Each variant knows its natural (uncolored) width
-/// so the renderer can size the box and pad every line to a uniform interior.
-enum BoxRow {
-    Gap,
-    Art(usize),              // index into VESTA_ART, centered, accent colour
-    Center(String),          // centered dim text (e.g. the version subtitle)
-    CenterRaw(String),       // centered uncoloured text (QR rows must stay scannable)
-    Kv(&'static str, String), // "label   value", left-aligned
-    Value(String),           // a full-width left-aligned value (e.g. the api key)
-    Rule(&'static str),      // "── label ─────" section divider
-}
-
-impl BoxRow {
-    /// Visible width of the row's content, ignoring borders and side margins.
-    fn width(&self) -> usize {
-        match self {
-            BoxRow::Gap => 0,
-            BoxRow::Art(_) => BANNER_ART_W,
-            BoxRow::Center(s) | BoxRow::CenterRaw(s) | BoxRow::Value(s) => s.chars().count(),
-            BoxRow::Kv(_, value) => BANNER_LABEL_W + value.chars().count(),
-            BoxRow::Rule(label) => label.chars().count() + 5, // "── " + " ─"
-        }
-    }
-
-    /// Render the content fitted to `inner` columns as one or more `(plain,
-    /// shown)` lines — long values (links, api key, a long error) are hard-wrapped
-    /// so the box never overflows a narrow terminal. `plain` drives padding math
-    /// (no ANSI); `shown` is what prints (equal to `plain` when colour is off).
-    fn render(&self, inner: usize) -> Vec<(String, String)> {
-        let centered = |line: &str, code: Option<&str>| {
-            let lead = " ".repeat(inner.saturating_sub(line.chars().count()) / 2);
-            let shown = match code {
-                Some(code) => paint(code, line),
-                None => line.to_string(),
-            };
-            (format!("{lead}{line}"), format!("{lead}{shown}"))
-        };
-        match self {
-            BoxRow::Gap => vec![(String::new(), String::new())],
-            BoxRow::Art(idx) => {
-                let art = VESTA_ART[*idx];
-                // Can't shrink the art; drop it rather than overflow a tiny box.
-                if art.chars().count() > inner {
-                    Vec::new()
-                } else {
-                    vec![centered(art, Some(BANNER_ACCENT))]
-                }
-            }
-            BoxRow::Center(text) => wrap_chars(text, inner)
-                .iter()
-                .map(|line| centered(line, Some(BANNER_DIM)))
-                .collect(),
-            BoxRow::CenterRaw(text) => vec![centered(text, None)],
-            BoxRow::Kv(label, value) => {
-                let label_col = format!("{:<width$}", label, width = BANNER_LABEL_W);
-                let value_width = inner.saturating_sub(BANNER_LABEL_W).max(1);
-                wrap_chars(value, value_width)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(line_no, chunk)| {
-                        if line_no == 0 {
-                            (format!("{label_col}{chunk}"), format!("{}{chunk}", paint(BANNER_DIM, &label_col)))
-                        } else {
-                            // continuation lines align under the value column
-                            let pad = " ".repeat(BANNER_LABEL_W);
-                            (format!("{pad}{chunk}"), format!("{pad}{chunk}"))
-                        }
-                    })
-                    .collect()
-            }
-            BoxRow::Value(value) => wrap_chars(value, inner)
-                .into_iter()
-                .map(|chunk| (chunk.clone(), paint(BANNER_ACCENT, &chunk)))
-                .collect(),
-            BoxRow::Rule(label) => {
-                let prefix = format!("── {} ", label);
-                let fill = inner.saturating_sub(prefix.chars().count());
-                let plain = format!("{}{}", prefix, "─".repeat(fill));
-                vec![(plain.clone(), paint(BANNER_DIM, &plain))]
-            }
-        }
-    }
-}
-
-/// Hard-wrap `text` into chunks of at most `width` characters (character-wise, so
-/// unbreakable strings like URLs and keys still fit). Always returns ≥1 element.
-fn wrap_chars(text: &str, width: usize) -> Vec<String> {
-    if width == 0 || text.is_empty() {
-        return vec![text.to_string()];
-    }
-    text.chars()
-        .collect::<Vec<char>>()
-        .chunks(width)
-        .map(|chunk| chunk.iter().collect())
-        .collect()
-}
-
-/// Terminal width (columns) of stderr, or `None` when it isn't a TTY / can't be
-/// queried — callers fall back to a conservative default.
-fn terminal_width() -> Option<usize> {
-    use std::os::unix::io::AsRawFd;
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    // SAFETY: TIOCGWINSZ fills the winsize through the pointer for a valid fd; we
-    // pass stderr's fd and a correctly sized, zeroed struct.
-    let rc = unsafe { libc::ioctl(std::io::stderr().as_raw_fd(), libc::TIOCGWINSZ, &mut size) };
-    (rc == 0 && size.ws_col > 0).then_some(size.ws_col as usize)
-}
-
-/// Draw the rows inside a rounded, accent-coloured box. The interior is as wide
-/// as the content but capped to the terminal so the box never wraps; over-long
-/// rows are wrapped to fit. Returns the finished lines (plain when colour is off,
-/// which is how the geometry test inspects them).
-fn render_box(rows: &[BoxRow]) -> Vec<String> {
-    // Reserve the 2-space outer indent, both borders, and both side margins.
-    let overhead = 2 + 2 + BANNER_MARGIN * 2;
-    let cap = terminal_width().unwrap_or(80).saturating_sub(overhead);
-    render_box_capped(rows, cap)
-}
-
-/// [`render_box`] with the interior width cap passed explicitly (so the wrapping
-/// behaviour is testable without a real terminal).
-fn render_box_capped(rows: &[BoxRow], cap: usize) -> Vec<String> {
-    let natural = rows.iter().map(BoxRow::width).max().unwrap_or(0);
-    let inner = natural.min(cap).max(1);
-    let span = BANNER_MARGIN * 2 + inner;
-    let edge = |left: &str, right: &str| {
-        format!("{}{}{}", paint(BANNER_ACCENT, left), paint(BANNER_ACCENT, &"─".repeat(span)), paint(BANNER_ACCENT, right))
-    };
-    let mut out = vec![edge("╭", "╮")];
-    let side = paint(BANNER_ACCENT, "│");
-    for row in rows {
-        for (plain, shown) in row.render(inner) {
-            let trailing = inner.saturating_sub(plain.chars().count());
-            out.push(format!(
-                "{side}{margin}{shown}{trailing}{margin}{side}",
-                margin = " ".repeat(BANNER_MARGIN),
-                trailing = " ".repeat(trailing),
-            ));
-        }
-    }
-    out.push(edge("╰", "╯"));
-    out
-}
-
-/// The full startup banner: the boxed identity/config/connection summary, then
-/// the app connect link + QR below it.
-fn print_startup_banner(fields: BannerFields) {
-    let BannerFields { version, user, port, dev_mode, tunnel, lan_url, expose_lan, local_url, api_key } = fields;
-    let tunnel_url = tunnel.url();
-
-    // enabled = tunnel is up; disabled = --no-tunnel; error — <reason> = a tunnel
-    // was wanted but couldn't be established (no creds, dead tunnel, API failure).
-    let tunnel_desc = match tunnel {
-        TunnelStatus::Active(_) => "enabled".to_string(),
-        TunnelStatus::Disabled => "disabled".to_string(),
-        TunnelStatus::Failed(reason) => format!("error — {}", first_line_truncated(reason, 100)),
-    };
-    let lan_desc = if expose_lan { "enabled".to_string() } else { "disabled".to_string() };
-    // The address most useful to a human: public tunnel, else the LAN URL when
-    // exposed, else the same-machine local URL.
-    let address = tunnel_url
-        .map(str::to_string)
-        .or_else(|| lan_url.map(str::to_string))
-        .unwrap_or_else(|| local_url.to_string());
-
-    // The LAN connect link is only real when the API is actually bound to the LAN.
-    let lan_app = expose_lan.then_some(lan_url).flatten();
-
-    let mut rows = vec![
-        BoxRow::Gap,
-        BoxRow::Art(0),
-        BoxRow::Art(1),
-        BoxRow::Art(2),
-        BoxRow::Art(3),
-        BoxRow::Art(4),
-        BoxRow::Art(5),
-        BoxRow::Gap,
-        BoxRow::Center(format!("personal AI daemon · v{version}")),
-        BoxRow::Gap,
-        BoxRow::Kv("user", user.to_string()),
-        BoxRow::Kv("port", port.to_string()),
-        BoxRow::Kv("mode", if dev_mode { "development".to_string() } else { "production".to_string() }),
-        BoxRow::Kv("tunnel", tunnel_desc),
-        BoxRow::Kv("lan", lan_desc),
-        BoxRow::Gap,
-        BoxRow::Rule("connection"),
-        BoxRow::Kv("address", address),
-        BoxRow::Kv("api key", String::new()),
-        BoxRow::Value(api_key.to_string()),
-        BoxRow::Gap,
-        BoxRow::Rule("connect the app"),
-    ];
-    // One labeled link per reachability tier: remote (public tunnel), lan (same
-    // network), local (this machine only). Local always exists. Each tier shows
-    // its label on its own line, then the link beneath it in the api-key colour.
-    let mut app_links: Vec<(&'static str, String)> = Vec::new();
-    // remote tier is always shown: the public link when a tunnel is up, otherwise
-    // how to get one.
-    match tunnel_url {
-        Some(url) => app_links.push(("remote", connect_link(url, api_key))),
-        None => app_links.push(("remote", "run `vestad connect` for a public URL".to_string())),
-    }
-    if let Some(url) = lan_app {
-        app_links.push(("lan", connect_link(url, api_key)));
-    }
-    app_links.push(("local", connect_link(local_url, api_key)));
-    for (index, (label, link)) in app_links.into_iter().enumerate() {
-        if index > 0 {
-            rows.push(BoxRow::Gap);
-        }
-        rows.push(BoxRow::Kv(label, String::new()));
-        rows.push(BoxRow::Value(link));
-    }
-
-    // QR only for the public (remote) link — that's the one meant for scanning
-    // from a phone.
-    if let Some(url) = tunnel_url {
-        let link = connect_link(url, api_key);
-        rows.push(BoxRow::Gap);
-        rows.extend(qr_lines(&link).into_iter().map(BoxRow::CenterRaw));
-        rows.push(BoxRow::Center("scan the remote link to connect your phone".to_string()));
-    }
-    rows.push(BoxRow::Gap);
-
-    eprintln!();
-    for line in render_box(&rows) {
-        eprintln!("  {line}");
-    }
-    eprintln!();
-}
-
-/// Grouped inputs for [`print_startup_banner`] — past ~5 args a struct reads
-/// better than a positional list.
-struct BannerFields<'a> {
-    version: &'a str,
-    user: &'a str,
-    port: u16,
-    dev_mode: bool,
-    tunnel: &'a TunnelStatus,
-    lan_url: Option<&'a str>,
-    expose_lan: bool,
-    local_url: &'a str,
-    api_key: &'a str,
-}
-
-fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
-    eprintln!();
-    match tunnel_url {
-        Some(url) => {
-            let link = connect_link(url, api_key);
-            eprintln!("  {} {}", paint("36", "connect"), paint("1", &link));
-            eprintln!("          {}", paint("2", "open this link to connect the app; the key is built in"));
-            eprintln!();
-            print_qr(&link);
-            eprintln!("  {}", paint("2", "or scan to connect your phone"));
-        }
-        // A missing tunnel is a first-class, visible state — never a silent
-        // "local only". Tell the user the exact command to fix it.
-        None => {
-            eprintln!(
-                "  {} {}  {}",
-                paint("36", "connect"),
-                paint("1", &connect_link(local_url, api_key)),
-                paint("2", "(same machine only)"),
-            );
-            eprintln!(
-                "          run {} for a public URL + a phone QR code",
-                paint("1", "vestad connect"),
-            );
-            eprintln!();
-            return;
-        }
-    }
-    eprintln!();
-    eprintln!(
-        "  {} {}  {}",
-        paint("36", "local  "),
-        paint("1", &connect_link(local_url, api_key)),
-        paint("2", "(same machine only)"),
-    );
-    eprintln!();
-}
-
 /// Best-effort primary LAN IPv4 — the source address the kernel uses to reach
 /// off-box via the default route, i.e. the address other LAN devices can reach.
 /// `ip route get` is used first so Docker/VPN bridge addresses (172.17.x and the
@@ -694,33 +374,6 @@ fn local_lan_ip() -> Option<String> {
         .map(|ip| ip.to_string())
 }
 
-/// Print connection info when an API key is present (the shape shared by `status`
-/// and the systemd start path), taking the `read_server_info` tuple directly.
-fn print_server_info_opt(info: (Option<String>, Option<String>, Option<String>)) {
-    let (tunnel_url, local_url, api_key) = info;
-    if let Some(api_key) = &api_key {
-        print_server_info(
-            tunnel_url.as_deref(),
-            local_url.as_deref().unwrap_or("http://localhost:?"),
-            api_key,
-        );
-    }
-}
-
-fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>, Option<String>) {
-    let api_key = std::fs::read_to_string(config.join("api-key"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    let local_url = read_port_file(config).map(|port| format!("http://localhost:{}", port + 1));
-
-    let tunnel_url = tunnel::get_tunnel_config(config)
-        .map(|tc| format!("https://{}", tc.hostname));
-
-    (tunnel_url, local_url, api_key)
-}
-
 /// Bind the HTTP listener atomically inside the tokio runtime. If the HTTP port
 /// (N+1) is in use, re-select a new N via find_available_port and retry. This
 /// closes the TOCTOU race where find_available_port's probe was dropped before
@@ -749,33 +402,6 @@ async fn bind_http_atomically(
         }
     }
     unreachable!()
-}
-
-/// Outcome of bringing the tunnel up at startup, surfaced in the banner.
-enum TunnelStatus {
-    Disabled,       // --no-tunnel
-    Active(String), // reachable https URL
-    Failed(String), // wanted, but couldn't be established — concise reason
-}
-
-impl TunnelStatus {
-    fn url(&self) -> Option<&str> {
-        match self {
-            TunnelStatus::Active(url) => Some(url),
-            _ => None,
-        }
-    }
-}
-
-/// First line of `msg`, trimmed and capped to `max` chars with an ellipsis, so a
-/// long or multi-line error can't blow up the banner width.
-fn first_line_truncated(msg: &str, max: usize) -> String {
-    let line = msg.lines().next().unwrap_or(msg).trim();
-    if line.chars().count() <= max {
-        line.to_string()
-    } else {
-        format!("{}…", line.chars().take(max.saturating_sub(1)).collect::<String>())
-    }
 }
 
 /// How many times startup tries to bring the tunnel up before giving up and
@@ -901,7 +527,6 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let tunnel_url = tunnel_status.url().map(str::to_string);
 
             docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
-            let local_url = format!("http://localhost:{}", port + 1);
             // Only advertise a LAN address when the API is actually bound to the
             // LAN (--expose-lan); otherwise the URL would be unreachable.
             let lan_url = expose_lan
@@ -910,17 +535,21 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 .map(|ip| format!("https://{}:{}", ip, port));
             let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
-            print_startup_banner(BannerFields {
-                version: env!("CARGO_PKG_VERSION"),
-                user: &user,
+
+            // Build the status snapshot, persist it before the API opens (so any
+            // reader that sees the daemon reachable also sees status.json), and
+            // print the banner from it — the same banner `vestad status` renders.
+            let status = Status::new(
+                env!("CARGO_PKG_VERSION").to_string(),
+                user,
                 port,
                 dev_mode,
-                tunnel: &tunnel_status,
-                lan_url: lan_url.as_deref(),
                 expose_lan,
-                local_url: &local_url,
-                api_key: &api_key,
-            });
+                lan_url,
+                tunnel_status,
+            );
+            status.persist(&config);
+            status.print_banner(&api_key);
 
             // Supervise whenever a tunnel is INTENDED, not only when boot-time
             // setup succeeded: a managed box whose tunnel.json the control plane
@@ -930,8 +559,34 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let tunnel_intended = tunnel_url.is_some()
                 || (!no_tunnel
                     && (is_cloud_managed() || tunnel::get_tunnel_config(&config).is_some()));
-            let tunnel_supervisor =
-                tunnel_intended.then(|| tunnel::supervise_tunnel(config.clone(), port));
+
+            // Keep status.json honest: on a SUSTAINED tunnel outage the supervisor
+            // flips the tunnel field to an error and back to enabled on recovery.
+            // Transient blips it recovers from on its own don't change it.
+            let status = std::sync::Arc::new(std::sync::Mutex::new(status));
+            let on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync> = {
+                let status = status.clone();
+                let config = config.clone();
+                let tunnel_url = tunnel_url.clone();
+                std::sync::Arc::new(move |up: bool| {
+                    let next = if up {
+                        match tunnel_url.clone().or_else(|| {
+                            tunnel::get_tunnel_config(&config).map(|tc| format!("https://{}", tc.hostname))
+                        }) {
+                            Some(url) => TunnelStatus::Active(url),
+                            None => return, // can't name the URL; leave the field as-is
+                        }
+                    } else {
+                        TunnelStatus::Failed("tunnel connection lost".to_string())
+                    };
+                    if let Ok(mut s) = status.lock() {
+                        s.set_tunnel(next);
+                        s.persist(&config);
+                    }
+                })
+            };
+            let tunnel_supervisor = tunnel_intended
+                .then(|| tunnel::supervise_tunnel(config.clone(), port, on_tunnel_up));
 
             serve::run_server(serve::ServerConfig {
                 port,
@@ -989,8 +644,8 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
 
     eprintln!();
     eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
-
-    print_server_info_opt(read_server_info(&config));
+    eprintln!("  run {} to see your connection info.", paint("1", "vestad status"));
+    eprintln!();
 
     eprintln!("manage with:");
     eprintln!("  vestad status     show status + your URL");
@@ -1050,7 +705,7 @@ fn main() {
                 if agent_count == 1 { "" } else { "s" },
             );
 
-            print_server_info_opt(read_server_info(&config));
+            status::print_status_banner(&config, read_api_key(&config).as_deref());
 
             systemd::print_status();
         }
@@ -1306,35 +961,6 @@ fn main() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn vesta_art_lines_are_uniform_width() {
-        for line in VESTA_ART {
-            assert_eq!(line.chars().count(), BANNER_ART_W, "art line: {line}");
-        }
-    }
-
-    #[test]
-    fn render_box_lines_share_width_and_are_bordered() {
-        // Colour is disabled under `cargo test` (stderr is not a TTY), so the
-        // rendered lines are plain and char count equals display width.
-        let rows = vec![
-            BoxRow::Gap,
-            BoxRow::Art(0),
-            BoxRow::Center("personal AI daemon".into()),
-            BoxRow::Kv("user", "emi".into()),
-            BoxRow::Rule("connection"),
-            BoxRow::Value("0123456789abcdef0123456789abcdef".into()),
-        ];
-        let lines = render_box(&rows);
-        let width = lines[0].chars().count();
-        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
-        assert!(lines.first().unwrap().starts_with('╭') && lines.first().unwrap().ends_with('╮'));
-        assert!(lines.last().unwrap().starts_with('╰') && lines.last().unwrap().ends_with('╯'));
-        for interior in &lines[1..lines.len() - 1] {
-            assert!(interior.starts_with('│') && interior.ends_with('│'), "interior row is bordered: {interior}");
-        }
-    }
-
     #[tokio::test]
     async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
         let calls = std::cell::Cell::new(0u32);
@@ -1375,20 +1001,6 @@ mod tests {
         .await;
         assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
         assert_eq!(calls.get(), 3, "should try exactly `attempts` times before giving up");
-    }
-
-    #[test]
-    fn render_box_wraps_long_rows_within_a_narrow_cap() {
-        let long = "x".repeat(120);
-        let cap = 30;
-        let lines = render_box_capped(&[BoxRow::Value(long), BoxRow::Art(0)], cap);
-        let width = lines[0].chars().count();
-        // Uniform width, and the whole box stays within the cap (+ borders/margins).
-        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
-        assert!(width <= cap + 2 + BANNER_MARGIN * 2, "box width {width} exceeds cap {cap}");
-        // The 120-char value wrapped across multiple interior lines instead of overflowing.
-        let value_lines = lines.iter().filter(|l| l.contains('x')).count();
-        assert!(value_lines >= 4, "expected the long value to wrap into >=4 lines, got {value_lines}");
     }
 
     #[test]

@@ -715,6 +715,10 @@ const READY_PROBE_INTERVAL_SECS: u64 = 30;
 const READY_PROBE_TIMEOUT_SECS: u64 = 5;
 /// Consecutive failed /ready probes before cloudflared is restarted.
 const READY_PROBE_MAX_FAILURES: u32 = 3;
+/// How long the tunnel must stay unregistered before the supervisor reports it
+/// down to status.json. Longer than a normal restart-recovery cycle, so transient
+/// blips the supervisor heals on its own keep the status showing "enabled".
+const TUNNEL_DOWN_SUSTAINED_SECS: u64 = 120;
 
 pub struct TunnelSupervisor {
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -731,7 +735,18 @@ impl TunnelSupervisor {
 
 /// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
 /// on a failed edge probe streak, after a fixed delay between attempts.
-pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
+///
+/// `on_tunnel_up(bool)` is invoked on SUSTAINED edge changes (debounced) so the
+/// caller can mirror tunnel health into status.json: `true` as soon as the tunnel
+/// re-registers, `false` only after it has been unregistered for
+/// `TUNNEL_DOWN_SUSTAINED_SECS` (so transient blips the supervisor heals don't
+/// flip status). Kept as a plain `Fn(bool)` to keep this module free of caller
+/// types.
+pub fn supervise_tunnel(
+    config_dir: PathBuf,
+    port: u16,
+    on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync>,
+) -> TunnelSupervisor {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(async move {
         // One client for every probe across respawns. Build failure is
@@ -747,6 +762,11 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
                 None
             }
         };
+        // Edge state for status.json, carried across cloudflared restarts. The
+        // supervisor only runs once the tunnel was verified up, so we start
+        // "reported up" with `now` as the last registered time.
+        let mut reported_up = true;
+        let mut last_registered = tokio::time::Instant::now();
         loop {
             match start_tunnel(&config_dir, port).await {
                 Ok((mut child, metrics_port)) => {
@@ -755,7 +775,14 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
                             child.kill().await.ok();
                             return;
                         }
-                        reason = run_until_unhealthy(&mut child, probe_client.as_ref(), metrics_port) => reason,
+                        reason = run_until_unhealthy(
+                            &mut child,
+                            probe_client.as_ref(),
+                            metrics_port,
+                            on_tunnel_up.as_ref(),
+                            &mut reported_up,
+                            &mut last_registered,
+                        ) => reason,
                     };
                     child.kill().await.ok();
                     tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel unhealthy ({reason}), restarting cloudflared");
@@ -774,11 +801,16 @@ pub fn supervise_tunnel(config_dir: PathBuf, port: u16) -> TunnelSupervisor {
 }
 
 /// Watch one cloudflared run; returns the reason it must be replaced (process
-/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row).
+/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row). Drives the
+/// debounced `on_tunnel_up` edge callback via `reported_up`/`last_registered`,
+/// which persist across restarts.
 async fn run_until_unhealthy(
     child: &mut tokio::process::Child,
     probe_client: Option<&reqwest::Client>,
     metrics_port: u16,
+    on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
+    reported_up: &mut bool,
+    last_registered: &mut tokio::time::Instant,
 ) -> String {
     let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
     let probe_interval = std::time::Duration::from_secs(READY_PROBE_INTERVAL_SECS);
@@ -805,6 +837,20 @@ async fn run_until_unhealthy(
                     Ok(resp) => resp.status().is_success(),
                     Err(_) => false,
                 };
+                // Mirror health into status.json on sustained edges only: "up" the
+                // moment it re-registers, "down" only after a sustained outage.
+                if ok {
+                    *last_registered = tokio::time::Instant::now();
+                    if !*reported_up {
+                        on_tunnel_up(true);
+                        *reported_up = true;
+                    }
+                } else if *reported_up
+                    && last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS)
+                {
+                    on_tunnel_up(false);
+                    *reported_up = false;
+                }
                 let (failures, restart) = record_probe(consecutive_failures, ok);
                 consecutive_failures = failures;
                 if !ok {
