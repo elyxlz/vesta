@@ -751,7 +751,123 @@ async fn bind_http_atomically(
     unreachable!()
 }
 
-fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
+/// Outcome of bringing the tunnel up at startup, surfaced in the banner.
+enum TunnelStatus {
+    Disabled,       // --no-tunnel
+    Active(String), // reachable https URL
+    Failed(String), // wanted, but couldn't be established — concise reason
+}
+
+impl TunnelStatus {
+    fn url(&self) -> Option<&str> {
+        match self {
+            TunnelStatus::Active(url) => Some(url),
+            _ => None,
+        }
+    }
+}
+
+/// First line of `msg`, trimmed and capped to `max` chars with an ellipsis, so a
+/// long or multi-line error can't blow up the banner width.
+fn first_line_truncated(msg: &str, max: usize) -> String {
+    let line = msg.lines().next().unwrap_or(msg).trim();
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        format!("{}…", line.chars().take(max.saturating_sub(1)).collect::<String>())
+    }
+}
+
+/// How many times startup tries to bring the tunnel up before giving up and
+/// starting anyway (with the failure shown in the banner). Absorbs a tunnel that
+/// is slow to register right after boot — e.g. the network isn't up yet.
+const TUNNEL_STARTUP_ATTEMPTS: u32 = 3;
+const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
+
+/// Bring the tunnel up at startup, retrying before giving up. On success the
+/// banner advertises the live URL and the supervisor keeps it alive; if every
+/// attempt fails, vestad starts ANYWAY (local access + agents) with the error
+/// surfaced in the banner — a broken tunnel must not block the rest of the box.
+///
+/// The /ready pre-flight is credential-free, so this works even on a box that
+/// can't reach the Cloudflare API. Managed (vesta.run) boxes are exempt: the
+/// control plane owns the tunnel, so we trust the seeded config and let the
+/// supervisor (re)connect rather than pre-flighting.
+async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
+    let status = retry_tunnel(
+        TUNNEL_STARTUP_ATTEMPTS,
+        std::time::Duration::from_secs(TUNNEL_STARTUP_RETRY_DELAY_SECS),
+        |attempt| async move {
+            let result = try_establish_tunnel(config, port).await;
+            if let Err(reason) = &result {
+                tracing::warn!(attempt, attempts = TUNNEL_STARTUP_ATTEMPTS, "tunnel not up: {reason}");
+            }
+            result
+        },
+    )
+    .await;
+
+    // Gave up. Drop the dead config (unless managed — the control plane owns it)
+    // so the supervisor isn't started into a "Tunnel not found" loop. vestad then
+    // starts anyway with the reason shown on the banner.
+    if matches!(status, TunnelStatus::Failed(_)) && !is_cloud_managed() {
+        tunnel::forget_tunnel(config);
+    }
+    status
+}
+
+/// Retry an async tunnel attempt up to `attempts` times, sleeping `delay` between
+/// tries. Returns `Active` with the first URL that comes up, or `Failed` carrying
+/// the last error once every attempt has failed.
+async fn retry_tunnel<F, Fut>(attempts: u32, delay: std::time::Duration, mut attempt: F) -> TunnelStatus
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let mut reason = "tunnel could not be established".to_string();
+    for n in 1..=attempts {
+        match attempt(n).await {
+            Ok(url) => return TunnelStatus::Active(url),
+            Err(e) => {
+                reason = e;
+                if n < attempts {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+    TunnelStatus::Failed(reason)
+}
+
+/// One attempt to bring up and verify the tunnel. `Ok(url)` once it registers an
+/// edge connection; `Err(reason)` describes why this attempt failed.
+async fn try_establish_tunnel(config: &std::path::Path, port: u16) -> Result<String, String> {
+    let tc = tunnel::ensure_cloudflared(config).and_then(|_| tunnel::ensure_tunnel(config))?;
+
+    if is_cloud_managed() {
+        return Ok(format!("https://{}", tc.hostname));
+    }
+
+    if tunnel::preflight_tunnel(config, port).await {
+        return Ok(format!("https://{}", tc.hostname));
+    }
+    tracing::warn!(hostname = %tc.hostname, "saved tunnel failed to register");
+
+    // With our own creds the tunnel may be fixable — recreate it from scratch
+    // (new tunnel + token + DNS) and re-verify.
+    if tunnel::has_cf_creds(config) {
+        let subdomain = tc.hostname.split('.').next().unwrap_or("");
+        let fresh = tunnel::setup_tunnel(config, subdomain)?;
+        if tunnel::preflight_tunnel(config, port).await {
+            tracing::info!(hostname = %fresh.hostname, "tunnel recreated and registered");
+            return Ok(format!("https://{}", fresh.hostname));
+        }
+        return Err("recreated tunnel still could not register".to_string());
+    }
+    Err("saved tunnel could not register".to_string())
+}
+
+fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     let config = config_dir();
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
@@ -777,24 +893,34 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
-            let tunnel_url = if no_tunnel {
-                None
+            let tunnel_status = if no_tunnel {
+                TunnelStatus::Disabled
             } else {
-                match tunnel::ensure_cloudflared(&config).and_then(|_| tunnel::ensure_tunnel(&config)) {
-                    Ok(tc) => Some(format!("https://{}", tc.hostname)),
-                    Err(e) => {
-                        tracing::warn!("tunnel setup failed: {e}, running without tunnel");
-                        None
-                    }
-                }
+                setup_and_verify_tunnel(&config, port).await
             };
+            let tunnel_url = tunnel_status.url().map(str::to_string);
 
             docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             let local_url = format!("http://localhost:{}", port + 1);
+            // Only advertise a LAN address when the API is actually bound to the
+            // LAN (--expose-lan); otherwise the URL would be unreachable.
+            let lan_url = expose_lan
+                .then(local_lan_ip)
+                .flatten()
+                .map(|ip| format!("https://{}:{}", ip, port));
             let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
-            eprintln!();
-            eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
-            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
+            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
+            print_startup_banner(BannerFields {
+                version: env!("CARGO_PKG_VERSION"),
+                user: &user,
+                port,
+                dev_mode,
+                tunnel: &tunnel_status,
+                lan_url: lan_url.as_deref(),
+                expose_lan,
+                local_url: &local_url,
+                api_key: &api_key,
+            });
 
             // Supervise whenever a tunnel is INTENDED, not only when boot-time
             // setup succeeded: a managed box whose tunnel.json the control plane
@@ -807,7 +933,6 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             let tunnel_supervisor =
                 tunnel_intended.then(|| tunnel::supervise_tunnel(config.clone(), port));
 
-            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
             serve::run_server(serve::ServerConfig {
                 port,
                 http_listener,
@@ -1180,6 +1305,91 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vesta_art_lines_are_uniform_width() {
+        for line in VESTA_ART {
+            assert_eq!(line.chars().count(), BANNER_ART_W, "art line: {line}");
+        }
+    }
+
+    #[test]
+    fn render_box_lines_share_width_and_are_bordered() {
+        // Colour is disabled under `cargo test` (stderr is not a TTY), so the
+        // rendered lines are plain and char count equals display width.
+        let rows = vec![
+            BoxRow::Gap,
+            BoxRow::Art(0),
+            BoxRow::Center("personal AI daemon".into()),
+            BoxRow::Kv("user", "emi".into()),
+            BoxRow::Rule("connection"),
+            BoxRow::Value("0123456789abcdef0123456789abcdef".into()),
+        ];
+        let lines = render_box(&rows);
+        let width = lines[0].chars().count();
+        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
+        assert!(lines.first().unwrap().starts_with('╭') && lines.first().unwrap().ends_with('╮'));
+        assert!(lines.last().unwrap().starts_with('╰') && lines.last().unwrap().ends_with('╯'));
+        for interior in &lines[1..lines.len() - 1] {
+            assert!(interior.starts_with('│') && interior.ends_with('│'), "interior row is bordered: {interior}");
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
+        let calls = std::cell::Cell::new(0u32);
+        let status = retry_tunnel(3, std::time::Duration::ZERO, |_| {
+            calls.set(calls.get() + 1);
+            async { Ok::<String, String>("https://host".to_string()) }
+        })
+        .await;
+        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://host"));
+        assert_eq!(calls.get(), 1, "should not retry once an attempt succeeds");
+    }
+
+    #[tokio::test]
+    async fn retry_tunnel_retries_until_an_attempt_succeeds() {
+        let calls = std::cell::Cell::new(0u32);
+        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
+            calls.set(calls.get() + 1);
+            async move {
+                if attempt < 3 {
+                    Err(format!("not up yet (attempt {attempt})"))
+                } else {
+                    Ok("https://up".to_string())
+                }
+            }
+        })
+        .await;
+        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://up"));
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[tokio::test]
+    async fn retry_tunnel_gives_up_with_the_last_error_after_all_attempts() {
+        let calls = std::cell::Cell::new(0u32);
+        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
+            calls.set(calls.get() + 1);
+            async move { Err::<String, String>(format!("boom {attempt}")) }
+        })
+        .await;
+        assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
+        assert_eq!(calls.get(), 3, "should try exactly `attempts` times before giving up");
+    }
+
+    #[test]
+    fn render_box_wraps_long_rows_within_a_narrow_cap() {
+        let long = "x".repeat(120);
+        let cap = 30;
+        let lines = render_box_capped(&[BoxRow::Value(long), BoxRow::Art(0)], cap);
+        let width = lines[0].chars().count();
+        // Uniform width, and the whole box stays within the cap (+ borders/margins).
+        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
+        assert!(width <= cap + 2 + BANNER_MARGIN * 2, "box width {width} exceeds cap {cap}");
+        // The 120-char value wrapped across multiple interior lines instead of overflowing.
+        let value_lines = lines.iter().filter(|l| l.contains('x')).count();
+        assert!(value_lines >= 4, "expected the long value to wrap into >=4 lines, got {value_lines}");
+    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {

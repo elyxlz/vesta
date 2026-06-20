@@ -258,6 +258,14 @@ pub fn get_tunnel_config(config_dir: &Path) -> Option<TunnelConfig> {
     serde_json::from_str(&data).ok()
 }
 
+/// Drop the saved tunnel config WITHOUT touching Cloudflare. Used when the box
+/// can't manage the remote tunnel (no creds — e.g. an orphaned `*.vesta.run`
+/// tunnel left behind on a now-self-hosted box) so future boots stop retrying a
+/// tunnel that can never register.
+pub fn forget_tunnel(config_dir: &Path) {
+    std::fs::remove_file(tunnel_config_path(config_dir)).ok();
+}
+
 const ANIMALS: &[&str] = &[
     "alpaca", "badger", "beaver", "bison", "bobcat", "camel", "capybara", "cardinal",
     "caribou", "chameleon", "cheetah", "chinchilla", "chipmunk", "cobra", "condor",
@@ -620,6 +628,64 @@ fn alloc_loopback_port() -> Result<u16, String> {
         .local_addr()
         .map_err(|e| format!("failed to read metrics port: {}", e))?;
     Ok(addr.port())
+}
+
+/// How long boot-time pre-flight waits for cloudflared to register an edge
+/// connection before declaring the saved tunnel dead. Generous enough to absorb
+/// a slow first connect, short enough not to stall startup.
+const PREFLIGHT_READY_TIMEOUT_SECS: u64 = 20;
+const PREFLIGHT_POLL_INTERVAL_MS: u64 = 500;
+
+/// Credential-free boot check that the saved tunnel can actually register.
+///
+/// Spawns one short-lived cloudflared and polls its /ready endpoint until it
+/// reports a registered edge connection, then kills it (the supervisor owns the
+/// long-lived child). Returns `false` if cloudflared exits early — e.g.
+/// "Unauthorized: Tunnel not found" when the tunnel was deleted server-side or
+/// its token revoked — or never registers within PREFLIGHT_READY_TIMEOUT_SECS.
+/// This relies only on cloudflared's local /ready, so it works on a box that
+/// holds no Cloudflare credentials and can't query the API.
+pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
+    let (mut child, metrics_port) = match start_tunnel(config_dir, port).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!("tunnel pre-flight could not start cloudflared: {e}");
+            return false;
+        }
+    };
+    let probe_client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(READY_PROBE_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("tunnel pre-flight probe client unavailable: {e}");
+            child.kill().await.ok();
+            return false;
+        }
+    };
+    let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(PREFLIGHT_READY_TIMEOUT_SECS);
+    let ready = loop {
+        // cloudflared gave up on its own (dead tunnel / revoked token).
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            break false;
+        }
+        let registered = match probe_client.get(&probe_url).send().await {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        };
+        if registered {
+            break true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(PREFLIGHT_POLL_INTERVAL_MS)).await;
+    };
+    child.kill().await.ok();
+    ready
 }
 
 // --- Tunnel supervision ---
