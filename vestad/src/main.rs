@@ -51,6 +51,10 @@ enum Command {
         /// Run in foreground without systemd (for CI/dev)
         #[arg(long)]
         standalone: bool,
+        /// Bind the HTTPS API to all interfaces so other devices on the LAN can
+        /// connect (default: loopback only). Standalone mode only.
+        #[arg(long)]
+        expose_lan: bool,
     },
     /// Show vestad service status
     Status,
@@ -659,12 +663,47 @@ fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
 }
 
+/// Best-effort primary LAN IPv4 — the source address the kernel uses to reach
+/// off-box via the default route, i.e. the address other LAN devices can reach.
+/// `ip route get` is used first so Docker/VPN bridge addresses (172.17.x and the
+/// like, always present since vestad needs Docker) are skipped; it falls back to
+/// the first non-loopback, non-Docker-bridge address from `hostname -I`. Either
+/// way the result is covered by the TLS cert SANs. `None` if undeterminable.
+fn local_lan_ip() -> Option<String> {
+    // `ip -4 route get <external ip>` prints "<dst> via <gw> dev <if> src <LAN_IP> …".
+    if let Ok(output) = std::process::Command::new("ip").args(["-4", "route", "get", "1.1.1.1"]).output() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(src) = text.split_whitespace().skip_while(|token| *token != "src").nth(1) {
+            if let Ok(ip) = src.parse::<std::net::Ipv4Addr>() {
+                if !ip.is_loopback() {
+                    return Some(ip.to_string());
+                }
+            }
+        }
+    }
+    // Fallback: first non-loopback IPv4 from `hostname -I`, skipping Docker's
+    // default bridge range (172.17.0.0/16).
+    let output = std::process::Command::new("hostname").arg("-I").output().ok()?;
+    let ips = String::from_utf8_lossy(&output.stdout);
+    ips.split_whitespace()
+        .filter_map(|token| token.parse::<std::net::Ipv4Addr>().ok())
+        .find(|ip| {
+            let octets = ip.octets();
+            !ip.is_loopback() && (octets[0] != 172 || octets[1] != 17)
+        })
+        .map(|ip| ip.to_string())
+}
+
 /// Print connection info when an API key is present (the shape shared by `status`
 /// and the systemd start path), taking the `read_server_info` tuple directly.
 fn print_server_info_opt(info: (Option<String>, Option<String>, Option<String>)) {
     let (tunnel_url, local_url, api_key) = info;
     if let Some(api_key) = &api_key {
-        print_server_info(tunnel_url.as_deref(), local_url.as_deref().unwrap_or("http://localhost:?"), api_key);
+        print_server_info(
+            tunnel_url.as_deref(),
+            local_url.as_deref().unwrap_or("http://localhost:?"),
+            api_key,
+        );
     }
 }
 
@@ -779,6 +818,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 config_dir: config.clone(),
                 docker: docker.clone(),
                 dev_mode,
+                expose_lan,
             }).await;
 
             if let Some(supervisor) = tunnel_supervisor {
@@ -853,11 +893,14 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false, standalone: false }) {
-        Command::Serve { port, no_tunnel, standalone } => {
+    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false, standalone: false, expose_lan: false }) {
+        Command::Serve { port, no_tunnel, standalone, expose_lan } => {
             if standalone {
-                run_server_foreground(port, no_tunnel);
+                run_server_foreground(port, no_tunnel, expose_lan);
             } else {
+                if expose_lan {
+                    eprintln!("note: --expose-lan only applies with --standalone");
+                }
                 run_server_systemd(port, no_tunnel);
             }
         }
