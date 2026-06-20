@@ -164,6 +164,21 @@ fn restic_command(name: &str) -> Result<std::process::Command, DockerError> {
     Ok(cmd)
 }
 
+/// Run a restic subcommand to completion, returning its captured stdout. A nonzero
+/// exit maps to `Failed`, with the subcommand `label` naming it in both the spawn-
+/// and exit-failure messages.
+fn run_restic_capture(name: &str, label: &str, args: &[&str]) -> Result<Vec<u8>, DockerError> {
+    let output = restic_command(name)?
+        .args(args)
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run restic {label}: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DockerError::Failed(format!("restic {label} failed: {stderr}")));
+    }
+    Ok(output.stdout)
+}
+
 /// Initialize the agent's repository if it does not already exist. Idempotent.
 fn ensure_repo(name: &str) -> Result<(), DockerError> {
     // `cat config` succeeds only on an initialized repo.
@@ -181,14 +196,7 @@ fn ensure_repo(name: &str) -> Result<(), DockerError> {
     std::fs::create_dir_all(repo_path(name))
         .map_err(|e| DockerError::Failed(format!("failed to create repo dir: {e}")))?;
 
-    let output = restic_command(name)?
-        .args(["init"])
-        .output()
-        .map_err(|e| DockerError::Failed(format!("failed to run restic init: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DockerError::Failed(format!("restic init failed: {stderr}")));
-    }
+    run_restic_capture(name, "init", &["init"])?;
     tracing::info!(repo = %repo_path(name).display(), "initialized restic backup repository");
     Ok(())
 }
@@ -309,15 +317,8 @@ struct ResticLsNode {
 /// `.tar`. This is rename-proof: it reads what was actually baked in at backup
 /// time rather than recomputing from the agent's current name.
 fn snapshot_tar_path_for_id(repo_name: &str, backup_id: &str) -> Result<String, DockerError> {
-    let output = restic_command(repo_name)?
-        .args(["ls", backup_id, "--json"])
-        .output()
-        .map_err(|e| DockerError::Failed(format!("failed to run restic ls: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DockerError::Failed(format!("restic ls failed: {stderr}")));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_restic_capture(repo_name, "ls", &["ls", backup_id, "--json"])?;
+    let stdout = String::from_utf8_lossy(&stdout);
     for line in stdout.lines() {
         let Ok(node) = serde_json::from_str::<ResticLsNode>(line) else {
             continue;
@@ -370,15 +371,8 @@ pub async fn list(name: &str) -> Result<Vec<BackupInfo>, DockerError> {
     let name = name.to_string();
 
     let snapshots = tokio::task::spawn_blocking(move || -> Result<Vec<ResticSnapshot>, DockerError> {
-        let output = restic_command(&name)?
-            .args(["snapshots", "--json"])
-            .output()
-            .map_err(|e| DockerError::Failed(format!("failed to run restic snapshots: {e}")))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DockerError::Failed(format!("restic snapshots failed: {stderr}")));
-        }
-        serde_json::from_slice::<Vec<ResticSnapshot>>(&output.stdout)
+        let stdout = run_restic_capture(&name, "snapshots", &["snapshots", "--json"])?;
+        serde_json::from_slice::<Vec<ResticSnapshot>>(&stdout)
             .map_err(|e| DockerError::Failed(format!("failed to parse restic snapshots: {e}")))
     })
     .await
@@ -465,16 +459,9 @@ pub async fn forget(name: &str, ids: &[String]) -> Result<(), DockerError> {
     tokio::time::timeout(
         std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-            let mut args = vec!["forget".to_string(), "--prune".to_string()];
-            args.extend(ids);
-            let output = restic_command(&name)?
-                .args(&args)
-                .output()
-                .map_err(|e| DockerError::Failed(format!("failed to run restic forget: {e}")))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(DockerError::Failed(format!("restic forget failed: {stderr}")));
-            }
+            let mut args = vec!["forget", "--prune"];
+            args.extend(ids.iter().map(String::as_str));
+            run_restic_capture(&name, "forget", &args)?;
             Ok(())
         }),
     )
