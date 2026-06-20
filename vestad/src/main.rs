@@ -333,21 +333,292 @@ fn connect_link(base_url: &str, api_key: &str) -> String {
     format!("{base_url}/app#k={api_key}")
 }
 
-/// Render `data` as a QR code of half-block characters, inverted (light
-/// modules on a dark glyph) so it scans correctly against a dark terminal.
-/// Silently skips on the rare encode failure rather than failing the command.
+/// Render `data` as QR rows of half-block characters, inverted (light modules on
+/// a dark glyph) so it scans correctly against a dark terminal. Empty on the rare
+/// encode failure.
+fn qr_lines(data: &str) -> Vec<String> {
+    let Ok(code) = QrCode::new(data.as_bytes()) else {
+        return Vec::new();
+    };
+    code.render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .quiet_zone(true)
+        .build()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Print a QR code with a small left margin (used by the status / systemd path).
 fn print_qr(data: &str) {
-    if let Ok(code) = QrCode::new(data.as_bytes()) {
-        let rendered = code
-            .render::<unicode::Dense1x2>()
-            .dark_color(unicode::Dense1x2::Light)
-            .light_color(unicode::Dense1x2::Dark)
-            .quiet_zone(true)
-            .build();
-        for line in rendered.lines() {
-            eprintln!("  {line}");
+    for line in qr_lines(data) {
+        eprintln!("  {line}");
+    }
+}
+
+// --- Startup banner ---
+
+const BANNER_ACCENT: &str = "38;2;231;186;140"; // light orange #e7ba8c (24-bit truecolor)
+const BANNER_DIM: &str = "2";
+const BANNER_MARGIN: usize = 3; // spaces between the border and content
+const BANNER_LABEL_W: usize = 9; // config label column width
+const BANNER_ART_W: usize = 46; // fixed width of every VESTA_ART line
+
+/// "VESTA" in an ANSI-shadow block font. Every line is exactly BANNER_ART_W wide
+/// (a unit test enforces this, since the box geometry centers on that width).
+const VESTA_ART: [&str; 6] = [
+    "██╗   ██╗ ███████╗ ███████╗ ████████╗  █████╗ ",
+    "██║   ██║ ██╔════╝ ██╔════╝ ╚══██╔══╝ ██╔══██╗",
+    "██║   ██║ █████╗   ███████╗    ██║    ███████║",
+    "╚██╗ ██╔╝ ██╔══╝   ╚════██║    ██║    ██╔══██║",
+    " ╚████╔╝  ███████╗ ███████║    ██║    ██║  ██║",
+    "  ╚═══╝   ╚══════╝ ╚══════╝    ╚═╝    ╚═╝  ╚═╝",
+];
+
+/// One row of the startup box. Each variant knows its natural (uncolored) width
+/// so the renderer can size the box and pad every line to a uniform interior.
+enum BoxRow {
+    Gap,
+    Art(usize),              // index into VESTA_ART, centered, accent colour
+    Center(String),          // centered dim text (e.g. the version subtitle)
+    CenterRaw(String),       // centered uncoloured text (QR rows must stay scannable)
+    Kv(&'static str, String), // "label   value", left-aligned
+    Value(String),           // a full-width left-aligned value (e.g. the api key)
+    Rule(&'static str),      // "── label ─────" section divider
+}
+
+impl BoxRow {
+    /// Visible width of the row's content, ignoring borders and side margins.
+    fn width(&self) -> usize {
+        match self {
+            BoxRow::Gap => 0,
+            BoxRow::Art(_) => BANNER_ART_W,
+            BoxRow::Center(s) | BoxRow::CenterRaw(s) | BoxRow::Value(s) => s.chars().count(),
+            BoxRow::Kv(_, value) => BANNER_LABEL_W + value.chars().count(),
+            BoxRow::Rule(label) => label.chars().count() + 5, // "── " + " ─"
         }
     }
+
+    /// Render the content fitted to `inner` columns as one or more `(plain,
+    /// shown)` lines — long values (links, api key, a long error) are hard-wrapped
+    /// so the box never overflows a narrow terminal. `plain` drives padding math
+    /// (no ANSI); `shown` is what prints (equal to `plain` when colour is off).
+    fn render(&self, inner: usize) -> Vec<(String, String)> {
+        let centered = |line: &str, code: Option<&str>| {
+            let lead = " ".repeat(inner.saturating_sub(line.chars().count()) / 2);
+            let shown = match code {
+                Some(code) => paint(code, line),
+                None => line.to_string(),
+            };
+            (format!("{lead}{line}"), format!("{lead}{shown}"))
+        };
+        match self {
+            BoxRow::Gap => vec![(String::new(), String::new())],
+            BoxRow::Art(idx) => {
+                let art = VESTA_ART[*idx];
+                // Can't shrink the art; drop it rather than overflow a tiny box.
+                if art.chars().count() > inner {
+                    Vec::new()
+                } else {
+                    vec![centered(art, Some(BANNER_ACCENT))]
+                }
+            }
+            BoxRow::Center(text) => wrap_chars(text, inner)
+                .iter()
+                .map(|line| centered(line, Some(BANNER_DIM)))
+                .collect(),
+            BoxRow::CenterRaw(text) => vec![centered(text, None)],
+            BoxRow::Kv(label, value) => {
+                let label_col = format!("{:<width$}", label, width = BANNER_LABEL_W);
+                let value_width = inner.saturating_sub(BANNER_LABEL_W).max(1);
+                wrap_chars(value, value_width)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(line_no, chunk)| {
+                        if line_no == 0 {
+                            (format!("{label_col}{chunk}"), format!("{}{chunk}", paint(BANNER_DIM, &label_col)))
+                        } else {
+                            // continuation lines align under the value column
+                            let pad = " ".repeat(BANNER_LABEL_W);
+                            (format!("{pad}{chunk}"), format!("{pad}{chunk}"))
+                        }
+                    })
+                    .collect()
+            }
+            BoxRow::Value(value) => wrap_chars(value, inner)
+                .into_iter()
+                .map(|chunk| (chunk.clone(), paint(BANNER_ACCENT, &chunk)))
+                .collect(),
+            BoxRow::Rule(label) => {
+                let prefix = format!("── {} ", label);
+                let fill = inner.saturating_sub(prefix.chars().count());
+                let plain = format!("{}{}", prefix, "─".repeat(fill));
+                vec![(plain.clone(), paint(BANNER_DIM, &plain))]
+            }
+        }
+    }
+}
+
+/// Hard-wrap `text` into chunks of at most `width` characters (character-wise, so
+/// unbreakable strings like URLs and keys still fit). Always returns ≥1 element.
+fn wrap_chars(text: &str, width: usize) -> Vec<String> {
+    if width == 0 || text.is_empty() {
+        return vec![text.to_string()];
+    }
+    text.chars()
+        .collect::<Vec<char>>()
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+/// Terminal width (columns) of stderr, or `None` when it isn't a TTY / can't be
+/// queried — callers fall back to a conservative default.
+fn terminal_width() -> Option<usize> {
+    use std::os::unix::io::AsRawFd;
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ fills the winsize through the pointer for a valid fd; we
+    // pass stderr's fd and a correctly sized, zeroed struct.
+    let rc = unsafe { libc::ioctl(std::io::stderr().as_raw_fd(), libc::TIOCGWINSZ, &mut size) };
+    (rc == 0 && size.ws_col > 0).then_some(size.ws_col as usize)
+}
+
+/// Draw the rows inside a rounded, accent-coloured box. The interior is as wide
+/// as the content but capped to the terminal so the box never wraps; over-long
+/// rows are wrapped to fit. Returns the finished lines (plain when colour is off,
+/// which is how the geometry test inspects them).
+fn render_box(rows: &[BoxRow]) -> Vec<String> {
+    // Reserve the 2-space outer indent, both borders, and both side margins.
+    let overhead = 2 + 2 + BANNER_MARGIN * 2;
+    let cap = terminal_width().unwrap_or(80).saturating_sub(overhead);
+    render_box_capped(rows, cap)
+}
+
+/// [`render_box`] with the interior width cap passed explicitly (so the wrapping
+/// behaviour is testable without a real terminal).
+fn render_box_capped(rows: &[BoxRow], cap: usize) -> Vec<String> {
+    let natural = rows.iter().map(BoxRow::width).max().unwrap_or(0);
+    let inner = natural.min(cap).max(1);
+    let span = BANNER_MARGIN * 2 + inner;
+    let edge = |left: &str, right: &str| {
+        format!("{}{}{}", paint(BANNER_ACCENT, left), paint(BANNER_ACCENT, &"─".repeat(span)), paint(BANNER_ACCENT, right))
+    };
+    let mut out = vec![edge("╭", "╮")];
+    let side = paint(BANNER_ACCENT, "│");
+    for row in rows {
+        for (plain, shown) in row.render(inner) {
+            let trailing = inner.saturating_sub(plain.chars().count());
+            out.push(format!(
+                "{side}{margin}{shown}{trailing}{margin}{side}",
+                margin = " ".repeat(BANNER_MARGIN),
+                trailing = " ".repeat(trailing),
+            ));
+        }
+    }
+    out.push(edge("╰", "╯"));
+    out
+}
+
+/// The full startup banner: the boxed identity/config/connection summary, then
+/// the app connect link + QR below it.
+fn print_startup_banner(fields: BannerFields) {
+    let BannerFields { version, user, port, dev_mode, tunnel, lan_url, expose_lan, local_url, api_key } = fields;
+    let tunnel_url = tunnel.url();
+
+    // enabled = tunnel is up; disabled = --no-tunnel; error — <reason> = a tunnel
+    // was wanted but couldn't be established (no creds, dead tunnel, API failure).
+    let tunnel_desc = match tunnel {
+        TunnelStatus::Active(_) => "enabled".to_string(),
+        TunnelStatus::Disabled => "disabled".to_string(),
+        TunnelStatus::Failed(reason) => format!("error — {}", first_line_truncated(reason, 100)),
+    };
+    let lan_desc = if expose_lan { "enabled".to_string() } else { "disabled".to_string() };
+    // The address most useful to a human: public tunnel, else the LAN URL when
+    // exposed, else the same-machine local URL.
+    let address = tunnel_url
+        .map(str::to_string)
+        .or_else(|| lan_url.map(str::to_string))
+        .unwrap_or_else(|| local_url.to_string());
+
+    // The LAN connect link is only real when the API is actually bound to the LAN.
+    let lan_app = expose_lan.then_some(lan_url).flatten();
+
+    let mut rows = vec![
+        BoxRow::Gap,
+        BoxRow::Art(0),
+        BoxRow::Art(1),
+        BoxRow::Art(2),
+        BoxRow::Art(3),
+        BoxRow::Art(4),
+        BoxRow::Art(5),
+        BoxRow::Gap,
+        BoxRow::Center(format!("personal AI daemon · v{version}")),
+        BoxRow::Gap,
+        BoxRow::Kv("user", user.to_string()),
+        BoxRow::Kv("port", port.to_string()),
+        BoxRow::Kv("mode", if dev_mode { "development".to_string() } else { "production".to_string() }),
+        BoxRow::Kv("tunnel", tunnel_desc),
+        BoxRow::Kv("lan", lan_desc),
+        BoxRow::Gap,
+        BoxRow::Rule("connection"),
+        BoxRow::Kv("address", address),
+        BoxRow::Kv("api key", String::new()),
+        BoxRow::Value(api_key.to_string()),
+        BoxRow::Gap,
+        BoxRow::Rule("connect the app"),
+    ];
+    // One labeled link per reachability tier: remote (public tunnel), lan (same
+    // network), local (this machine only). Local always exists. Each tier shows
+    // its label on its own line, then the link beneath it in the api-key colour.
+    let mut app_links: Vec<(&'static str, String)> = Vec::new();
+    // remote tier is always shown: the public link when a tunnel is up, otherwise
+    // how to get one.
+    match tunnel_url {
+        Some(url) => app_links.push(("remote", connect_link(url, api_key))),
+        None => app_links.push(("remote", "run `vestad connect` for a public URL".to_string())),
+    }
+    if let Some(url) = lan_app {
+        app_links.push(("lan", connect_link(url, api_key)));
+    }
+    app_links.push(("local", connect_link(local_url, api_key)));
+    for (index, (label, link)) in app_links.into_iter().enumerate() {
+        if index > 0 {
+            rows.push(BoxRow::Gap);
+        }
+        rows.push(BoxRow::Kv(label, String::new()));
+        rows.push(BoxRow::Value(link));
+    }
+
+    // QR only for the public (remote) link — that's the one meant for scanning
+    // from a phone.
+    if let Some(url) = tunnel_url {
+        let link = connect_link(url, api_key);
+        rows.push(BoxRow::Gap);
+        rows.extend(qr_lines(&link).into_iter().map(BoxRow::CenterRaw));
+        rows.push(BoxRow::Center("scan the remote link to connect your phone".to_string()));
+    }
+    rows.push(BoxRow::Gap);
+
+    eprintln!();
+    for line in render_box(&rows) {
+        eprintln!("  {line}");
+    }
+    eprintln!();
+}
+
+/// Grouped inputs for [`print_startup_banner`] — past ~5 args a struct reads
+/// better than a positional list.
+struct BannerFields<'a> {
+    version: &'a str,
+    user: &'a str,
+    port: u16,
+    dev_mode: bool,
+    tunnel: &'a TunnelStatus,
+    lan_url: Option<&'a str>,
+    expose_lan: bool,
+    local_url: &'a str,
+    api_key: &'a str,
 }
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
