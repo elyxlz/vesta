@@ -129,8 +129,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     except (KeyboardInterrupt, asyncio.CancelledError):
         state.shutdown_event.set()
 
-    if not state.shutdown_event.is_set():
-        state.shutdown_event.set()
+    state.shutdown_event.set()
 
     reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")

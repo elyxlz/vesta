@@ -74,9 +74,7 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
-    paths = {n.file_path for n in notifications if n.file_path}
-    for path_str in paths:
-        pl.Path(path_str).unlink(missing_ok=True)
+    _delete_paths([n.file_path for n in notifications if n.file_path])
 
 
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
@@ -132,13 +130,14 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
+    async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
+        paths = [n.file_path for n in group if n.file_path]
+        await queue.put((format_notification_batch(group, suffix=suffix), False, paths))
+
     if system:
-        system_paths = [n.file_path for n in system if n.file_path]
-        await queue.put((format_notification_batch(system, suffix=""), False, system_paths))
+        await queue_section(system, suffix="")
     if external:
-        suffix = load_prompt("notification_suffix", config) or ""
-        external_paths = [n.file_path for n in external if n.file_path]
-        await queue.put((format_notification_batch(external, suffix=suffix), False, external_paths))
+        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
 
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
@@ -422,7 +421,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
     watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, shutdown=state.shutdown_event))
 
     try:
-        while state.shutdown_event and not state.shutdown_event.is_set():
+        while not state.shutdown_event.is_set():
             # Wait for either a file change or the periodic tick
             try:
                 await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
@@ -430,7 +429,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
                 pass
             notify.clear()
 
-            if state.shutdown_event and state.shutdown_event.is_set():
+            if state.shutdown_event.is_set():
                 break
 
             now = _now()

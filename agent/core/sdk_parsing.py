@@ -155,8 +155,7 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
     if name in _TOOL_KEYS:
         val = tool_input[_TOOL_KEYS[name]] if _TOOL_KEYS[name] in tool_input else "?"
         return f"{name}: {val}"
-    raw = json.dumps(tool_input)
-    return f"{name}: {raw}"
+    return f"{name}: {json.dumps(tool_input)}"
 
 
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
