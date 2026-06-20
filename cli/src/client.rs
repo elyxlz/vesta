@@ -451,33 +451,29 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with provider credentials. Either Claude
-    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
+    /// Provision an existing agent with Claude credentials (the OAuth JSON blob), then apply the
+    /// model/context preferences through the config store. `/provider` is auth-only now.
     pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        let mut body = serde_json::json!({"credentials": credentials});
-        if let Some(model) = model {
-            body["model"] = serde_json::json!(model);
-        }
-        if let Some(ctx) = max_context_tokens {
-            body["max_context_tokens"] = serde_json::json!(ctx);
-        }
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
-        Ok(())
+        self.post_json(&format!("/agents/{name}/provider"), &serde_json::json!({"credentials": credentials}))?;
+        self.set_config(name, model, max_context_tokens)
     }
 
-    /// Change the model and/or context window on a provisioned agent, keeping its
-    /// provider and credentials. POSTs `{model?, max_context_tokens?}`.
-    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+    /// Update editable preferences (model and/or context window) via the agent's config store
+    /// (PUT /config). A no-op when both are None. Vestad restarts the agent so they take effect.
+    pub fn set_config(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         let mut body = serde_json::Map::new();
         if let Some(model) = model {
-            body.insert("model".to_string(), serde_json::json!(model));
+            body.insert("agent_model".to_string(), serde_json::json!(model));
         }
         if let Some(ctx) = max_context_tokens {
             body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
         }
-        self.post_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(body))?;
+        if body.is_empty() {
+            return Ok(());
+        }
+        self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(body))?;
         Ok(())
     }
 

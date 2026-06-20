@@ -6,6 +6,7 @@ import socket
 import time
 import weakref
 
+import pydantic as pyd
 import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
@@ -92,7 +93,7 @@ SHUTDOWN_BUDGET_SEC = 3.0
 
 @pytest.mark.anyio
 async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -118,7 +119,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
 @pytest.mark.anyio
 async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -134,3 +135,63 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
             await cleanup_task
 
     assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING)
+
+
+# --- Request-body validation models (PUT /config, POST /provider) ---
+
+
+def test_config_update_accepts_any_field_and_returns_sparse(config):
+    from core.config import validate_config_updates
+
+    # Any real config field may be set, by its VestaConfig name, not a fixed allow-list.
+    assert validate_config_updates(config, {"agent_model": "sonnet"}) == {"agent_model": "sonnet"}
+    assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
+        "log_level": "DEBUG",
+        "response_timeout": 30,
+    }
+    # thinking takes the plain string form; the model coerces it on load.
+    assert validate_config_updates(config, {"thinking": "enabled"}) == {"thinking": "enabled"}
+
+
+def test_config_update_null_clears_a_key(config):
+    from core.config import validate_config_updates
+
+    # A null is preserved (not dropped) so the handler can clear that key in the store.
+    assert validate_config_updates(config, {"max_context_tokens": None}) == {"max_context_tokens": None}
+
+
+def test_config_update_rejects_unknown_field(config):
+    from core.config import validate_config_updates
+
+    with pytest.raises(ValueError):
+        validate_config_updates(config, {"bogus": 1})
+
+
+def test_config_update_rejects_bad_values(config):
+    from core.config import validate_config_updates
+
+    for bad in [
+        {"max_context_tokens": 0},
+        {"nightly_memory_hour": 99},
+        {"thinking": "x"},
+        {"log_level": "LOUD"},
+    ]:
+        with pytest.raises(pyd.ValidationError):
+            validate_config_updates(config, bad)
+
+
+def test_provider_update_accepts_each_provider():
+    from core.api import _ProviderUpdate
+
+    assert _ProviderUpdate.model_validate({"credentials": "{}"}).credentials == "{}"
+    parsed = _ProviderUpdate.model_validate({"openrouter_key": "k", "openrouter_model": "m"})
+    assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
+
+
+def test_provider_update_requires_exactly_one_provider():
+
+    from core.api import _ProviderUpdate
+
+    for bad in [{}, {"credentials": "c", "openrouter_key": "k"}, {"openrouter_key": "k"}, {"bogus": 1}]:
+        with pytest.raises(pyd.ValidationError):
+            _ProviderUpdate.model_validate(bad)

@@ -1,21 +1,12 @@
-//! Single source of truth for the defaults a brand-new agent gets.
-//!
-//! These are the values the create wizard (web + CLI) pre-selects and that
-//! `write_agent_env_file` seeds into the agent's env. The Python agent requires
-//! `AGENT_MODEL` / `AGENT_PROVIDER` / `AGENT_PERSONALITY` from the env rather than
-//! re-defining their defaults, so each default lives here only. Clients read them
-//! from `GET /agent-defaults` instead of hardcoding their own copies.
+//! Defaults a brand-new agent gets. Model/provider/personality come from the agent's embedded
+//! `core/defaults.json` (its config floor), so vestad and the agent share one source. The
+//! context-window presets are create-wizard UI metadata and stay here.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_PERSONALITY: &str = "dry";
-pub const DEFAULT_PROVIDER: &str = "claude";
-pub const DEFAULT_MODEL: &str = "opus";
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 1_000_000;
 
-/// Selectable context-window presets, largest first. The first entry is the default
-/// (`DEFAULT_CONTEXT_TOKENS` points at it). Smaller windows give cheaper prompt-cache
-/// reads and compact sooner.
+/// Context-window presets for the create wizard, largest first; the first is the default.
 pub const CONTEXT_PRESETS: &[ContextPreset] = &[
     ContextPreset { tokens: 1_000_000, label: "1M", note: "most context" },
     ContextPreset { tokens: 500_000, label: "500K", note: "balanced" },
@@ -29,11 +20,24 @@ pub struct ContextPreset {
     pub note: &'static str,
 }
 
+/// The model/provider/personality defaults, read verbatim from the shipped `core/defaults.json`.
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ShippedDefaults {
+    pub agent_model: String,
+    pub agent_provider: String,
+    pub agent_personality: String,
+}
+
+/// Read the embedded `core/defaults.json`. It ships in the binary, so a failure here is a build bug.
+pub fn shipped_defaults() -> ShippedDefaults {
+    let raw = crate::agent_embed::AgentSource::get("core/defaults.json").expect("core/defaults.json embedded in agent source");
+    serde_json::from_slice(&raw.data).expect("core/defaults.json is valid ShippedDefaults JSON")
+}
+
 #[derive(Serialize)]
 pub struct AgentDefaults {
-    pub personality: &'static str,
-    pub provider: &'static str,
-    pub model: &'static str,
+    #[serde(flatten)]
+    pub shipped: ShippedDefaults,
     pub context_tokens: u32,
     pub context_presets: &'static [ContextPreset],
 }
@@ -41,10 +45,22 @@ pub struct AgentDefaults {
 /// `GET /agent-defaults`: everything the create wizard needs to pre-select.
 pub async fn agent_defaults_handler() -> axum::Json<AgentDefaults> {
     axum::Json(AgentDefaults {
-        personality: DEFAULT_PERSONALITY,
-        provider: DEFAULT_PROVIDER,
-        model: DEFAULT_MODEL,
+        shipped: shipped_defaults(),
         context_tokens: DEFAULT_CONTEXT_TOKENS,
         context_presets: CONTEXT_PRESETS,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_defaults_match_the_agent_floor() {
+        // The single source of truth: vestad serves exactly what the agent ships as its defaults.
+        let defaults = shipped_defaults();
+        assert_eq!(defaults.agent_provider, "claude");
+        assert_eq!(defaults.agent_model, "opus");
+        assert_eq!(defaults.agent_personality, "dry");
+    }
 }

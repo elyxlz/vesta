@@ -6,7 +6,9 @@ Routes:
   - GET  /search               full-text search over events
   - GET  /usage                plan usage limits and rate limit status
   - GET  /provider/status      LLM-provider auth state
-  - POST /provider             set Claude credentials or OpenRouter config
+  - POST /provider             set Claude credentials or OpenRouter key (auth only)
+  - GET  /config               current editable preferences (model, context, personality, thinking)
+  - PUT  /config               update preferences (applies on next restart)
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -18,13 +20,14 @@ import sqlite3
 import weakref
 
 import aiohttp as _aiohttp
+import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig
+from .config import VestaConfig, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
-from .provider import CREDENTIALS_PATH, set_claude, set_openrouter, set_settings
+from .provider import CREDENTIALS_PATH, set_claude, set_openrouter
 
 
 logger = logging.getLogger("vesta.api")
@@ -229,68 +232,86 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
     )
 
 
+class _ProviderUpdate(pyd.BaseModel):
+    """POST /provider body: exactly one of `{credentials}` or `{openrouter_key, openrouter_model}`."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    credentials: str | None = None
+    openrouter_key: str | None = None
+    openrouter_model: str | None = None
+
+    @pyd.model_validator(mode="after")
+    def _exactly_one_provider(self) -> "_ProviderUpdate":
+        if (self.credentials is None) == (self.openrouter_key is None):
+            raise ValueError("provide exactly one of credentials or openrouter_key")
+        if self.openrouter_key is not None and not self.openrouter_model:
+            raise ValueError("openrouter_model is required with openrouter_key")
+        return self
+
+
 async def _provider_set_handler(request: web.Request) -> web.Response:
-    """Apply new provider config. Mutually exclusive body shapes:
-    - `{credentials, model?, max_context_tokens?}`             -> set Claude (OAuth blob)
-    - `{openrouter_key, openrouter_model, max_context_tokens?}`-> set OpenRouter
-    - `{model?, max_context_tokens?}`                          -> change model and/or
-      context window only, keeping the current provider
-    `max_context_tokens` is the context window in tokens; omit to leave it unchanged.
-    Vestad orchestrates the container restart that picks up env-var changes."""
+    """Set the provider credentials: `{credentials}` for Claude or `{openrouter_key, openrouter_model}`
+    for OpenRouter. Vestad restarts the agent to apply it."""
     state = request.app["state"]
     config: VestaConfig = request.app["config"]
     if state.provider_status is None:
         return web.json_response({"error": "provider not initialized"}, status=503)
     try:
-        data = await request.json()
+        body = _ProviderUpdate.model_validate(await request.json())
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider config: {e.errors(include_url=False)}"}, status=400)
 
-    has_creds = "credentials" in data and isinstance(data["credentials"], str)
-    has_or = "openrouter_key" in data and isinstance(data["openrouter_key"], str)
-    has_model = "model" in data and isinstance(data["model"], str)
-    ctx = data["max_context_tokens"] if "max_context_tokens" in data else None
-    # bool is an int subclass; reject True/False explicitly so {"max_context_tokens": true} 400s.
-    if ctx is not None and (not isinstance(ctx, int) or isinstance(ctx, bool) or ctx <= 0):
-        return web.json_response({"error": "max_context_tokens must be a positive integer"}, status=400)
-    has_ctx = ctx is not None
-    if has_creds and has_or:
-        return web.json_response({"error": "credentials and openrouter_key are mutually exclusive"}, status=400)
-    if not has_creds and not has_or and not has_model and not has_ctx:
-        return web.json_response({"error": "must provide credentials, openrouter_key, model, or max_context_tokens"}, status=400)
-
-    if has_creds:
-        claude_model = data["model"] if has_model else None
+    if body.credentials is not None:
         try:
-            state.provider_status = set_claude(data["credentials"], claude_model, ctx, config=config, persisted=state.persisted)
+            state.provider_status = set_claude(body.credentials, config=config, persisted=state.persisted)
         except (json.JSONDecodeError, TypeError) as e:
             return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
         except OSError as e:
             return web.json_response({"error": f"set_claude failed: {e}"}, status=500)
-    elif has_or:
-        if "openrouter_model" not in data or not isinstance(data["openrouter_model"], str):
-            return web.json_response({"error": "openrouter_model is required when openrouter_key is set"}, status=400)
+    elif body.openrouter_key is not None and body.openrouter_model is not None:
         try:
-            state.provider_status = set_openrouter(
-                data["openrouter_key"], data["openrouter_model"], ctx, config=config, persisted=state.persisted
-            )
+            state.provider_status = set_openrouter(body.openrouter_key, body.openrouter_model, config=config, persisted=state.persisted)
         except OSError as e:
             return web.json_response({"error": f"set_openrouter failed: {e}"}, status=500)
-    else:
-        # Model and/or context-window change: keep the current provider and any stored key.
-        try:
-            state.provider_status = set_settings(
-                model=data["model"] if has_model else None,
-                max_context_tokens=ctx,
-                config=config,
-                persisted=state.persisted,
-            )
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        except OSError as e:
-            return web.json_response({"error": f"set_settings failed: {e}"}, status=500)
 
     return web.json_response({"ok": True})
+
+
+async def _config_get_handler(request: web.Request) -> web.Response:
+    """The full live config, every key, with secrets redacted by SecretStr. The client filters it."""
+    config: VestaConfig = request.app["config"]
+    return web.json_response(config.model_dump(mode="json"))
+
+
+async def _config_schema_handler(request: web.Request) -> web.Response:
+    """The config's JSON schema, so the client renders/filters the settings UI off the one model."""
+    return web.json_response(VestaConfig.model_json_schema())
+
+
+async def _config_put_handler(request: web.Request) -> web.Response:
+    """Update any config field in the store, validated against VestaConfig. An omitted field is left
+    unchanged; a null clears it back to its env/default. Vestad restarts the agent to apply."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    try:
+        updates = validate_config_updates(config, data)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not updates:
+        return web.json_response({"error": "no config fields provided"}, status=400)
+    try:
+        update_config_store(updates)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
+    return web.json_response({"ok": True, "restart_required": True})
 
 
 async def _memory_get_handler(request: web.Request) -> web.Response:
@@ -347,7 +368,7 @@ async def start_ws_server(
 ) -> web.AppRunner:
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus
-    app["agent_token"] = config.agent_token
+    app["agent_token"] = config.agent_token.get_secret_value() if config.agent_token is not None else None
     app["config"] = config
     app["state"] = state
     app["websockets"] = weakref.WeakSet()
@@ -358,6 +379,9 @@ async def start_ws_server(
     app.router.add_get("/usage", _usage_handler)
     app.router.add_get("/provider/status", _provider_status_handler)
     app.router.add_post("/provider", _provider_set_handler)
+    app.router.add_get("/config", _config_get_handler)
+    app.router.add_get("/config/schema", _config_schema_handler)
+    app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

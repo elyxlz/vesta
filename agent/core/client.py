@@ -18,6 +18,7 @@ from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, Too
 from . import logger
 from . import models as vm
 from . import state_store
+from .provider import OPENROUTER_SMALL_FAST_MODEL
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, EXPANDED_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -34,13 +35,13 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     The caller caps this at config.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default, same behavior as before."""
-    if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
+    if config.agent_provider != "openrouter" or config.openrouter_key is None:
         return None
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 OPENROUTER_MODELS_URL,
-                headers={"Authorization": f"Bearer {os.environ['ANTHROPIC_AUTH_TOKEN']}"},
+                headers={"Authorization": f"Bearer {config.openrouter_key.get_secret_value()}"},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
@@ -289,6 +290,11 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if not state.openrouter_proxy_url:
             raise RuntimeError("OpenRouter cache proxy not started before building client options")
         sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
+        # The OpenRouter key + background model the subprocess talks to OpenRouter with, injected
+        # from the config store (no shell env inheritance).
+        if config.openrouter_key is not None:
+            sdk_env["ANTHROPIC_AUTH_TOKEN"] = config.openrouter_key.get_secret_value()
+        sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
         # Tell claude-code the model's real window so autocompact uses the right
         # threshold instead of its 200k default for non-Anthropic models.
         if state.openrouter_max_tokens:

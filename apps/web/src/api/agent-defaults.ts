@@ -9,9 +9,9 @@ export interface ContextPreset {
 // Creation-time defaults a new agent gets. vestad owns these (vestad/src/defaults.rs);
 // the wizard reads them here instead of hardcoding its own copies.
 export interface AgentDefaults {
-  personality: string;
-  provider: string;
-  model: string;
+  agent_personality: string;
+  agent_provider: string;
+  agent_model: string;
   context_tokens: number;
   context_presets: ContextPreset[];
 }

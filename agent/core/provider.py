@@ -1,19 +1,6 @@
-"""Per-agent LLM-provider authentication state.
-
-This is the agent's relationship with its upstream LLM provider (Claude OAuth or
-OpenRouter API key), NOT the agent's own HTTP API auth (that's the X-Agent-Token
-middleware in `api.py`).
-
-`ProviderStatus` is the in-memory state, derived at boot from PersistedState +
-disk files via `derive_status`. It is replaced at runtime by:
-- explicit writes via POST /provider (`set_claude` / `set_openrouter` / `set_model`)
-- terminal upstream errors seen in the SDK stream (`observed_provider_failure`)
-
-`vesta-provider.env` is the single source of truth for AGENT_PROVIDER + AGENT_MODEL
-for both providers (OpenRouter additionally stores its key there); the Claude OAuth
-blob lives in `.credentials.json`. Each mutation persists to PersistedState so a
-runtime failure isn't silently forgotten across a container restart (e.g. dreamer).
-"""
+"""Per-agent LLM-provider auth (Claude OAuth or OpenRouter key). The provider choice and OpenRouter
+key live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
+reads it). Each mutation persists the auth state to PersistedState so it survives a restart."""
 
 import dataclasses as dc
 import enum
@@ -23,16 +10,14 @@ import time
 import typing as tp
 
 from . import logger
-from .config import VestaConfig
+from .config import VestaConfig, update_config_store
 from .state_store import PersistedState, save_state
 
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
-PROVIDER_ENV_PATH = pl.Path.home() / ".claude" / "vesta-provider.env"
 
-# Cheap haiku-class model the SDK reaches for on background work (compaction probes,
-# summarization, intent classification). Hardcoded so picking an expensive primary
-# model doesn't silently 5–10× background spend. Editable in the provider file post-create.
+# Cheap model the SDK uses for background work (compaction probes, etc.); pinned so an expensive
+# primary model doesn't inflate background spend.
 OPENROUTER_SMALL_FAST_MODEL = "anthropic/claude-haiku-4.5"
 
 
@@ -53,90 +38,48 @@ class ProviderStatus:
 
 
 def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Re-derive provider status at boot from disk files + last persisted state."""
-    kind, model = _derive_kind_and_model(config)
-    # If we recorded a 401 in a prior boot, honor it — otherwise derive from disk.
+    """Re-derive provider status at boot from the config store (provider + key) and
+    `.credentials.json`. The model and context window come from the config store via VestaConfig."""
+    kind, authed = _derive_kind_and_auth(config)
+    # A 401 recorded in a prior boot overrides the on-disk reading.
     if persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value:
-        state = ProviderAuthState.NOT_AUTHENTICATED
-    else:
-        state = _derive_state_from_disk(kind)
-    return ProviderStatus(state=state, kind=kind, model=model, max_context_tokens=_current_max_context_tokens())
+        authed = False
+    state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
+    model = config.agent_model if kind != "none" else None
+    return ProviderStatus(state=state, kind=kind, model=model, max_context_tokens=config.max_context_tokens)
 
 
-def set_claude(
-    credentials_json: str, model: str | None = None, max_context_tokens: int | None = None, *, config: VestaConfig, persisted: PersistedState
-) -> ProviderStatus:
-    """Write Claude OAuth credentials + the Claude provider file and return the
-    new (authenticated) status. The provider file records AGENT_PROVIDER=claude +
-    AGENT_MODEL (+ MAX_CONTEXT_TOKENS when given) and clears the OpenRouter exports,
-    so switching OpenRouter->Claude leaves no stale token/base-url behind. `model`
-    defaults to the configured model. `max_context_tokens=None` preserves the
-    currently-recorded window (so a reauth doesn't wipe the user's choice); pass a
-    value to change it."""
+def set_claude(credentials_json: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Write the Claude OAuth credentials, set the provider to claude in the config store, and clear
+    any OpenRouter key, returning the authenticated status."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
-    chosen = model or config.agent_model
-    ctx = max_context_tokens if max_context_tokens is not None else _current_max_context_tokens()
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    _write_provider_file(_claude_provider_file(chosen, ctx))
-    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=chosen, max_context_tokens=ctx)
+    update_config_store({"agent_provider": "claude", "openrouter_key": None})
+    status = ProviderStatus(
+        state=ProviderAuthState.AUTHENTICATED, kind="claude", model=config.agent_model, max_context_tokens=config.max_context_tokens
+    )
     _persist(status, config=config, persisted=persisted)
-    logger.startup(f"Provider set to claude model={chosen} max_context_tokens={ctx}")
+    logger.startup("Provider set to claude")
     return status
 
 
-def set_openrouter(
-    key: str, model: str, max_context_tokens: int | None = None, *, config: VestaConfig, persisted: PersistedState
-) -> ProviderStatus:
-    """Write the OpenRouter provider env file and return the new (authenticated)
-    status. The agent must be restarted by vestad for the env vars to take effect.
-    `max_context_tokens=None` preserves the currently-recorded window."""
-    ctx = max_context_tokens if max_context_tokens is not None else _current_max_context_tokens()
-    _write_provider_file(_openrouter_provider_file(key, model, ctx))
-    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=ctx)
+def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Record the OpenRouter provider, key, and model in the config store (OpenRouter needs a valid
+    model). Vestad restarts the agent to apply it."""
+    update_config_store({"agent_provider": "openrouter", "openrouter_key": key, "agent_model": model})
+    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
     _persist(status, config=config, persisted=persisted)
-    logger.startup(f"Provider set to openrouter model={model} max_context_tokens={ctx}")
+    logger.startup(f"Provider set to openrouter model={model}")
     return status
-
-
-def set_settings(
-    *, model: str | None = None, max_context_tokens: int | None = None, config: VestaConfig, persisted: PersistedState
-) -> ProviderStatus:
-    """Change the model and/or context window, keeping the current provider and
-    (for OpenRouter) the stored key. Fields left None are preserved from the
-    existing provider file. Raises if no provider is configured. Lets the app / CLI
-    adjust model + context post-setup without re-supplying credentials."""
-    status = derive_status(config, persisted)
-    if status.kind not in ("claude", "openrouter"):
-        raise ValueError("no provider configured")
-    new_model = model or status.model or config.agent_model
-    new_ctx = max_context_tokens if max_context_tokens is not None else _current_max_context_tokens()
-    if status.kind == "openrouter":
-        key = _parse_first_export(PROVIDER_ENV_PATH.read_text(), "ANTHROPIC_AUTH_TOKEN")
-        if not key:
-            raise ValueError("no OpenRouter key on file to preserve")
-        return set_openrouter(key, new_model, new_ctx, config=config, persisted=persisted)
-    # claude: OAuth blob in .credentials.json is untouched; only the env file changes.
-    _write_provider_file(_claude_provider_file(new_model, new_ctx))
-    new_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=new_model, max_context_tokens=new_ctx)
-    _persist(new_status, config=config, persisted=persisted)
-    logger.startup(f"Settings updated: model={new_model} max_context_tokens={new_ctx} (claude)")
-    return new_status
-
-
-def set_model(model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Change only the model, preserving provider, key, and the context window."""
-    return set_settings(model=model, config=config, persisted=persisted)
 
 
 def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
-    """Called by the SDK response-stream handler on a terminal upstream auth/billing
-    error (401 invalid auth, 402 insufficient credits). Returns the status flipped to
-    NOT_AUTHENTICATED (persisted so it survives a restart), or the input unchanged when
-    there's nothing to flip. A flipped provider needs re-provisioning to recover (a 402
-    won't clear on its own until the key has credits and the agent is re-provisioned)."""
+    """Called by the SDK response-stream handler on a terminal upstream auth/billing error (401
+    invalid auth, 402 insufficient credits). Returns the status flipped to NOT_AUTHENTICATED
+    (persisted so it survives a restart), or the input unchanged when there's nothing to flip."""
     if status is None or status.state == ProviderAuthState.NOT_AUTHENTICATED:
         return status
     new_status = dc.replace(status, state=ProviderAuthState.NOT_AUTHENTICATED)
@@ -150,128 +93,19 @@ def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: Persiste
     save_state(persisted, config)
 
 
-def _derive_kind_and_model(config: VestaConfig) -> tuple[ProviderKind, str | None]:
-    """The provider file (AGENT_PROVIDER + AGENT_MODEL) is the source of truth and
-    wins over bare credentials. A legacy/empty file (no AGENT_PROVIDER) falls back
-    to credential presence, so pre-existing Claude agents keep working until their
-    next provider write rewrites the file in the new format."""
-    if PROVIDER_ENV_PATH.exists():
-        content = PROVIDER_ENV_PATH.read_text()
-        provider = _parse_first_export(content, "AGENT_PROVIDER")
-        if provider in ("openrouter", "claude"):
-            model = _parse_first_export(content, "AGENT_MODEL") or config.agent_model
-            return tp.cast(ProviderKind, provider), model
+def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
+    """The usable provider and whether its credential is valid: openrouter when chosen with a key,
+    claude when the OAuth blob is on disk, else none (a fresh, unprovisioned agent)."""
+    if config.agent_provider == "openrouter" and config.openrouter_key is not None:
+        return "openrouter", bool(config.openrouter_key.get_secret_value())
     if CREDENTIALS_PATH.exists():
-        return "claude", config.agent_model
-    return "none", None
-
-
-def _derive_state_from_disk(kind: ProviderKind) -> ProviderAuthState:
-    if kind == "openrouter":
-        content = PROVIDER_ENV_PATH.read_text()
-        ok = _provider_declares_openrouter(content) and _openrouter_token_present(content)
-    elif kind == "claude":
-        ok = CREDENTIALS_PATH.exists() and _check_claude_auth(CREDENTIALS_PATH.read_text())
-    else:
-        ok = False
-    return ProviderAuthState.AUTHENTICATED if ok else ProviderAuthState.NOT_AUTHENTICATED
-
-
-# --- File-format helpers (mirror of vestad/src/providers/openrouter.rs) ---
-
-
-def _shell_single_quote(value: str) -> str:
-    """Single-quote a value for safe shell sourcing; escapes embedded quotes."""
-    escaped = value.replace("'", "'\\''")
-    return f"'{escaped}'"
-
-
-def _write_provider_file(content: str) -> None:
-    PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROVIDER_ENV_PATH.write_text(content)
-
-
-def _context_window_export(max_context_tokens: int | None) -> str:
-    """The MAX_CONTEXT_TOKENS line for a provider file, or empty when unset."""
-    return f"export MAX_CONTEXT_TOKENS={max_context_tokens}\n" if max_context_tokens is not None else ""
-
-
-def _claude_provider_file(model: str, max_context_tokens: int | None = None) -> str:
-    """The sourced shell file for Claude mode. Records the model (+ context window
-    when chosen) and explicitly clears the OpenRouter exports so an OpenRouter->Claude
-    switch leaves no stale token behind (Claude auth itself lives in .credentials.json)."""
-    return (
-        "export AGENT_PROVIDER=claude\n"
-        f"export AGENT_MODEL={_shell_single_quote(model)}\n"
-        "export ANTHROPIC_AUTH_TOKEN=\n"
-        "export ANTHROPIC_API_KEY=\n"
-        "export ANTHROPIC_SMALL_FAST_MODEL=\n"
-        f"{_context_window_export(max_context_tokens)}"
-    )
-
-
-def _openrouter_provider_file(key: str, model: str, max_context_tokens: int | None = None) -> str:
-    """The sourced shell file that puts an agent into OpenRouter mode."""
-    return (
-        "export AGENT_PROVIDER=openrouter\n"
-        f"export AGENT_MODEL={_shell_single_quote(model)}\n"
-        f"export ANTHROPIC_AUTH_TOKEN={_shell_single_quote(key)}\n"
-        "export ANTHROPIC_API_KEY=\n"
-        f"export ANTHROPIC_SMALL_FAST_MODEL={_shell_single_quote(OPENROUTER_SMALL_FAST_MODEL)}\n"
-        f"{_context_window_export(max_context_tokens)}"
-    )
-
-
-def _current_max_context_tokens() -> int | None:
-    """The MAX_CONTEXT_TOKENS currently recorded in the provider file, if any."""
-    if not PROVIDER_ENV_PATH.exists():
-        return None
-    raw = _parse_first_export(PROVIDER_ENV_PATH.read_text(), "MAX_CONTEXT_TOKENS")
-    return int(raw) if raw and raw.isdigit() else None
-
-
-def _parse_shell_export(line: str, key: str) -> str | None:
-    """Parse a `[export ]KEY=value` shell line, returning the unquoted value if
-    `key` matches. Skips blanks and `#`-comments. Strips one layer of single quotes."""
-    line = line.strip()
-    if not line or line.startswith("#"):
-        return None
-    if line.startswith("export "):
-        line = line[len("export ") :]
-    if "=" not in line:
-        return None
-    k, _, v = line.partition("=")
-    if k.strip() != key:
-        return None
-    v = v.strip()
-    if len(v) >= 2 and v.startswith("'") and v.endswith("'"):
-        v = v[1:-1]
-    return v
-
-
-def _parse_first_export(content: str, key: str) -> str | None:
-    for line in content.splitlines():
-        parsed = _parse_shell_export(line, key)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _provider_declares_openrouter(content: str) -> bool:
-    return any(_parse_shell_export(line, "AGENT_PROVIDER") == "openrouter" for line in content.splitlines())
-
-
-def _openrouter_token_present(content: str) -> bool:
-    for line in content.splitlines():
-        v = _parse_shell_export(line, "ANTHROPIC_AUTH_TOKEN")
-        if v is not None and v:
-            return True
-    return False
+        return "claude", _check_claude_auth(CREDENTIALS_PATH.read_text())
+    return "none", False
 
 
 def _check_claude_auth(content: str) -> bool:
-    """A refresh token lets the SDK mint a fresh access token on demand, so an
-    expired expiresAt isn't a problem — the SDK refreshes transparently."""
+    """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt
+    isn't a problem — the SDK refreshes transparently."""
     try:
         creds = json.loads(content)
     except (json.JSONDecodeError, TypeError):

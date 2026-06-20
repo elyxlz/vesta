@@ -98,15 +98,10 @@ const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 10] = [
+    let steps: [String; 9] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
-        // file; absent for Claude agents. Guard with `[ -f ]`: `.` is a POSIX special
-        // built-in, so sourcing a missing file makes dash exit the whole script (and
-        // `|| true` does NOT catch it), which would crash-loop every Claude agent.
-        "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
         // recreates a container from a `docker export|import` snapshot and never re-runs the
@@ -922,7 +917,6 @@ pub fn write_agent_env_file(
     ws_port: u16,
     agent_token: &str,
     timezone: Option<&str>,
-    personality: Option<&str>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -943,12 +937,8 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
-    // Seed the creation-time defaults the Python agent now requires from the env (it no
-    // longer re-defines them). vesta-provider.env is sourced after this file, so once a
-    // provider is configured its AGENT_PROVIDER/AGENT_MODEL override these defaults.
-    append_optional("AGENT_PERSONALITY", Some(personality.unwrap_or(crate::defaults::DEFAULT_PERSONALITY)));
-    append_optional("AGENT_PROVIDER", Some(crate::defaults::DEFAULT_PROVIDER));
-    append_optional("AGENT_MODEL", Some(crate::defaults::DEFAULT_MODEL));
+    // The env carries only identity; the agent owns model/provider/personality and provider auth
+    // in its config store (preferences) and .credentials.json (Claude OAuth blob).
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -1016,15 +1006,26 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY): rename it to
+        // AGENT_PERSONALITY in place, value-preserving, so the agent keeps the chosen voice.
+        let has_new_personality = content
+            .lines()
+            .any(|line| line.strip_prefix("export ").unwrap_or(line).starts_with("AGENT_PERSONALITY="));
         let mut new_lines: Vec<String> = content
             .lines()
-            .filter(|line| {
+            .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                !stripped.starts_with("VESTAD_PORT=")
-                    && !stripped.starts_with("VESTAD_TUNNEL=")
-                    && !stripped.starts_with("VESTA_UPSTREAM_REF=")
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
+                    return None; // re-appended below with the current values
+                }
+                if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
+                    if has_new_personality {
+                        return None; // already migrated; drop the stale duplicate
+                    }
+                    return Some(line.replacen("AGENT_SEED_PERSONALITY=", "AGENT_PERSONALITY=", 1));
+                }
+                Some(line.to_string())
             })
-            .map(|l| l.to_string())
             .collect();
         new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
         if let Some(url) = vestad_tunnel {
@@ -1328,9 +1329,9 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 // --- Container creation ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, personality: Option<&str>) -> Result<(), DockerError> {
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, personality)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
 
     let constitution_path = ensure_constitution_file(&env_config.agents_dir, agent_name)?;
@@ -1652,7 +1653,7 @@ impl std::fmt::Debug for BuildProgress {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, personality: Option<&str>, seed_context: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_context: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1675,7 +1676,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, personality).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone).await?;
 
     // Freeform creator-supplied context (e.g. what an onboarding vesta learned about the
     // user). Delivered into the not-yet-started container's data dir so first-wake setup can
@@ -1826,7 +1827,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None) {
+                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -2058,7 +2059,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None).await?;
 
     Ok(())
 }
@@ -2136,7 +2137,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
@@ -2203,6 +2204,33 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
         assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
+    }
+
+    #[test]
+    fn update_env_renames_legacy_personality_var_preserving_value() {
+        // The agent dropped the AGENT_SEED_PERSONALITY env alias; the startup normalizer must
+        // rename it to AGENT_PERSONALITY in existing files so a legacy non-default voice survives.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_TOKEN=t\nexport AGENT_SEED_PERSONALITY=warm\nexport VESTAD_PORT=1\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=warm"), "renamed, value preserved: {content}");
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"), "legacy var removed: {content}");
+        assert!(content.contains("export AGENT_TOKEN=t"), "identity preserved");
+    }
+
+    #[test]
+    fn update_env_drops_legacy_personality_when_new_one_present() {
+        // If a file already has the new var, the stale legacy duplicate is dropped, not re-added.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_PERSONALITY=dry\nexport AGENT_SEED_PERSONALITY=warm\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=dry"));
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"));
+        assert!(!content.contains("warm"));
     }
 
     #[test]

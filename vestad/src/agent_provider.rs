@@ -70,10 +70,8 @@ impl<'a> AgentProvider<'a> {
         resp.json().await.map_err(|e| format!("agent status parse failed: {e}"))
     }
 
-    /// POST the agent's /provider with the given JSON body. Body shape (one of):
-    /// `{ "credentials": "...", "model"?: "..." }` (Claude),
-    /// `{ "openrouter_key": "...", "openrouter_model": "..." }` (OpenRouter), or
-    /// `{ "model": "..." }` (change model only, keep current provider).
+    /// POST the agent's /provider (auth only): `{credentials}` for Claude or
+    /// `{openrouter_key, openrouter_model}`. Preferences go through put_config, not here.
     pub async fn set(&self, body: &serde_json::Value) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client
@@ -90,6 +88,41 @@ impl<'a> AgentProvider<'a> {
         }
         let body_text = resp.text().await.unwrap_or_default();
         Err(format!("agent /provider returned HTTP {status}: {body_text}"))
+    }
+
+    /// GET the agent's /config (its current config; vestad relays it to the app).
+    pub async fn get_config(&self) -> Result<serde_json::Value, String> {
+        let (port, token) = self.port_and_token()?;
+        let resp = self.http_client
+            .get(format!("http://127.0.0.1:{port}/config"))
+            .header("X-Agent-Token", token)
+            .timeout(STATUS_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| format!("agent /config request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("agent /config returned HTTP {}", resp.status()));
+        }
+        resp.json().await.map_err(|e| format!("agent /config parse failed: {e}"))
+    }
+
+    /// PUT a sparse config body to the agent's /config. Applies on next restart.
+    pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
+        let (port, token) = self.port_and_token()?;
+        let resp = self.http_client
+            .put(format!("http://127.0.0.1:{port}/config"))
+            .header("X-Agent-Token", token)
+            .json(body)
+            .timeout(SET_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| format!("agent /config request failed: {e}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body_text = resp.text().await.unwrap_or_default();
+        Err(format!("agent /config returned HTTP {status}: {body_text}"))
     }
 
     fn port_and_token(&self) -> Result<(u16, String), String> {

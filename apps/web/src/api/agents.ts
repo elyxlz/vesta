@@ -18,13 +18,13 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Switch (or refresh) an existing agent's provider. Body is either `credentials`
-/// (Claude OAuth blob) or the `openrouter_*` pair, plus an optional `model` (Claude)
-/// and `max_context_tokens`. The agent owns the file writes and clears the obsolete
-/// provider config; vestad proxies the call and restarts.
+/// Set an agent's provider credentials (Claude OAuth blob or OpenRouter key + model), then apply
+/// the chosen preferences (personality, Claude model, context window) to the config store. Vestad
+/// restarts the agent to apply both.
 export async function setProvider(
   name: string,
   result: ProviderResult,
+  personality?: string,
 ): Promise<void> {
   const body: Record<string, unknown> =
     result.kind === "claude"
@@ -33,15 +33,21 @@ export async function setProvider(
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  if (result.kind === "claude" && result.model) body.model = result.model;
-  if (result.maxContextTokens != null) {
-    body.max_context_tokens = result.maxContextTokens;
-  }
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
+  // preference applied here in one PUT.
+  const config: Record<string, unknown> = {};
+  if (personality) config.agent_personality = personality;
+  if (result.kind === "claude" && result.model)
+    config.agent_model = result.model;
+  if (result.maxContextTokens != null) {
+    config.max_context_tokens = result.maxContextTokens;
+  }
+  if (Object.keys(config).length > 0) await setConfig(name, config);
 }
 
 export interface ProviderInfo {
@@ -57,42 +63,54 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// Change only the model, keeping the current provider (and, for OpenRouter, the
-/// stored key). Works for both Claude and OpenRouter. Vestad restarts the agent
-/// so the new model takes effect.
-export async function setModel(name: string, model: string): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
+/// An agent's config, proxied from the agent (GET /config). Keys are VestaConfig's own field names;
+/// secrets are redacted. The client picks which to show/edit. This lists the commonly-edited subset.
+export interface AgentConfig {
+  agent_model: string;
+  max_context_tokens: number | null;
+  agent_personality: string;
+  thinking: string;
+}
+
+/// Update any agent config field via its config store (PUT /config), keyed by VestaConfig field name.
+/// An omitted field is left unchanged, a null clears it; vestad restarts the agent to apply.
+export async function setConfig(
+  name: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(config),
   });
 }
 
-/// Change only the context window (tokens), keeping the provider, key, and model.
-/// Vestad restarts the agent so the new window takes effect.
+/// Read an agent's current config, proxied from the agent.
+export async function getConfig(name: string): Promise<AgentConfig> {
+  return apiJson<AgentConfig>(`/agents/${encodeURIComponent(name)}/config`);
+}
+
+/// Change only the model preference. Vestad restarts the agent so it takes effect.
+export async function setModel(name: string, model: string): Promise<void> {
+  await setConfig(name, { agent_model: model });
+}
+
+/// Change only the context window (tokens). Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_context_tokens: maxContextTokens }),
-  });
+  await setConfig(name, { max_context_tokens: maxContextTokens });
 }
 
-/// Create an empty agent container. Provider config is sent separately via
-/// `setProvider` once the agent is up — vestad no longer accepts credentials
-/// at create time (the agent owns its own auth state).
-export async function createAgent(
-  name: string,
-  personality?: string,
-): Promise<void> {
+/// Create an empty agent container. Credentials and preferences (provider, model, personality,
+/// context) are sent once it's up, via `setProvider`.
+export async function createAgent(name: string): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone, personality }),
+    body: JSON.stringify({ name, timezone }),
   });
 }
 

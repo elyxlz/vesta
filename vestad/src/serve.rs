@@ -6,7 +6,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Sse,
     },
-    routing::{any, get, post},
+    routing::{any, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,10 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // forever). Deliberately NOT applied to the WS-upgrade route or the long-lived SSE/proxy
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
+
+// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
+const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -508,11 +512,6 @@ struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
-    /// Active personality preset (e.g. "dry"). Exported as AGENT_PERSONALITY; the
-    /// agent loads the matching preset into its system prompt on every boot. The
-    /// old `seed_personality` field name is still accepted from older clients.
-    #[serde(alias = "seed_personality")]
-    personality: Option<String>,
     /// Freeform setup notes the creator wants the new agent to start with: what it
     /// learned about the user during onboarding, plus any skills or services to set
     /// up. Written to ~/agent/data/seed-context.md in the container; the agent folds
@@ -568,7 +567,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.personality.as_deref(), body.seed_context.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_context.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 
@@ -846,6 +845,45 @@ async fn set_provider_handler(
 
     // TODO: poke agent_status_cache so the web sees the change inside ~50ms
     // instead of waiting for the next 3s poll.
+    Ok(ok_json())
+}
+
+/// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
+async fn get_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .get_config()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
+/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart the
+/// container so the change applies on next boot.
+async fn set_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.put_config(&body).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -2052,6 +2090,10 @@ fn control_timeout_layer() -> tower_http::timeout::TimeoutLayer {
     request_timeout_layer(std::time::Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS))
 }
 
+fn longrun_timeout_layer() -> tower_http::timeout::TimeoutLayer {
+    request_timeout_layer(std::time::Duration::from_secs(LONGRUN_REQUEST_TIMEOUT_SECS))
+}
+
 pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
@@ -2085,7 +2127,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
-        .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/build-phase", get(build_phase_handler))
@@ -2093,9 +2134,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
+        .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
@@ -2119,6 +2160,13 @@ pub fn build_router(state: SharedState) -> Router {
             state.clone(),
             auth::auth_middleware,
         ));
+
+    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
+    let vestad_protected_longrun = Router::new()
+        .route("/agents", post(create_agent_handler))
+        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
+        .layer(longrun_timeout_layer())
+        .layer(middleware::from_fn_with_state(state.clone(), auth::auth_middleware));
 
     // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
     // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
@@ -2174,6 +2222,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected_timed)
+        .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
         .merge(agents_services)
         .merge(agents_services_read)
@@ -2428,10 +2477,17 @@ pub async fn run_server(cfg: ServerConfig) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
     let agent_settings = load_settings().agents.clone();
-    docker::reconcile_containers(&docker, &env_config, &|name| {
-        agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-    }).await;
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
+    // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
+    // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
+    let reconcile_docker = docker.clone();
+    let reconcile_env = state.env_config.clone();
+    tokio::spawn(async move {
+        docker::reconcile_containers(&reconcile_docker, &reconcile_env, &move |name| {
+            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+        })
+        .await;
+    });
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
@@ -2604,6 +2660,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn longrun_layer_allows_a_request_past_the_control_deadline() {
+        // A handler slower than a control-class deadline must survive under the longrun layer —
+        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            "ok"
+        };
+        let control_deadline = std::time::Duration::from_millis(100);
+        let longrun_deadline = std::time::Duration::from_millis(2000);
+        let router = axum::Router::new()
+            .route("/control", axum::routing::post(slow))
+            .layer(super::request_timeout_layer(control_deadline))
+            .merge(
+                axum::Router::new()
+                    .route("/longrun", axum::routing::post(slow))
+                    .layer(super::request_timeout_layer(longrun_deadline)),
+            );
+        let (port, handle) = serve_router(router).await;
+        let client = reqwest::Client::new();
+
+        let timed = client.post(format!("http://127.0.0.1:{}/control", port)).send().await.unwrap();
+        assert_eq!(timed.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
+        let long = client.post(format!("http://127.0.0.1:{}/longrun", port)).send().await.unwrap();
+        assert_eq!(long.status(), reqwest::StatusCode::OK);
+
+        assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS);
         handle.abort();
     }
 
