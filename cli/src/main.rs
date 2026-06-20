@@ -325,6 +325,16 @@ enum Toggle {
     Off,
 }
 
+/// Build a `{daily?, weekly?, monthly?}` retention object from the optional flags,
+/// omitting any the user didn't pass.
+fn retention_map(daily: Option<usize>, weekly: Option<usize>, monthly: Option<usize>) -> serde_json::Map<String, serde_json::Value> {
+    let mut ret = serde_json::Map::new();
+    if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
+    if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
+    if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+    ret
+}
+
 fn print_retention(ret: &serde_json::Value) {
     eprintln!("retention: daily={}, weekly={}, monthly={}",
         ret["daily"].as_u64().unwrap_or(0),
@@ -1290,10 +1300,7 @@ fn run(cli: Cli) {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
                     } else {
-                        let mut ret = serde_json::Map::new();
-                        if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                        if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                        if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+                        let ret = retention_map(daily, weekly, monthly);
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
                             .unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
@@ -1315,11 +1322,7 @@ fn run(cli: Cli) {
                             body.insert("enabled".into(), matches!(toggle, Toggle::On).into());
                         }
                         if daily.is_some() || weekly.is_some() || monthly.is_some() {
-                            let mut ret = serde_json::Map::new();
-                            if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                            if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                            if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
-                            body.insert("retention".into(), serde_json::Value::Object(ret));
+                            body.insert("retention".into(), retention_map(daily, weekly, monthly).into());
                         }
                         let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
                             .unwrap_or_else(|e| platform::die(&e));
