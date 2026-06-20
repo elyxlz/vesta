@@ -22,25 +22,19 @@ from core.state_store import PersistedState, load_state
 # --- Claude credentials auth check ---
 
 
-def test_claude_auth_valid_access_token():
-    creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
-    assert _check_claude_auth(creds)
-
-
-def test_claude_auth_expired_with_refresh_token_still_passes():
-    creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}})
-    assert _check_claude_auth(creds)
-
-
-def test_claude_auth_expired_no_refresh_fails():
-    creds = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}})
-    assert not _check_claude_auth(creds)
-
-
-def test_claude_auth_malformed_json_fails():
-    assert not _check_claude_auth("not json")
-    assert not _check_claude_auth("{}")
-    assert not _check_claude_auth(json.dumps({"claudeAiOauth": None}))
+@pytest.mark.parametrize(
+    "creds,expected",
+    [
+        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}}), True),  # valid, unexpired
+        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}}), True),  # expired but refreshable
+        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}), False),  # expired, no refresh
+        ("not json", False),
+        ("{}", False),
+        (json.dumps({"claudeAiOauth": None}), False),
+    ],
+)
+def test_claude_auth(creds, expected):
+    assert _check_claude_auth(creds) is expected
 
 
 # --- State transitions (free functions) ---

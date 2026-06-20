@@ -26,26 +26,26 @@ def test_memory_paths(config):
     assert config.skills_dir == config.agent_dir / "skills"
 
 
-def test_thinking_legacy_json_dict_coerces_with_defaults(monkeypatch):
-    """Env files written before adaptive.display was required carry the JSON-dict form
-    (e.g. THINKING='{"type":"adaptive"}'); it must coerce, not fail union validation."""
+import pytest  # noqa: E402
+
+
+# Both the plain-string form (THINKING=adaptive) and the legacy JSON-dict form written before
+# adaptive.display was required (THINKING='{"type":"adaptive"}') must coerce to the SDK config.
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ('{"type":"adaptive"}', {"type": "adaptive", "display": "summarized"}),
+        ('{"type":"enabled"}', {"type": "enabled", "budget_tokens": 10000}),
+        ('{"type":"disabled"}', {"type": "disabled"}),
+        ("adaptive", {"type": "adaptive", "display": "summarized"}),
+        ("disabled", {"type": "disabled"}),
+    ],
+)
+def test_thinking_coerces(monkeypatch, value, expected):
     from core.config import VestaConfig
 
-    monkeypatch.setenv("THINKING", '{"type":"adaptive"}')
-    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
-    monkeypatch.setenv("THINKING", '{"type":"enabled"}')
-    assert VestaConfig().thinking == {"type": "enabled", "budget_tokens": 10000}
-    monkeypatch.setenv("THINKING", '{"type":"disabled"}')
-    assert VestaConfig().thinking == {"type": "disabled"}
-
-
-def test_thinking_string_form_still_parses(monkeypatch):
-    from core.config import VestaConfig
-
-    monkeypatch.setenv("THINKING", "adaptive")
-    assert VestaConfig().thinking == {"type": "adaptive", "display": "summarized"}
-    monkeypatch.setenv("THINKING", "disabled")
-    assert VestaConfig().thinking == {"type": "disabled"}
+    monkeypatch.setenv("THINKING", value)
+    assert VestaConfig().thinking == expected
 
 
 def test_load_config_reverts_invalid_env_to_default(monkeypatch):
@@ -109,9 +109,6 @@ def test_report_config_issues_noop_without_issues(config):
 
 
 # --- Config store + layered sources (writable store > env > shipped defaults floor) ---
-
-
-import pytest  # noqa: E402
 
 
 @pytest.fixture
