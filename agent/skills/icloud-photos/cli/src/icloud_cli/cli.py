@@ -60,13 +60,17 @@ def _ensure_dirs() -> None:
     COOKIE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _load_state() -> dict[str, Any]:
-    if not STATE_FILE.exists():
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
         return {}
     try:
-        return json.loads(STATE_FILE.read_text())
+        return json.loads(path.read_text())
     except Exception:
         return {}
+
+
+def _load_state() -> dict[str, Any]:
+    return _load_json(STATE_FILE)
 
 
 def _write_state(**kwargs: Any) -> None:
@@ -78,12 +82,7 @@ def _write_state(**kwargs: Any) -> None:
 
 
 def _load_config() -> dict[str, Any]:
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        return json.loads(CONFIG_FILE.read_text())
-    except Exception:
-        return {}
+    return _load_json(CONFIG_FILE)
 
 
 def _write_config(**kwargs: Any) -> None:
@@ -320,11 +319,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
         message=f"SMS sent to phone id {phone_id}; run `icloud auth verify --code <code>`",
     )
 
-    if CODE_FILE.exists():
-        try:
-            CODE_FILE.unlink()
-        except Exception:
-            pass
+    CODE_FILE.unlink(missing_ok=True)
 
     deadline = time.time() + POLL_TIMEOUT_S
     code: str | None = None
@@ -356,10 +351,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
             phase="error",
             message=f"code rejected: {resp.status_code} {resp.text[:300]!r}",
         )
-        try:
-            CODE_FILE.unlink()
-        except Exception:
-            pass
+        CODE_FILE.unlink(missing_ok=True)
         return 5
 
     try:
@@ -367,10 +359,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
     except Exception as e:
         _write_state(message=f"trust_session warning: {type(e).__name__}:{e}")
 
-    try:
-        CODE_FILE.unlink()
-    except Exception:
-        pass
+    CODE_FILE.unlink(missing_ok=True)
 
     _write_state(
         phase="trusted",
