@@ -17,7 +17,6 @@ import asyncio
 import json
 import logging
 import sqlite3
-import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
@@ -25,7 +24,7 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig, update_config_store
+from .config import VestaConfig, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
 from .provider import CREDENTIALS_PATH, set_claude, set_openrouter
@@ -234,8 +233,7 @@ async def _provider_status_handler(request: web.Request) -> web.Response:
 
 
 class _ProviderUpdate(pyd.BaseModel):
-    """POST /provider body: exactly one of `{credentials}` (Claude OAuth blob) or
-    `{openrouter_key, openrouter_model}`."""
+    """POST /provider body: exactly one of `{credentials}` or `{openrouter_key, openrouter_model}`."""
 
     model_config = pyd.ConfigDict(extra="forbid")
 
@@ -283,47 +281,32 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
 
 
 async def _config_get_handler(request: web.Request) -> web.Response:
-    """The full live config as the agent is running it — every key, with secrets (agent_token,
-    openrouter_key) redacted by SecretStr. The client picks what to show/edit; GET /config/schema
-    describes the shape."""
+    """The full live config, every key, with secrets redacted by SecretStr. The client filters it."""
     config: VestaConfig = request.app["config"]
     return web.json_response(config.model_dump(mode="json"))
 
 
 async def _config_schema_handler(request: web.Request) -> web.Response:
-    """The JSON schema of the config (types, enums, defaults), so the client renders/filters the
-    settings UI off the single model definition."""
+    """The config's JSON schema, so the client renders/filters the settings UI off the one model."""
     return web.json_response(VestaConfig.model_json_schema())
 
 
-class _ConfigUpdate(pyd.BaseModel):
-    """PUT /config body: any of model/max_context_tokens/personality/thinking. An omitted field is
-    left unchanged; a null clears it. Field names are the config-store keys; the client-facing
-    aliases populate them."""
-
-    model_config = pyd.ConfigDict(extra="forbid", populate_by_name=True)
-
-    agent_model: tp.Annotated[str, pyd.StringConstraints(min_length=1)] | None = pyd.Field(default=None, alias="model")
-    agent_personality: tp.Annotated[str, pyd.StringConstraints(min_length=1)] | None = pyd.Field(default=None, alias="personality")
-    # strict so bool is rejected (a lax int would coerce True -> 1).
-    max_context_tokens: tp.Annotated[int, pyd.Field(strict=True, gt=0)] | None = None
-    thinking: tp.Literal["adaptive", "enabled", "disabled"] | None = None
-
-
 async def _config_put_handler(request: web.Request) -> web.Response:
-    """Update preferences in the config store. Vestad restarts the agent to apply them."""
+    """Update any config field in the store, validated against VestaConfig. An omitted field is left
+    unchanged; a null clears it back to its env/default. Vestad restarts the agent to apply."""
+    config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
     try:
-        update = _ConfigUpdate.model_validate(data)
+        updates = validate_config_updates(config, data)
     except pyd.ValidationError as e:
         return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
-
-    updates = update.model_dump(exclude_unset=True)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
     if not updates:
-        return web.json_response({"error": "must provide at least one of model, max_context_tokens, personality, thinking"}, status=400)
+        return web.json_response({"error": "no config fields provided"}, status=400)
     try:
         update_config_store(updates)
     except OSError as e:

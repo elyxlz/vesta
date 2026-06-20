@@ -24,10 +24,8 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 
-// Agent create and rebuild build (or pull) the agent image, which legitimately takes minutes on a
-// cold cache or slow network. The 120s control deadline would 408 such a request even though the
-// build is progressing (clients track progress via GET /agents/{name}/build-phase), so these get a
-// generous deadline that still bounds a truly-hung build instead of holding a connection forever.
+// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
 const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
@@ -850,8 +848,7 @@ async fn set_provider_handler(
     Ok(ok_json())
 }
 
-/// Read an agent's editable preferences, proxied from the agent's `GET /config`. The agent owns
-/// these (model, context window, personality, thinking); vestad just relays them to the app.
+/// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -865,10 +862,8 @@ async fn get_config_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Update an agent's editable preferences. Body is forwarded verbatim to the agent's
-/// `PUT /config` (the agent owns the writable config store and its validation). After the write
-/// succeeds vestad restarts the container so the change takes effect on next boot — the same
-/// model as the provider write, since preferences also apply at boot.
+/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart the
+/// container so the change applies on next boot.
 async fn set_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -2166,10 +2161,7 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Long-running mutations: agent create and rebuild build/pull the image (minutes on a cold
-    // cache). Same auth as the control routes but a generous deadline instead of 120s, so a real
-    // build isn't 408'd mid-flight while still bounding a hung one. Clients show progress via
-    // GET /agents/{name}/build-phase.
+    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
@@ -2486,10 +2478,8 @@ pub async fn run_server(cfg: ServerConfig) {
     }
     let agent_settings = load_settings().agents.clone();
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
-    // Reconcile existing containers in the background so the API starts serving immediately.
-    // Reconcile can rebuild containers (a multi-minute filesystem snapshot each) when an upgrade
-    // changes the entrypoint or mounts; awaiting it here would leave vestad unreachable for the
-    // whole rebuild. Agents keep running under `unless-stopped` while the rebuild swaps them.
+    // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
+    // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     tokio::spawn(async move {

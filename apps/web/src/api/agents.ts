@@ -41,8 +41,9 @@ export async function setProvider(
   // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
   // preference applied here in one PUT.
   const config: Record<string, unknown> = {};
-  if (personality) config.personality = personality;
-  if (result.kind === "claude" && result.model) config.model = result.model;
+  if (personality) config.agent_personality = personality;
+  if (result.kind === "claude" && result.model)
+    config.agent_model = result.model;
   if (result.maxContextTokens != null) {
     config.max_context_tokens = result.maxContextTokens;
   }
@@ -62,24 +63,20 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// An agent's editable preferences (the config-store bucket), proxied from the agent.
+/// An agent's config, proxied from the agent (GET /config). Keys are VestaConfig's own field names;
+/// secrets are redacted. The client picks which to show/edit. This lists the commonly-edited subset.
 export interface AgentConfig {
-  model: string;
+  agent_model: string;
   max_context_tokens: number | null;
-  personality: string;
+  agent_personality: string;
   thinking: string;
 }
 
-/// Update an agent's editable preferences via its config store (PUT /config). Any subset of
-/// model/context/personality/thinking; vestad restarts the agent so the change takes effect.
+/// Update any agent config field via its config store (PUT /config), keyed by VestaConfig field name.
+/// An omitted field is left unchanged, a null clears it; vestad restarts the agent to apply.
 export async function setConfig(
   name: string,
-  config: {
-    model?: string;
-    max_context_tokens?: number | null;
-    personality?: string;
-    thinking?: string;
-  },
+  config: Record<string, unknown>,
 ): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
     method: "PUT",
@@ -88,14 +85,14 @@ export async function setConfig(
   });
 }
 
-/// Read an agent's current editable preferences, proxied from the agent.
+/// Read an agent's current config, proxied from the agent.
 export async function getConfig(name: string): Promise<AgentConfig> {
   return apiJson<AgentConfig>(`/agents/${encodeURIComponent(name)}/config`);
 }
 
 /// Change only the model preference. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await setConfig(name, { model });
+  await setConfig(name, { agent_model: model });
 }
 
 /// Change only the context window (tokens). Vestad restarts the agent so it takes effect.

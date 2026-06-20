@@ -1,11 +1,6 @@
-"""Per-agent LLM-provider authentication: the agent's relationship with its upstream provider
-(Claude OAuth or OpenRouter API key).
-
-The provider choice and the OpenRouter key live in the config store (`config.py`); the Claude OAuth
-blob lives in `.credentials.json`, which the `claude` CLI reads directly. Each mutation persists the
-auth state to PersistedState so it survives a restart. The agent's own HTTP API auth is the
-X-Agent-Token middleware in `api.py`.
-"""
+"""Per-agent LLM-provider auth (Claude OAuth or OpenRouter key). The provider choice and OpenRouter
+key live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
+reads it). Each mutation persists the auth state to PersistedState so it survives a restart."""
 
 import dataclasses as dc
 import enum
@@ -21,9 +16,8 @@ from .state_store import PersistedState, save_state
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
-# Cheap haiku-class model the SDK reaches for on background work (compaction probes,
-# summarization, intent classification). Hardcoded so picking an expensive primary model
-# doesn't silently 5–10× background spend.
+# Cheap model the SDK uses for background work (compaction probes, etc.); pinned so an expensive
+# primary model doesn't inflate background spend.
 OPENROUTER_SMALL_FAST_MODEL = "anthropic/claude-haiku-4.5"
 
 

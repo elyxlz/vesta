@@ -465,7 +465,7 @@ impl Client {
     pub fn set_config(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         let mut body = serde_json::Map::new();
         if let Some(model) = model {
-            body.insert("model".to_string(), serde_json::json!(model));
+            body.insert("agent_model".to_string(), serde_json::json!(model));
         }
         if let Some(ctx) = max_context_tokens {
             body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));

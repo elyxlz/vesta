@@ -1006,9 +1006,8 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
-        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY, i.e. one release after
-        // this has run across the fleet): rename AGENT_SEED_PERSONALITY to AGENT_PERSONALITY in place,
-        // value-preserving, so the agent (which reads AGENT_PERSONALITY) keeps the chosen voice.
+        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY): rename it to
+        // AGENT_PERSONALITY in place, value-preserving, so the agent keeps the chosen voice.
         let has_new_personality = content
             .lines()
             .any(|line| line.strip_prefix("export ").unwrap_or(line).starts_with("AGENT_PERSONALITY="));

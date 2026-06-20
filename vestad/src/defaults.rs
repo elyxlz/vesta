@@ -1,19 +1,12 @@
-//! Defaults a brand-new agent gets.
-//!
-//! The model / provider / personality defaults live in exactly one place: the agent's
-//! `agent/core/defaults.json`, which the Python agent reads as its config floor. vestad reads
-//! the embedded copy of that file (see `agent_embed`) so the create wizard's pre-selected
-//! defaults and the env it seeds match what the agent boots with, with no Rust/Python
-//! duplication. The context-window presets are wizard-only UI metadata and stay here.
+//! Defaults a brand-new agent gets. Model/provider/personality come from the agent's embedded
+//! `core/defaults.json` (its config floor), so vestad and the agent share one source. The
+//! context-window presets are create-wizard UI metadata and stay here.
 
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 1_000_000;
 
-/// Selectable context-window presets, largest first. The first entry is the default
-/// (`DEFAULT_CONTEXT_TOKENS` points at it). Smaller windows give cheaper prompt-cache
-/// reads and compact sooner. UI metadata for the create wizard only (the agent's runtime
-/// context default is "unset = model default", a different concern).
+/// Context-window presets for the create wizard, largest first; the first is the default.
 pub const CONTEXT_PRESETS: &[ContextPreset] = &[
     ContextPreset { tokens: 1_000_000, label: "1M", note: "most context" },
     ContextPreset { tokens: 500_000, label: "500K", note: "balanced" },
@@ -38,9 +31,7 @@ pub struct ShippedDefaults {
     pub personality: String,
 }
 
-/// Read the embedded `core/defaults.json`. Its presence and validity are guaranteed at build
-/// time (it ships in the agent source embedded into the binary), so a failure here is a build
-/// bug, not a runtime condition — hence the expects.
+/// Read the embedded `core/defaults.json`. It ships in the binary, so a failure here is a build bug.
 pub fn shipped_defaults() -> ShippedDefaults {
     let raw = crate::agent_embed::AgentSource::get("core/defaults.json").expect("core/defaults.json embedded in agent source");
     serde_json::from_slice(&raw.data).expect("core/defaults.json is valid ShippedDefaults JSON")

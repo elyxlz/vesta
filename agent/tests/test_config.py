@@ -156,14 +156,13 @@ def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
     assert vm.VestaConfig().max_context_tokens is None
 
 
-def test_update_rejects_non_writable_keys(agentdir):
+def test_update_rejects_keys_that_are_not_config_fields(agentdir):
     from core.config import update_config_store
 
-    # Identity (vestad-assigned) must not be smuggled in through the store.
+    # Any real VestaConfig field is writable; a key that isn't a field is a typo and is rejected
+    # so it can't write a dead entry the loader would silently ignore.
     with pytest.raises(ValueError):
-        update_config_store({"agent_token": "x"})
-    with pytest.raises(ValueError):
-        update_config_store({"ws_port": 1})
+        update_config_store({"not_a_field": "x"})
 
 
 def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):

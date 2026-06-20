@@ -140,35 +140,44 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
 # --- Request-body validation models (PUT /config, POST /provider) ---
 
 
-def test_config_update_aliases_and_sparse_dump():
-    from core.api import _ConfigUpdate
+def test_config_update_accepts_any_field_and_returns_sparse(config):
+    from core.config import validate_config_updates
 
-    # Client-facing aliases populate the store-key fields; only provided keys come back.
-    assert _ConfigUpdate.model_validate({"model": "sonnet"}).model_dump(exclude_unset=True) == {"agent_model": "sonnet"}
-    assert _ConfigUpdate.model_validate({"personality": "warm"}).model_dump(exclude_unset=True) == {"agent_personality": "warm"}
-
-
-def test_config_update_null_clears_a_key():
-    from core.api import _ConfigUpdate
-
-    # A null value is preserved (not dropped) so the handler can clear that key in the store.
-    assert _ConfigUpdate.model_validate({"model": None}).model_dump(exclude_unset=True) == {"agent_model": None}
+    # Any real config field may be set, by its VestaConfig name, not a fixed allow-list.
+    assert validate_config_updates(config, {"agent_model": "sonnet"}) == {"agent_model": "sonnet"}
+    assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
+        "log_level": "DEBUG",
+        "response_timeout": 30,
+    }
+    # thinking takes the plain string form; the model coerces it on load.
+    assert validate_config_updates(config, {"thinking": "enabled"}) == {"thinking": "enabled"}
 
 
-def test_config_update_rejects_bad_values():
+def test_config_update_null_clears_a_key(config):
+    from core.config import validate_config_updates
 
-    from core.api import _ConfigUpdate
+    # A null is preserved (not dropped) so the handler can clear that key in the store.
+    assert validate_config_updates(config, {"max_context_tokens": None}) == {"max_context_tokens": None}
+
+
+def test_config_update_rejects_unknown_field(config):
+    from core.config import validate_config_updates
+
+    with pytest.raises(ValueError):
+        validate_config_updates(config, {"bogus": 1})
+
+
+def test_config_update_rejects_bad_values(config):
+    from core.config import validate_config_updates
 
     for bad in [
         {"max_context_tokens": 0},
-        {"max_context_tokens": True},
-        {"max_context_tokens": "500"},
-        {"model": ""},
+        {"nightly_memory_hour": 99},
         {"thinking": "x"},
-        {"bogus": 1},
+        {"log_level": "LOUD"},
     ]:
         with pytest.raises(pyd.ValidationError):
-            _ConfigUpdate.model_validate(bad)
+            validate_config_updates(config, bad)
 
 
 def test_provider_update_accepts_each_provider():

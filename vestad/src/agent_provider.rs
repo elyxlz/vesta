@@ -70,10 +70,8 @@ impl<'a> AgentProvider<'a> {
         resp.json().await.map_err(|e| format!("agent status parse failed: {e}"))
     }
 
-    /// POST the agent's /provider with the given JSON body (auth only). Body shape (one of):
-    /// `{ "credentials": "..." }` (Claude OAuth blob) or
-    /// `{ "openrouter_key": "...", "openrouter_model": "..." }` (OpenRouter).
-    /// Model / context / personality are preferences, set via put_config, not here.
+    /// POST the agent's /provider (auth only): `{credentials}` for Claude or
+    /// `{openrouter_key, openrouter_model}`. Preferences go through put_config, not here.
     pub async fn set(&self, body: &serde_json::Value) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client
@@ -92,8 +90,7 @@ impl<'a> AgentProvider<'a> {
         Err(format!("agent /provider returned HTTP {status}: {body_text}"))
     }
 
-    /// GET the agent's /config: its current editable preferences (model, context, personality,
-    /// thinking). The agent owns these; vestad just relays them to the app.
+    /// GET the agent's /config (its current config; vestad relays it to the app).
     pub async fn get_config(&self) -> Result<serde_json::Value, String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client
@@ -109,8 +106,7 @@ impl<'a> AgentProvider<'a> {
         resp.json().await.map_err(|e| format!("agent /config parse failed: {e}"))
     }
 
-    /// PUT the agent's /config with a sparse preferences body, any of
-    /// `{ "model", "max_context_tokens", "personality", "thinking" }`. Applies on next restart.
+    /// PUT a sparse config body to the agent's /config. Applies on next restart.
     pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let resp = self.http_client

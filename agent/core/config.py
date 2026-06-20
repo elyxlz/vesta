@@ -12,23 +12,20 @@ from core.cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, Th
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
 
-# Single source of truth for new-agent defaults, shipped with the agent. vestad reads this same
-# file from the embedded agent source to serve GET /agent-defaults, so the default model/provider/
-# personality live in exactly one place across the whole system (no Rust/Python duplication).
+# Shipped new-agent defaults, read here as the config floor and by vestad (from the embedded agent
+# source) for GET /agent-defaults, so they live in one place across Python and Rust.
 CONFIG_DEFAULTS_PATH = pl.Path(__file__).parent / "defaults.json"
 
 
 def _resolve_agent_dir() -> pl.Path:
-    """Agent dir resolved straight from the env, mirroring the agent_dir field. Needed before
-    the config is built so the writable settings store path can be located."""
+    # Mirrors the agent_dir field, but resolved from env before the config exists so the store path can be located.
     if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
         return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
     return _DEFAULT_AGENT_DIR
 
 
 def config_store_path() -> pl.Path:
-    """Writable per-agent settings store (sparse overrides), written only by PUT /config.
-    Holds the live, user-editable preferences (model, context window, personality, thinking)."""
+    """The writable per-agent config store (sparse overrides written by PUT /config)."""
     return _resolve_agent_dir() / "data" / "config.json"
 
 
@@ -36,39 +33,29 @@ def _shipped_defaults() -> dict[str, tp.Any]:
     return json.loads(CONFIG_DEFAULTS_PATH.read_text())
 
 
-# Keys the config store may hold (the source of truth for everything except identity, which vestad
-# assigns via env). Preferences are set through PUT /config; agent_provider + openrouter_key are set
-# through /provider (its own endpoint for the multi-step credential flow) but land in this same store.
-CONFIG_STORE_KEYS = ("agent_model", "agent_provider", "openrouter_key", "max_context_tokens", "agent_personality", "thinking")
-
-
 def read_config_store() -> dict[str, tp.Any]:
-    """The raw sparse overrides in the writable settings store, or {} when absent/corrupt.
-    Never raises: a broken store must not crash the boot path that reads it."""
+    """The store's sparse overrides, or {} when absent/corrupt (never raises: it's on the boot path)."""
     path = config_store_path()
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
-        logger.error(f"config store {path} is corrupt ({exc}); ignoring it (preferences fall back to env/defaults)")
+        logger.error(f"config store {path} is corrupt ({exc}); ignoring it")
         return {}
     return data if isinstance(data, dict) else {}
 
 
 def update_config_store(updates: dict[str, tp.Any]) -> None:
-    """Merge sparse preference updates into the writable settings store, atomically (tmp+rename
-    so a crash never leaves a half-written file the boot path would choke on). A None value
-    clears the key (reverts that preference to the default/env). Rejects keys outside
-    CONFIG_STORE_KEYS so identity/auth can't be smuggled in through the settings path."""
+    """Merge updates into the store (atomic tmp+rename). A None clears the key; non-field keys are rejected."""
+    fields = VestaConfig.model_fields
     for key in updates:
-        if key not in CONFIG_STORE_KEYS:
-            raise ValueError(f"{key!r} is not a writable config key")
+        if key not in fields:
+            raise ValueError(f"{key!r} is not a config field")
     current = read_config_store()
     for key, value in updates.items():
         if value is None:
-            if key in current:
-                del current[key]
+            current.pop(key, None)
         else:
             current[key] = value
     path = config_store_path()
@@ -78,20 +65,29 @@ def update_config_store(updates: dict[str, tp.Any]) -> None:
     tmp.replace(path)
 
 
+def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
+    """Validate a sparse PUT /config body by merging it onto the live config and validating the whole
+    model, so any field is settable under its real constraints (thinking coerces, gt/le hold). A null clears."""
+    if not isinstance(data, dict):
+        raise ValueError("config body must be a JSON object")
+    unknown = [key for key in data if key not in VestaConfig.model_fields]
+    if unknown:
+        raise ValueError(f"not config fields: {', '.join(sorted(unknown))}")
+    candidate = config.model_dump()
+    candidate.update({key: value for key, value in data.items() if value is not None})
+    VestaConfig.model_validate(candidate)
+    return tp.cast("dict[str, tp.Any]", data)
+
+
 _LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"
 
 
 def _parse_legacy_export(content: str, key: str) -> str | None:
-    """Read a `[export ]KEY=value` line from a legacy shell env file, stripping one layer of single
-    quotes; returns None when absent or empty."""
+    """Read a `[export ]KEY=value` line from a shell env file, unquoting once; None if absent/empty."""
     for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if line.startswith("export "):
-            line = line[len("export ") :]
-        if "=" not in line:
-            continue
+        line = raw_line.strip().removeprefix("export ")
         name, _, value = line.partition("=")
-        if name.strip() != key:
+        if "=" not in line or name.strip() != key:
             continue
         value = value.strip()
         if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
@@ -101,14 +97,11 @@ def _parse_legacy_export(content: str, key: str) -> str | None:
 
 
 def migrate_legacy_config_to_store() -> None:
-    """Drain a legacy agent's config into the store so the whole fleet lands on it: preferences from
-    the agent env (AGENT_MODEL, AGENT_PERSONALITY, MAX_CONTEXT_TOKENS) and provider choice + key from
-    the old vesta-provider.env file, which is then deleted. Seeds a key only when it's set and not
-    already in the store, so it never overwrites a live value or writes a default. Idempotent.
+    """Drain a legacy agent's preferences (env) and provider choice/key (old vesta-provider.env, then
+    deleted) into the store, seeding only unset keys. Idempotent.
 
-    LEGACY(remove-when: every fleet agent has a config.json and no vesta-provider.env, i.e. one release
-    after this has rolled out): this function, its boot call site, and the env layer in
-    settings_customise_sources.
+    LEGACY(remove-when: every fleet agent has a config.json and no vesta-provider.env): this function,
+    its boot call site, and the env layer in settings_customise_sources.
     """
     store = read_config_store()
     updates: dict[str, tp.Any] = {}
@@ -274,14 +267,11 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "dreamer"
 
     agent_name: str = "vesta"
-    # model, provider, and personality come from the layered sources (config store, then env, then
-    # the defaults.json floor); init=False since the floor guarantees a value, so they're never
-    # unset. build_client_options loads the personality preset into the system prompt every boot.
+    # init=False: these come from the layered sources (store > env > defaults.json floor), never init args.
     agent_model: str = pyd.Field(init=False)
     agent_provider: tp.Literal["claude", "openrouter"] = pyd.Field(init=False)
     agent_personality: str = pyd.Field(init=False)
-    # The OpenRouter API key (None for Claude). SecretStr so it's redacted in GET /config dumps;
-    # client.py injects its real value into the SDK subprocess env for OpenRouter mode.
+    # None for Claude. SecretStr redacts it in GET /config; client.py injects the real value into the SDK env.
     openrouter_key: pyd.SecretStr | None = None
 
     @classmethod
@@ -293,23 +283,20 @@ class VestaConfig(pyd_settings.BaseSettings):
         dotenv_settings: pyd_settings.PydanticBaseSettingsSource,
         file_secret_settings: pyd_settings.PydanticBaseSettingsSource,
     ) -> tuple[pyd_settings.PydanticBaseSettingsSource, ...]:
-        # Precedence high -> low: explicit init args, the writable config store (PUT /config),
-        # the env, then the shipped defaults floor. The config store wins over env so a PUT takes
-        # effect on an agent whose env still carries the old value.
+        # Precedence high -> low: init args, config store (PUT /config wins over a stale env), env, defaults floor.
         sources: list[pyd_settings.PydanticBaseSettingsSource] = [init_settings]
         store = config_store_path()
-        # Only layer the store in when it parses; a corrupt store must fall back to env/defaults,
-        # not crash the boot (JsonConfigSettingsSource would raise on malformed JSON).
+        # Layer the store in only when it parses; a corrupt store falls back to env/defaults instead of
+        # crashing the boot (JsonConfigSettingsSource raises on malformed JSON).
         if store.is_file():
             try:
                 json.loads(store.read_text())
             except (json.JSONDecodeError, OSError) as exc:
-                logger.error(f"config store {store} unreadable ({exc}); ignoring it (preferences fall back to env/defaults)")
+                logger.error(f"config store {store} unreadable ({exc}); ignoring it")
             else:
                 sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
-        # LEGACY(remove-when: every fleet agent has a config.json, i.e. one release after this): env as
-        # a source of agent_model / agent_personality. They are config-store preferences; env carries
-        # them only for agents that predate the store.
+        # LEGACY(remove-when: every fleet agent has a config.json): env as a source of store preferences,
+        # for agents that predate the store.
         sources.extend([env_settings, dotenv_settings, file_secret_settings])
         sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=CONFIG_DEFAULTS_PATH))
         return tuple(sources)
@@ -343,9 +330,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     dropped.add(env_name)
                     progressed = True
             if not progressed:
-                # No offending env var to drop (a bad value in the config store, or an invalid field
-                # default — a bug, not bad env). Fall back rather than crash-loop the boot. Seed the
-                # shipped defaults explicitly so model/provider/personality (which have no inline
-                # default) are populated; the remaining fields fall back to their field defaults.
+                # No env var to drop (bad store value or invalid field default). Fall back to defaults
+                # rather than crash-loop; seed the shipped floor so the init=False fields are populated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
                 return VestaConfig.model_construct(**_shipped_defaults()), issues
