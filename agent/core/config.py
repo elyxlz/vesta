@@ -104,35 +104,25 @@ def migrate_legacy_config_to_store() -> None:
     its boot call site, and the env layer in settings_customise_sources.
     """
     store = read_config_store()
-    updates: dict[str, tp.Any] = {}
+    content = _LEGACY_PROVIDER_ENV.read_text() if _LEGACY_PROVIDER_ENV.is_file() else ""
 
-    def seed(key: str, value: tp.Any) -> None:
-        if value is not None and key not in store and key not in updates:
-            updates[key] = value
+    def legacy(key: str) -> str | None:  # env wins over the old provider file
+        return (os.environ[key] if key in os.environ else "") or _parse_legacy_export(content, key)
 
-    if "AGENT_MODEL" in os.environ:
-        seed("agent_model", os.environ["AGENT_MODEL"] or None)
-    if "AGENT_PERSONALITY" in os.environ:
-        seed("agent_personality", os.environ["AGENT_PERSONALITY"] or None)
-    if "MAX_CONTEXT_TOKENS" in os.environ and os.environ["MAX_CONTEXT_TOKENS"].isdigit():
-        seed("max_context_tokens", int(os.environ["MAX_CONTEXT_TOKENS"]))
-
-    if _LEGACY_PROVIDER_ENV.is_file():
-        content = _LEGACY_PROVIDER_ENV.read_text()
-        provider = _parse_legacy_export(content, "AGENT_PROVIDER")
-        if provider in ("claude", "openrouter"):
-            seed("agent_provider", provider)
-        seed("agent_model", _parse_legacy_export(content, "AGENT_MODEL"))
-        if provider == "openrouter":
-            seed("openrouter_key", _parse_legacy_export(content, "ANTHROPIC_AUTH_TOKEN"))
-        legacy_ctx = _parse_legacy_export(content, "MAX_CONTEXT_TOKENS")
-        if legacy_ctx is not None and legacy_ctx.isdigit():
-            seed("max_context_tokens", int(legacy_ctx))
-        _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
-
+    provider = legacy("AGENT_PROVIDER")
+    ctx = legacy("MAX_CONTEXT_TOKENS")
+    candidates: dict[str, tp.Any] = {
+        "agent_model": legacy("AGENT_MODEL"),
+        "agent_personality": legacy("AGENT_PERSONALITY"),
+        "agent_provider": provider if provider in ("claude", "openrouter") else None,
+        "openrouter_key": legacy("ANTHROPIC_AUTH_TOKEN") if provider == "openrouter" else None,
+        "max_context_tokens": int(ctx) if ctx and ctx.isdigit() else None,
+    }
+    updates = {key: value for key, value in candidates.items() if value is not None and key not in store}
     if updates:
         logger.startup(f"migrated legacy config into the store: {sorted(updates)}")
         update_config_store(updates)
+    _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
 
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback

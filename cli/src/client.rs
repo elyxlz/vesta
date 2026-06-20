@@ -477,12 +477,6 @@ impl Client {
         Ok(())
     }
 
-    /// Change the model and/or context window on a provisioned agent (a config-store preference,
-    /// independent of provider auth). Kept under this name for callers; delegates to set_config.
-    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        self.set_config(name, model, max_context_tokens)
-    }
-
     /// Current provider status: `{state, kind, model, max_context_tokens}`.
     pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
         let resp = self.get(&format!("/agents/{name}/provider"))?;

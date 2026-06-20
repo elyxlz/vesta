@@ -40,12 +40,11 @@ class ProviderStatus:
 def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
     """Re-derive provider status at boot from the config store (provider + key) and
     `.credentials.json`. The model and context window come from the config store via VestaConfig."""
-    kind = _derive_kind(config)
-    # If we recorded a 401 in a prior boot, honor it — otherwise derive from disk.
+    kind, authed = _derive_kind_and_auth(config)
+    # A 401 recorded in a prior boot overrides the on-disk reading.
     if persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value:
-        state = ProviderAuthState.NOT_AUTHENTICATED
-    else:
-        state = _derive_state_from_disk(kind, config)
+        authed = False
+    state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
     model = config.agent_model if kind != "none" else None
     return ProviderStatus(state=state, kind=kind, model=model, max_context_tokens=config.max_context_tokens)
 
@@ -94,24 +93,14 @@ def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: Persiste
     save_state(persisted, config)
 
 
-def _derive_kind(config: VestaConfig) -> ProviderKind:
-    """The usable provider: openrouter when chosen and a key is present, claude when the OAuth blob
-    is on disk, else none (e.g. a fresh agent that hasn't been provisioned)."""
+def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
+    """The usable provider and whether its credential is valid: openrouter when chosen with a key,
+    claude when the OAuth blob is on disk, else none (a fresh, unprovisioned agent)."""
     if config.agent_provider == "openrouter" and config.openrouter_key is not None:
-        return "openrouter"
+        return "openrouter", bool(config.openrouter_key.get_secret_value())
     if CREDENTIALS_PATH.exists():
-        return "claude"
-    return "none"
-
-
-def _derive_state_from_disk(kind: ProviderKind, config: VestaConfig) -> ProviderAuthState:
-    if kind == "openrouter":
-        ok = config.openrouter_key is not None and bool(config.openrouter_key.get_secret_value())
-    elif kind == "claude":
-        ok = CREDENTIALS_PATH.exists() and _check_claude_auth(CREDENTIALS_PATH.read_text())
-    else:
-        ok = False
-    return ProviderAuthState.AUTHENTICATED if ok else ProviderAuthState.NOT_AUTHENTICATED
+        return "claude", _check_claude_auth(CREDENTIALS_PATH.read_text())
+    return "none", False
 
 
 def _check_claude_auth(content: str) -> bool:
