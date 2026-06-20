@@ -1,4 +1,3 @@
-export { apiFetch, apiJson } from "./client";
 export {
   createAgent,
   startAgent,
@@ -12,9 +11,6 @@ export {
   deleteBackup,
   type BackupInfo,
 } from "./agents";
-export { fetchMemory, saveMemory } from "./memory";
-export { fetchConstitution, saveConstitution } from "./constitution";
-export { fetchPersonalities, type Personality } from "./personalities";
 export * as claudeProvider from "./providers/claude";
 export * as openrouterProvider from "./providers/openrouter";
 export { streamLogs, stopLogs } from "./logs";

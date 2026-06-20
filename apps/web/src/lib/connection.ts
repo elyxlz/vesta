@@ -180,10 +180,6 @@ export function clearConnection(): void {
   }
 }
 
-export function isConnected(): boolean {
-  return getConnection() !== null;
-}
-
 export function isTokenExpiringSoon(): boolean {
   const conn = getConnection();
   if (!conn) return false;
