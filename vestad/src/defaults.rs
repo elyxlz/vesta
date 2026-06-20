@@ -20,15 +20,12 @@ pub struct ContextPreset {
     pub note: &'static str,
 }
 
-/// The model/provider/personality defaults, read from the agent's shipped `core/defaults.json`.
+/// The model/provider/personality defaults, read verbatim from the shipped `core/defaults.json`.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ShippedDefaults {
-    #[serde(rename = "agent_model")]
-    pub model: String,
-    #[serde(rename = "agent_provider")]
-    pub provider: String,
-    #[serde(rename = "agent_personality")]
-    pub personality: String,
+    pub agent_model: String,
+    pub agent_provider: String,
+    pub agent_personality: String,
 }
 
 /// Read the embedded `core/defaults.json`. It ships in the binary, so a failure here is a build bug.
@@ -39,20 +36,16 @@ pub fn shipped_defaults() -> ShippedDefaults {
 
 #[derive(Serialize)]
 pub struct AgentDefaults {
-    pub personality: String,
-    pub provider: String,
-    pub model: String,
+    #[serde(flatten)]
+    pub shipped: ShippedDefaults,
     pub context_tokens: u32,
     pub context_presets: &'static [ContextPreset],
 }
 
 /// `GET /agent-defaults`: everything the create wizard needs to pre-select.
 pub async fn agent_defaults_handler() -> axum::Json<AgentDefaults> {
-    let defaults = shipped_defaults();
     axum::Json(AgentDefaults {
-        personality: defaults.personality,
-        provider: defaults.provider,
-        model: defaults.model,
+        shipped: shipped_defaults(),
         context_tokens: DEFAULT_CONTEXT_TOKENS,
         context_presets: CONTEXT_PRESETS,
     })
@@ -66,8 +59,8 @@ mod tests {
     fn shipped_defaults_match_the_agent_floor() {
         // The single source of truth: vestad serves exactly what the agent ships as its defaults.
         let defaults = shipped_defaults();
-        assert_eq!(defaults.provider, "claude");
-        assert_eq!(defaults.model, "opus");
-        assert_eq!(defaults.personality, "dry");
+        assert_eq!(defaults.agent_provider, "claude");
+        assert_eq!(defaults.agent_model, "opus");
+        assert_eq!(defaults.agent_personality, "dry");
     }
 }
