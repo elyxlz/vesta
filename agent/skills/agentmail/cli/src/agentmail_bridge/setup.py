@@ -61,6 +61,15 @@ def _install_npm_cli() -> None:
         click.echo(f"  warn: expected binary at {NPM_CLI_BIN} but didn't find it", err=True)
 
 
+def _signup_result(signup, username: str) -> dict:
+    return {
+        "api_key": signup.api_key,
+        "inbox_id": signup.inbox_id,
+        "organization_id": signup.organization_id,
+        "email_address": f"{username}@agentmail.to",
+    }
+
+
 def _autonomous_signup(username: str) -> dict:
     """Sign up to AgentMail using a disposable mail.tm inbox for the OTP.
 
@@ -84,12 +93,7 @@ def _autonomous_signup(username: str) -> dict:
     verified_client = AgentMail(api_key=signup.api_key)
     verified_client.agent.verify(otp_code=otp)
 
-    return {
-        "api_key": signup.api_key,
-        "inbox_id": signup.inbox_id,
-        "organization_id": signup.organization_id,
-        "email_address": f"{username}@agentmail.to",
-    }
+    return _signup_result(signup, username)
 
 
 def _prompt_signup(username: str) -> dict:
@@ -101,12 +105,7 @@ def _prompt_signup(username: str) -> dict:
     otp = click.prompt("OTP code")
     verified_client = AgentMail(api_key=signup.api_key)
     verified_client.agent.verify(otp_code=otp)
-    return {
-        "api_key": signup.api_key,
-        "inbox_id": signup.inbox_id,
-        "organization_id": signup.organization_id,
-        "email_address": f"{username}@agentmail.to",
-    }
+    return _signup_result(signup, username)
 
 
 def _create_inbox_for_existing_account(username: str) -> dict:
