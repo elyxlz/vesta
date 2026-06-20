@@ -33,6 +33,14 @@ def _get_settings() -> MicrosoftSettings:
     return MicrosoftSettings()
 
 
+def _file_attachment(name: str, content_bytes: bytes) -> dict[str, str]:
+    return {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": name,
+        "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
+    }
+
+
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
     if "attachments" in result and result["attachments"]:
         for attachment in result["attachments"]:
@@ -254,13 +262,7 @@ def create_email_draft(
             att_name = path.name
 
             if att_size < LARGE_ATTACHMENT_THRESHOLD:
-                small_attachments.append(
-                    {
-                        "@odata.type": "#microsoft.graph.fileAttachment",
-                        "name": att_name,
-                        "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
-                    }
-                )
+                small_attachments.append(_file_attachment(att_name, content_bytes))
             else:
                 large_attachments.append(
                     {
@@ -347,14 +349,7 @@ def send_email(
                 has_large_attachments = True
 
     if not has_large_attachments and processed_attachments:
-        message["attachments"] = [
-            {
-                "@odata.type": "#microsoft.graph.fileAttachment",
-                "name": att["name"],
-                "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
-            }
-            for att in processed_attachments
-        ]
+        message["attachments"] = [_file_attachment(att["name"], att["content_bytes"]) for att in processed_attachments]
         graph.request_cfg(config, client, settings, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
     elif has_large_attachments:
@@ -377,11 +372,7 @@ def send_email(
                     att["content_type"] if "content_type" in att else "application/octet-stream",
                 )
             else:
-                small_att = {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": att["name"],
-                    "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
-                }
+                small_att = _file_attachment(att["name"], att["content_bytes"])
                 graph.request_cfg(config, client, settings, "POST", f"/me/messages/{message_id}/attachments", account_id, json=small_att)
 
         graph.request_cfg(config, client, settings, "POST", f"/me/messages/{message_id}/send", account_id)
@@ -431,11 +422,7 @@ def reply_to_email(
             att_name = path.name
 
             if att_size < LARGE_ATTACHMENT_THRESHOLD:
-                attachment = {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": att_name,
-                    "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
-                }
+                attachment = _file_attachment(att_name, content_bytes)
                 graph.request_cfg(config, client, settings, "POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
             else:
                 graph.upload_mail_attachment_cfg(config, client, settings, draft_id, att_name, content_bytes, account_id)

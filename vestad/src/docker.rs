@@ -37,15 +37,11 @@ impl std::error::Error for DockerError {}
 
 impl From<bollard::errors::Error> for DockerError {
     fn from(e: bollard::errors::Error) -> Self {
-        match &e {
-            bollard::errors::Error::DockerResponseServerError { status_code, .. } => {
-                match *status_code {
-                    404 => DockerError::NotFound(e.to_string()),
-                    409 => DockerError::AlreadyExists(e.to_string()),
-                    _ => DockerError::Failed(e.to_string()),
-                }
-            }
-            _ => DockerError::Failed(e.to_string()),
+        let msg = e.to_string();
+        match e {
+            bollard::errors::Error::DockerResponseServerError { status_code: 404, .. } => DockerError::NotFound(msg),
+            bollard::errors::Error::DockerResponseServerError { status_code: 409, .. } => DockerError::AlreadyExists(msg),
+            _ => DockerError::Failed(msg),
         }
     }
 }
@@ -1106,14 +1102,13 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
         return GpuStatus::NoGpu;
     }
 
-    let has_runtime = match docker.info().await {
-        Ok(info) => {
-            info.runtimes
-                .map(|runtimes| runtimes.contains_key("nvidia"))
-                .unwrap_or(false)
-        }
-        Err(_) => false,
-    };
+    let has_runtime = docker
+        .info()
+        .await
+        .ok()
+        .and_then(|info| info.runtimes)
+        .map(|runtimes| runtimes.contains_key("nvidia"))
+        .unwrap_or(false);
 
     if has_runtime { GpuStatus::Ready } else { GpuStatus::NoRuntime }
 }

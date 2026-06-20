@@ -2271,10 +2271,6 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
-                let today = today_date.to_string();
-                let week_ago = seven_days_ago.clone();
-                let month_ago = thirty_days_ago.clone();
-
                 if let Some(age) = backup::container_age_secs(&state.docker, name).await {
                     if age < backup::MIN_AGE_FOR_BACKUP_SECS {
                         tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
@@ -2294,21 +2290,21 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && b.created_at.starts_with(&today)
+                        && b.created_at.starts_with(today_date)
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
                 }
 
                 let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
+                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= seven_days_ago
                 });
                 if !has_recent_weekly {
                     needed.push(crate::types::BackupType::Weekly);
                 }
 
                 let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
+                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= thirty_days_ago
                 });
                 if !has_recent_monthly {
                     needed.push(crate::types::BackupType::Monthly);

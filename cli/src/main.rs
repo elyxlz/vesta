@@ -937,12 +937,7 @@ fn run(cli: Cli) {
         return;
     };
 
-    let is_update = matches!(command, Command::Update);
-    let bg_handle = if is_update {
-        None
-    } else {
-        check_update_cached()
-    };
+    let bg_handle = if matches!(command, Command::Update) { None } else { check_update_cached() };
 
     let host_ref = cli.host.as_deref();
     let token_ref = cli.token.as_deref();

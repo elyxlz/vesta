@@ -201,15 +201,17 @@ fn find_available_port() -> Option<u16> {
     None
 }
 
+/// Read the stored HTTPS port from `<config>/port`, if present and parseable.
+fn read_port_file(config: &std::path::Path) -> Option<u16> {
+    std::fs::read_to_string(config.join("port")).ok().and_then(|s| s.trim().parse::<u16>().ok())
+}
+
 fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
     if let Some(port) = explicit {
         return port;
     }
 
-    if let Some(stored) = std::fs::read_to_string(config.join("port"))
-        .ok()
-        .and_then(|s| s.trim().parse::<u16>().ok())
-    {
+    if let Some(stored) = read_port_file(config) {
         if std::net::TcpListener::bind(("127.0.0.1", stored)).is_ok()
             && std::net::TcpListener::bind(("127.0.0.1", stored + 1)).is_ok()
         {
@@ -301,9 +303,7 @@ fn report_restart_readiness(config: &std::path::Path) {
 /// `http://127.0.0.1:<https_port + 1>/health` — the unauthenticated local HTTP API
 /// (serve.rs binds HTTPS on the stored port and plain HTTP on port + 1).
 fn local_health_url(config: &std::path::Path) -> Option<String> {
-    let https_port = std::fs::read_to_string(config.join("port"))
-        .ok()
-        .and_then(|stored| stored.trim().parse::<u16>().ok())?;
+    let https_port = read_port_file(config)?;
     let http_port = https_port.checked_add(1)?;
     Some(format!("http://127.0.0.1:{http_port}/health"))
 }
@@ -388,16 +388,22 @@ fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
 }
 
+/// Print connection info when an API key is present (the shape shared by `status`
+/// and the systemd start path), taking the `read_server_info` tuple directly.
+fn print_server_info_opt(info: (Option<String>, Option<String>, Option<String>)) {
+    let (tunnel_url, local_url, api_key) = info;
+    if let Some(api_key) = &api_key {
+        print_server_info(tunnel_url.as_deref(), local_url.as_deref().unwrap_or("http://localhost:?"), api_key);
+    }
+}
+
 fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>, Option<String>) {
     let api_key = std::fs::read_to_string(config.join("api-key"))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let local_url = std::fs::read_to_string(config.join("port"))
-        .ok()
-        .and_then(|s| s.trim().parse::<u16>().ok())
-        .map(|port| format!("http://localhost:{}", port + 1));
+    let local_url = read_port_file(config).map(|port| format!("http://localhost:{}", port + 1));
 
     let tunnel_url = tunnel::get_tunnel_config(config)
         .map(|tc| format!("https://{}", tc.hostname));
@@ -545,18 +551,10 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
 
-    let (tunnel_url, local_url, api_key) = read_server_info(&config);
-
     eprintln!();
     eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
 
-    if let Some(api_key) = &api_key {
-        print_server_info(
-            tunnel_url.as_deref(),
-            local_url.as_deref().unwrap_or("http://localhost:?"),
-            api_key,
-        );
-    }
+    print_server_info_opt(read_server_info(&config));
 
     eprintln!("manage with:");
     eprintln!("  vestad status     show status + your URL");
@@ -613,14 +611,7 @@ fn main() {
                 if agent_count == 1 { "" } else { "s" },
             );
 
-            let (tunnel_url, local_url, api_key) = read_server_info(&config);
-            if let Some(api_key) = &api_key {
-                print_server_info(
-                    tunnel_url.as_deref(),
-                    local_url.as_deref().unwrap_or("http://localhost:?"),
-                    api_key,
-                );
-            }
+            print_server_info_opt(read_server_info(&config));
 
             systemd::print_status();
         }
@@ -731,10 +722,7 @@ fn main() {
 
                         eprintln!("creating agent '{}'...", name);
                         let config = config_dir();
-                        let vestad_port = std::fs::read_to_string(config.join("port"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<u16>().ok())
-                            .unwrap_or(0);
+                        let vestad_port = read_port_file(&config).unwrap_or(0);
                         let vestad_tunnel = tunnel::get_tunnel_config(&config)
                             .map(|tc| format!("https://{}", tc.hostname));
                         let env_config = docker::AgentEnvConfig {
