@@ -153,6 +153,21 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+/// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
+/// sessions), exiting with the child's code if it fails.
+fn docker_exec_inherit(args: &[&str]) {
+    let status = std::process::Command::new("docker")
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 /// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
 /// is unset. Without this, `vestad status > file` / piping captures raw escape
 /// codes.
@@ -632,17 +647,7 @@ fn main() {
             rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
 
             eprintln!("entering {name} (exit with `exit`, or detach with Ctrl-Q)…");
-            // Keep the docker exec -it subprocess as-is for TTY support
-            let status = std::process::Command::new("docker")
-                .args(["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
-            if !status.success() {
-                std::process::exit(status.code().unwrap_or(1));
-            }
+            docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
         }
 
         Command::Attach { name, write } => {
@@ -655,16 +660,7 @@ fn main() {
             let script = attach_script(&name, write);
             let mode = if write { "read-write" } else { "read-only" };
             eprintln!("attaching to {name}'s claude session ({mode}; detach with Ctrl-Q)…");
-            let status = std::process::Command::new("docker")
-                .args(["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash", "-lc", &script])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
-            if !status.success() {
-                std::process::exit(status.code().unwrap_or(1));
-            }
+            docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash", "-lc", &script]);
         }
 
         Command::Backup { action } => {

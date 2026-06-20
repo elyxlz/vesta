@@ -419,13 +419,10 @@ pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str)
     let env_path = agents_dir.join(format!("{}.env", agent_name));
     let content = std::fs::read_to_string(&env_path).ok()?;
     let prefix = format!("{key}=");
-    for line in content.lines() {
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        if let Some(val) = line.strip_prefix(&prefix) {
-            return Some(val.to_string());
-        }
-    }
-    None
+    content
+        .lines()
+        .map(|line| line.strip_prefix("export ").unwrap_or(line))
+        .find_map(|line| line.strip_prefix(&prefix).map(str::to_string))
 }
 
 pub(crate) fn container_info_from(cname: &str, info: &bollard::models::ContainerInspectResponse, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
@@ -813,9 +810,8 @@ pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
 /// Read the agent's port and token from the per-agent env file in a single read.
 pub fn read_agent_port_and_token(agent_name: &str, agents_dir: &std::path::Path) -> (Option<u16>, Option<String>) {
     let env_path = agents_dir.join(format!("{}.env", agent_name));
-    let content = match std::fs::read_to_string(&env_path) {
-        Ok(content) => content,
-        Err(_) => return (None, None),
+    let Ok(content) = std::fs::read_to_string(&env_path) else {
+        return (None, None);
     };
     let mut port = None;
     let mut token = None;
@@ -1716,22 +1712,12 @@ pub struct StartAllResult {
 }
 
 pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
-    let agents = list_managed_agents(docker).await;
     let mut results = Vec::new();
-    for ManagedAgent { cname, agent_name } in &agents {
-        if container_status(docker, cname).await != ContainerStatus::Running {
-            if start_container(docker, cname).await {
-                results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
-            } else {
-                results.push(StartAllResult {
-                    name: agent_name.clone(),
-                    ok: false,
-                    error: Some("failed to start".into()),
-                });
-            }
-        } else {
-            results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
-        }
+    for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
+        let ok = container_status(docker, &cname).await == ContainerStatus::Running
+            || start_container(docker, &cname).await;
+        let error = (!ok).then(|| "failed to start".to_string());
+        results.push(StartAllResult { name: agent_name, ok, error });
     }
     results
 }

@@ -315,13 +315,8 @@ async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Val
 
 async fn version_json(state: &SharedState) -> serde_json::Value {
     let update = state.update_info.lock().await;
-    let (latest, update_available) = match update.as_ref() {
-        Some(info) => (
-            Some(info.latest.clone()),
-            Some(info.update_available),
-        ),
-        None => (None, None),
-    };
+    let latest = update.as_ref().map(|info| info.latest.clone());
+    let update_available = update.as_ref().map(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
