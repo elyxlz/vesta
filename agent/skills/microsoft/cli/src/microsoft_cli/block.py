@@ -46,16 +46,7 @@ def _get_inbox_rules(
 ) -> list[dict[str, Any]]:
     """Fetch all inbox message rules for the account."""
     try:
-        result = graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "GET",
-            "/me/mailFolders/inbox/messageRules",
-            account_id,
-        )
+        result = graph.request_cfg(config, client, settings, "GET", "/me/mailFolders/inbox/messageRules", account_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc
@@ -131,17 +122,7 @@ def block_sender(
     }
 
     try:
-        result = graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "POST",
-            "/me/mailFolders/inbox/messageRules",
-            account_id,
-            json=rule_body,
-        )
+        result = graph.request_cfg(config, client, settings, "POST", "/me/mailFolders/inbox/messageRules", account_id, json=rule_body)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc
@@ -181,16 +162,7 @@ def unblock_sender(
     for rule in matching_rules:
         rule_id = rule["id"]
         try:
-            graph.request(
-                client,
-                config.cache_file,
-                config.scopes,
-                settings,
-                config.base_url,
-                "DELETE",
-                f"/me/mailFolders/inbox/messageRules/{rule_id}",
-                account_id,
-            )
+            graph.request_cfg(config, client, settings, "DELETE", f"/me/mailFolders/inbox/messageRules/{rule_id}", account_id)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (401, 403):
                 raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc
