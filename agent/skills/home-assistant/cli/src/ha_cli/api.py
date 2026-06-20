@@ -43,11 +43,6 @@ class HAClient:
         r.raise_for_status()
         return r.json()
 
-    def get_services(self) -> dict:
-        r = self._client.get("/api/services")
-        r.raise_for_status()
-        return r.json()
-
     def check_api(self) -> dict:
         r = self._client.get("/api/")
         r.raise_for_status()
