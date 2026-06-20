@@ -49,6 +49,37 @@ interface SettingsDialogProps {
   agentSettingsSlot?: React.ReactNode;
 }
 
+function ConnectionToggle({
+  label,
+  description,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <Field
+      orientation="horizontal"
+      className="mt-3 items-center justify-between"
+    >
+      <FieldContent>
+        <FieldLabel className="text-sm">{label}</FieldLabel>
+        <FieldDescription>{description}</FieldDescription>
+      </FieldContent>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+      />
+    </Field>
+  );
+}
+
 export function SettingsDialog({
   open,
   onOpenChange,
@@ -279,43 +310,22 @@ export function SettingsDialog({
               </Button>
             )}
             {reachable && (
-              <Field
-                orientation="horizontal"
-                className="mt-3 items-center justify-between"
-              >
-                <FieldContent>
-                  <FieldLabel className="text-sm">beta releases</FieldLabel>
-                  <FieldDescription>
-                    receive prereleases first to test them before everyone else;
-                    switching off stops future betas (it never downgrades)
-                  </FieldDescription>
-                </FieldContent>
-                <Switch
-                  checked={gatewayChannel === "beta"}
-                  disabled={channelSaving}
-                  onCheckedChange={onToggleBeta}
-                />
-              </Field>
+              <ConnectionToggle
+                label="beta releases"
+                description="receive prereleases first to test them before everyone else; switching off stops future betas (it never downgrades)"
+                checked={gatewayChannel === "beta"}
+                disabled={channelSaving}
+                onCheckedChange={onToggleBeta}
+              />
             )}
             {reachable && (
-              <Field
-                orientation="horizontal"
-                className="mt-3 items-center justify-between"
-              >
-                <FieldContent>
-                  <FieldLabel className="text-sm">automatic updates</FieldLabel>
-                  <FieldDescription>
-                    apply new releases automatically in the background;
-                    switching off keeps you on the current version until you
-                    update manually
-                  </FieldDescription>
-                </FieldContent>
-                <Switch
-                  checked={gatewayAutoUpdate}
-                  disabled={autoUpdateSaving}
-                  onCheckedChange={onToggleAutoUpdate}
-                />
-              </Field>
+              <ConnectionToggle
+                label="automatic updates"
+                description="apply new releases automatically in the background; switching off keeps you on the current version until you update manually"
+                checked={gatewayAutoUpdate}
+                disabled={autoUpdateSaving}
+                onCheckedChange={onToggleAutoUpdate}
+              />
             )}
           </MenuSection>
         </div>
