@@ -41,27 +41,21 @@ def _write_death_notification(notif_dir: Path, reason: str):
     os.replace(tmp, notif_dir / filename)
 
 
+def _fail_daemon_not_running(detail: str):
+    msg = f"daemon not running{detail} — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
+    print(json.dumps({"error": msg}), file=sys.stderr)
+    sys.exit(1)
+
+
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(
-            json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"}),
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        _fail_daemon_not_running("")
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(
-            json.dumps(
-                {
-                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
-                }
-            ),
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        _fail_daemon_not_running(" (stale pid file)")
 
 
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
