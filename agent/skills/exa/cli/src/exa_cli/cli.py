@@ -103,17 +103,14 @@ def auth_setup(api_key: str) -> None:
 
 
 def auth_status() -> None:
-    source = None
-    key: str | None = None
     if os.environ.get("EXA_API_KEY"):
-        source = "env:EXA_API_KEY"
-        key = os.environ["EXA_API_KEY"]
-    elif _load_key_from_file():
-        source = f"file:{CONFIG_FILE}"
-        key = _load_key_from_file()
-    elif _load_key_from_keeper():
-        source = "keeper:Exa API"
-        key = _load_key_from_keeper()
+        source, key = "env:EXA_API_KEY", os.environ["EXA_API_KEY"]
+    elif file_key := _load_key_from_file():
+        source, key = f"file:{CONFIG_FILE}", file_key
+    elif keeper_key := _load_key_from_keeper():
+        source, key = "keeper:Exa API", keeper_key
+    else:
+        source, key = None, None
 
     if not key:
         print(
