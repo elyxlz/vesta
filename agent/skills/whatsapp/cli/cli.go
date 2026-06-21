@@ -103,24 +103,18 @@ func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInte
 	return allowlist, explicit, noInterrupt
 }
 
-func parseStateDir() (dataDir, logDir string) {
-	instance := extractInstance()
-	if instance != "" {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance)
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "logs")
-	} else {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp")
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", "logs")
+// stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
+// directory for the default instance, a named subdirectory otherwise).
+func stateDataDir() string {
+	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
+	if instance := extractInstance(); instance != "" {
+		return filepath.Join(base, instance)
 	}
-	return
+	return base
 }
 
 func getSocketPath() string {
-	instance := extractInstance()
-	if instance != "" {
-		return filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "whatsapp.sock")
-	}
-	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
+	return filepath.Join(stateDataDir(), "whatsapp.sock")
 }
 
 func successResult(success bool, msg string) map[string]any {
@@ -169,7 +163,7 @@ func readAuthStatus(dataDir string) map[string]string {
 }
 
 func runAuthenticate() {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 	var err error
 	dataDir, err = resolveDir(dataDir)
 	if err != nil {
@@ -180,7 +174,7 @@ func runAuthenticate() {
 }
 
 func runServe(logger waLog.Logger) {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 
 	notifDir := extractNotificationsDir()
 	noNotify := isNoNotifications()
