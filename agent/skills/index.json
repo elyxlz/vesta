@@ -92,6 +92,10 @@
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
+    "name": "reduce-loc",
+    "description": "Shrink a codebase's line count without changing behavior; dead code, dedup, then architectural simplification. Use when asked to reduce LOC, simplify, or trim a repo."
+  },
+  {
     "name": "restart",
     "description": "What to do after a container restart. Holds the per-skill daemon startup commands."
   },
