@@ -223,13 +223,17 @@ export function useChat({
     };
   }, [active, name]);
 
+  const sendEvent = useCallback((event: object): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(event));
+    return true;
+  }, []);
+
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-      ws.send(
-        JSON.stringify({ type: "message", text, input_method: inputMethod }),
-      );
+      if (!sendEvent({ type: "message", text, input_method: inputMethod }))
+        return false;
       pendingEchoesRef.current.push(text);
       setMessages((prev) =>
         capTail([
@@ -244,15 +248,8 @@ export function useChat({
       );
       return true;
     },
-    [],
+    [sendEvent],
   );
-
-  const sendEvent = useCallback((event: object): boolean => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify(event));
-    return true;
-  }, []);
 
   useEffect(() => {
     activeSender = sendEvent;
