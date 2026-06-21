@@ -349,11 +349,7 @@ async def _auth_middleware(request: web.Request, handler):
     return await handler(request)
 
 
-async def start_runner(app: web.Application, *, shutdown_timeout: float = 5.0) -> web.AppRunner:
-    """Set up and return an aiohttp AppRunner. Caller starts a TCPSite/SockSite on it."""
-    runner = web.AppRunner(app, shutdown_timeout=shutdown_timeout)
-    await runner.setup()
-    return runner
+_SHUTDOWN_TIMEOUT_S = 5.0  # bound the WS server drain on shutdown
 
 
 async def start_ws_server(
@@ -385,7 +381,8 @@ async def start_ws_server(
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 
-    runner = await start_runner(app)
+    runner = web.AppRunner(app, shutdown_timeout=_SHUTDOWN_TIMEOUT_S)
+    await runner.setup()
     await web.TCPSite(runner, host, config.ws_port).start()
     return runner
 
