@@ -80,19 +80,14 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
 
 
-def _reply_hint(notif: vm.Notification) -> str:
-    """Point the model at the originating channel's reply skill instead of copying its CLI syntax."""
-    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
-        return ""
-    return f"\n→ Reply using the `{notif.source}` skill."
-
-
 def _format_one(notif: vm.Notification) -> str:
-    """Embed the reply hint inside the <notification> element so the model sees them as one unit."""
+    """Embed a reply hint inside the <notification> element so the model sees them as one unit.
+
+    The hint points the model at the originating channel's reply skill instead of copying its CLI syntax."""
     body = notif.format_for_display()
-    hint = _reply_hint(notif)
-    if not hint:
+    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return body
+    hint = f"\n→ Reply using the `{notif.source}` skill."
     return body.replace("</notification>", f"{hint}\n</notification>")
 
 
