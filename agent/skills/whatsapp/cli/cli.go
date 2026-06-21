@@ -849,10 +849,12 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{"contacts": messages}, nil
 }
 
-func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+// cmdChatTarget runs a single-target chat command that accepts the target via
+// --to or a leading positional (contact name, phone, group, or JID).
+func cmdChatTarget(name, usage string, args []string, action func(string) (bool, string)) (any, error) {
 	var to string
-	fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to archive (contact name, phone, group, or JID)")
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", usage)
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -862,8 +864,12 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	if to == "" {
 		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
 	}
-	success, msg := wac.ArchiveChat(to)
+	success, msg := action(to)
 	return successResult(success, msg), nil
+}
+
+func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
 func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
@@ -879,20 +885,7 @@ func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
 }
 
 func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
-	var to string
-	fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to delete")
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-	if to == "" && len(fs.Args()) > 0 {
-		to = fs.Args()[0]
-	}
-	if to == "" {
-		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
-	}
-	success, msg := wac.DeleteChat(to)
-	return successResult(success, msg), nil
+	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
 func cmdClearAllChats(wac *WhatsAppClient) (any, error) {
