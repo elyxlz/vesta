@@ -229,6 +229,14 @@ impl AppState {
 
 pub type SharedState = Arc<AppState>;
 
+/// Acquire the per-agent serialization lock as an owned write guard — the single
+/// owner of the `agent_lock(name).write_owned()` idiom every mutating agent
+/// handler repeats. Owned so it can be held across the rest of an `async move`
+/// (e.g. the spawned backup/restore pipelines) without borrowing `state`.
+async fn agent_write_guard(state: &AppState, name: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
+    state.agent_lock(name).await.write_owned().await
+}
+
 // --- Response helpers ---
 
 pub fn ok_json() -> Json<serde_json::Value> {
@@ -526,8 +534,7 @@ async fn create_agent_handler(
     let manage_core_code = body.manage_agent_code.unwrap_or(true);
     tracing::info!(name = %name, manage_core_code, "creating agent");
 
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     if !manage_core_code {
         let mut settings = state.settings.write().await;
@@ -597,8 +604,7 @@ async fn start_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "starting agent");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::start_agent(&state.docker, &name)
         .await
@@ -626,8 +632,7 @@ async fn stop_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "stopping agent");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::stop_agent(&state.docker, &name)
         .await
@@ -645,8 +650,7 @@ async fn restart_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::restart_agent(&state.docker, &name)
         .await
@@ -659,8 +663,7 @@ async fn destroy_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "destroying agent");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
         .await
@@ -680,8 +683,7 @@ async fn rebuild_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "rebuilding agent");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::rebuild_agent(&state.docker, &name, &state.env_config)
         .await
@@ -805,42 +807,54 @@ async fn get_provider_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Set or refresh an existing agent's provider config. Body is forwarded
-/// verbatim to the agent's `POST /provider` (the agent owns file writes and
-/// format knowledge). After the write succeeds, vestad restarts the container
-/// so env-var changes (OpenRouter mode) take effect on next boot, then bumps
-/// the status cache so the web sees the change without waiting for next poll.
+/// Which of the agent's own write endpoints a `forward_to_agent_and_restart` call targets.
+enum AgentWrite {
+    /// The agent's `POST /provider` — the restart picks up env-var changes (OpenRouter mode).
+    Provider,
+    /// The agent's `PUT /config` — the change applies on next boot.
+    Config,
+}
+
+/// Forward a body to one of the agent's own write endpoints (it owns the file
+/// writes, format, and validation), then restart the container so the change
+/// applies on next boot. Ensures the agent exists, takes the per-agent write
+/// lock, and auto-starts a stopped agent so it can receive the proxied call —
+/// the shared skeleton behind both the provider and config setters.
+async fn forward_to_agent_and_restart(
+    state: &SharedState,
+    name: &str,
+    target: AgentWrite,
+    body: serde_json::Value,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(name).map_err(map_docker_err)?;
+    let cname = docker::container_name(name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let _guard = agent_write_guard(state, name).await;
+
+    // Agent must be running to receive the proxy call; auto-start stopped agents.
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
+    let forwarded = match target {
+        AgentWrite::Provider => provider.set(&body).await,
+        AgentWrite::Config => provider.put_config(&body).await,
+    };
+    forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, name).await.map_err(map_docker_err)?;
+    Ok(ok_json())
+}
+
+/// Set or refresh an existing agent's provider config, forwarded verbatim to the agent's `POST /provider`.
 async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    // Agent must be running to receive the proxy call; auto-start stopped agents.
-    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, &name)
-            .await
-            .map_err(map_docker_err)?;
-    }
-
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    provider.set(&body)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-
-    docker::restart_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
-
-    // TODO: poke agent_status_cache so the web sees the change inside ~50ms
-    // instead of waiting for the next 3s poll.
-    Ok(ok_json())
+    forward_to_agent_and_restart(&state, &name, AgentWrite::Provider, body).await
 }
 
 /// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
@@ -857,29 +871,13 @@ async fn get_config_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart the
-/// container so the change applies on next boot.
+/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart.
 async fn set_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    }
-
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    provider.put_config(&body).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-
-    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    Ok(ok_json())
+    forward_to_agent_and_restart(&state, &name, AgentWrite::Config, body).await
 }
 
 // --- SSE Logs ---
@@ -995,30 +993,18 @@ async fn tree_handler(
     docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
-    let exec = state.docker.create_exec(&cname, bollard::exec::CreateExecOptions {
-        cmd: Some(vec![
-            "find".to_string(), "/root".to_string(),
-            "-not".to_string(), "-path".to_string(), "*/.venv/*".to_string(),
-            "-not".to_string(), "-path".to_string(), "*/__pycache__/*".to_string(),
-            "-not".to_string(), "-path".to_string(), "*/.cache/*".to_string(),
-            "-not".to_string(), "-path".to_string(), "*/node_modules/*".to_string(),
-            "-printf".to_string(), "%y\t%m\t%p\n".to_string(),
-        ]),
-        attach_stdout: Some(true),
-        attach_stderr: Some(false),
-        ..Default::default()
-    }).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
-
-    let output = state.docker.start_exec(&exec.id, None).await
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
-
-    let mut buffer = String::new();
-    if let bollard::exec::StartExecResults::Attached { mut output, .. } = output {
-        use futures_util::StreamExt;
-        while let Some(Ok(chunk)) = output.next().await {
-            buffer.push_str(&chunk.to_string());
-        }
-    }
+    let find = vec![
+        "find".into(), "/root".into(),
+        "-not".into(), "-path".into(), "*/.venv/*".into(),
+        "-not".into(), "-path".into(), "*/__pycache__/*".into(),
+        "-not".into(), "-path".into(), "*/.cache/*".into(),
+        "-not".into(), "-path".into(), "*/node_modules/*".into(),
+        "-printf".into(), "%y\t%m\t%p\n".into(),
+    ];
+    let result = docker_exec_capture(&state.docker, &cname, find, None)
+        .await
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let buffer = String::from_utf8_lossy(&result.stdout);
 
     let mut entries: Vec<TreeEntry> = Vec::new();
     for line in buffer.lines() {
@@ -1631,46 +1617,46 @@ fn sse_error_event(e: docker::DockerError) -> Event {
     Event::default().event("error").data(err.to_string())
 }
 
-async fn create_backup_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    tracing::info!(agent = %name, "creating manual backup");
-
-    // Spawn the destructive pipeline so it runs to completion even if the SSE client
-    // disconnects mid-backup. Running it inline in the stream body would let hyper drop
-    // the future at the restic::snapshot await point, leaving the agent container stopped
-    // indefinitely (with_container_paused stops the container before the snapshot and
-    // only restarts it after — plain sequential code, not a Drop guard).
+/// Run a destructive backup/restore pipeline on a spawned task and surface its single
+/// terminal result as the `done`/`error` SSE both endpoints share. Spawning (rather than
+/// awaiting inline in the stream body) is the load-bearing invariant: if the SSE client
+/// disconnects mid-pipeline, hyper drops the stream future, but the spawned task keeps
+/// running to completion so a half-applied destructive step can't strand the agent. On
+/// success the pipeline returns the `done` event's data payload.
+fn spawn_pipeline_sse<Fut>(pipeline: Fut) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>
+where
+    Fut: std::future::Future<Output = Result<String, docker::DockerError>> + Send + 'static,
+{
     let (tx, rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let lock = state.agent_lock(&name).await;
-        let _guard = lock.write().await;
-        let _file_lock = match backup::agent_file_lock(&name) {
-            Ok(l) => l,
-            Err(e) => {
-                let _ = tx.send(Err(e));
-                return;
-            }
-        };
-        let result = backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await;
-        let _ = tx.send(result);
+        let _ = tx.send(pipeline.await);
     });
 
     let stream = async_stream::stream! {
         match rx.await {
-            Ok(Ok(info)) => {
-                tracing::info!(backup_id = %info.id, size = info.size, "backup created");
-                yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
-            }
-            Ok(Err(e)) => {
-                yield Ok(sse_error_event(e));
-            }
+            Ok(Ok(done_data)) => yield Ok(Event::default().event("done").data(done_data)),
+            Ok(Err(e)) => yield Ok(sse_error_event(e)),
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+async fn create_backup_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    tracing::info!(agent = %name, "creating manual backup");
+    // Inline, a disconnect could drop the future at restic::snapshot, leaving the container
+    // stopped indefinitely (with_container_paused only restarts it after the snapshot returns).
+    spawn_pipeline_sse(async move {
+        let _guard = agent_write_guard(&state, &name).await;
+        let _file_lock = backup::agent_file_lock(&name)?;
+        let info = backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
+        tracing::info!(backup_id = %info.id, size = info.size, "backup created");
+        Ok(serde_json::to_string(&info).unwrap_or_default())
+    })
 }
 
 async fn list_backups_handler(
@@ -1705,44 +1691,17 @@ async fn restore_backup_handler(
     Path(path): Path<RestoreBackupPath>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
-
-    // Spawn the destructive pipeline so it runs to completion even if the SSE client
-    // disconnects mid-restore. Running it inline would let a disconnect cancel the future
-    // after remove_container_force but before create_container, leaving the agent with no
-    // container and making it unrecoverable via the API (restore_backup's NotFound guard
-    // rejects any retry because the container is gone).
-    let agent_name = path.name.clone();
-    let backup_id = path.backup_id.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let lock = state.agent_lock(&path.name).await;
-        let _guard = lock.write().await;
-        let _file_lock = match backup::agent_file_lock(&path.name) {
-            Ok(l) => l,
-            Err(e) => {
-                let _ = tx.send(Err(e));
-                return;
-            }
-        };
+    // Inline, a disconnect could cancel the future after remove_container_force but before
+    // create_container, leaving the agent with no container and unrecoverable via the API
+    // (restore_backup's NotFound guard rejects any retry because the container is gone).
+    spawn_pipeline_sse(async move {
+        let _guard = agent_write_guard(&state, &path.name).await;
+        let _file_lock = backup::agent_file_lock(&path.name)?;
         let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
-        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await;
-        let _ = tx.send(result);
-    });
-
-    let stream = async_stream::stream! {
-        match rx.await {
-            Ok(Ok(())) => {
-                tracing::info!(agent = %agent_name, backup_id = %backup_id, "backup restored");
-                yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
-            }
-            Ok(Err(e)) => {
-                yield Ok(sse_error_event(e));
-            }
-            Err(_) => {} // pipeline task panicked; nothing to forward
-        }
-    };
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await?;
+        tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
+        Ok(r#"{"ok":true}"#.to_string())
+    })
 }
 
 #[derive(Deserialize)]
@@ -1755,8 +1714,7 @@ async fn delete_backup_handler(
     State(state): State<SharedState>,
     Path(path): Path<DeleteBackupPath>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let lock = state.agent_lock(&path.name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &path.name).await;
 
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "deleting backup");
     backup::delete_backup(&state.docker, &path.name, &path.backup_id)
@@ -2026,8 +1984,7 @@ async fn set_constitution_handler(
     Json(body): Json<SetConstitutionBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let _guard = agent_write_guard(&state, &name).await;
 
     docker::write_constitution(&state.env_config.agents_dir, &name, &body.content)
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
@@ -2317,8 +2274,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     .and_then(|o| o.retention)
                     .unwrap_or(backup_settings.retention);
 
-                let lock = state.agent_lock(name).await;
-                let _guard = lock.write().await;
+                let _guard = agent_write_guard(&state, name).await;
 
                 if let Some(age) = backup::container_age_secs(&state.docker, name).await {
                     if age < backup::MIN_AGE_FOR_BACKUP_SECS {
