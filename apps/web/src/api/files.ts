@@ -1,4 +1,4 @@
-import { apiJson } from "./client";
+import { apiJson, jsonInit } from "./client";
 
 export interface FileTreeEntry {
   path: string;
@@ -41,9 +41,8 @@ export async function writeFile(
   path: string,
   content: string,
 ): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(agent)}/file`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, content }),
-  });
+  await apiJson(
+    `/agents/${encodeURIComponent(agent)}/file`,
+    jsonInit("PUT", { path, content }),
+  );
 }
