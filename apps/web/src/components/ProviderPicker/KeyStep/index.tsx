@@ -1,13 +1,9 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
+import { StepHeading } from "../StepHeading";
 
 export function KeyStep({
   initialKey,
@@ -39,12 +35,10 @@ export function KeyStep({
 
   return (
     <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">OpenRouter API key</h2>
-        <FieldDescription>
-          paste a key from openrouter.ai/keys. it stays on this machine.
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="OpenRouter API key"
+        description="paste a key from openrouter.ai/keys. it stays on this machine."
+      />
 
       <FieldGroup className="w-full gap-3">
         <Field>

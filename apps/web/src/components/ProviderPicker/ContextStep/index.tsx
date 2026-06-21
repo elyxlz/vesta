@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FieldDescription } from "@/components/ui/field";
 import type { ContextPreset } from "@/api/agent-defaults";
+import { StepHeading } from "../StepHeading";
 
 // Presets + the default come from vestad (GET /agent-defaults), passed in by the parent,
 // so this step holds no copy of either.
@@ -26,13 +26,10 @@ export function ContextStep({
       }}
       className="flex w-full flex-col items-center gap-4"
     >
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">context window</h2>
-        <FieldDescription>
-          how much the agent keeps in context before it compacts. larger holds
-          more at once; smaller is cheaper and compacts sooner.
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="context window"
+        description="how much the agent keeps in context before it compacts. larger holds more at once; smaller is cheaper and compacts sooner."
+      />
 
       <div className="flex w-full flex-col gap-1.5">
         {presets.map((preset) => (
