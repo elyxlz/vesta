@@ -2238,11 +2238,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_simple() {
-        assert_eq!(normalize_name("MyAgent"), "myagent");
-    }
-
-    #[test]
     fn retry_import_pipeline_recovers_after_transient_failure() {
         let tries = std::cell::Cell::new(0u32);
         let result = retry_import_pipeline("test", || {
@@ -2269,38 +2264,20 @@ mod tests {
     }
 
     #[test]
-    fn normalize_spaces_and_underscores() {
-        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
-    }
-
-    #[test]
-    fn normalize_special_chars() {
-        assert_eq!(normalize_name("hello!@#world"), "helloworld");
-    }
-
-    #[test]
-    fn normalize_leading_trailing_hyphens() {
-        assert_eq!(normalize_name("--test--"), "test");
-    }
-
-    #[test]
-    fn normalize_multiple_hyphens() {
-        assert_eq!(normalize_name("a---b"), "a-b");
-    }
-
-    #[test]
-    fn normalize_whitespace() {
-        assert_eq!(normalize_name("  hello  "), "hello");
-    }
-
-    #[test]
-    fn normalize_empty() {
-        assert_eq!(normalize_name(""), "");
-    }
-
-    #[test]
-    fn normalize_all_special() {
-        assert_eq!(normalize_name("!!!"), "");
+    fn normalize_name_lowercases_and_sanitizes() {
+        let cases = [
+            ("MyAgent", "myagent"),
+            ("My Agent_Name", "my-agent-name"),
+            ("hello!@#world", "helloworld"),
+            ("--test--", "test"),
+            ("a---b", "a-b"),
+            ("  hello  ", "hello"),
+            ("", ""),
+            ("!!!", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(normalize_name(input), expected, "input: {input:?}");
+        }
     }
 
     #[test]
@@ -2319,51 +2296,32 @@ mod tests {
     }
 
     #[test]
-    fn validate_ok() {
-        assert!(validate_name("hello").is_ok());
-        assert!(validate_name("a").is_ok());
-        assert!(validate_name("test-agent").is_ok());
-        assert!(validate_name("a1").is_ok());
-        assert!(validate_name("123").is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_empty() {
-        assert!(validate_name("").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_uppercase() {
-        assert!(validate_name("Hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_leading_hyphen() {
-        assert!(validate_name("-hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_trailing_hyphen() {
-        assert!(validate_name("hello-").is_err());
+    fn validate_name_accepts_dns_labels_rejects_the_rest() {
+        let cases = [
+            ("hello", true),
+            ("a", true),
+            ("test-agent", true),
+            ("a1", true),
+            ("123", true),
+            ("vesta", true),
+            ("my-vesta", true),
+            ("vesta-agent", true),
+            ("", false),
+            ("Hello", false),
+            ("-hello", false),
+            ("hello-", false),
+            ("hello world", false),
+            ("hello_world", false),
+        ];
+        for (name, ok) in cases {
+            assert_eq!(validate_name(name).is_ok(), ok, "name: {name:?}");
+        }
     }
 
     #[test]
     fn validate_rejects_too_long() {
         let long = "a".repeat(33);
         assert!(validate_name(&long).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_special_chars() {
-        assert!(validate_name("hello world").is_err());
-        assert!(validate_name("hello_world").is_err());
-    }
-
-    #[test]
-    fn validate_allows_vesta_in_name() {
-        assert!(validate_name("vesta").is_ok());
-        assert!(validate_name("my-vesta").is_ok());
-        assert!(validate_name("vesta-agent").is_ok());
     }
 
     #[test]
