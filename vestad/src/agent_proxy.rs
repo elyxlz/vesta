@@ -282,34 +282,18 @@ mod tests {
     use tokio::time::Instant;
 
     #[test]
-    fn forwards_nested_asset_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/assets/index-abc.js"),
-            ("dashboard", "/assets/index-abc.js"),
-        );
-    }
-
-    #[test]
-    fn forwards_deeply_nested_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/a/b/c/d.png"),
-            ("dashboard", "/a/b/c/d.png"),
-        );
-    }
-
-    #[test]
-    fn forwards_root_with_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard/"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn forwards_root_without_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn empty_path_yields_empty_segment() {
-        assert_eq!(split_service_subpath(""), ("", "/"));
+    fn splits_service_name_from_forwarded_subpath() {
+        // (path, expected service, expected subpath)
+        let cases = [
+            ("dashboard/assets/index-abc.js", ("dashboard", "/assets/index-abc.js")),
+            ("dashboard/a/b/c/d.png", ("dashboard", "/a/b/c/d.png")),
+            ("dashboard/", ("dashboard", "/")),
+            ("dashboard", ("dashboard", "/")),
+            ("", ("", "/")),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(split_service_subpath(path), expected, "split_service_subpath({path:?})");
+        }
     }
 
     #[tokio::test]
