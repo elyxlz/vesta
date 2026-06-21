@@ -100,7 +100,6 @@ pub async fn agent_proxy_handler(
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
-    // Append query string.
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
         target_path.push('?');
