@@ -14,6 +14,7 @@ import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import { setModel, setContextWindow } from "@/api/agents";
 import { formatTokens } from "@/lib/format";
+import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
@@ -47,10 +48,8 @@ export function ProviderCard() {
       await setModel(name, model);
       setModelOpen(false);
       refresh();
-    } catch (e: unknown) {
-      setError(
-        (e as { message?: string })?.message || "failed to change model",
-      );
+    } catch (e) {
+      setError(errorMessage(e, "failed to change model"));
     } finally {
       setApplying(false);
     }
@@ -64,11 +63,8 @@ export function ProviderCard() {
       await setContextWindow(name, tokens);
       setContextOpen(false);
       refresh();
-    } catch (e: unknown) {
-      setError(
-        (e as { message?: string })?.message ||
-          "failed to change context window",
-      );
+    } catch (e) {
+      setError(errorMessage(e, "failed to change context window"));
     } finally {
       setApplying(false);
     }
