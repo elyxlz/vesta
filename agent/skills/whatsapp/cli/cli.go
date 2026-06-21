@@ -19,18 +19,26 @@ import (
 // global flags that must be read before command dispatch (the per-command FlagSet
 // only sees the remaining args after the subcommand).
 
-func extractFlag(name string) string {
+// lookupFlag returns the value of --name (as "--name value" or "--name=value")
+// and whether the flag was present, so callers can distinguish an absent flag
+// from one set to the empty string.
+func lookupFlag(name string) (string, bool) {
 	flag := "--" + name
 	prefix := flag + "="
 	for i, arg := range os.Args {
 		if arg == flag && i+1 < len(os.Args) {
-			return os.Args[i+1]
+			return os.Args[i+1], true
 		}
 		if strings.HasPrefix(arg, prefix) {
-			return strings.TrimPrefix(arg, prefix)
+			return strings.TrimPrefix(arg, prefix), true
 		}
 	}
-	return ""
+	return "", false
+}
+
+func extractFlag(name string) string {
+	val, _ := lookupFlag(name)
+	return val
 }
 
 func extractInstance() string         { return extractFlag("instance") }
@@ -77,22 +85,7 @@ func extractSkipSenders() map[string]bool {
 // no sender should interrupt.
 func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInterrupt bool) {
 	allowlist = make(map[string]bool)
-	val := ""
-	found := false
-	flagName := "--interrupt-senders"
-	prefix := flagName + "="
-	for i, arg := range os.Args {
-		if arg == flagName && i+1 < len(os.Args) {
-			val = os.Args[i+1]
-			found = true
-			break
-		}
-		if strings.HasPrefix(arg, prefix) {
-			val = strings.TrimPrefix(arg, prefix)
-			found = true
-			break
-		}
-	}
+	val, found := lookupFlag("interrupt-senders")
 	if !found {
 		return allowlist, false, false
 	}
@@ -110,24 +103,18 @@ func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInte
 	return allowlist, explicit, noInterrupt
 }
 
-func parseStateDir() (dataDir, logDir string) {
-	instance := extractInstance()
-	if instance != "" {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance)
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "logs")
-	} else {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp")
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", "logs")
+// stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
+// directory for the default instance, a named subdirectory otherwise).
+func stateDataDir() string {
+	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
+	if instance := extractInstance(); instance != "" {
+		return filepath.Join(base, instance)
 	}
-	return
+	return base
 }
 
 func getSocketPath() string {
-	instance := extractInstance()
-	if instance != "" {
-		return filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "whatsapp.sock")
-	}
-	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
+	return filepath.Join(stateDataDir(), "whatsapp.sock")
 }
 
 func successResult(success bool, msg string) map[string]any {
@@ -176,7 +163,7 @@ func readAuthStatus(dataDir string) map[string]string {
 }
 
 func runAuthenticate() {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 	var err error
 	dataDir, err = resolveDir(dataDir)
 	if err != nil {
@@ -187,7 +174,7 @@ func runAuthenticate() {
 }
 
 func runServe(logger waLog.Logger) {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 
 	notifDir := extractNotificationsDir()
 	noNotify := isNoNotifications()
@@ -862,10 +849,12 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{"contacts": messages}, nil
 }
 
-func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+// cmdChatTarget runs a single-target chat command that accepts the target via
+// --to or a leading positional (contact name, phone, group, or JID).
+func cmdChatTarget(name, usage string, args []string, action func(string) (bool, string)) (any, error) {
 	var to string
-	fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to archive (contact name, phone, group, or JID)")
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", usage)
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -875,8 +864,12 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	if to == "" {
 		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
 	}
-	success, msg := wac.ArchiveChat(to)
+	success, msg := action(to)
 	return successResult(success, msg), nil
+}
+
+func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
 func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
@@ -892,20 +885,7 @@ func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
 }
 
 func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
-	var to string
-	fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to delete")
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-	if to == "" && len(fs.Args()) > 0 {
-		to = fs.Args()[0]
-	}
-	if to == "" {
-		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
-	}
-	success, msg := wac.DeleteChat(to)
-	return successResult(success, msg), nil
+	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
 func cmdClearAllChats(wac *WhatsAppClient) (any, error) {

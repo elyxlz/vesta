@@ -629,17 +629,20 @@ func (ms *MessageStore) ListMessages(
 	senderPhone, chatJID, query string,
 	limit, offset int,
 ) ([]Message, error) {
+	// Try the FTS index first when searching; fall back to a LIKE scan if the
+	// FTS query errors (e.g. a syntactically invalid MATCH expression).
 	if query != "" {
-		messages, err := ms.listMessagesFTS(after, before, senderPhone, chatJID, query, limit, offset)
+		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJID, query, limit, offset)
 		if err == nil {
 			return messages, nil
 		}
 	}
 
-	return ms.listMessagesLike(after, before, senderPhone, chatJID, query, limit, offset)
+	return ms.listMessagesQuery(false, after, before, senderPhone, chatJID, query, limit, offset)
 }
 
-func (ms *MessageStore) listMessagesFTS(
+func (ms *MessageStore) listMessagesQuery(
+	useFTS bool,
 	after, before *time.Time,
 	senderPhone, chatJID, query string,
 	limit, offset int,
@@ -650,11 +653,14 @@ func (ms *MessageStore) listMessagesFTS(
 			m.id, m.chat_jid, c.name, m.sender, m.content,
 			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
 		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		JOIN messages_fts ON messages_fts.rowid = m.rowid
-		WHERE messages_fts MATCH ?
-	`)
-	args := []any{query}
+		JOIN chats c ON m.chat_jid = c.jid`)
+	var args []any
+	if useFTS {
+		qb.WriteString("\n\t\tJOIN messages_fts ON messages_fts.rowid = m.rowid\n\t\tWHERE messages_fts MATCH ?")
+		args = append(args, query)
+	} else {
+		qb.WriteString("\n\t\tWHERE 1=1")
+	}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -672,46 +678,7 @@ func (ms *MessageStore) listMessagesFTS(
 		qb.WriteString(" AND m.chat_jid = ?")
 		args = append(args, chatJID)
 	}
-
-	qb.WriteString(" ORDER BY m.timestamp DESC LIMIT ? OFFSET ?")
-	args = append(args, limit, offset)
-
-	return ms.scanMessages(ms.db.Query(qb.String(), args...))
-}
-
-func (ms *MessageStore) listMessagesLike(
-	after, before *time.Time,
-	senderPhone, chatJID, query string,
-	limit, offset int,
-) ([]Message, error) {
-	qb := strings.Builder{}
-	qb.WriteString(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE 1=1
-	`)
-	args := []any{}
-
-	if after != nil {
-		qb.WriteString(" AND m.timestamp >= ?")
-		args = append(args, *after)
-	}
-	if before != nil {
-		qb.WriteString(" AND m.timestamp <= ?")
-		args = append(args, *before)
-	}
-	if senderPhone != "" {
-		qb.WriteString(" AND m.sender LIKE ?")
-		args = append(args, "%"+senderPhone+"%")
-	}
-	if chatJID != "" {
-		qb.WriteString(" AND m.chat_jid = ?")
-		args = append(args, chatJID)
-	}
-	if query != "" {
+	if !useFTS && query != "" {
 		qb.WriteString(" AND m.content LIKE ?")
 		args = append(args, "%"+query+"%")
 	}
