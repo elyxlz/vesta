@@ -1399,6 +1399,19 @@ impl Default for BackupGlobalSettings {
     }
 }
 
+impl BackupGlobalSettings {
+    /// Effective (enabled, retention) for `agent`, layering its override over the globals.
+    /// Single owner of the override-resolution rule the settings handler and the
+    /// auto-backup task both depend on.
+    fn effective_for(&self, agent: &str) -> (bool, crate::types::RetentionPolicy) {
+        let agent_override = self.agents.get(agent);
+        (
+            agent_override.and_then(|o| o.enabled).unwrap_or(self.enabled),
+            agent_override.and_then(|o| o.retention).unwrap_or(self.retention),
+        )
+    }
+}
+
 fn default_true() -> bool { true }
 
 fn default_backup_hour() -> u8 { DEFAULT_AUTO_BACKUP_HOUR }
@@ -1727,15 +1740,18 @@ async fn delete_backup_handler(
 
 // --- Auto-backup settings ---
 
-async fn get_auto_backup_handler(
-    State(state): State<SharedState>,
-) -> Json<serde_json::Value> {
-    let settings = state.settings.read().await;
-    Json(serde_json::json!({
-        "enabled": settings.backup.enabled,
-        "hour": settings.backup.hour,
-        "retention": settings.backup.retention,
-    }))
+/// The `{enabled, hour, retention}` body the global auto-backup GET/PUT both return.
+fn auto_backup_json(backup: &BackupGlobalSettings) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "enabled": backup.enabled, "hour": backup.hour, "retention": backup.retention }))
+}
+
+/// The `{enabled, retention, has_override}` body the per-agent backup GET/PUT/DELETE all return.
+fn agent_backup_json(enabled: bool, retention: crate::types::RetentionPolicy, has_override: bool) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "enabled": enabled, "retention": retention, "has_override": has_override }))
+}
+
+async fn get_auto_backup_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    auto_backup_json(&state.settings.read().await.backup)
 }
 
 #[derive(Deserialize)]
@@ -1805,11 +1821,7 @@ async fn set_auto_backup_handler(
 
     save_settings(&settings);
 
-    Ok(Json(serde_json::json!({
-        "enabled": settings.backup.enabled,
-        "hour": settings.backup.hour,
-        "retention": settings.backup.retention,
-    })))
+    Ok(auto_backup_json(&settings.backup))
 }
 
 // --- Release channel ---
@@ -1887,15 +1899,9 @@ async fn get_agent_backup_settings_handler(
     Path(name): Path<String>,
 ) -> Json<serde_json::Value> {
     let settings = state.settings.read().await;
-    let agent_override = settings.backup.agents.get(&name);
-    let enabled = agent_override.and_then(|o| o.enabled).unwrap_or(settings.backup.enabled);
-    let retention = agent_override.and_then(|o| o.retention).unwrap_or(settings.backup.retention);
-    let has_override = agent_override.is_some();
-    Json(serde_json::json!({
-        "enabled": enabled,
-        "retention": retention,
-        "has_override": has_override,
-    }))
+    let has_override = settings.backup.agents.contains_key(&name);
+    let (enabled, retention) = settings.backup.effective_for(&name);
+    agent_backup_json(enabled, retention, has_override)
 }
 
 async fn set_agent_backup_settings_handler(
@@ -1933,11 +1939,7 @@ async fn set_agent_backup_settings_handler(
     save_settings(&settings);
     tracing::info!(agent = %name, "agent backup settings updated");
 
-    Ok(Json(serde_json::json!({
-        "enabled": effective_enabled,
-        "retention": effective_retention,
-        "has_override": true,
-    })))
+    Ok(agent_backup_json(effective_enabled, effective_retention, true))
 }
 
 async fn delete_agent_backup_settings_handler(
@@ -1948,11 +1950,7 @@ async fn delete_agent_backup_settings_handler(
     settings.backup.agents.remove(&name);
     save_settings(&settings);
     tracing::info!(agent = %name, "agent backup override removed, using global settings");
-    Json(serde_json::json!({
-        "enabled": settings.backup.enabled,
-        "retention": settings.backup.retention,
-        "has_override": false,
-    }))
+    agent_backup_json(settings.backup.enabled, settings.backup.retention, false)
 }
 
 // --- Constitution ---
@@ -2262,17 +2260,11 @@ fn spawn_auto_backup_task(state: SharedState) {
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
-                let agent_override = backup_settings.agents.get(name);
-                let agent_enabled = agent_override
-                    .and_then(|o| o.enabled)
-                    .unwrap_or(backup_settings.enabled);
+                let (agent_enabled, ret) = backup_settings.effective_for(name);
                 if !agent_enabled {
                     tracing::debug!(agent = %name, "auto-backup: disabled for agent, skipping");
                     continue;
                 }
-                let ret = agent_override
-                    .and_then(|o| o.retention)
-                    .unwrap_or(backup_settings.retention);
 
                 let _guard = agent_write_guard(&state, name).await;
 
