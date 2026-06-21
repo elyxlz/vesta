@@ -1429,7 +1429,6 @@ fn settings_file() -> std::path::PathBuf {
 fn load_settings() -> Settings {
     let path = settings_file();
 
-    // Try loading unified settings.json
     if let Ok(data) = std::fs::read_to_string(&path) {
         match serde_json::from_str(&data) {
             Ok(settings) => {

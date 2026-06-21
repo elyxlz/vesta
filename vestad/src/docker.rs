@@ -861,7 +861,6 @@ pub fn detect_upstream_ref() -> Option<String> {
 /// no stale entries (e.g. directories where files should be). Fails fast with a
 /// clear error instead of producing cryptic permission errors later.
 pub fn validate_config_dir(env_config: &AgentEnvConfig) -> Result<(), DockerError> {
-    // Ensure dirs exist
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!(
             "cannot create agents directory {}: {e} — check ownership (try: sudo chown -R $(whoami) {})",
@@ -1917,7 +1916,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check cmd
     let cmd = info.config.as_ref()
         .and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
@@ -1932,7 +1930,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check network mode
     let network = info.host_config.as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
@@ -1952,7 +1949,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check /dev/fuse device
     let devices = info.host_config.as_ref()
         .and_then(|h| h.devices.as_deref())
         .unwrap_or(&[]);
@@ -1964,7 +1960,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check SYS_ADMIN capability
     let caps = info.host_config.as_ref()
         .and_then(|h| h.cap_add.as_deref())
         .unwrap_or(&[]);
