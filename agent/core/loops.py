@@ -203,10 +203,8 @@ async def _run_messages_with_interrupts(
             raise
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
-            if not state.persisted.session_id and state.client:
-                sid = state.client.session_id
-                if sid:
-                    persist_session_id(sid, state=state, config=config)
+            if not state.persisted.session_id and state.client and state.client.session_id:
+                persist_session_id(state.client.session_id, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
@@ -254,9 +252,8 @@ async def _run_messages_with_interrupts(
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
-        if process_task and not process_task.done():
-            process_task.cancel()
-            await asyncio.gather(process_task, return_exceptions=True)
+        if process_task:
+            await _cancel_task(process_task)
         raise
 
 
@@ -445,11 +442,10 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
             notifications = await load_new_notifications(state=state, config=config)
-            interrupt_notifs = [n for n in notifications if n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
-            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
-
-            new_passive = [n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
-            queued_paths.update(n.file_path for n in new_passive if n.file_path)
+            fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
+            queued_paths.update(n.file_path for n in fresh if n.file_path)
+            interrupt_notifs = [n for n in fresh if n.interrupt]
+            new_passive = [n for n in fresh if not n.interrupt]
             pending_passive.extend(new_passive)
 
             if interrupt_notifs:
@@ -459,8 +455,4 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
                 await process_batch(pending_passive, queue=queue, state=state, config=config)
                 pending_passive = []
     finally:
-        watcher_task.cancel()
-        try:
-            await watcher_task
-        except asyncio.CancelledError:
-            pass
+        await _cancel_task(watcher_task)
