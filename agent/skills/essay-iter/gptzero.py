@@ -449,9 +449,7 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
                 "https://gptzero.me/",
             ],
         )
-        cookies = {}
-        for c in cookies_resp.get("cookies", []):
-            cookies[c["name"]] = c["value"]
+        cookies = {c["name"]: c["value"] for c in cookies_resp.get("cookies", [])}
         return {
             "access_token": token["access_token"],
             "refresh_token": token["refresh_token"],
