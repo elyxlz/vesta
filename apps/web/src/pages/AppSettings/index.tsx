@@ -38,6 +38,9 @@ export function AppSettingsPage() {
         className="flex flex-1 flex-col overflow-y-auto px-page pb-8"
         style={{ paddingTop: navbarHeight }}
       >
+        <div className="flex min-h-11 items-center justify-center pt-8 pb-6">
+          <h1 className="text-lg font-semibold">settings</h1>
+        </div>
         <AppSettings />
       </div>
       <Footer />
