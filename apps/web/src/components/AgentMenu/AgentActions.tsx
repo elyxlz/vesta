@@ -139,7 +139,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     generalItems.push({
       key: "authenticate",
       icon: <KeyRound data-icon="inline-start" />,
-      label: input.isAuthenticated ? "switch provider" : "authenticate",
+      label: input.isAuthenticated ? "switch provider" : "sign in",
       onClick: input.onAuthenticate,
     });
   }

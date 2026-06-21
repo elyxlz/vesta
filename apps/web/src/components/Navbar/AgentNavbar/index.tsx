@@ -87,23 +87,7 @@ export function AgentNavbar({
             </Tooltip>
           )
         }
-        center={
-          <>
-            <AgentIsland />
-            {isMobile && needsAuth && (
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center gap-2">
-                <Button
-                  variant="default"
-                  size="lg"
-                  onClick={() => void handleOpenAuth()}
-                >
-                  <KeyRound data-icon="inline-start" />
-                  sign in
-                </Button>
-              </div>
-            )}
-          </>
-        }
+        center={<AgentIsland />}
         trailing={
           connected ? (
             <div className="flex items-center gap-2">
