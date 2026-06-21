@@ -2438,6 +2438,7 @@ pub struct ServerConfig {
     pub config_dir: std::path::PathBuf,
     pub docker: bollard::Docker,
     pub dev_mode: bool,
+    pub expose_lan: bool,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2451,6 +2452,7 @@ pub async fn run_server(cfg: ServerConfig) {
         config_dir,
         docker,
         dev_mode,
+        expose_lan,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2508,15 +2510,21 @@ pub async fn run_server(cfg: ServerConfig) {
     // the async block, closing the TOCTOU race on the HTTP port. HTTPS binds
     // inside axum_server::bind_rustls below; its window is short and a loss is
     // loud (the task panics) rather than silent.
-    // Bind the HTTPS control API to loopback only. Every path that reaches vestad
-    // arrives via localhost: the Cloudflare tunnel's cloudflared dials
-    // https://localhost:{port} (see tunnel.rs) and the plain HTTP server is
-    // already loopback-only, so this keeps the API off the LAN and the public
-    // internet. On cloud-managed VMs a deny-all host firewall is the boundary
-    // regardless, so loopback binding there is defence in depth, not a regression.
-    let https_addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+    // Bind the HTTPS control API to loopback by default — every normal path
+    // reaches vestad via localhost (cloudflared dials https://localhost:{port}),
+    // so this keeps the API off the LAN and the public internet. `--expose-lan`
+    // opts into binding all interfaces so other devices on the LAN can connect
+    // (0.0.0.0 still includes loopback, so the tunnel keeps working); the API is
+    // then guarded only by the API key + fingerprint-pinned self-signed TLS. The
+    // plain HTTP server stays loopback-only regardless (see main.rs).
+    let https_bind_addr = if expose_lan {
+        std::net::Ipv4Addr::UNSPECIFIED
+    } else {
+        std::net::Ipv4Addr::LOCALHOST
+    };
+    let https_addr = std::net::SocketAddr::from((https_bind_addr, port));
 
-    tracing::info!(port, "https listening on 127.0.0.1");
+    tracing::info!(port, %https_bind_addr, "https listening");
     tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
 
     let http_app = app.clone();
