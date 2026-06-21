@@ -37,6 +37,20 @@ def _email(args: argparse.Namespace) -> str:
     return args.email.strip().lower()
 
 
+class _Invalid(Exception):
+    """A surfaced bad-input/state condition: its payload is printed and the CLI exits 2."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+
+def _require_token(email: str, hint: str = "run `onboard verify` first") -> str:
+    token = state.token_for(email)
+    if not token:
+        raise _Invalid({"error": f"not verified — {hint}"})
+    return token
+
+
 # --- auth -------------------------------------------------------------------
 
 
@@ -49,8 +63,7 @@ def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> i
     identity = client.mint_identity_token()
     created = client.create_account(email, identity)
     if "error" in created:
-        _print(created)  # e.g. our vesta isn't active, or a bad email
-        return 2
+        raise _Invalid(created)  # e.g. our vesta isn't active, or a bad email
     client.send_otp(email)
     _print(
         {
@@ -66,8 +79,7 @@ def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
     token = client.verify_otp(email, args.code.strip())
     if not token:
-        _print({"error": "wrong or expired code — ask them to re-read it (or resend)"})
-        return 2
+        raise _Invalid({"error": "wrong or expired code — ask them to re-read it (or resend)"})
     state.update(email, token=token)
     _print({"verified": True, "email": email})
     return 0
@@ -78,16 +90,12 @@ def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 
 def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
-    token = state.token_for(email)
-    if not token:
-        _print({"error": "not verified — run `onboard verify` with the buyer's code first"})
-        return 2
+    token = _require_token(email, "run `onboard verify` with the buyer's code first")
 
     price: float | None = None
     if args.price is not None:
         if args.price < PLAN_FLOOR_USD:
-            _print({"error": f"price ${args.price:g} is below the ${PLAN_FLOOR_USD} floor", "floor_usd": PLAN_FLOOR_USD})
-            return 2
+            raise _Invalid({"error": f"price ${args.price:g} is below the ${PLAN_FLOOR_USD} floor", "floor_usd": PLAN_FLOOR_USD})
         price = args.price
 
     result = client.checkout(
@@ -108,10 +116,7 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 
 def _cmd_status(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
-    token = state.token_for(email)
-    if not token:
-        _print({"error": "not verified — run `onboard verify` first"})
-        return 2
+    token = _require_token(email)
     server = client.me(token).get("server")
     if not server:
         _print({"status": "no_server", "hint": "run `onboard checkout` and have them pay"})
@@ -132,16 +137,17 @@ def _active_server(client: Client, token: str) -> dict[str, Any] | None:
     return None
 
 
-def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> int:
-    email = _email(args)
-    token = state.token_for(email)
-    if not token:
-        _print({"error": "not verified — run `onboard verify` first"})
-        return 2
+def _require_active_server(client: Client, token: str) -> dict[str, Any]:
     server = _active_server(client, token)
     if not server:
-        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
-        return 2
+        raise _Invalid({"error": "server not ready yet — poll `onboard status` until it is active"})
+    return server
+
+
+def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    email = _email(args)
+    token = _require_token(email)
+    server = _require_active_server(client, token)
 
     name = args.name.strip()
     context = args.context.strip() if args.context else None
@@ -154,8 +160,7 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
         context=context,
     )
     if "error" in result:
-        _print(result)
-        return 2
+        raise _Invalid(result)
     # vestad normalizes the name (lowercases/strips); store what it ACTUALLY created
     # so claude-finish addresses /agents/<name>/provider with a name that validates.
     created_name = result.get("name", name)
@@ -166,20 +171,13 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
 
 def _cmd_claude_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
-    token = state.token_for(email)
-    if not token:
-        _print({"error": "not verified — run `onboard verify` first"})
-        return 2
-    server = _active_server(client, token)
-    if not server:
-        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
-        return 2
+    token = _require_token(email)
+    server = _require_active_server(client, token)
 
     server_token = client.server_token(token, server["id"])
     result = client.claude_oauth_start(subdomain=server["subdomain"], server_token=server_token)
     if "error" in result:
-        _print(result)
-        return 2
+        raise _Invalid(result)
     state.update(email, claude_session_id=result["session_id"])
     _print({"auth_url": result["auth_url"], "next": "have them open it, approve, and read the code back"})
     return 0
@@ -187,23 +185,15 @@ def _cmd_claude_start(args: argparse.Namespace, client: Client, cfg: Config) -> 
 
 def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
-    token = state.token_for(email)
-    if not token:
-        _print({"error": "not verified — run `onboard verify` first"})
-        return 2
+    token = _require_token(email)
     st = state.load(email)
     session_id = st.get("claude_session_id")
     if not session_id:
-        _print({"error": "no Claude auth in progress — run `onboard claude-start` first"})
-        return 2
+        raise _Invalid({"error": "no Claude auth in progress — run `onboard claude-start` first"})
     name = args.name.strip() if args.name else st.get("agent_name")
     if not name:
-        _print({"error": "unknown agent name — pass --name (the one used in create-agent)"})
-        return 2
-    server = _active_server(client, token)
-    if not server:
-        _print({"error": "server not ready yet — poll `onboard status` until it is active"})
-        return 2
+        raise _Invalid({"error": "unknown agent name — pass --name (the one used in create-agent)"})
+    server = _require_active_server(client, token)
 
     server_token = client.server_token(token, server["id"])
     credentials = client.claude_oauth_complete(
@@ -224,10 +214,9 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         model=(args.model or client.fetch_agent_defaults()["model"]),
     )
     if "error" in result:
-        _print(
+        raise _Invalid(
             {"error": f"authorized on Anthropic's side but attaching it failed ({result['error']}); run `onboard claude-start` again to retry"}
         )
-        return 2
     # Onboarding complete — forget the buyer's session token.
     state.clear(email)
     _print({"connected": True, "name": name})
@@ -340,6 +329,9 @@ def main(argv: list[str] | None = None) -> int:
     handler = handlers[args.command]
     try:
         return handler(args, client, cfg)
+    except _Invalid as e:
+        _print(e.payload)
+        return 2
     except OnboardError as e:
         _print({"error": str(e)})
         return 3
