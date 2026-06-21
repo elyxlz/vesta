@@ -910,28 +910,21 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
 	var fileLength sql.NullInt64
 
-	err := ms.db.QueryRow(`
-		SELECT id, chat_jid, media_type, filename, url,
+	const selectCols = `SELECT id, chat_jid, media_type, filename, url,
 			media_key, file_sha256, file_enc_sha256, file_length
-		FROM messages
-		WHERE id = ? AND chat_jid = ?
-	`, messageID, chatJID).Scan(
-		&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
-		&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
-	)
-
-	if err == sql.ErrNoRows {
-		// Fallback: some contacts use LID JIDs (@lid) instead of phone JIDs (@s.whatsapp.net).
-		// Try matching by message ID alone.
-		err = ms.db.QueryRow(`
-			SELECT id, chat_jid, media_type, filename, url,
-				media_key, file_sha256, file_enc_sha256, file_length
-			FROM messages
-			WHERE id = ?
-		`, messageID).Scan(
+		FROM messages WHERE `
+	scan := func(where string, qargs ...any) error {
+		return ms.db.QueryRow(selectCols+where, qargs...).Scan(
 			&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
 			&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
 		)
+	}
+
+	// Fallback: some contacts use LID JIDs (@lid) instead of phone JIDs (@s.whatsapp.net),
+	// so retry by message ID alone if the chat-scoped lookup misses.
+	err := scan("id = ? AND chat_jid = ?", messageID, chatJID)
+	if err == sql.ErrNoRows {
+		err = scan("id = ?", messageID)
 	}
 
 	if err != nil {
