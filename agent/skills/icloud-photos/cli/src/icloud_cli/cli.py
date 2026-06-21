@@ -514,26 +514,13 @@ def _connect() -> Any:
     return api
 
 
-def _serialize_shared(album: Any) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "name": getattr(album, "name", None),
-        "id": getattr(album, "id", None),
-        "kind": "shared",
-        "sharing_type": getattr(album, "sharing_type", None),
-    }
-    try:
-        entry["photo_count"] = len(album)
-    except Exception as e:
-        entry["photo_count_error"] = f"{type(e).__name__}:{e}"
-    return entry
-
-
-def _serialize_owned(album: Any) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "name": getattr(album, "name", None) or getattr(album, "title", None),
-        "id": getattr(album, "id", None),
-        "kind": "owned",
-    }
+def _serialize_album(album: Any, kind: str) -> dict[str, Any]:
+    name = getattr(album, "name", None)
+    if kind == "owned":
+        name = name or getattr(album, "title", None)
+    entry: dict[str, Any] = {"name": name, "id": getattr(album, "id", None), "kind": kind}
+    if kind == "shared":
+        entry["sharing_type"] = getattr(album, "sharing_type", None)
     try:
         entry["photo_count"] = len(album)
     except Exception as e:
@@ -547,13 +534,13 @@ def cmd_albums(args: argparse.Namespace) -> None:
     if not args.owned:
         try:
             for album in api.photos.shared_streams:
-                out["shared"].append(_serialize_shared(album))
+                out["shared"].append(_serialize_album(album, "shared"))
         except Exception as e:
             out["errors"]["shared"] = f"{type(e).__name__}:{e}"
     if not args.shared:
         try:
             for album in api.photos.albums:
-                out["owned"].append(_serialize_owned(album))
+                out["owned"].append(_serialize_album(album, "owned"))
         except Exception as e:
             out["errors"]["owned"] = f"{type(e).__name__}:{e}"
     print(json.dumps(out, indent=2, default=str))
