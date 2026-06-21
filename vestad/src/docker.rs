@@ -2383,75 +2383,40 @@ mod tests {
 
     // --- Dockerignore pattern matching ---
 
-    fn patterns(pats: &[&str]) -> Vec<String> {
-        pats.iter().map(|s| s.to_string()).collect()
-    }
-
     #[test]
-    fn dockerignore_exact_match() {
-        let pats = patterns(&["target"]);
-        assert!(is_dockerignored("target", &pats));
-        assert!(is_dockerignored("target/debug/foo", &pats));
-        assert!(!is_dockerignored("targets", &pats));
-        assert!(!is_dockerignored("some/nested/target", &pats));
-        assert!(!is_dockerignored("some/nested/target/file.txt", &pats));
-    }
-
-    #[test]
-    fn dockerignore_trailing_slash() {
-        let pats = patterns(&["app/"]);
-        // Matches root-level app/ directory
-        assert!(is_dockerignored("app", &pats));
-        assert!(is_dockerignored("app/package.json", &pats));
-        // Must NOT match nested directories with the same name
-        assert!(!is_dockerignored("agent/skills/dashboard/app", &pats));
-        assert!(!is_dockerignored("agent/skills/dashboard/app/src/App.tsx", &pats));
-    }
-
-    #[test]
-    fn dockerignore_wildcard_extension() {
-        let pats = patterns(&["*.pyc"]);
-        assert!(is_dockerignored("foo.pyc", &pats));
-        assert!(is_dockerignored("dir/bar.pyc", &pats));
-        assert!(!is_dockerignored("foo.py", &pats));
-    }
-
-    #[test]
-    fn dockerignore_question_mark() {
-        let pats = patterns(&["?.txt"]);
-        assert!(is_dockerignored("a.txt", &pats));
-        assert!(!is_dockerignored("ab.txt", &pats));
-    }
-
-    #[test]
-    fn dockerignore_doublestar() {
-        let pats = patterns(&["**/logs"]);
-        assert!(is_dockerignored("logs", &pats));
-        assert!(is_dockerignored("a/logs", &pats));
-        assert!(is_dockerignored("a/b/logs", &pats));
-        assert!(is_dockerignored("a/b/logs/debug.log", &pats));
-    }
-
-    #[test]
-    fn dockerignore_negation() {
-        let pats = patterns(&["*.md", "!README.md"]);
-        assert!(!is_dockerignored("README.md", &pats));
-        assert!(is_dockerignored("CHANGELOG.md", &pats));
-    }
-
-    #[test]
-    fn dockerignore_path_with_slash() {
-        let pats = patterns(&["agent/tests"]);
-        assert!(is_dockerignored("agent/tests", &pats));
-        assert!(is_dockerignored("agent/tests/test_unit.py", &pats));
-        assert!(!is_dockerignored("other/agent/tests", &pats));
-    }
-
-    #[test]
-    fn dockerignore_no_false_prefix() {
-        let pats = patterns(&["app"]);
-        assert!(!is_dockerignored("application", &pats));
-        assert!(is_dockerignored("app/foo", &pats));
+    fn dockerignore_matches_paths_against_patterns() {
+        // (label, patterns, path, expected)
+        let cases: &[(&str, &[&str], &str, bool)] = &[
+            ("exact dir name", &["target"], "target", true),
+            ("exact dir prefix matches contents", &["target"], "target/debug/foo", true),
+            ("exact must not match plural", &["target"], "targets", false),
+            ("exact must not match nested dir", &["target"], "some/nested/target", false),
+            ("exact must not match nested file", &["target"], "some/nested/target/file.txt", false),
+            ("trailing slash matches root dir", &["app/"], "app", true),
+            ("trailing slash matches root contents", &["app/"], "app/package.json", true),
+            ("trailing slash skips nested dir", &["app/"], "agent/skills/dashboard/app", false),
+            ("trailing slash skips nested contents", &["app/"], "agent/skills/dashboard/app/src/App.tsx", false),
+            ("extension wildcard matches root", &["*.pyc"], "foo.pyc", true),
+            ("extension wildcard matches nested", &["*.pyc"], "dir/bar.pyc", true),
+            ("extension wildcard rejects other ext", &["*.pyc"], "foo.py", false),
+            ("question mark single char", &["?.txt"], "a.txt", true),
+            ("question mark rejects two chars", &["?.txt"], "ab.txt", false),
+            ("doublestar matches root", &["**/logs"], "logs", true),
+            ("doublestar matches one level", &["**/logs"], "a/logs", true),
+            ("doublestar matches two levels", &["**/logs"], "a/b/logs", true),
+            ("doublestar matches contents", &["**/logs"], "a/b/logs/debug.log", true),
+            ("negation re-includes file", &["*.md", "!README.md"], "README.md", false),
+            ("negation leaves others ignored", &["*.md", "!README.md"], "CHANGELOG.md", true),
+            ("slash pattern exact", &["agent/tests"], "agent/tests", true),
+            ("slash pattern contents", &["agent/tests"], "agent/tests/test_unit.py", true),
+            ("slash pattern not nested", &["agent/tests"], "other/agent/tests", false),
+            ("no false prefix match", &["app"], "application", false),
+            ("prefix dir matches contents", &["app"], "app/foo", true),
+        ];
+        for (label, pats, path, expected) in cases {
+            let pats: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
+            assert_eq!(is_dockerignored(path, &pats), *expected, "{label}");
+        }
     }
 
     #[test]
