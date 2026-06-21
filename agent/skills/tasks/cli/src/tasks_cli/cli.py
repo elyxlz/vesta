@@ -37,6 +37,12 @@ def _fail_daemon_not_running(detail: str):
     sys.exit(1)
 
 
+def _require_arg(value: str | None, name: str, usage: str) -> str:
+    if not value:
+        raise ValueError(f"{name} is required: {usage}")
+    return value
+
+
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
@@ -278,9 +284,7 @@ subcommands:
 
 
 def _do_remind_set(config, args):
-    message = args.message_pos or args.message
-    if not message:
-        raise ValueError('message is required: tasks remind "message" or tasks remind --message "message"')
+    message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
     return commands.remind_set(
         config,
         message=message,
@@ -299,24 +303,18 @@ def _do_remind_list(config, args):
 
 
 def _do_remind_delete(config, args):
-    reminder_id = args.id_pos or args.reminder_id
-    if not reminder_id:
-        raise ValueError("id is required: tasks remind delete <id> or tasks remind delete --id <id>")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind delete <id> or tasks remind delete --id <id>")
     return commands.remind_delete(config, reminder_id=reminder_id)
 
 
 def _do_remind_update(config, args):
-    reminder_id = args.id_pos or args.reminder_id
-    if not reminder_id:
-        raise ValueError("id is required: tasks remind update <id> or tasks remind update --id <id>")
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind update <id> or tasks remind update --id <id>")
     return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
 
 
 def _handle_task(args, config: Config):
     if args.command == "add":
-        title = args.title_pos or args.title
-        if not title:
-            raise ValueError('title is required: tasks add "title" or tasks add --title "title"')
+        title = _require_arg(args.title_pos or args.title, "title", 'tasks add "title" or tasks add --title "title"')
         result = commands.add_task(
             config,
             title=title,
@@ -334,9 +332,7 @@ def _handle_task(args, config: Config):
         _print_list(args, commands.list_tasks(config, show_completed=args.show_completed), fmt.format_task_list)
         return
     elif args.command == "get":
-        task_id = args.id_pos or args.task_id
-        if not task_id:
-            raise ValueError("id is required: tasks get <id> or tasks get --id <id>")
+        task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks get <id> or tasks get --id <id>")
         if args.field:
             fields = list(args.field)
             result = commands.get_task_fields(config, task_id=task_id, fields=fields)
@@ -344,9 +340,7 @@ def _handle_task(args, config: Config):
             return
         result = commands.get_task(config, task_id=task_id)
     elif args.command == "update":
-        task_id = args.id_pos or args.task_id
-        if not task_id:
-            raise ValueError("id is required: tasks update <id> or tasks update --id <id>")
+        task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks update <id> or tasks update --id <id>")
         result = commands.update_task(
             config,
             task_id=task_id,
@@ -360,14 +354,10 @@ def _handle_task(args, config: Config):
             due_in_days=args.due_in_days,
         )
     elif args.command == "delete":
-        task_id = args.id_pos or args.task_id
-        if not task_id:
-            raise ValueError("id is required: tasks delete <id> or tasks delete --id <id>")
+        task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks delete <id> or tasks delete --id <id>")
         result = commands.delete_task(config, task_id=task_id)
     elif args.command == "search":
-        query = args.query_pos or args.query
-        if not query:
-            raise ValueError('query is required: tasks search "query" or tasks search --query "query"')
+        query = _require_arg(args.query_pos or args.query, "query", 'tasks search "query" or tasks search --query "query"')
         _print_list(args, commands.search_tasks(config, query=query, show_completed=args.show_completed), fmt.format_task_list)
         return
     else:
