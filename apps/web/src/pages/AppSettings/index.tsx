@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { Home } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
 import { LogoText } from "@/components/Logo/LogoText";
@@ -19,10 +19,10 @@ export function AppSettingsPage() {
           <Button
             variant="outline"
             size="icon-lg"
-            aria-label="back"
-            onClick={() => navigate(-1)}
+            aria-label="home"
+            onClick={() => navigate("/")}
           >
-            <ArrowLeft />
+            <Home />
           </Button>
         }
         center={<LogoText />}
