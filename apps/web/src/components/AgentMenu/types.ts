@@ -7,7 +7,8 @@ export interface MenuState {
   onToggle: () => void;
   onLogs: () => void;
   onToolCalls: () => void;
-  onOpenSettings: () => void;
+  onAppSettings: () => void;
+  onAgentSettings: () => void;
   onRestart: () => void;
   onRebuild: () => void;
   onBackup: () => void;

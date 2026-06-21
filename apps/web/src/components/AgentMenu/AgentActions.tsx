@@ -7,6 +7,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings,
+  SlidersHorizontal,
   Square,
   Trash2,
   Wrench,
@@ -28,7 +29,8 @@ export interface AgentActionsInput {
   onBackup: () => void;
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;
-  onOpenSettings?: () => void;
+  onAppSettings?: () => void;
+  onAgentSettings?: () => void;
   onDelete?: () => void;
   onDebugInfo?: () => void;
 }
@@ -109,12 +111,20 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   sections.push({ key: "controls", title: "Controls", items: controlItems });
 
   const generalItems: ActionItem[] = [];
-  if (input.onOpenSettings) {
+  if (input.onAgentSettings) {
     generalItems.push({
-      key: "settings",
+      key: "agent-settings",
+      icon: <SlidersHorizontal data-icon="inline-start" />,
+      label: "agent settings",
+      onClick: input.onAgentSettings,
+    });
+  }
+  if (input.onAppSettings) {
+    generalItems.push({
+      key: "app-settings",
       icon: <Settings data-icon="inline-start" />,
-      label: "settings",
-      onClick: input.onOpenSettings,
+      label: "app settings",
+      onClick: input.onAppSettings,
     });
   }
   if (input.onDebugInfo) {
