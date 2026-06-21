@@ -335,12 +335,19 @@ fn retention_map(daily: Option<usize>, weekly: Option<usize>, monthly: Option<us
     ret
 }
 
-fn print_retention(ret: &serde_json::Value) {
-    eprintln!("retention: daily={}, weekly={}, monthly={}",
+/// Pull the `(daily, weekly, monthly)` counts out of a retention object,
+/// defaulting any missing field to 0.
+fn retention_fields(ret: &serde_json::Value) -> (u64, u64, u64) {
+    (
         ret["daily"].as_u64().unwrap_or(0),
         ret["weekly"].as_u64().unwrap_or(0),
         ret["monthly"].as_u64().unwrap_or(0),
-    );
+    )
+}
+
+fn print_retention(ret: &serde_json::Value) {
+    let (daily, weekly, monthly) = retention_fields(ret);
+    eprintln!("retention: daily={daily}, weekly={weekly}, monthly={monthly}");
 }
 
 fn print_agent_backup_settings(result: &serde_json::Value) {
@@ -348,11 +355,8 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
     let has_override = result["has_override"].as_bool().unwrap_or(false);
     eprintln!("  enabled: {} {}", if enabled { "yes" } else { "no" },
         if has_override { "(override)" } else { "(global)" });
-    eprintln!("  retention: daily={}, weekly={}, monthly={}",
-        result["retention"]["daily"].as_u64().unwrap_or(0),
-        result["retention"]["weekly"].as_u64().unwrap_or(0),
-        result["retention"]["monthly"].as_u64().unwrap_or(0),
-    );
+    let (daily, weekly, monthly) = retention_fields(&result["retention"]);
+    eprintln!("  retention: daily={daily}, weekly={weekly}, monthly={monthly}");
 }
 
 fn read_file_or_stdin(path: &std::path::Path) -> String {
@@ -827,9 +831,9 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
     Some(tmp_dir)
 }
 
-// Resolve the platform target/archive and run the self-update. `target_version`
-// pins a specific version (the gateway's) or is `None` for the latest release.
-fn run_cli_self_update(target_version: Option<&str>) {
+// The release artifact for this platform: (rust target triple, is_zip, binary
+// path inside the archive). The arch→triple match dies on an unsupported CPU.
+fn update_target() -> (&'static str, bool, &'static str) {
     #[cfg(target_os = "linux")]
     {
         let target = match std::env::consts::ARCH {
@@ -837,9 +841,7 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-unknown-linux-gnu",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "macos")]
     {
@@ -848,17 +850,20 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-apple-darwin",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "windows")]
     {
-        if let Some(tmp_dir) =
-            cli_self_update(target_version, "x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
-        {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        ("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
+    }
+}
+
+// Resolve the platform target/archive and run the self-update. `target_version`
+// pins a specific version (the gateway's) or is `None` for the latest release.
+fn run_cli_self_update(target_version: Option<&str>) {
+    let (target, is_zip, binary_subpath) = update_target();
+    if let Some(tmp_dir) = cli_self_update(target_version, target, is_zip, binary_subpath) {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }
 
