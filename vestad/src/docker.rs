@@ -1971,6 +1971,19 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
     false
 }
 
+/// Resolve an existing agent's WS port for a snapshot-and-recreate: prefer the env-file
+/// port, fall back to the container's baked-in WS_PORT, then allocate a fresh one.
+async fn resolve_existing_port(docker: &Docker, cname: &str, info: &ContainerInfo, name: &str, agents_dir: &std::path::Path) -> Result<u16, DockerError> {
+    let baked = read_container_env(docker, cname, "WS_PORT").await.and_then(|v| v.parse::<u16>().ok());
+    match info.port.or(baked) {
+        Some(port) => Ok(port),
+        None => {
+            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
+            allocate_port(agents_dir)
+        }
+    }
+}
+
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
 /// while preserving the filesystem. Snapshots the old container, removes it, and creates
 /// a new one from the snapshot. Mount topology is preserved from the existing container,
@@ -1989,16 +2002,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    // Get port: try env file first, then container's baked-in env vars, then allocate new
-    let container_port = read_container_env(docker, &cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
@@ -2060,15 +2064,7 @@ pub async fn rename_agent(
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    let container_port = read_container_env(docker, &old_cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %old_name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &old_cname, &info, old_name, &env_config.agents_dir).await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
