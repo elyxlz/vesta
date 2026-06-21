@@ -23,7 +23,7 @@ export function NavbarScrim() {
     <div
       aria-hidden
       className="pointer-events-none fixed inset-x-0 top-0 z-40"
-      style={{ height: navbarHeight + 16, background: EASED_FADE }}
+      style={{ height: navbarHeight * 2, background: EASED_FADE }}
     />
   );
 }
