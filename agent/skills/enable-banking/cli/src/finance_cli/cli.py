@@ -213,10 +213,7 @@ def cmd_auth_revoke(args) -> dict:
 def cmd_accounts(args) -> list:
     conf = cfg.load()
     cfg.require_session(conf)
-    accounts = conf.get("accounts", [])
-    if not accounts:
-        return []
-    return accounts
+    return conf.get("accounts", [])
 
 
 def cmd_balances(args) -> list:

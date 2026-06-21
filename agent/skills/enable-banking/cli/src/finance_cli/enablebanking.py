@@ -41,13 +41,12 @@ def _make_jwt(app_id: str, key_path: str) -> str:
         "iat": iat,
         "exp": iat + 3600,
     }
-    token = pyjwt.encode(
+    return pyjwt.encode(
         payload,
         pem,
         algorithm="RS256",
         headers={"kid": app_id},
     )
-    return token
 
 
 def _headers(conf: dict) -> dict:
