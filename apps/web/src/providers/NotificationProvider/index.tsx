@@ -78,6 +78,15 @@ interface TapEntry {
   delay: number;
 }
 
+function teardownTap(entry: TapEntry): void {
+  entry.cancelled = true;
+  if (entry.timer) clearTimeout(entry.timer);
+  if (entry.socket) {
+    entry.socket.onclose = null;
+    entry.socket.close();
+  }
+}
+
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { agents, reachable } = useGateway();
   const focused = useWindowFocus();
@@ -229,12 +238,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     function closeTap(name: string) {
       const entry = tapsRef.current.get(name);
       if (!entry) return;
-      entry.cancelled = true;
-      if (entry.timer) clearTimeout(entry.timer);
-      if (entry.socket) {
-        entry.socket.onclose = null;
-        entry.socket.close();
-      }
+      teardownTap(entry);
       tapsRef.current.delete(name);
     }
   }, [aliveKey, reachable, notifyAssistant]);
@@ -242,14 +246,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const taps = tapsRef.current;
     return () => {
-      for (const entry of taps.values()) {
-        entry.cancelled = true;
-        if (entry.timer) clearTimeout(entry.timer);
-        if (entry.socket) {
-          entry.socket.onclose = null;
-          entry.socket.close();
-        }
-      }
+      for (const entry of taps.values()) teardownTap(entry);
       taps.clear();
     };
   }, []);

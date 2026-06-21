@@ -123,14 +123,22 @@ export function useChat({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelay = RECONNECT_BASE;
 
-    setMessages([]);
-    setHistoryLoaded(false);
-    cursorRef.current = null;
-    pendingEchoesRef.current = [];
-    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    chatQueueRef.current = [];
-    drainingRef.current = false;
-    setIsTyping(false);
+    const resetTyping = () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      chatQueueRef.current = [];
+      drainingRef.current = false;
+      setIsTyping(false);
+    };
+
+    const resetConnection = () => {
+      setMessages([]);
+      setHistoryLoaded(false);
+      cursorRef.current = null;
+      pendingEchoesRef.current = [];
+      resetTyping();
+    };
+
+    resetConnection();
 
     const doConnect = () => {
       if (cancelled) return;
@@ -151,14 +159,7 @@ export function useChat({
         if (cancelled) return;
         reconnectDelay = RECONNECT_BASE;
         setConnected(true);
-        setHistoryLoaded(false);
-        setMessages([]);
-        cursorRef.current = null;
-        pendingEchoesRef.current = [];
-        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-        chatQueueRef.current = [];
-        drainingRef.current = false;
-        setIsTyping(false);
+        resetConnection();
       };
 
       socket.onmessage = (e) => {
@@ -218,10 +219,7 @@ export function useChat({
       }
       wsRef.current = null;
       setConnected(false);
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      chatQueueRef.current = [];
-      drainingRef.current = false;
-      setIsTyping(false);
+      resetTyping();
     };
   }, [active, name]);
 

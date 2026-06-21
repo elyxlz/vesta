@@ -102,41 +102,45 @@ export function SettingsDialog({
   const [channelSaving, setChannelSaving] = useState(false);
   const [autoUpdateSaving, setAutoUpdateSaving] = useState(false);
 
-  const onToggleBeta = async (enabled: boolean) => {
-    setChannelSaving(true);
+  // PUT a settings change, then re-check /version so the toggle reflects the
+  // daemon's persisted value (and surfaces the matching update target). Switching
+  // the channel never downgrades, so leaving beta only stops future betas.
+  const saveSetting = async (
+    setSaving: (value: boolean) => void,
+    path: string,
+    body: object,
+    label: string,
+  ) => {
+    setSaving(true);
     try {
-      await apiJson("/settings/channel", {
+      await apiJson(path, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
+        body: JSON.stringify(body),
       });
-      // Re-check so /version reflects the new channel (and surfaces the matching
-      // version to update to). Switching channel never downgrades, so leaving beta
-      // only stops future betas until stable catches up.
       await checkForUpdate();
     } catch (err) {
-      console.warn("[settings] failed to set release channel:", err);
+      console.warn(`[settings] failed to set ${label}:`, err);
     } finally {
-      setChannelSaving(false);
+      setSaving(false);
     }
   };
 
-  const onToggleAutoUpdate = async (enabled: boolean) => {
-    setAutoUpdateSaving(true);
-    try {
-      await apiJson("/settings/auto-update", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_update: enabled }),
-      });
-      // Re-read so the toggle reflects the daemon's persisted value.
-      await checkForUpdate();
-    } catch (err) {
-      console.warn("[settings] failed to set auto-update:", err);
-    } finally {
-      setAutoUpdateSaving(false);
-    }
-  };
+  const onToggleBeta = (enabled: boolean) =>
+    saveSetting(
+      setChannelSaving,
+      "/settings/channel",
+      { channel: enabled ? "beta" : "stable" },
+      "release channel",
+    );
+
+  const onToggleAutoUpdate = (enabled: boolean) =>
+    saveSetting(
+      setAutoUpdateSaving,
+      "/settings/auto-update",
+      { auto_update: enabled },
+      "auto-update",
+    );
 
   const onCheckForUpdate = async () => {
     setChecking(true);
