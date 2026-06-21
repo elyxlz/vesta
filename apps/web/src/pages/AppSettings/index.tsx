@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
 import { Footer } from "@/components/Footer";
+import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -25,9 +26,7 @@ export function AppSettingsPage() {
             <ArrowLeft />
           </Button>
         }
-        center={
-          <span className="font-heading text-base font-medium">settings</span>
-        }
+        center={<LogoText />}
         trailing={
           <div className="flex items-center gap-2">
             <StatusPill showHostname={false} />

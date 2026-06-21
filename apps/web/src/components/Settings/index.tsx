@@ -59,7 +59,7 @@ export function AppSettings() {
   })();
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl grid-cols-1 gap-4 md:auto-rows-min md:grid-cols-2">
+    <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 md:auto-rows-min md:grid-cols-2">
       <Card size="sm">
         <CardContent>
           <MenuSection title="Appearance">
