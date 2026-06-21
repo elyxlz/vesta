@@ -41,8 +41,7 @@ def read_new_objects(path: pl.Path, offset: int) -> tuple[list[dict[str, tp.Any]
 
 
 def _is_main_assistant(obj: dict[str, tp.Any]) -> bool:
-    type_ = obj["type"] if "type" in obj else None
-    if type_ != "assistant":
+    if "type" not in obj or obj["type"] != "assistant":
         return False
     return not ("isSidechain" in obj and obj["isSidechain"])
 
@@ -62,8 +61,7 @@ def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:
         if kind == "text" and "text" in block:
             blocks.append(TextBlock(text=block["text"]))
         elif kind == "thinking" and "thinking" in block:
-            signature = block["signature"] if "signature" in block else ""
-            blocks.append(ThinkingBlock(thinking=block["thinking"], signature=signature))
+            blocks.append(ThinkingBlock(thinking=block["thinking"], signature=block["signature"] if "signature" in block else ""))
         elif kind == "tool_use":
             blocks.append(
                 ToolUseBlock(
@@ -72,8 +70,7 @@ def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:
                     input=block["input"] if "input" in block else {},
                 )
             )
-    model = message["model"] if "model" in message else None
-    return AssistantMessage(content=blocks, model=model)
+    return AssistantMessage(content=blocks, model=message["model"] if "model" in message else None)
 
 
 def is_compact_summary(obj: dict[str, tp.Any]) -> bool:

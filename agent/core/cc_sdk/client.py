@@ -217,10 +217,7 @@ class ClaudeSDKClient:
     async def query(self, prompt: str) -> None:
         if self._transcript_path is None:
             self._transcript_path = self._find_transcript()
-        if self._transcript_path is not None and self._transcript_path.exists():
-            self._offset = self._transcript_path.stat().st_size
-        else:
-            self._offset = 0
+        self._offset = self._transcript_path.stat().st_size if self._transcript_path is not None and self._transcript_path.exists() else 0
         self._turn_index += 1
         # Clamp stops_received so it cannot pre-satisfy the new turn's threshold.
         # interrupt() credits stops_received = turn_index, but a late Stop hook can
@@ -361,9 +358,7 @@ class ClaudeSDKClient:
         self._bridge.on("PreCompact", on_precompact)
 
     def _hook_events(self) -> list[str]:
-        events = {str(e) for e in self._options.hooks}
-        events.update(_ALWAYS_EVENTS)
-        return sorted(events)
+        return sorted({str(e) for e in self._options.hooks}.union(_ALWAYS_EVENTS))
 
     def _write_config_files(self) -> None:
         sysprompt = self._options.system_prompt or ""
