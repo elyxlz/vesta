@@ -16,14 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .admin import send
-
-INTERNAL_URL_PREFIXES = (
-    "chrome://",
-    "chrome-untrusted://",
-    "devtools://",
-    "chrome-extension://",
-    "about:",
-)
+from .daemon import INTERNAL_URL_PREFIXES
 
 SPECIAL_KEYS = {
     "Enter": (13, "Enter", "\r"),
