@@ -6,6 +6,7 @@ import { NavigationGuard } from "@/layouts/NavigationGuard";
 import {
   AgentLogs,
   AgentSettingsPage,
+  AppSettingsPage,
   Callback,
   Connect,
   Debug,
@@ -34,6 +35,7 @@ export const router = createBrowserRouter(
                 { path: "new", element: <NewAgent /> },
               ],
             },
+            { path: "settings", element: <AppSettingsPage /> },
             {
               path: "agent/:name",
               element: <AgentLayout />,
