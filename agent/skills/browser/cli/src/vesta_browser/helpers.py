@@ -12,6 +12,7 @@ import gzip
 import json
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -358,40 +359,38 @@ def wait(seconds: float = 1.0) -> None:
     time.sleep(seconds)
 
 
-def wait_for_load(timeout: float = 15.0) -> bool:
-    """Poll document.readyState == 'complete'."""
+def _poll_until(predicate: Callable[[], bool], timeout: float, poll: float) -> bool:
+    """Poll `predicate` until it is truthy or `timeout` elapses."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if js("document.readyState") == "complete":
-            return True
-        time.sleep(0.3)
-    return False
-
-
-def wait_for_text(text: str, timeout: float = 20.0, poll: float = 0.4) -> bool:
-    deadline = time.time() + timeout
-    expr = f"document.body && document.body.innerText.indexOf({json.dumps(text)}) >= 0"
-    while time.time() < deadline:
-        if js(expr):
+        if predicate():
             return True
         time.sleep(poll)
     return False
+
+
+def wait_for_load(timeout: float = 15.0) -> bool:
+    """Poll document.readyState == 'complete'."""
+    return _poll_until(lambda: js("document.readyState") == "complete", timeout, 0.3)
+
+
+def wait_for_text(text: str, timeout: float = 20.0, poll: float = 0.4) -> bool:
+    expr = f"document.body && document.body.innerText.indexOf({json.dumps(text)}) >= 0"
+    return _poll_until(lambda: bool(js(expr)), timeout, poll)
 
 
 def wait_for_url(pattern: str, timeout: float = 20.0, poll: float = 0.3) -> bool:
     """Match a URL glob-ish pattern with `*` wildcards."""
     import fnmatch
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    def matched() -> bool:
         try:
             info = page_info()
         except RuntimeError:
-            info = {}
-        if "url" in info and fnmatch.fnmatch(info["url"], pattern):
-            return True
-        time.sleep(poll)
-    return False
+            return False
+        return "url" in info and fnmatch.fnmatch(info["url"], pattern)
+
+    return _poll_until(matched, timeout, poll)
 
 
 # ── Network / HTTP shortcut ───────────────────────────────────
