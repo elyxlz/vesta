@@ -2,8 +2,19 @@ import { describe, expect, it } from "vitest";
 import { linkify } from "./linkify";
 
 describe("linkify", () => {
-  it("returns plain text with HTML escaping", () => {
-    expect(linkify("hello <world>")).toBe("hello &lt;world&gt;");
+  it.each<[string, string, string]>([
+    [
+      "returns plain text with HTML escaping",
+      "hello <world>",
+      "hello &lt;world&gt;",
+    ],
+    ["renders bold markdown", "**bold**", "<strong>bold</strong>"],
+    ["renders italic markdown", "*italic*", "<em>italic</em>"],
+    ["renders inline code", "`code`", "<code>code</code>"],
+    ["escapes ampersands in text", "a & b", "a &amp; b"],
+    ["handles empty string", "", ""],
+  ])("%s", (_name, input, expected) => {
+    expect(linkify(input)).toBe(expected);
   });
 
   it("converts URLs to anchor tags", () => {
@@ -27,22 +38,6 @@ describe("linkify", () => {
     expect(result).toContain('target="_blank"');
   });
 
-  it("renders bold markdown", () => {
-    expect(linkify("**bold**")).toBe("<strong>bold</strong>");
-  });
-
-  it("renders italic markdown", () => {
-    expect(linkify("*italic*")).toBe("<em>italic</em>");
-  });
-
-  it("renders inline code", () => {
-    expect(linkify("`code`")).toBe("<code>code</code>");
-  });
-
-  it("escapes ampersands in text", () => {
-    expect(linkify("a & b")).toBe("a &amp; b");
-  });
-
   it("escapes ampersands in both URL href and display text", () => {
     const result = linkify("https://example.com?a=1&b=2");
     expect(result).toContain('href="https://example.com?a=1&amp;b=2"');
@@ -52,9 +47,5 @@ describe("linkify", () => {
   it("includes rel=noopener on links", () => {
     const result = linkify("https://example.com");
     expect(result).toContain('rel="noopener"');
-  });
-
-  it("handles empty string", () => {
-    expect(linkify("")).toBe("");
   });
 });

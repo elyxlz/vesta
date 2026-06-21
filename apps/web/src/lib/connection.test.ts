@@ -2,52 +2,49 @@ import { describe, expect, it } from "vitest";
 import { parseConnectKey, parseConnectLink } from "./connection";
 
 describe("parseConnectKey", () => {
-  it("reads the key from a vestad connect-link fragment", () => {
-    expect(parseConnectKey("#k=4b80df6fdbf6de42ff4505a6")).toBe(
+  it.each<[string, string, string | null]>([
+    [
+      "reads the key from a vestad connect-link fragment",
+      "#k=4b80df6fdbf6de42ff4505a6",
       "4b80df6fdbf6de42ff4505a6",
-    );
-  });
-
-  it("returns null when the fragment is empty", () => {
-    expect(parseConnectKey("")).toBe(null);
-  });
-
-  it("returns null for a fragment without a k param", () => {
-    expect(parseConnectKey("#section")).toBe(null);
-    expect(parseConnectKey("#token=abc")).toBe(null);
-  });
-
-  it("ignores other fragment params alongside the key", () => {
-    expect(parseConnectKey("#foo=1&k=mykey&bar=2")).toBe("mykey");
+    ],
+    ["returns null when the fragment is empty", "", null],
+    ["returns null for a fragment without a k param", "#section", null],
+    ["returns null for a token-only fragment", "#token=abc", null],
+    [
+      "ignores other fragment params alongside the key",
+      "#foo=1&k=mykey&bar=2",
+      "mykey",
+    ],
+  ])("%s", (_name, fragment, expected) => {
+    expect(parseConnectKey(fragment)).toBe(expected);
   });
 });
 
 describe("parseConnectLink", () => {
-  it("splits a remote connect link into origin and key", () => {
-    expect(
-      parseConnectLink("https://fox-endeavour.vesta.run/app#k=abc123"),
-    ).toEqual({ host: "https://fox-endeavour.vesta.run", key: "abc123" });
-  });
-
-  it("splits a local connect link into origin and key", () => {
-    expect(parseConnectLink("http://localhost:39566/app#k=abc123")).toEqual({
-      host: "http://localhost:39566",
-      key: "abc123",
-    });
-  });
-
-  it("trims surrounding whitespace from a pasted link", () => {
-    expect(parseConnectLink("  https://fox.vesta.run/app#k=abc123\n")).toEqual({
-      host: "https://fox.vesta.run",
-      key: "abc123",
-    });
-  });
-
-  it("returns null for a bare host with no key fragment", () => {
-    expect(parseConnectLink("https://fox.vesta.run")).toBe(null);
-  });
-
-  it("returns null for an empty string", () => {
-    expect(parseConnectLink("")).toBe(null);
+  it.each<[string, string, { host: string; key: string } | null]>([
+    [
+      "splits a remote connect link into origin and key",
+      "https://fox-endeavour.vesta.run/app#k=abc123",
+      { host: "https://fox-endeavour.vesta.run", key: "abc123" },
+    ],
+    [
+      "splits a local connect link into origin and key",
+      "http://localhost:39566/app#k=abc123",
+      { host: "http://localhost:39566", key: "abc123" },
+    ],
+    [
+      "trims surrounding whitespace from a pasted link",
+      "  https://fox.vesta.run/app#k=abc123\n",
+      { host: "https://fox.vesta.run", key: "abc123" },
+    ],
+    [
+      "returns null for a bare host with no key fragment",
+      "https://fox.vesta.run",
+      null,
+    ],
+    ["returns null for an empty string", "", null],
+  ])("%s", (_name, link, expected) => {
+    expect(parseConnectLink(link)).toEqual(expected);
   });
 });
