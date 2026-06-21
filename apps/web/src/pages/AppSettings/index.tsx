@@ -37,7 +37,7 @@ export function AppSettingsPage() {
         className="flex min-h-0 flex-1 flex-col px-page"
         style={{ paddingTop: navbarHeight }}
       >
-        <div className="flex min-h-11 shrink-0 items-center justify-center py-6">
+        <div className="flex min-h-11 shrink-0 items-center justify-center pt-6 pb-2">
           <h1 className="text-lg font-semibold">app settings</h1>
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-2">

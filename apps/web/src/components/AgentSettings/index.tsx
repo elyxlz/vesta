@@ -9,7 +9,7 @@ import { SttCard, TtsCard } from "./VoiceSection";
 export function AgentSettings() {
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="py-6 flex items-center justify-center min-h-11 shrink-0">
+      <div className="pt-6 pb-2 flex items-center justify-center min-h-11 shrink-0">
         <h1 className="text-lg font-semibold">agent settings</h1>
       </div>
 
