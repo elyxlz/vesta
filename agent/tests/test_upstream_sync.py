@@ -198,14 +198,20 @@ def place_skills_install(home):
     return dst
 
 
+def _synced(tmp_path, *, skills=None, cone=None, broad=False):
+    """Upstream repo + a clone-based agent sharing its history; returns (upstream, home)."""
+    up = tmp_path / "up"
+    make_upstream(up, skills or ["alpha"])
+    home = tmp_path / "agent"
+    make_synced_agent(home, up, cone_includes=cone or ["alpha"], broad=broad)
+    return up, home
+
+
 # --- narrow-sparse-checkout.sh ------------------------------------------------
 
 
 def test_narrow_is_idempotent(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"], broad=True)
+    up, home = _synced(tmp_path, broad=True)
 
     first = _run(NARROW, home)
     assert first.returncode == 0, first.stderr
@@ -219,10 +225,7 @@ def test_narrow_is_idempotent(tmp_path):
 
 
 def test_narrowed_cone_keeps_new_upstream_skill_off_disk(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"], broad=True)
+    up, home = _synced(tmp_path, broad=True)
 
     assert _run(NARROW, home).returncode == 0
 
@@ -309,10 +312,7 @@ MAIN = {"VESTA_UPSTREAM_REF": "main"}
 
 
 def test_sync_up_to_date(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])
+    _up, home = _synced(tmp_path)
 
     r = _run(SYNC, home, extra_env=MAIN)
     assert r.returncode == 0, r.stderr
@@ -320,10 +320,7 @@ def test_sync_up_to_date(tmp_path):
 
 
 def test_sync_clean_merge_pulls_content(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])
+    up, home = _synced(tmp_path)
     add_upstream_file(up, "agent/settings.txt", "UPSTREAM SETTINGS v2\n", "bump settings")
 
     r = _run(SYNC, home, extra_env=MAIN)
@@ -332,10 +329,7 @@ def test_sync_clean_merge_pulls_content(tmp_path):
 
 
 def test_sync_keeps_index_json_as_full_registry(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha", "zeta"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])  # only alpha on disk
+    up, home = _synced(tmp_path, skills=["alpha", "zeta"])  # only alpha on disk
     add_upstream_skill(up, "newreg", "# newreg\n")  # registry grows upstream
 
     r = _run(SYNC, home, extra_env=MAIN)
@@ -399,10 +393,7 @@ def test_sync_first_start_with_managed_paths_on_disk(tmp_path):
 def test_sync_untracks_vestad_managed_core(tmp_path):
     """An agent that tracked agent/core has it dropped from tracking on sync, and stays
     gitignored (no noise)."""
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])  # a clone, so core is tracked
+    up, home = _synced(tmp_path)  # a clone, so core is tracked
     assert "agent/core/x.py" in _git(["ls-files"], home)
     add_upstream_file(up, "agent/core/x.py", "UPSTREAM CORE v2\n", "bump core")
 
@@ -416,10 +407,7 @@ def test_sync_quiet_against_read_only_core(tmp_path):
     """The real bind-mount case: agent/core is a read-only directory on disk. sync merges a
     core-less copy of upstream, so git never touches core, no read-only error even when
     upstream changed core."""
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])
+    up, home = _synced(tmp_path)
     core_dir = home / "agent" / "core"
     core_dir.mkdir(parents=True, exist_ok=True)
     (core_dir / "x.py").write_text("MOUNTED CORE\n")
@@ -441,10 +429,7 @@ def test_sync_quiet_against_read_only_core(tmp_path):
 
 
 def test_status_reports_behind_ahead_and_changes(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=["alpha"])
+    up, home = _synced(tmp_path)
     (home / "agent" / "MEMORY.md").write_text("# mine\n")
     _git(["add", "-A"], home)
     _git(["commit", "-q", "-m", "mine"], home)
