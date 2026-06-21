@@ -4,6 +4,7 @@ import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
+import { NavbarScrim } from "@/components/NavbarScrim";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { useLayout } from "@/stores/use-layout";
@@ -14,6 +15,7 @@ export function AppSettingsPage() {
 
   return (
     <>
+      <NavbarScrim />
       <Navbar
         leading={
           <Button
