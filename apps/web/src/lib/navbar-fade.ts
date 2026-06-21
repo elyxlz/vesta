@@ -7,7 +7,7 @@ import type { CSSProperties } from "react";
 // fade has no visible linear band. Below `fade` px the mask is fully opaque, so
 // the rest of the content is untouched.
 export function navbarFadeMask(navbarHeight: number): CSSProperties {
-  const fade = navbarHeight * 2.6;
+  const fade = navbarHeight * 2.3;
   const stop = (fraction: number, alpha: number) =>
     `rgba(0,0,0,${alpha}) ${Math.round(fraction * fade)}px`;
   const gradient =
