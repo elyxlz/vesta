@@ -6,7 +6,7 @@ export function AgentSettingsPage() {
 
   return (
     <div
-      className="flex flex-col flex-1 min-h-0 px-page"
+      className="flex flex-col flex-1 min-h-0 overflow-y-auto px-page"
       style={{ paddingTop: navbarHeight }}
     >
       <AgentSettings />

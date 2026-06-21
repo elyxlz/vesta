@@ -1,14 +1,16 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLayout } from "@/stores/use-layout";
 import { ActionsCard } from "./ActionsCard";
 import { ConstitutionCard } from "./ConstitutionCard";
 import { FilesTab } from "./FilesTab";
-import { PlanUsage } from "./PlanUsage";
 import { ProviderCard } from "./ProviderCard";
 import { SttCard, TtsCard } from "./VoiceSection";
 
 export function AgentSettings() {
+  const navbarHeight = useLayout((s) => s.navbarHeight);
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+    <div className="flex flex-col">
       <div className="pt-6 pb-2 flex items-center justify-center min-h-11 shrink-0">
         <h1 className="text-lg font-semibold">agent settings</h1>
       </div>
@@ -21,12 +23,14 @@ export function AgentSettings() {
 
         <TabsContent value="general" className="mt-4">
           <div className="grid w-full gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
-            <div className="flex flex-col gap-4 lg:sticky lg:top-6">
+            <div
+              className="flex flex-col gap-4 lg:sticky"
+              style={{ top: navbarHeight + 16 }}
+            >
               <ActionsCard />
               <ProviderCard />
             </div>
             <div className="flex min-w-0 flex-col gap-4">
-              <PlanUsage />
               <ConstitutionCard />
               <SttCard />
               <TtsCard />
