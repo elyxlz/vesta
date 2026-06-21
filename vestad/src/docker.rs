@@ -1432,22 +1432,8 @@ pub(crate) fn percent_encode(s: &str) -> String {
 }
 
 fn base64url_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
-        out.push(CHARS[b0 >> 2] as char);
-        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[b2 & 0x3f] as char);
-        }
-    }
-    out
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
 use ring::rand::SecureRandom;
