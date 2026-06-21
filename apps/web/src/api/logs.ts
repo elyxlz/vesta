@@ -1,5 +1,6 @@
 import { getConnection } from "@/lib/connection";
 import type { LogEvent } from "@/lib/types";
+import { openLogStream } from "./log-stream";
 
 const logSources = new Map<string, EventSource>();
 
@@ -15,33 +16,14 @@ export function streamLogs(
     }
 
     const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}`;
-    const existing = logSources.get(name);
-    if (existing) existing.close();
-    const es = new EventSource(url);
-    logSources.set(name, es);
-
-    es.onmessage = (e) => {
-      const text = e.data;
-      if (text.startsWith("error:")) {
-        onEvent({ kind: "Error", message: text });
-      } else {
-        onEvent({ kind: "Line", text });
-      }
-    };
-
-    es.addEventListener("agent_stopped", () => {
-      onEvent({ kind: "End" });
-      es.close();
-      logSources.delete(name);
-      resolve();
-    });
-
-    es.onerror = () => {
-      onEvent({ kind: "Error", message: "log stream disconnected" });
-      es.close();
-      logSources.delete(name);
-      resolve();
-    };
+    logSources.get(name)?.close();
+    logSources.set(
+      name,
+      openLogStream(url, "agent_stopped", onEvent, () => {
+        logSources.delete(name);
+        resolve();
+      }),
+    );
   });
 }
 

@@ -5,24 +5,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buildActionSections } from "./AgentActions";
+import { buildActionSections, menuActionsInput } from "./AgentActions";
 import type { MenuProps } from "./types";
 
 export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
-  const sections = buildActionSections({
-    isRunning: state.isRunning,
-    showAliveActions: state.showAliveActions,
-    isBusy: state.isBusy,
-    showToolCalls: state.showToolCalls,
-    onLogs: state.onLogs,
-    onToolCalls: state.onToolCalls,
-    onToggle: state.onToggle,
-    onRestart: state.onRestart,
-    onRebuild: state.onRebuild,
-    onBackup: state.onBackup,
-    onOpenSettings: state.onOpenSettings,
-    onDebugInfo: state.onDebugInfo,
-  });
+  const sections = buildActionSections(menuActionsInput(state));
 
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>

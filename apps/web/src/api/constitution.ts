@@ -1,4 +1,4 @@
-import { apiJson } from "./client";
+import { apiJson, jsonInit } from "./client";
 
 export async function fetchConstitution(agentName: string): Promise<string> {
   const { content } = await apiJson<{ content: string }>(
@@ -11,9 +11,8 @@ export async function saveConstitution(
   agentName: string,
   content: string,
 ): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(agentName)}/constitution`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
+  await apiJson(
+    `/agents/${encodeURIComponent(agentName)}/constitution`,
+    jsonInit("PUT", { content }),
+  );
 }

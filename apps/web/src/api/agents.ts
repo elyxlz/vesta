@@ -1,4 +1,4 @@
-import { apiJson, apiFetch } from "./client";
+import { apiJson, apiFetch, jsonInit } from "./client";
 
 export interface OpenRouterConfig {
   key: string;
@@ -33,11 +33,10 @@ export async function setProvider(
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  await apiFetch(
+    `/agents/${encodeURIComponent(name)}/provider`,
+    jsonInit("POST", body),
+  );
   // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
   // preference applied here in one PUT.
   const config: Record<string, unknown> = {};
@@ -78,11 +77,10 @@ export async function setConfig(
   name: string,
   config: Record<string, unknown>,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
+  await apiFetch(
+    `/agents/${encodeURIComponent(name)}/config`,
+    jsonInit("PUT", config),
+  );
 }
 
 /// Read an agent's current config, proxied from the agent.
@@ -107,11 +105,7 @@ export async function setContextWindow(
 /// context) are sent once it's up, via `setProvider`.
 export async function createAgent(name: string): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  await apiJson("/agents", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone }),
-  });
+  await apiJson("/agents", jsonInit("POST", { name, timezone }));
 }
 
 /// Coarse, ordered stages of first-time agent creation reported by vestad while
@@ -148,83 +142,86 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
+// A status the agent can never advance past, so polling should fail fast instead of
+// waiting for the deadline. `not_authenticated` is terminal for "alive" but a success
+// for "running" (a fresh agent boots there), so each waiter passes its own success set.
+const TERMINAL_STATUSES = ["dead", "stopped", "not_found", "not_authenticated"];
+
+async function waitForStatus(
+  name: string,
+  timeoutMs: number,
+  successStatuses: string[],
+  timedOutMessage: string,
+  pollIntervalMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const resp = await apiJson<{ status: string }>(
+      `/agents/${encodeURIComponent(name)}`,
+    );
+    if (successStatuses.includes(resp.status)) return;
+    if (TERMINAL_STATUSES.includes(resp.status)) {
+      throw new Error(`${name}: ${resp.status}`);
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`${name}: ${timedOutMessage}`);
+}
+
 /// Poll /agents/{name} until it reports "alive" or "not_authenticated".
 /// A brand-new empty agent boots into not_authenticated until provisioned.
-export async function waitUntilRunning(
+export function waitUntilRunning(
   name: string,
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: string }>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (resp.status === "alive" || resp.status === "not_authenticated") return;
-    if (
-      resp.status === "dead" ||
-      resp.status === "stopped" ||
-      resp.status === "not_found"
-    ) {
-      throw new Error(`${name}: ${resp.status}`);
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new Error(`${name}: timed out waiting for HTTP server`);
+  return waitForStatus(
+    name,
+    timeoutMs,
+    ["alive", "not_authenticated"],
+    "timed out waiting for HTTP server",
+    pollIntervalMs,
+  );
 }
 
-export async function waitUntilAlive(
+export function waitUntilAlive(
   name: string,
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: string }>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (resp.status === "alive") return;
-    if (
-      resp.status === "dead" ||
-      resp.status === "stopped" ||
-      resp.status === "not_found" ||
-      resp.status === "not_authenticated"
-    ) {
-      throw new Error(`${name}: ${resp.status}`);
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new Error(`${name}: timed out waiting to become alive`);
+  return waitForStatus(
+    name,
+    timeoutMs,
+    ["alive"],
+    "timed out waiting to become alive",
+    pollIntervalMs,
+  );
 }
 
-export async function startAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/start`, {
+async function agentAction(name: string, action: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/${action}`, {
     method: "POST",
   });
 }
 
-export async function stopAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/stop`, {
-    method: "POST",
-  });
+export function startAgent(name: string): Promise<void> {
+  return agentAction(name, "start");
 }
 
-export async function restartAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+export function stopAgent(name: string): Promise<void> {
+  return agentAction(name, "stop");
 }
 
-export async function deleteAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/destroy`, {
-    method: "POST",
-  });
+export function restartAgent(name: string): Promise<void> {
+  return agentAction(name, "restart");
 }
 
-export async function rebuildAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/rebuild`, {
-    method: "POST",
-  });
+export function deleteAgent(name: string): Promise<void> {
+  return agentAction(name, "destroy");
+}
+
+export function rebuildAgent(name: string): Promise<void> {
+  return agentAction(name, "rebuild");
 }
 
 export interface BackupInfo {

@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
+import { StepHeading } from "../StepHeading";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
@@ -89,12 +85,12 @@ export function ModelStep({
 
   return (
     <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">pick a model</h2>
-        <FieldDescription>
-          {isFixed ? "choose a model." : "top models on OpenRouter this week."}
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="pick a model"
+        description={
+          isFixed ? "choose a model." : "top models on OpenRouter this week."
+        }
+      />
 
       <FieldGroup className="w-full gap-3">
         <Field>

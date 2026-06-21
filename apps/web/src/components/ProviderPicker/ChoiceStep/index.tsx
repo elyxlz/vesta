@@ -1,5 +1,5 @@
-import { FieldDescription } from "@/components/ui/field";
 import type { ProviderMode } from "../types";
+import { StepHeading } from "../StepHeading";
 
 export function ChoiceStep({
   onPick,
@@ -11,12 +11,10 @@ export function ChoiceStep({
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">how should it run?</h2>
-        <FieldDescription>
-          use your Claude account, or bring an OpenRouter API key.
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="how should it run?"
+        description="use your Claude account, or bring an OpenRouter API key."
+      />
 
       <div className="flex w-full gap-2">
         <button

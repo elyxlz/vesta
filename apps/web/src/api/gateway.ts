@@ -1,5 +1,6 @@
 import { getConnection } from "@/lib/connection";
 import type { LogEvent } from "@/lib/types";
+import { openLogStream } from "./log-stream";
 
 let gatewayLogSource: EventSource | null = null;
 
@@ -18,32 +19,11 @@ export function streamGatewayLogs(
     if (follow) params.set("follow", "true");
     const url = `${conn.url}/gateway/logs?${params.toString()}`;
 
-    if (gatewayLogSource) gatewayLogSource.close();
-    const es = new EventSource(url);
-    gatewayLogSource = es;
-
-    es.onmessage = (e) => {
-      const text = e.data;
-      if (text.startsWith("error:")) {
-        onEvent({ kind: "Error", message: text });
-      } else {
-        onEvent({ kind: "Line", text });
-      }
-    };
-
-    es.addEventListener("gateway_stopped", () => {
-      onEvent({ kind: "End" });
-      es.close();
+    gatewayLogSource?.close();
+    gatewayLogSource = openLogStream(url, "gateway_stopped", onEvent, () => {
       gatewayLogSource = null;
       resolve();
     });
-
-    es.onerror = () => {
-      onEvent({ kind: "Error", message: "log stream disconnected" });
-      es.close();
-      gatewayLogSource = null;
-      resolve();
-    };
   });
 }
 
