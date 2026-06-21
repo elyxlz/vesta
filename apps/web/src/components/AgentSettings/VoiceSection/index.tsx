@@ -72,37 +72,33 @@ export function SttCard() {
     : null;
 
   return (
-    <Card size="sm">
-      <CardContent>
-        <DomainSection
-          icon={<Mic className="size-4 text-muted-foreground" />}
-          title="speech to text"
-          configured={configured}
-          provider={sttStatus?.provider ?? null}
-          enabled={enabled}
-          onToggleEnabled={toggleEnabled}
-          settings={sttStatus?.settings}
-          domain="stt"
-          agentName={agentName}
-          onSettingChange={(settings) =>
-            patchStt({ settings } as Partial<SttStatus>)
-          }
-          usageContent={
-            <UsageCollapsible onOpen={loadUsage}>
-              <div className="flex items-center justify-between text-xs px-6 pt-2">
-                <span className="text-muted-foreground">hours this month</span>
-                <span className="text-foreground tabular-nums">
-                  {hours !== null && balanceStr !== null
-                    ? `${hours.toFixed(2)} h used · ${balanceStr} left`
-                    : "—"}
-                </span>
-              </div>
-            </UsageCollapsible>
-          }
-          extraSettings={<ToggleIdleTimeoutSetting />}
-        />
-      </CardContent>
-    </Card>
+    <DomainSection
+      icon={<Mic className="size-4 text-muted-foreground" />}
+      title="speech to text"
+      configured={configured}
+      provider={sttStatus?.provider ?? null}
+      enabled={enabled}
+      onToggleEnabled={toggleEnabled}
+      settings={sttStatus?.settings}
+      domain="stt"
+      agentName={agentName}
+      onSettingChange={(settings) =>
+        patchStt({ settings } as Partial<SttStatus>)
+      }
+      usageContent={
+        <UsageCollapsible onOpen={loadUsage}>
+          <div className="flex items-center justify-between text-xs px-6 pt-2">
+            <span className="text-muted-foreground">hours this month</span>
+            <span className="text-foreground tabular-nums">
+              {hours !== null && balanceStr !== null
+                ? `${hours.toFixed(2)} h used · ${balanceStr} left`
+                : "—"}
+            </span>
+          </div>
+        </UsageCollapsible>
+      }
+      extraSettings={<ToggleIdleTimeoutSetting />}
+    />
   );
 }
 
@@ -169,40 +165,34 @@ export function TtsCard() {
   const chars = usageData?.usage;
 
   return (
-    <Card size="sm">
-      <CardContent>
-        <DomainSection
-          icon={<Volume2 className="size-4 text-muted-foreground" />}
-          title="text to speech"
-          configured={configured}
-          provider={ttsStatus?.provider ?? null}
-          enabled={enabled}
-          onToggleEnabled={toggleEnabled}
-          settings={ttsStatus?.settings}
-          domain="tts"
-          agentName={agentName}
-          onSettingChange={(settings) =>
-            patchTts({ settings } as Partial<TtsStatus>)
-          }
-          usageContent={
-            <UsageCollapsible onOpen={loadUsage}>
-              <div className="flex items-center justify-between text-xs px-6 pt-2">
-                <span className="text-muted-foreground">
-                  characters this month
-                </span>
-                <span className="text-foreground tabular-nums">
-                  {chars &&
-                  typeof chars.character_count === "number" &&
-                  typeof chars.character_limit === "number"
-                    ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
-                    : "—"}
-                </span>
-              </div>
-            </UsageCollapsible>
-          }
-        />
-      </CardContent>
-    </Card>
+    <DomainSection
+      icon={<Volume2 className="size-4 text-muted-foreground" />}
+      title="text to speech"
+      configured={configured}
+      provider={ttsStatus?.provider ?? null}
+      enabled={enabled}
+      onToggleEnabled={toggleEnabled}
+      settings={ttsStatus?.settings}
+      domain="tts"
+      agentName={agentName}
+      onSettingChange={(settings) =>
+        patchTts({ settings } as Partial<TtsStatus>)
+      }
+      usageContent={
+        <UsageCollapsible onOpen={loadUsage}>
+          <div className="flex items-center justify-between text-xs px-6 pt-2">
+            <span className="text-muted-foreground">characters this month</span>
+            <span className="text-foreground tabular-nums">
+              {chars &&
+              typeof chars.character_count === "number" &&
+              typeof chars.character_limit === "number"
+                ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
+                : "—"}
+            </span>
+          </div>
+        </UsageCollapsible>
+      }
+    />
   );
 }
 
@@ -274,45 +264,52 @@ function DomainSection({
   extraSettings?: React.ReactNode;
 }) {
   return (
-    <Field orientation="vertical" className="gap-3">
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="flex items-center gap-2">
-            {icon}
-            {title}
-            {provider && (
-              <span className="text-xs text-muted-foreground font-normal">
-                {provider}
-              </span>
-            )}
-          </FieldLabel>
-        </FieldContent>
-        <Switch
-          checked={enabled && configured}
-          disabled={!configured}
-          onCheckedChange={onToggleEnabled}
-        />
-      </Field>
-
-      {!configured ? (
-        <p className="text-xs text-warning">
-          not configured — ask the agent to set it up
-        </p>
-      ) : enabled ? (
-        <>
-          {usageContent}
-          {settings && settings.length > 0 && (
-            <DynamicSettings
-              settings={settings}
-              domain={domain}
-              agentName={agentName}
-              onSettingChange={onSettingChange}
+    <Card size="sm">
+      <CardContent>
+        <Field orientation="vertical" className="gap-3">
+          <Field
+            orientation="horizontal"
+            className="items-center justify-between"
+          >
+            <FieldContent>
+              <FieldLabel className="flex items-center gap-2">
+                {icon}
+                {title}
+                {provider && (
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {provider}
+                  </span>
+                )}
+              </FieldLabel>
+            </FieldContent>
+            <Switch
+              checked={enabled && configured}
+              disabled={!configured}
+              onCheckedChange={onToggleEnabled}
             />
-          )}
-          {extraSettings}
-        </>
-      ) : null}
-    </Field>
+          </Field>
+
+          {!configured ? (
+            <p className="text-xs text-warning">
+              not configured — ask the agent to set it up
+            </p>
+          ) : enabled ? (
+            <>
+              {usageContent}
+              {settings && settings.length > 0 && (
+                <DynamicSettings
+                  settings={settings}
+                  domain={domain}
+                  agentName={agentName}
+                  onSettingChange={onSettingChange}
+                />
+              )}
+              {extraSettings}
+            </>
+          ) : null}
+        </Field>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -353,16 +350,29 @@ function SettingByType({
   setting: SettingDef;
   updateSetting: (key: string, value: unknown) => void;
 }) {
-  switch (setting.type) {
-    case "bool":
-      return <BoolSetting setting={setting} updateSetting={updateSetting} />;
-    case "number":
-      return <NumberSetting setting={setting} updateSetting={updateSetting} />;
-    case "select":
-      return <SelectSetting setting={setting} updateSetting={updateSetting} />;
-    default:
-      return null;
-  }
+  const control = (() => {
+    switch (setting.type) {
+      case "bool":
+        return <BoolSetting setting={setting} updateSetting={updateSetting} />;
+      case "number":
+        return (
+          <NumberSetting setting={setting} updateSetting={updateSetting} />
+        );
+      case "select":
+        return (
+          <SelectSetting setting={setting} updateSetting={updateSetting} />
+        );
+      default:
+        return null;
+    }
+  })();
+  if (!control) return null;
+  return (
+    <>
+      {control}
+      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+    </>
+  );
 }
 
 function SubSettingsCollapsible({
@@ -408,18 +418,15 @@ function BoolSetting({
     (v) => updateSetting(setting.key, v),
   );
   return (
-    <>
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="text-sm">{setting.label}</FieldLabel>
-          {setting.description && (
-            <FieldDescription>{setting.description}</FieldDescription>
-          )}
-        </FieldContent>
-        <Switch checked={value} onCheckedChange={toggle} />
-      </Field>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+    <Field orientation="horizontal" className="items-center justify-between">
+      <FieldContent>
+        <FieldLabel className="text-sm">{setting.label}</FieldLabel>
+        {setting.description && (
+          <FieldDescription>{setting.description}</FieldDescription>
+        )}
+      </FieldContent>
+      <Switch checked={value} onCheckedChange={toggle} />
+    </Field>
   );
 }
 
@@ -460,27 +467,24 @@ function NumberSetting({
   };
 
   return (
-    <>
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-foreground">{setting.label}</span>
-          <span className="text-[10px] text-muted-foreground/70 tabular-nums">
-            {formatValue(localValue)}
-          </span>
-        </div>
-        <Slider
-          min={setting.min ?? 0}
-          max={setting.max ?? 1}
-          step={setting.step ?? 0.01}
-          value={[localValue]}
-          onValueChange={([v]) => handleChange(v)}
-        />
-        {setting.description && (
-          <p className="text-xs text-muted-foreground">{setting.description}</p>
-        )}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-foreground">{setting.label}</span>
+        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+          {formatValue(localValue)}
+        </span>
       </div>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+      <Slider
+        min={setting.min ?? 0}
+        max={setting.max ?? 1}
+        step={setting.step ?? 0.01}
+        value={[localValue]}
+        onValueChange={([v]) => handleChange(v)}
+      />
+      {setting.description && (
+        <p className="text-xs text-muted-foreground">{setting.description}</p>
+      )}
+    </div>
   );
 }
 
@@ -495,43 +499,30 @@ function SelectSetting({
   const hasPreview = options.some((o) => o.preview);
   const onChange = (v: string) => updateSetting(setting.key, v);
 
-  if (hasPreview) {
-    return (
-      <>
-        <VoicePicker setting={setting} onChange={onChange} />
-        <SubSettingsCollapsible
-          setting={setting}
-          updateSetting={updateSetting}
-        />
-      </>
-    );
-  }
+  if (hasPreview) return <VoicePicker setting={setting} onChange={onChange} />;
 
   return (
-    <>
-      <Collapsible>
-        <CollapsibleChevronButton>
-          {setting.label}:{" "}
-          <span className="text-foreground font-medium">
-            {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
-          </span>
-        </CollapsibleChevronButton>
-        <CollapsibleContent>
-          <div className="flex flex-col gap-1 pt-2 px-6">
-            {options.map((opt) => (
-              <button
-                key={opt.value}
-                className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
-                onClick={() => onChange(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+    <Collapsible>
+      <CollapsibleChevronButton>
+        {setting.label}:{" "}
+        <span className="text-foreground font-medium">
+          {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
+        </span>
+      </CollapsibleChevronButton>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-1 pt-2 px-6">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
+              onClick={() => onChange(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
