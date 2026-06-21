@@ -18,9 +18,6 @@ class ClaudeSDKError(Exception):
     """Base error raised by the transport (resume failure, CLI crash, timeouts)."""
 
 
-# --- Content blocks ---
-
-
 @dc.dataclass
 class TextBlock:
     text: str
@@ -40,9 +37,6 @@ class ToolUseBlock:
 
 
 ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock
-
-
-# --- Messages ---
 
 
 @dc.dataclass
@@ -81,9 +75,6 @@ class ResultMessage:
 Message = AssistantMessage | ResultMessage | SystemMessage | RateLimitEvent
 
 
-# --- Hooks ---
-
-
 @dc.dataclass
 class HookContext:
     """Opaque context handed to hook callbacks. Empty, like the SDK's."""
@@ -93,9 +84,6 @@ class HookContext:
 class HookMatcher:
     matcher: str | None = None
     hooks: list[HookCallback] = dc.field(default_factory=list)
-
-
-# --- Client options ---
 
 
 @dc.dataclass
