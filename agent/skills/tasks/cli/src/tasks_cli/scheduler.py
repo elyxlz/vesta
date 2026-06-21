@@ -27,6 +27,22 @@ _REARM_HINT = (
 )
 
 
+def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:
+    """Atomically write a `source=tasks` notification JSON file. Single owner of the
+    on-disk notification format (source, timestamp, filename pattern, tmp+rename)."""
+    notif_dir.mkdir(exist_ok=True)
+    notif = {
+        "source": "tasks",
+        "type": type_,
+        **fields,
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
+    }
+    filename = f"{int(time.time() * 1e6)}-tasks-{type_}.json"
+    tmp = notif_dir / f"{filename}.tmp"
+    tmp.write_text(json.dumps(notif, indent=2))
+    os.replace(tmp, notif_dir / filename)
+
+
 def write_reminder_notification(
     notif_dir: Path,
     reminder_id: str,
@@ -39,21 +55,5 @@ def write_reminder_notification(
     if not reminder_id or not message:
         raise ValueError("reminder_id and message required")
 
-    notif_dir.mkdir(exist_ok=True)
-
     full_message = f"{message}\n{_REARM_HINT.format(rid=reminder_id)}"
-
-    notif = {
-        "source": "tasks",
-        "type": "reminder",
-        "message": full_message,
-        "reminder_id": reminder_id,
-        "task_id": task_id,
-        **(extra or {}),
-        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
-    }
-
-    filename = f"{int(time.time() * 1e6)}-tasks-reminder.json"
-    tmp = notif_dir / f"{filename}.tmp"
-    tmp.write_text(json.dumps(notif, indent=2))
-    os.replace(tmp, notif_dir / filename)
+    write_notification(notif_dir, "reminder", message=full_message, reminder_id=reminder_id, task_id=task_id, **(extra or {}))

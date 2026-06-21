@@ -6,12 +6,11 @@ import signal
 import sys
 import time
 from contextlib import closing
-from datetime import datetime, UTC
 from pathlib import Path
 
 from .config import Config
 from . import commands, db, format as fmt
-from .scheduler import create_scheduler
+from .scheduler import create_scheduler, write_notification
 
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
@@ -30,15 +29,6 @@ def _remove_pid(config):
         (config.data_dir / "serve.pid").unlink()
     except FileNotFoundError:
         pass
-
-
-def _write_death_notification(notif_dir: Path, reason: str):
-    notif_dir.mkdir(exist_ok=True)
-    notif = {"timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(), "source": "tasks", "type": "daemon_died", "reason": reason}
-    filename = f"{int(time.time() * 1e6)}-tasks-daemon_died.json"
-    tmp = notif_dir / f"{filename}.tmp"
-    tmp.write_text(json.dumps(notif))
-    os.replace(tmp, notif_dir / filename)
 
 
 def _fail_daemon_not_running(detail: str):
@@ -446,6 +436,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
             _sync_jobs(config, scheduler, notif_dir)
     finally:
         http_server.should_exit = True
-        _write_death_notification(notif_dir, shutdown_reason)
+        write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         _remove_pid(config)
         scheduler.shutdown(wait=True)

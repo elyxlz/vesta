@@ -41,6 +41,13 @@ def _file_attachment(name: str, content_bytes: bytes) -> dict[str, str]:
     }
 
 
+def _read_attachment(file_path: str) -> tuple[bytes, str, int]:
+    """Read an attachment file, returning (content_bytes, name, size_bytes)."""
+    path = pl.Path(file_path).expanduser().resolve()
+    content_bytes = path.read_bytes()
+    return content_bytes, path.name, len(content_bytes)
+
+
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
     if "attachments" in result and result["attachments"]:
         for attachment in result["attachments"]:
@@ -256,10 +263,7 @@ def create_email_draft(
 
     if attachments:
         for file_path in attachments:
-            path = pl.Path(file_path).expanduser().resolve()
-            content_bytes = path.read_bytes()
-            att_size = len(content_bytes)
-            att_name = path.name
+            content_bytes, att_name, att_size = _read_attachment(file_path)
 
             if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 small_attachments.append(_file_attachment(att_name, content_bytes))
@@ -331,10 +335,7 @@ def send_email(
 
     if attachments:
         for file_path in attachments:
-            path = pl.Path(file_path).expanduser().resolve()
-            content_bytes = path.read_bytes()
-            att_size = len(content_bytes)
-            att_name = path.name
+            content_bytes, att_name, att_size = _read_attachment(file_path)
 
             processed_attachments.append(
                 {
@@ -416,10 +417,7 @@ def reply_to_email(
         )
 
         for file_path in attachments:
-            path = pl.Path(file_path).expanduser().resolve()
-            content_bytes = path.read_bytes()
-            att_size = len(content_bytes)
-            att_name = path.name
+            content_bytes, att_name, att_size = _read_attachment(file_path)
 
             if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 attachment = _file_attachment(att_name, content_bytes)
