@@ -1248,51 +1248,41 @@ mod file_path_tests {
     use super::*;
 
     #[test]
-    fn validate_path_accepts_normal() {
-        assert!(validate_file_path("/root/agent/data/foo").is_ok());
-        assert!(validate_file_path("/root/agent/prompts/x.md").is_ok());
+    fn validate_file_path_accepts_inside_root_rejects_escape() {
+        let cases = [
+            ("/root/agent/data/foo", true),
+            ("/root/agent/prompts/x.md", true),
+            ("/etc/passwd", false),
+            ("/run/vestad-env", false),
+            ("/root", false),
+            ("/root/../etc/passwd", false),
+            ("/root/agent/..", false),
+            ("/root/agent/../../etc", false),
+            ("/root/foo\0bar", false),
+        ];
+        for (path, ok) in cases {
+            assert_eq!(validate_file_path(path).is_ok(), ok, "path: {path:?}");
+        }
     }
 
     #[test]
-    fn validate_path_rejects_outside_root() {
-        assert!(validate_file_path("/etc/passwd").is_err());
-        assert!(validate_file_path("/run/vestad-env").is_err());
-        assert!(validate_file_path("/root").is_err());
-    }
-
-    #[test]
-    fn validate_path_rejects_traversal() {
-        assert!(validate_file_path("/root/../etc/passwd").is_err());
-        assert!(validate_file_path("/root/agent/..").is_err());
-        assert!(validate_file_path("/root/agent/../../etc").is_err());
-    }
-
-    #[test]
-    fn validate_path_rejects_nul() {
-        assert!(validate_file_path("/root/foo\0bar").is_err());
-    }
-
-    #[test]
-    fn readonly_detects_bind_mounts() {
-        assert!(is_readonly_path("/root/agent/core/main.py"));
-        assert!(is_readonly_path("/root/agent/core"));
-        assert!(is_readonly_path("/root/agent/pyproject.toml"));
-        assert!(is_readonly_path("/root/agent/uv.lock"));
-        assert!(is_readonly_path("/run/vestad-env"));
-    }
-
-    #[test]
-    fn readonly_detects_sensitive_paths() {
-        assert!(is_readonly_path("/root/agent/data/events.db"));
-        assert!(is_readonly_path("/root/agent/data/session_id"));
-        assert!(is_readonly_path("/root/.claude/.credentials.json"));
-    }
-
-    #[test]
-    fn readonly_allows_normal_paths() {
-        assert!(!is_readonly_path("/root/agent/data/foo.json"));
-        assert!(!is_readonly_path("/root/agent/prompts/x.md"));
-        assert!(!is_readonly_path("/root/.claude/settings.json"));
+    fn is_readonly_path_protects_bind_mounts_and_sensitive_files() {
+        let cases = [
+            ("/root/agent/core/main.py", true),
+            ("/root/agent/core", true),
+            ("/root/agent/pyproject.toml", true),
+            ("/root/agent/uv.lock", true),
+            ("/run/vestad-env", true),
+            ("/root/agent/data/events.db", true),
+            ("/root/agent/data/session_id", true),
+            ("/root/.claude/.credentials.json", true),
+            ("/root/agent/data/foo.json", false),
+            ("/root/agent/prompts/x.md", false),
+            ("/root/.claude/settings.json", false),
+        ];
+        for (path, readonly) in cases {
+            assert_eq!(is_readonly_path(path), readonly, "path: {path:?}");
+        }
     }
 }
 
