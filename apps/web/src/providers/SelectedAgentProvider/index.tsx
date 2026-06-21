@@ -76,49 +76,22 @@ export function SelectedAgentProvider({
     agentState,
   );
 
-  const start = () => {
-    withOp(
-      name,
-      "starting",
-      async () => {
-        await startAgent(name);
-      },
-      "start failed",
-    );
-  };
+  const op =
+    (operation: AgentOperation, run: () => Promise<unknown>, failure: string) =>
+    () =>
+      withOp(
+        name,
+        operation,
+        async () => {
+          await run();
+        },
+        failure,
+      );
 
-  const stop = () => {
-    withOp(
-      name,
-      "stopping",
-      async () => {
-        await stopAgent(name);
-      },
-      "stop failed",
-    );
-  };
-
-  const restart = () => {
-    withOp(
-      name,
-      "starting",
-      async () => {
-        await restartAgent(name);
-      },
-      "restart failed",
-    );
-  };
-
-  const rebuild = () => {
-    withOp(
-      name,
-      "rebuilding",
-      async () => {
-        await rebuildAgent(name);
-      },
-      "rebuild failed",
-    );
-  };
+  const start = op("starting", () => startAgent(name), "start failed");
+  const stop = op("stopping", () => stopAgent(name), "stop failed");
+  const restart = op("starting", () => restartAgent(name), "restart failed");
+  const rebuild = op("rebuilding", () => rebuildAgent(name), "rebuild failed");
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
@@ -144,17 +117,14 @@ export function SelectedAgentProvider({
     };
   }, [name]);
 
-  const backup = () => {
-    withOp(
-      name,
-      "backing-up",
-      async () => {
-        await createBackup(name);
-        await refreshBackups();
-      },
-      "backup failed",
-    );
-  };
+  const backup = op(
+    "backing-up",
+    async () => {
+      await createBackup(name);
+      await refreshBackups();
+    },
+    "backup failed",
+  );
 
   const restore = (backupId: string) => {
     withOp(
