@@ -35,7 +35,7 @@ from core.cc_sdk.types import (
 from . import diagnostics
 from . import logger
 from . import models as vm
-from .events import StreamEvent, SubagentStartEvent, SubagentStopEvent
+from .events import StreamEvent
 
 _AGENT_TOOLS = ("Task", "Agent")
 
@@ -163,12 +163,7 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
         agent_id = input_data["agent_id"] if "agent_id" in input_data else "?"
         agent_type = input_data["agent_type"] if "agent_type" in input_data else "unknown"
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
-        event: StreamEvent
-        if event_type == "subagent_start":
-            event = SubagentStartEvent(type="subagent_start", agent_id=agent_id, agent_type=agent_type)
-        else:
-            event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
-        state.event_bus.emit(event)
+        state.event_bus.emit(tp.cast(StreamEvent, {"type": event_type, "agent_id": agent_id, "agent_type": agent_type}))
         return tp.cast(HookJSONOutput, {})
 
     return tp.cast(HookCallback, hook)
