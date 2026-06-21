@@ -19,18 +19,26 @@ import (
 // global flags that must be read before command dispatch (the per-command FlagSet
 // only sees the remaining args after the subcommand).
 
-func extractFlag(name string) string {
+// lookupFlag returns the value of --name (as "--name value" or "--name=value")
+// and whether the flag was present, so callers can distinguish an absent flag
+// from one set to the empty string.
+func lookupFlag(name string) (string, bool) {
 	flag := "--" + name
 	prefix := flag + "="
 	for i, arg := range os.Args {
 		if arg == flag && i+1 < len(os.Args) {
-			return os.Args[i+1]
+			return os.Args[i+1], true
 		}
 		if strings.HasPrefix(arg, prefix) {
-			return strings.TrimPrefix(arg, prefix)
+			return strings.TrimPrefix(arg, prefix), true
 		}
 	}
-	return ""
+	return "", false
+}
+
+func extractFlag(name string) string {
+	val, _ := lookupFlag(name)
+	return val
 }
 
 func extractInstance() string         { return extractFlag("instance") }
@@ -77,22 +85,7 @@ func extractSkipSenders() map[string]bool {
 // no sender should interrupt.
 func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInterrupt bool) {
 	allowlist = make(map[string]bool)
-	val := ""
-	found := false
-	flagName := "--interrupt-senders"
-	prefix := flagName + "="
-	for i, arg := range os.Args {
-		if arg == flagName && i+1 < len(os.Args) {
-			val = os.Args[i+1]
-			found = true
-			break
-		}
-		if strings.HasPrefix(arg, prefix) {
-			val = strings.TrimPrefix(arg, prefix)
-			found = true
-			break
-		}
-	}
+	val, found := lookupFlag("interrupt-senders")
 	if !found {
 		return allowlist, false, false
 	}
