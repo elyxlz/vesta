@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
+import { LogOut } from "lucide-react";
+import { ConnectionControls } from "@/components/ConnectionControls";
 import { Footer } from "@/components/Footer";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
-import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { useAuth } from "@/providers/AuthProvider";
 import {
   Empty,
   EmptyHeader,
@@ -15,7 +17,7 @@ import {
 import { isTauri } from "@/lib/env";
 import { compareVersions } from "@/lib/version";
 
-interface VersionMismatchDialogProps {
+interface VersionMismatchScreenProps {
   gatewayVersion: string;
   onUpdateGateway: () => Promise<boolean>;
 }
@@ -42,12 +44,17 @@ async function updateApp(gatewayVersion: string) {
   await invoke(command, { version: gatewayVersion });
 }
 
-export function VersionMismatchDialog({
+// Full-screen takeover shown in place of the whole app when the app and gateway
+// run different versions. It renders outside the router (so /settings is
+// unreachable), so it carries its own connection controls — disconnect + release
+// channel + auto-update — so the user can resolve the mismatch while blocked.
+export function VersionMismatchScreen({
   gatewayVersion,
   onUpdateGateway,
-}: VersionMismatchDialogProps) {
+}: VersionMismatchScreenProps) {
   const appIsOlder = compareVersions(__APP_VERSION__, gatewayVersion) < 0;
   const hint = appIsOlder ? "update your app" : "update your gateway";
+  const { disconnect } = useAuth();
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,20 +86,13 @@ export function VersionMismatchDialog({
 
   return (
     <>
-      <Navbar
-        center={<LogoText />}
-        trailing={
-          <>
-            <StatusPill />
-            <Settings />
-          </>
-        }
-      />
+      <Navbar center={<LogoText />} trailing={<StatusPill />} />
       <Empty>
         <EmptyHeader>
           <EmptyTitle>version mismatch</EmptyTitle>
           <EmptyDescription>
-            app v{__APP_VERSION__}, gateway v{gatewayVersion}
+            your app (v{__APP_VERSION__}) and gateway (v{gatewayVersion}) are on
+            different versions and need to match. {hint} to reconnect.
           </EmptyDescription>
         </EmptyHeader>
         <Button
@@ -103,6 +103,13 @@ export function VersionMismatchDialog({
           {hint}
         </Button>
         {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="mt-4 flex w-full max-w-sm flex-col gap-3">
+          <Button variant="destructive" onClick={() => disconnect()}>
+            <LogOut data-icon="inline-start" />
+            Disconnect
+          </Button>
+          <ConnectionControls />
+        </div>
       </Empty>
       <Footer />
     </>
