@@ -249,24 +249,6 @@ def request_paginated(
         page_num += 1
 
 
-def download_raw(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    path: str,
-    account_id: str | None = None,
-    max_retries: int = 3,
-) -> bytes:
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
-
-    response = _retry_http_call(lambda: client.get(f"{base_url}{path}", headers=headers), max_retries)
-    if not response:
-        raise ValueError("Failed to download file after all retries")
-    return response.content
-
-
 def _do_chunked_upload(
     client: httpx.Client,
     upload_url: str,
@@ -293,52 +275,6 @@ def _do_chunked_upload(
             break
 
     raise ValueError("Upload completed but no final response received")
-
-
-def create_upload_session(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    path: str,
-    account_id: str | None = None,
-    item_properties: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Create an upload session for large files"""
-    payload = {"item": item_properties or {}}
-    result = request(client, cache_file, scopes, settings, base_url, "POST", f"{path}/createUploadSession", account_id, json=payload)
-    if not result:
-        raise ValueError("Failed to create upload session")
-    return result
-
-
-def upload_large_file(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    upload_chunk_size: int,
-    path: str,
-    data: bytes,
-    account_id: str | None = None,
-    item_properties: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Upload a large file using upload sessions"""
-    file_size = len(data)
-
-    if file_size <= upload_chunk_size:
-        result = request(client, cache_file, scopes, settings, base_url, "PUT", f"{path}/content", account_id, data=data)
-        if not result:
-            raise ValueError("Failed to upload file")
-        return result
-
-    session = create_upload_session(client, cache_file, scopes, settings, base_url, path, account_id, item_properties)
-    upload_url = session["uploadUrl"]
-
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
-    return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
 def create_mail_upload_session(
