@@ -59,7 +59,7 @@ export function AppSettings() {
   })();
 
   return (
-    <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
+    <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
       <Card size="sm">
         <CardContent>
           <MenuSection title="Appearance">
@@ -145,27 +145,29 @@ export function AppSettings() {
 
       <Card size="sm" className="md:col-span-2">
         <CardContent>
-          <MenuSection title="Gateway">
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+          <MenuSection
+            title="Gateway"
+            trailing={
+              (gatewayVersion || gatewayBranch) && (
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  {gatewayVersion && <>v{gatewayVersion}</>}
+                  {gatewayVersion && gatewayBranch && " "}
+                  {gatewayBranch && <>({gatewayBranch})</>}
+                </span>
+              )
+            }
+          >
+            <div className="mt-2 flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm leading-none">
                 <StatusPill showHostname={false} />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="flex min-w-0 items-baseline gap-1">
-                    <span className="shrink-0 text-muted-foreground">
-                      {reachable ? "Connected to" : "Cannot reach"}
-                    </span>
-                    <span className="min-w-0 truncate font-medium text-foreground">
-                      {hostname}
-                    </span>
+                <span className="flex min-w-0 flex-1 items-baseline gap-1">
+                  <span className="shrink-0 text-muted-foreground">
+                    {reachable ? "Connected to" : "Cannot reach"}
                   </span>
-                  {(gatewayVersion || gatewayBranch) && (
-                    <span className="text-xs text-muted-foreground">
-                      {gatewayVersion && <>gateway v{gatewayVersion}</>}
-                      {gatewayVersion && gatewayBranch && " "}
-                      {gatewayBranch && <>({gatewayBranch})</>}
-                    </span>
-                  )}
-                </div>
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {hostname}
+                  </span>
+                </span>
               </div>
               <Button
                 variant="destructive"
