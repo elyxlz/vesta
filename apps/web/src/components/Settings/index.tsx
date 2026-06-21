@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Settings as SettingsIcon,
   Sun,
@@ -559,18 +560,18 @@ export function AppSettings() {
   );
 }
 
-// The gear button that owns its open state and pops the SettingsDialog. Used
-// where settings is reached via a standalone icon (navbar, version-mismatch
-// prompt); AgentMenu drives SettingsDialog directly with its own trigger.
+// The gear button. Navigates to the app settings page.
 export function SettingsButton() {
-  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
-    <>
-      <Button variant="outline" size="icon-lg" onClick={() => setOpen(true)}>
-        <SettingsIcon />
-      </Button>
-      <SettingsDialog open={open} onOpenChange={setOpen} />
-    </>
+    <Button
+      variant="outline"
+      size="icon-lg"
+      aria-label="settings"
+      onClick={() => navigate("/settings")}
+    >
+      <SettingsIcon />
+    </Button>
   );
 }
