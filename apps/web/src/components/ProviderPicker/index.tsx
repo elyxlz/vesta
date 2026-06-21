@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeftIcon } from "lucide-react";
 import { stepTransition } from "@/lib/motion";
+import { errorMessage } from "@/lib/utils";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
@@ -44,11 +45,9 @@ export function ProviderPicker({
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })
-      .catch((e: unknown) => {
+      .catch((e) => {
         if (cancelled) return;
-        setAuthStartError(
-          (e as { message?: string })?.message || "failed to start auth",
-        );
+        setAuthStartError(errorMessage(e, "failed to start auth"));
       });
     return () => {
       cancelled = true;
