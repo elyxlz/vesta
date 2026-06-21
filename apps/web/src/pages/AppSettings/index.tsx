@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
-import { Footer } from "@/components/Footer";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
@@ -35,15 +34,16 @@ export function AppSettingsPage() {
         }
       />
       <div
-        className="flex flex-1 flex-col overflow-y-auto px-page pb-8"
+        className="flex min-h-0 flex-1 flex-col px-page"
         style={{ paddingTop: navbarHeight }}
       >
-        <div className="flex min-h-11 items-center justify-center pt-8 pb-6">
-          <h1 className="text-lg font-semibold">settings</h1>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-2">
+          <div className="flex min-h-11 items-center justify-center py-6">
+            <h1 className="text-lg font-semibold">settings</h1>
+          </div>
+          <AppSettings />
         </div>
-        <AppSettings />
       </div>
-      <Footer />
     </>
   );
 }
