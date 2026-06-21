@@ -142,11 +142,7 @@ fn unauthorized() -> Response {
 /// apart without leaking the secret itself.
 fn token_fingerprint(token: &str) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
-    let mut out = String::with_capacity(6);
-    for byte in digest.as_ref().iter().take(3) {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    hex::encode(&digest.as_ref()[..3])
 }
 
 pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {

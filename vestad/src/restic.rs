@@ -144,7 +144,7 @@ fn ensure_password() -> Result<PathBuf, DockerError> {
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut bytes))
         .map_err(|e| DockerError::Failed(format!("failed to read /dev/urandom: {e}")))?;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hex::encode(bytes);
 
     std::fs::write(&path, &hex)
         .map_err(|e| DockerError::Failed(format!("failed to write restic password: {e}")))?;
