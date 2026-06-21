@@ -99,7 +99,7 @@ export function SettingsDialog({
   } = useGateway();
   const [checking, setChecking] = useState(false);
   // Intentional staged wiring: GatewayLogsViewer is rendered but nothing opens it
-  // yet. Keep it; do not remove as dead code.
+  // yet. Keep it; not dead code. See issue #852.
   const [showLogs, setShowLogs] = useState(false);
   const [channelSaving, setChannelSaving] = useState(false);
   const [autoUpdateSaving, setAutoUpdateSaving] = useState(false);
