@@ -128,12 +128,9 @@ where
     result
 }
 
-/// Create a backup of the given agent. Stops the container during the snapshot, then restarts.
-pub async fn create_backup(
-    docker: &Docker,
-    name: &str,
-    backup_type: BackupType,
-) -> Result<BackupInfo, DockerError> {
+/// Validate the agent, confirm its container is backup-able (not NotFound/Dead),
+/// and verify disk headroom. Returns the container's status for the stop/start cycle.
+async fn backup_preflight(docker: &Docker, name: &str) -> Result<ContainerStatus, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let cs = container_status(docker, &cname).await;
@@ -149,8 +146,17 @@ pub async fn create_backup(
         }
         _ => {}
     }
-
     check_disk_space(docker, name, &cname).await?;
+    Ok(cs)
+}
+
+/// Create a backup of the given agent. Stops the container during the snapshot, then restarts.
+pub async fn create_backup(
+    docker: &Docker,
+    name: &str,
+    backup_type: BackupType,
+) -> Result<BackupInfo, DockerError> {
+    let cs = backup_preflight(docker, name).await?;
 
     let result = with_container_paused(docker, name, cs, || async {
         tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
@@ -186,28 +192,10 @@ pub async fn create_backups_batch(
         return Vec::new();
     }
 
-    let cname = match validate_name(name).map(|_| container_name(name)) {
-        Ok(c) => c,
+    let cs = match backup_preflight(docker, name).await {
+        Ok(cs) => cs,
         Err(e) => return fail_all(types, e),
     };
-
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => {
-            return fail_all(types, DockerError::NotFound(format!("agent '{}' not found", name)));
-        }
-        ContainerStatus::Dead => {
-            return fail_all(
-                types,
-                DockerError::BrokenState(format!("agent '{}' is in a broken state", name)),
-            );
-        }
-        _ => {}
-    }
-
-    if let Err(e) = check_disk_space(docker, name, &cname).await {
-        return fail_all(types, e);
-    }
 
     with_container_paused(docker, name, cs, || async {
         let mut results = Vec::new();

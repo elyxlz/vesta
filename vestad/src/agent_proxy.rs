@@ -84,14 +84,14 @@ pub async fn agent_proxy_handler(
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
-    let (target_port, stripped_path, service) = if !first_segment.is_empty() {
-        if let Some(entry) = resolve_service(&state, &name, first_segment).await {
-            (entry.port, service_subpath.to_string(), Some(entry))
-        } else {
-            (agent_port, format!("/{}", path), None)
-        }
+    let resolved = if first_segment.is_empty() {
+        None
     } else {
-        (agent_port, format!("/{}", path), None)
+        resolve_service(&state, &name, first_segment).await
+    };
+    let (target_port, stripped_path, service) = match resolved {
+        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
+        None => (agent_port, format!("/{}", path), None),
     };
 
     // Public services are fully open; everything else requires auth.
