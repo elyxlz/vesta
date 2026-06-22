@@ -28,9 +28,9 @@ export function AgentSettings() {
               style={{ top: navbarHeight + 16 }}
             >
               <ActionsCard />
-              <ProviderCard />
             </div>
             <div className="flex min-w-0 flex-col gap-4">
+              <ProviderCard />
               <ConstitutionCard />
               <SttCard />
               <TtsCard />
