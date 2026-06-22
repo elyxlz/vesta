@@ -1,5 +1,6 @@
 import { getConnection } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider";
+import { Button } from "@/components/ui/button";
 import { UpdatePill } from "@/components/UpdatePill";
 
 interface StatusPillProps {
@@ -21,17 +22,23 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
 
   return (
     <div className="flex items-center gap-2">
-      <div
-        role="img"
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
         title={reachable ? "connected" : "can't reach gateway"}
-        aria-label={reachable ? "connected" : "can't reach gateway"}
-        className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`}
-      />
-      {showHostname && hostname && (
-        <span className="text-sm text-secondary-foreground truncate hidden sm:block">
-          {hostname}
-        </span>
-      )}
+      >
+        <div
+          role="img"
+          aria-label={reachable ? "connected" : "can't reach gateway"}
+          className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`}
+        />
+        {showHostname && hostname && (
+          <span className="hidden truncate text-sm text-secondary-foreground sm:block">
+            {hostname}
+          </span>
+        )}
+      </Button>
       <UpdatePill />
     </div>
   );
