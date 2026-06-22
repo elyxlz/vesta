@@ -19,6 +19,13 @@ import { useAuth } from "@/providers/AuthProvider";
 // the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
+// A soft rise-and-fade so the connect card settles in rather than snapping on.
+const connectEntrance = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.3, ease: "easeOut" },
+} as const;
+
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
   const [value, setValue] = useState("");
@@ -101,14 +108,21 @@ export function Connect() {
     });
   };
 
-  // Still probing /info to avoid flashing the wrong form.
+  // Still probing /info to avoid flashing the wrong form. Keep the logo in place
+  // so resolving to a form doesn't jump the layout.
   if (managed === null) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-[240px] max-w-full px-4">
-            <ProgressBar />
-          </div>
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
+          >
+            <LogoText className="mb-2" />
+            <div className="w-full">
+              <ProgressBar />
+            </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -120,7 +134,10 @@ export function Connect() {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
+          >
             <LogoText className="mb-2" />
             {sessionExpired && (
               <FieldDescription className="text-center">
@@ -162,7 +179,7 @@ export function Connect() {
                 self-hosting? connect with a link
               </button>
             )}
-          </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -171,9 +188,10 @@ export function Connect() {
   return (
     <div className="flex h-full flex-col p-page">
       <div className="flex flex-1 items-center justify-center">
-        <form
+        <motion.form
+          {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
+          className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4"
         >
           <LogoText className="mb-2" />
           {sessionExpired && (
@@ -230,7 +248,7 @@ export function Connect() {
               </motion.p>
             )}
           </AnimatePresence>
-        </form>
+        </motion.form>
       </div>
     </div>
   );
