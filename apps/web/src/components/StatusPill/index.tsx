@@ -1,6 +1,5 @@
 import { getConnection } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider";
-import { Button } from "@/components/ui/button";
 import { UpdatePill } from "@/components/UpdatePill";
 
 interface StatusPillProps {
@@ -22,11 +21,9 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
 
   return (
     <div className="flex items-center gap-2">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
+      <div
         title={reachable ? "connected" : "can't reach gateway"}
+        className="inline-flex h-8 items-center gap-2 rounded-4xl px-3"
       >
         <div
           role="img"
@@ -38,7 +35,7 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
             {hostname}
           </span>
         )}
-      </Button>
+      </div>
       <UpdatePill />
     </div>
   );
