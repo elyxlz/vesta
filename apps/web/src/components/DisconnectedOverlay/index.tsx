@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { LogOut } from "lucide-react";
+import { getConnection } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -14,6 +15,16 @@ import {
 export function DisconnectedOverlay() {
   const { disconnect } = useAuth();
 
+  const hostname = (() => {
+    const conn = getConnection();
+    if (!conn) return "";
+    try {
+      return new URL(conn.url).hostname;
+    } catch {
+      return conn.url;
+    }
+  })();
+
   return (
     <motion.div
       role="alertdialog"
@@ -27,7 +38,11 @@ export function DisconnectedOverlay() {
         <EmptyHeader>
           <Spinner className="size-6" />
           <EmptyTitle>disconnected from gateway</EmptyTitle>
-          <EmptyDescription>attempting to reconnect…</EmptyDescription>
+          <EmptyDescription>
+            {hostname
+              ? `attempting to reconnect to ${hostname}…`
+              : "attempting to reconnect…"}
+          </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button variant="destructive" onClick={() => disconnect()}>
