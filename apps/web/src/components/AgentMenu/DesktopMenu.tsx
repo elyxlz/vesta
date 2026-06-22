@@ -22,8 +22,6 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     onBackup: state.onBackup,
     onAppSettings: state.onAppSettings,
     onAgentSettings: state.onAgentSettings,
-    onAuthenticate: state.onAuthenticate,
-    isAuthenticated: state.isAuthenticated,
     onDebugInfo: state.onDebugInfo,
   });
 
