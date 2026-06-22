@@ -39,9 +39,7 @@ export function DisconnectedOverlay() {
           <Spinner className="size-6" />
           <EmptyTitle>disconnected from gateway</EmptyTitle>
           <EmptyDescription>
-            {hostname
-              ? `attempting to reconnect to ${hostname}…`
-              : "attempting to reconnect…"}
+            attempting to reconnect to {hostname}…
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
