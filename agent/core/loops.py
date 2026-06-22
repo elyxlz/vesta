@@ -102,13 +102,6 @@ def format_notification_batch(notifications: list[vm.Notification], *, suffix: s
     return f"<notifications>\n{inner}\n</notifications>{suffix_str}"
 
 
-async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> list[vm.Notification]:
-    notifications = await load_notifications(config=config)
-    for notif in notifications:
-        state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
-    return notifications
-
-
 def _delete_paths(file_paths: list[str]) -> None:
     for path_str in file_paths:
         pl.Path(path_str).unlink(missing_ok=True)
@@ -459,11 +452,17 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
             # completed and its file is gone, preventing unbounded set growth.
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
-            notifications = await load_new_notifications(state=state, config=config)
+            notifications = await load_notifications(config=config)
             interrupt_notifs = [n for n in notifications if n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
-            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
-
             new_passive = [n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
+
+            # Emit each genuinely-new notification to the bus exactly once. load_notifications
+            # re-reads every file each tick, so files kept on disk (e.g. deferred while
+            # unauthenticated) must not re-emit — that was the notification storm.
+            for notif in (*interrupt_notifs, *new_passive):
+                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
+
+            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
             queued_paths.update(n.file_path for n in new_passive if n.file_path)
             pending_passive.extend(new_passive)
 
