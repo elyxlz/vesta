@@ -113,11 +113,12 @@ type VestaEvent = StreamEvent | HistoryEvent
 
 PAGE_SIZE = 100
 
-# Event types the app-chat conversation surface (the chat UI) renders. History pages
-# for the "app-chat" channel filter to these so a burst of notifications or internal
-# events can't bury the conversation inside the capped recent window — without it, a
-# noisy agent's whole history page can be notifications and the chat shows up empty.
-APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat", "tool_start")
+# The conversation the chat surface shows by default: the user's messages and the
+# agent's replies. History pages for the "app-chat" channel filter to these so the
+# capped recent window is filled with visible messages — not notifications or
+# tool-call events that are hidden by default and would otherwise push the actual
+# conversation out of the window (tool calls still arrive live for the show-tools toggle).
+APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat")
 
 
 def _channel_condition(channel: str | None) -> tuple[str, tuple[object, ...]]:

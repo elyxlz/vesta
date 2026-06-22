@@ -11,6 +11,7 @@ from core.events import (
     EventBus,
     NotificationEvent,
     SubagentStartEvent,
+    ToolStartEvent,
     UserEvent,
 )
 
@@ -150,13 +151,15 @@ def test_cursor_pagination(event_bus):
     assert cursor3 is None
 
 
-def test_app_chat_channel_filters_out_notifications(event_bus):
-    """recent(channel="app-chat") keeps the conversation even when a notification
-    storm fills the recent window — the regression that blanked the chat."""
+def test_app_chat_channel_filters_out_noise(event_bus):
+    """recent(channel="app-chat") keeps the conversation even when notifications and
+    hidden-by-default tool calls flood the recent window — the regression that blanked
+    the chat, then left only a handful of messages once tool_start counted toward the cap."""
     event_bus.emit(UserEvent(type="user", text="my real message"))
     event_bus.emit(ChatEvent(type="chat", text="my real reply"))
     for i in range(200):
         event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+        event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}", subagent=False))
 
     events, _ = event_bus.recent(limit=50, channel="app-chat")
     types = {tp.cast(tp.Any, e)["type"] for e in events}
@@ -164,9 +167,11 @@ def test_app_chat_channel_filters_out_notifications(event_bus):
     texts = [tp.cast(tp.Any, e)["text"] for e in events]
     assert texts == ["my real message", "my real reply"]
 
-    # Unfiltered recent() still returns the raw tail (other consumers untouched).
+    # Unfiltered recent() still returns the raw tail (other consumers untouched): here
+    # it is all noise, which is exactly why the conversation needs the channel filter.
     raw, _ = event_bus.recent(limit=50)
-    assert all(tp.cast(tp.Any, e)["type"] == "notification" for e in raw)
+    raw_types = {tp.cast(tp.Any, e)["type"] for e in raw}
+    assert raw_types == {"notification", "tool_start"}
 
 
 def test_app_chat_channel_paginates_across_notification_runs(event_bus):
