@@ -2,7 +2,7 @@ import { useMemo, type RefObject } from "react";
 import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { createScroller } from "@/lib/virtuoso";
@@ -89,6 +89,43 @@ const components: Components<DecoratedRow, ChatListContext> = {
   Footer,
 };
 
+// Placeholder bubbles shown while the first page of history is in flight, so a slow
+// load reads as a conversation arriving rather than an empty/"needs to sign in" state.
+const SKELETON_ROWS: { align: string; size: string; tint: string }[] = [
+  { align: "justify-start", size: "h-8 w-44", tint: "bg-muted" },
+  { align: "justify-end", size: "h-8 w-28", tint: "bg-primary/15" },
+  { align: "justify-start", size: "h-12 w-60", tint: "bg-muted" },
+  { align: "justify-end", size: "h-8 w-36", tint: "bg-primary/15" },
+  { align: "justify-start", size: "h-8 w-32", tint: "bg-muted" },
+];
+
+function ChatSkeleton({
+  fullscreen,
+  navbarHeight,
+}: {
+  fullscreen?: boolean;
+  navbarHeight: number;
+}) {
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col justify-end gap-3 px-4 pb-4"
+      style={{ paddingTop: fullscreen ? navbarHeight + 16 : 32 }}
+    >
+      {SKELETON_ROWS.map((row, i) => (
+        <div key={i} className={cn("flex", row.align)}>
+          <Skeleton
+            className={cn(
+              "rounded-squircle-sm [corner-shape:squircle]",
+              row.size,
+              row.tint,
+            )}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ChatMessageArea({
   virtuosoRef,
   onStartReached,
@@ -123,11 +160,11 @@ export function ChatMessageArea({
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
-      {decorated.length === 0 && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
-          {connected && !historyLoaded ? (
-            <Spinner className="size-4 text-muted-foreground" />
-          ) : (
+      {decorated.length === 0 &&
+        (connected && !historyLoaded ? (
+          <ChatSkeleton fullscreen={fullscreen} navbarHeight={navbarHeight} />
+        ) : (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
             <span className="text-xs text-muted-foreground">
               {!connected
                 ? "connecting..."
@@ -135,9 +172,8 @@ export function ChatMessageArea({
                   ? `${agentName} needs to sign in`
                   : `${agentName} is setting things up`}
             </span>
-          )}
-        </div>
-      )}
+          </div>
+        ))}
       <AnimatePresence>
         {loadingMore && (
           <motion.div
