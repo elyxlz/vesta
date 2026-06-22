@@ -18,10 +18,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return () => setChattingAgent(null);
   }, [name, setChattingAgent]);
 
-  const ready = agent?.status === "alive";
+  // Connect once the agent's WS is up so chat history loads — including when the
+  // agent isn't authenticated yet (the composer stays disabled until sign-in).
+  const connectable =
+    agent?.status === "alive" || agent?.status === "not_authenticated";
   const chat = useChat({
     name,
-    active: ready,
+    active: connectable,
     onAssistantMessage: (text) => {
       speak(text);
       notifyAssistant(name, text);
