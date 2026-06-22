@@ -43,7 +43,7 @@ function SkeletonList() {
   return (
     <motion.div
       key="skeletons"
-      className="relative flex min-h-0 w-full flex-1 items-center"
+      className="relative flex min-h-0 w-full flex-1 items-center overflow-hidden"
       style={{
         gap: AGENT_CAROUSEL_GAP,
         paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
