@@ -2,7 +2,6 @@ import { useMemo, type RefObject } from "react";
 import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { createScroller } from "@/lib/virtuoso";
@@ -91,37 +90,53 @@ const components: Components<DecoratedRow, ChatListContext> = {
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
 // load reads as a conversation arriving rather than an empty/"needs to sign in" state.
-const SKELETON_ROWS: { align: string; size: string; tint: string }[] = [
-  { align: "justify-start", size: "h-8 w-44", tint: "bg-muted" },
-  { align: "justify-end", size: "h-8 w-28", tint: "bg-primary/15" },
-  { align: "justify-start", size: "h-12 w-60", tint: "bg-muted" },
-  { align: "justify-end", size: "h-8 w-36", tint: "bg-primary/15" },
-  { align: "justify-start", size: "h-8 w-32", tint: "bg-muted" },
+// Mirrors ChatBubble: bg-secondary on the left (agent), bg-primary on the right (you),
+// clustered into runs like a real chat. The column is bottom-anchored and overflows the
+// top, so it reads as a thread continuing above the fold.
+const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
+  { side: "agent", size: "h-9 w-40" },
+  { side: "agent", size: "h-14 w-56" },
+  { side: "user", size: "h-9 w-28" },
+  { side: "user", size: "h-9 w-44" },
+  { side: "user", size: "h-9 w-24" },
+  { side: "agent", size: "h-9 w-48" },
+  { side: "agent", size: "h-9 w-32" },
+  { side: "user", size: "h-14 w-52" },
+  { side: "agent", size: "h-9 w-44" },
+  { side: "user", size: "h-9 w-36" },
+  { side: "user", size: "h-9 w-28" },
+  { side: "agent", size: "h-14 w-60" },
+  { side: "agent", size: "h-9 w-36" },
+  { side: "user", size: "h-9 w-40" },
 ];
 
-function ChatSkeleton({
-  fullscreen,
-  navbarHeight,
-}: {
-  fullscreen?: boolean;
-  navbarHeight: number;
-}) {
+function ChatSkeleton() {
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col justify-end gap-3 px-4 pb-4"
-      style={{ paddingTop: fullscreen ? navbarHeight + 16 : 32 }}
-    >
-      {SKELETON_ROWS.map((row, i) => (
-        <div key={i} className={cn("flex", row.align)}>
-          <Skeleton
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
+      {SKELETON_ROWS.map((row, i) => {
+        const isUser = row.side === "user";
+        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1].side === row.side;
+        return (
+          <div
+            key={i}
             className={cn(
-              "rounded-squircle-sm [corner-shape:squircle]",
-              row.size,
-              row.tint,
+              "flex",
+              isUser ? "justify-end" : "justify-start",
+              i > 0 && (sameAsPrev ? "mt-1.5" : "mt-5"),
             )}
-          />
-        </div>
-      ))}
+          >
+            <div
+              className={cn(
+                "animate-pulse rounded-squircle-sm [corner-shape:squircle]",
+                row.size,
+                isUser
+                  ? "bg-primary rounded-br-sm"
+                  : "bg-secondary rounded-bl-sm",
+              )}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -162,7 +177,7 @@ export function ChatMessageArea({
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
       {decorated.length === 0 &&
         (connected && !historyLoaded ? (
-          <ChatSkeleton fullscreen={fullscreen} navbarHeight={navbarHeight} />
+          <ChatSkeleton />
         ) : (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
             <span className="text-xs text-muted-foreground">
