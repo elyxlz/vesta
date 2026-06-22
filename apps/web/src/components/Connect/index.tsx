@@ -226,7 +226,7 @@ export function Connect() {
             />
           </Field>
 
-          <Button type="submit" disabled={busy} className="w-full">
+          <Button type="submit" disabled={busy}>
             {busy ? "connecting..." : "connect"}
           </Button>
 
