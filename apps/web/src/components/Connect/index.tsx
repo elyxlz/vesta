@@ -83,7 +83,7 @@ export function Connect() {
     if (busy) return;
     const link = parseConnectLink(value);
     if (!link) {
-      setError("paste your connect link");
+      setError("paste your gateway connect link");
       inputRef.current?.focus();
       return;
     }
@@ -125,7 +125,7 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
             <ConnectHeader />
             <div className="w-full">
@@ -145,7 +145,7 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
             <ConnectHeader />
             {sessionExpired && (
@@ -200,7 +200,7 @@ export function Connect() {
         <motion.form
           {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4"
+          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4"
         >
           <ConnectHeader />
           {sessionExpired && (
@@ -217,7 +217,7 @@ export function Connect() {
               ref={inputRef}
               id="connect-link"
               type="text"
-              placeholder="paste your connect link"
+              placeholder="paste your gateway connect link"
               autoComplete="off"
               autoFocus
               value={value}
