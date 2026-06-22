@@ -85,7 +85,6 @@ export function Connect() {
     if (busy) return;
     const link = parseConnectLink(value);
     if (!link) {
-      setError("paste your gateway connect link");
       inputRef.current?.focus();
       return;
     }
