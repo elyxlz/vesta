@@ -68,6 +68,23 @@ async def test_ws_sends_history_by_default(event_bus):
 
 
 @pytest.mark.anyio
+async def test_ws_sends_empty_history_when_no_events(event_bus):
+    """The history event is always sent on connect, even with no events, so the client
+    can distinguish 'still loading' from 'no messages' instead of guessing."""
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                data = json.loads(msg.data)
+                assert data["type"] == "history"
+                assert data["events"] == []
+                assert data["cursor"] is None
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
 async def test_ws_skip_history_omits_history_event(event_bus):
     event_bus.emit(ChatEvent(type="chat", text="stored"))
     runner, base = await _start_server(event_bus)

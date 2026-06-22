@@ -47,6 +47,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     messages,
     isTyping,
     connected,
+    historyLoaded,
     hasMore,
     loadingMore,
     loadMore,
@@ -185,6 +186,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           hasMore={hasMore}
           chatMessages={chatMessages}
           connected={connected}
+          historyLoaded={historyLoaded}
           agentName={name}
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}

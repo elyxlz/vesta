@@ -2,6 +2,7 @@ import { useMemo, type RefObject } from "react";
 import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { createScroller } from "@/lib/virtuoso";
@@ -32,6 +33,7 @@ interface ChatMessageAreaProps {
   hasMore: boolean;
   chatMessages: VestaEvent[];
   connected: boolean;
+  historyLoaded: boolean;
   agentName: string;
   notAuthenticated: boolean;
   isTyping: boolean;
@@ -98,6 +100,7 @@ export function ChatMessageArea({
   hasMore,
   chatMessages,
   connected,
+  historyLoaded,
   agentName,
   notAuthenticated,
   isTyping,
@@ -122,13 +125,17 @@ export function ChatMessageArea({
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
       {decorated.length === 0 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
-          <span className="text-xs text-muted-foreground">
-            {!connected
-              ? "connecting..."
-              : notAuthenticated
-                ? `${agentName} needs to sign in`
-                : `${agentName} is setting things up`}
-          </span>
+          {connected && !historyLoaded ? (
+            <Spinner className="size-4 text-muted-foreground" />
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              {!connected
+                ? "connecting..."
+                : notAuthenticated
+                  ? `${agentName} needs to sign in`
+                  : `${agentName} is setting things up`}
+            </span>
+          )}
         </div>
       )}
       <AnimatePresence>

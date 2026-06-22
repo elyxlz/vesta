@@ -54,10 +54,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         if not skip_history:
             # The chat WS is the app-chat surface, so seed it with the app-chat channel:
             # notifications/internal events still arrive on the live stream but never bury
-            # the conversation in the capped recent window.
+            # the conversation in the capped recent window. Always send the history event,
+            # even with no events, so the client can tell "still loading" from "no messages".
             events, cursor = event_bus.recent(channel="app-chat")
-            if events:
-                await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
