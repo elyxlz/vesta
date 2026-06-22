@@ -111,7 +111,7 @@ class HistoryEvent(tp.TypedDict):
 
 type VestaEvent = StreamEvent | HistoryEvent
 
-PAGE_SIZE = 100
+PAGE_SIZE = 50
 
 # The conversation the chat surface shows by default: the user's messages and the
 # agent's replies. History pages for the "app-chat" channel filter to these so the
