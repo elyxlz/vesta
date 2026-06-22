@@ -12,7 +12,7 @@ from aiohttp import ClientSession, WSMsgType, web
 
 import core.models as vm
 from core.api import _ws_handler, start_ws_server
-from core.events import ChatEvent
+from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
 
 
@@ -81,6 +81,29 @@ async def test_ws_skip_history_omits_history_event(event_bus):
                 )
                 assert not any(e.get("type") == "history" for e in received)
                 assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_history_survives_notification_storm(event_bus):
+    """Regression: a burst of notifications used to fill the recent window and the
+    seeded history rendered empty. The WS now seeds the app-chat channel, so the
+    conversation comes through and notifications are excluded from history."""
+    event_bus.emit(UserEvent(type="user", text="are you there"))
+    event_bus.emit(ChatEvent(type="chat", text="i am here"))
+    for i in range(200):
+        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                data = json.loads(msg.data)
+                assert data["type"] == "history"
+                history_types = {e["type"] for e in data["events"]}
+                assert history_types == {"user", "chat"}
+                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["events"])
     finally:
         await runner.cleanup()
 

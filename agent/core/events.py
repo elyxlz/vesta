@@ -113,6 +113,24 @@ type VestaEvent = StreamEvent | HistoryEvent
 
 PAGE_SIZE = 100
 
+# Event types the app-chat conversation surface (the chat UI) renders. History pages
+# for the "app-chat" channel filter to these so a burst of notifications or internal
+# events can't bury the conversation inside the capped recent window — without it, a
+# noisy agent's whole history page can be notifications and the chat shows up empty.
+APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat", "tool_start")
+
+
+def _channel_condition(channel: str | None) -> tuple[str, tuple[object, ...]]:
+    """SQL condition + params selecting a history channel's event types.
+
+    channel="app-chat" keeps only APP_CHAT_TYPES; any other value (incl. None)
+    applies no filter, so the full event stream is still reachable."""
+    if channel != "app-chat":
+        return "", ()
+    placeholders = ",".join("?" for _ in APP_CHAT_TYPES)
+    return f"json_extract(data, '$.type') IN ({placeholders})", APP_CHAT_TYPES
+
+
 _EVENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,11 +250,12 @@ class EventBus:
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
 
-    def _page(self, where_clause: str, params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
+    def _page(self, conditions: tuple[str, ...], params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
         if not self._conn or limit <= 0:
             return [], None
+        where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
         rows = self._conn.execute(
-            f"SELECT id, data FROM events {where_clause}ORDER BY id DESC LIMIT ?",
+            f"SELECT id, data FROM events {where}ORDER BY id DESC LIMIT ?",
             (*params, limit + 1),
         ).fetchall()
         if not rows:
@@ -246,11 +265,15 @@ class EventBus:
         events = [json.loads(r[1]) for r in reversed(rows)]
         return events, rows[-1][0] if has_older else None
 
-    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        return self._page("", (), limit)
+    def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
+        cond, params = _channel_condition(channel)
+        conditions = (cond,) if cond else ()
+        return self._page(conditions, params, limit)
 
-    def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        return self._page("WHERE id < ? ", (cursor,), limit)
+    def before(self, cursor: int, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
+        cond, params = _channel_condition(channel)
+        conditions = ("id < ?", *((cond,) if cond else ()))
+        return self._page(conditions, (cursor, *params), limit)
 
     def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
         if not self._conn:

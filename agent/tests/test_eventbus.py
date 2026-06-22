@@ -3,7 +3,16 @@
 import sqlite3
 import typing as tp
 
-from core.events import _EVENTS_SCHEMA, _SCHEMA_VERSION, SUBSCRIBER_QUEUE_MAXSIZE, ChatEvent, EventBus, SubagentStartEvent, UserEvent
+from core.events import (
+    _EVENTS_SCHEMA,
+    _SCHEMA_VERSION,
+    SUBSCRIBER_QUEUE_MAXSIZE,
+    ChatEvent,
+    EventBus,
+    NotificationEvent,
+    SubagentStartEvent,
+    UserEvent,
+)
 
 
 # --- Emit & persist ---
@@ -139,6 +148,41 @@ def test_cursor_pagination(event_bus):
     assert len(oldest) == 20
     assert tp.cast(tp.Any, oldest[0])["text"] == "msg 0"
     assert cursor3 is None
+
+
+def test_app_chat_channel_filters_out_notifications(event_bus):
+    """recent(channel="app-chat") keeps the conversation even when a notification
+    storm fills the recent window — the regression that blanked the chat."""
+    event_bus.emit(UserEvent(type="user", text="my real message"))
+    event_bus.emit(ChatEvent(type="chat", text="my real reply"))
+    for i in range(200):
+        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+
+    events, _ = event_bus.recent(limit=50, channel="app-chat")
+    types = {tp.cast(tp.Any, e)["type"] for e in events}
+    assert types == {"user", "chat"}
+    texts = [tp.cast(tp.Any, e)["text"] for e in events]
+    assert texts == ["my real message", "my real reply"]
+
+    # Unfiltered recent() still returns the raw tail (other consumers untouched).
+    raw, _ = event_bus.recent(limit=50)
+    assert all(tp.cast(tp.Any, e)["type"] == "notification" for e in raw)
+
+
+def test_app_chat_channel_paginates_across_notification_runs(event_bus):
+    """before(cursor, channel) skips notification noise between conversation pages."""
+    for i in range(5):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        for j in range(20):
+            event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"noise {i}-{j}"))
+
+    page, cursor = event_bus.recent(limit=3, channel="app-chat")
+    assert [tp.cast(tp.Any, e)["text"] for e in page] == ["msg 2", "msg 3", "msg 4"]
+    assert cursor is not None
+
+    older, cursor2 = event_bus.before(cursor, limit=3, channel="app-chat")
+    assert [tp.cast(tp.Any, e)["text"] for e in older] == ["msg 0", "msg 1"]
+    assert cursor2 is None
 
 
 # --- Search ---

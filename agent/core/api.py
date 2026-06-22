@@ -52,7 +52,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     send_task: asyncio.Task[None] | None = None
     try:
         if not skip_history:
-            events, cursor = event_bus.recent()
+            # The chat WS is the app-chat surface, so seed it with the app-chat channel:
+            # notifications/internal events still arrive on the live stream but never bury
+            # the conversation in the capped recent window.
+            events, cursor = event_bus.recent(channel="app-chat")
             if events:
                 await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
@@ -113,8 +116,9 @@ async def _history_handler(request: web.Request) -> web.Response:
     """Paginated event history.
 
     Query params:
-      cursor (int, optional): fetch events before this id. Omit for most recent.
-      limit  (int, optional): max events to return (default: EventBus.PAGE_SIZE).
+      cursor  (int, optional): fetch events before this id. Omit for most recent.
+      limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE).
+      channel (str, optional): "app-chat" filters to the conversation event types.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -125,6 +129,7 @@ async def _history_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid limit"}, status=400)
 
     kwargs = {"limit": limit} if limit is not None else {}
+    channel = request.query.get("channel", "") or None
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:
@@ -132,9 +137,9 @@ async def _history_handler(request: web.Request) -> web.Response:
             cursor = int(cursor_raw)
         except ValueError:
             return web.json_response({"error": "invalid cursor"}, status=400)
-        events, next_cursor = event_bus.before(cursor, **kwargs)
+        events, next_cursor = event_bus.before(cursor, channel=channel, **kwargs)
     else:
-        events, next_cursor = event_bus.recent(**kwargs)
+        events, next_cursor = event_bus.recent(channel=channel, **kwargs)
 
     return web.json_response({"events": events, "cursor": next_cursor})
 
