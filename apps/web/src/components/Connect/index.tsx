@@ -229,7 +229,7 @@ export function Connect() {
           <Button
             type="submit"
             disabled={busy}
-            className="w-[240px] max-w-full"
+            className="w-[200px] max-w-full"
           >
             {busy ? "connecting..." : "connect"}
           </Button>
