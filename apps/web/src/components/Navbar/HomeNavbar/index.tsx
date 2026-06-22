@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { Home, Plus } from "lucide-react";
+import { SettingsButton } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,11 +72,20 @@ function Leading() {
 }
 
 export function HomeNavbar() {
+  // The gear is hidden while unreachable: the disconnected overlay takes over and
+  // routing to /settings would render it underneath that overlay.
+  const { reachable } = useGateway();
+
   return (
     <Navbar
       leading={<Leading />}
       center={<LogoText />}
-      trailing={<StatusPill />}
+      trailing={
+        <>
+          <StatusPill />
+          {reachable && <SettingsButton />}
+        </>
+      }
     />
   );
 }
