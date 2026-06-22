@@ -26,6 +26,15 @@ const connectEntrance = {
   transition: { duration: 0.3, ease: "easeOut" },
 } as const;
 
+function ConnectHeader() {
+  return (
+    <div className="mb-2 flex flex-col items-center gap-1.5">
+      <LogoText />
+      <p className="text-sm text-muted-foreground">your unfair advantage</p>
+    </div>
+  );
+}
+
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
   const [value, setValue] = useState("");
@@ -118,7 +127,7 @@ export function Connect() {
             {...connectEntrance}
             className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
-            <LogoText className="mb-2" />
+            <ConnectHeader />
             <div className="w-full">
               <ProgressBar />
             </div>
@@ -138,7 +147,7 @@ export function Connect() {
             {...connectEntrance}
             className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
-            <LogoText className="mb-2" />
+            <ConnectHeader />
             {sessionExpired && (
               <FieldDescription className="text-center">
                 your session expired, sign in again
@@ -193,7 +202,7 @@ export function Connect() {
           onSubmit={handleSubmit}
           className="flex w-[280px] max-w-full flex-col items-center gap-4 px-4"
         >
-          <LogoText className="mb-2" />
+          <ConnectHeader />
           {sessionExpired && (
             <FieldDescription className="text-center">
               your session expired, connect again
