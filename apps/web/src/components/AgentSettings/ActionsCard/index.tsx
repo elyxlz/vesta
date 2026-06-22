@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentActions } from "@/components/AgentMenu/AgentActions";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useModals } from "@/providers/ModalsProvider";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
@@ -31,15 +32,16 @@ export function ActionsCard() {
     agent && agent.status !== "not_authenticated",
   );
 
-  // An agent that needs auth is an urgent action: lift "sign in" to a primary
-  // button at the top and drop the routine auth row from the list below (the
-  // list keeps "switch provider" once authed).
-  const needsAuth = !isAuthenticated;
+  // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
+  // action: lift "sign in" to a primary button at the top and drop the routine
+  // auth row from the list below. Desktop keeps it as a normal list row.
+  const isMobile = useIsMobile();
+  const showTopSignIn = isMobile && !isAuthenticated;
 
   return (
     <Card size="sm">
       <CardContent>
-        {needsAuth && (
+        {showTopSignIn && (
           <Button
             variant="default"
             size="lg"
@@ -64,7 +66,7 @@ export function ActionsCard() {
           onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
           onAuthenticate={
-            isAuthenticated ? () => void handleOpenAuth() : undefined
+            showTopSignIn ? undefined : () => void handleOpenAuth()
           }
           isAuthenticated={isAuthenticated}
           onDelete={() => setDeleteDialogOpen(true)}
