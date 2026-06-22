@@ -51,7 +51,7 @@ export function AgentMenu() {
     onRestart: () => void restart(),
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
-    onAuthenticate: () => handleOpenAuth(),
+    onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
     isAuthenticated: Boolean(agent && agent.status !== "not_authenticated"),
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,

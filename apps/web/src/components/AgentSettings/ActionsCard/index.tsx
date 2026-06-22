@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
@@ -34,9 +35,11 @@ export function ActionsCard() {
 
   // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
   // action: lift "sign in" to a primary button at the top and drop the routine
-  // auth row from the list below. Desktop keeps it as a normal list row.
+  // auth row from the list below. Desktop keeps it as a normal list row. Auth is
+  // only offered when the gateway is reachable — signing in is moot while offline.
   const isMobile = useIsMobile();
-  const showTopSignIn = isMobile && !isAuthenticated;
+  const { reachable } = useGateway();
+  const showTopSignIn = isMobile && !isAuthenticated && reachable;
 
   return (
     <Card size="sm">
@@ -66,7 +69,9 @@ export function ActionsCard() {
           onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
           onAuthenticate={
-            showTopSignIn ? undefined : () => void handleOpenAuth()
+            reachable && !showTopSignIn
+              ? () => void handleOpenAuth()
+              : undefined
           }
           isAuthenticated={isAuthenticated}
           onDelete={() => setDeleteDialogOpen(true)}
