@@ -28,7 +28,7 @@ const connectEntrance = {
 
 function ConnectHeader() {
   return (
-    <div className="mb-2 flex flex-col items-center gap-1.5">
+    <div className="flex flex-col items-center gap-1.5">
       <LogoText />
       <p className="text-sm text-muted-foreground">your unfair advantage</p>
     </div>
@@ -125,7 +125,7 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-6 px-4 text-center"
           >
             <ConnectHeader />
             <div className="w-full">
@@ -145,7 +145,7 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-6 px-4 text-center"
           >
             <ConnectHeader />
             {sessionExpired && (
@@ -200,7 +200,7 @@ export function Connect() {
         <motion.form
           {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4"
+          className="flex w-[360px] max-w-full flex-col items-center gap-6 px-4"
         >
           <ConnectHeader />
           {sessionExpired && (
