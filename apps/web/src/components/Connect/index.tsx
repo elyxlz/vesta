@@ -215,9 +215,6 @@ export function Connect() {
               onChange={(e) => setValue(e.target.value)}
               className="text-center"
             />
-            <FieldDescription className="text-center">
-              paste the connect link vestad printed
-            </FieldDescription>
           </Field>
 
           <Button type="submit" disabled={busy} className="w-full">
