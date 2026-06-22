@@ -22,7 +22,7 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
           className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`}
         />
         {showHostname && hostname && (
-          <span className="hidden truncate text-sm text-secondary-foreground sm:block">
+          <span className="hidden truncate text-xs text-muted-foreground sm:block">
             {hostname}
           </span>
         )}
