@@ -102,6 +102,17 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (hasMore && !loadingMore) loadMore();
   }, [hasMore, loadingMore, loadMore]);
 
+  // startReached is distinct-until-changed on the absolute top index, so with a
+  // bottom-anchored initial scroll it can emit once during settling and then stay
+  // suppressed when the user actually reaches the top. Reaching the top also flips
+  // the at-top state, which fires every time, so trigger the same paged load there.
+  const handleAtTopChange = useCallback(
+    (atTop: boolean) => {
+      if (atTop && hasMore && !loadingMore) loadMore();
+    },
+    [hasMore, loadingMore, loadMore],
+  );
+
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
     bottomVisibleRef.current = atBottom;
     if (atBottom) setHasNewMessage(false);
@@ -166,6 +177,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         <ChatMessageArea
           virtuosoRef={virtuosoRef}
           onStartReached={handleStartReached}
+          onAtTopStateChange={handleAtTopChange}
           onAtBottomStateChange={handleAtBottomChange}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}

@@ -24,6 +24,7 @@ interface ChatListContext {
 interface ChatMessageAreaProps {
   virtuosoRef: RefObject<VirtuosoHandle | null>;
   onStartReached: () => void;
+  onAtTopStateChange: (atTop: boolean) => void;
   onAtBottomStateChange: (atBottom: boolean) => void;
   fullscreen?: boolean;
   navbarHeight: number;
@@ -89,6 +90,7 @@ const components: Components<DecoratedRow, ChatListContext> = {
 export function ChatMessageArea({
   virtuosoRef,
   onStartReached,
+  onAtTopStateChange,
   onAtBottomStateChange,
   fullscreen,
   navbarHeight,
@@ -159,6 +161,7 @@ export function ChatMessageArea({
         followOutput={(atBottom) => (atBottom ? "smooth" : false)}
         initialTopMostItemIndex={{ index: "LAST", align: "end" }}
         startReached={onStartReached}
+        atTopStateChange={onAtTopStateChange}
         atBottomStateChange={onAtBottomStateChange}
         atBottomThreshold={48}
         increaseViewportBy={{ top: 600, bottom: 200 }}
