@@ -211,7 +211,7 @@ export function Connect() {
             </FieldDescription>
           )}
 
-          <Field className="w-full">
+          <Field className="w-[320px] max-w-full">
             <FieldLabel htmlFor="connect-link" className="sr-only">
               Connect link
             </FieldLabel>
