@@ -30,7 +30,9 @@ function ConnectHeader() {
   return (
     <div className="flex flex-col items-center gap-1.5">
       <LogoText />
-      <p className="text-sm text-muted-foreground">your unfair advantage</p>
+      <p className="text-sm leading-none text-muted-foreground">
+        your unfair advantage
+      </p>
     </div>
   );
 }
