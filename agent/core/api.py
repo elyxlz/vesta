@@ -56,7 +56,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
             # notifications/internal events still arrive on the live stream but never bury
             # the conversation in the capped recent window. Always send the history event,
             # even with no events, so the client can tell "still loading" from "no messages".
-            events, cursor = event_bus.recent(channel="app-chat")
+            # Run the read off the loop: a slow scan on a large db must not freeze the agent
+            # (it would starve vestad's /provider/status poll and flap the agent to "starting").
+            events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
             await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
@@ -137,9 +139,9 @@ async def _history_handler(request: web.Request) -> web.Response:
             cursor = int(cursor_raw)
         except ValueError:
             return web.json_response({"error": "invalid cursor"}, status=400)
-        events, next_cursor = event_bus.before(cursor, channel=channel, **kwargs)
+        events, next_cursor = await asyncio.to_thread(event_bus.before, cursor, channel=channel, **kwargs)
     else:
-        events, next_cursor = event_bus.recent(channel=channel, **kwargs)
+        events, next_cursor = await asyncio.to_thread(event_bus.recent, channel=channel, **kwargs)
 
     return web.json_response({"events": events, "cursor": next_cursor})
 

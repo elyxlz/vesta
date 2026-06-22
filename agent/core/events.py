@@ -197,9 +197,11 @@ class EventBus:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
         self._conn: sqlite3.Connection | None = None
+        self._db_path: pl.Path | None = None
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(data_dir / "events.db"))
+            self._db_path = data_dir / "events.db"
+            self._conn = sqlite3.connect(str(self._db_path))
             self._conn.execute("PRAGMA journal_mode=WAL")
             _migrate(self._conn)
 
@@ -252,13 +254,21 @@ class EventBus:
         self.emit(StatusEvent(type="status", state=state))
 
     def _page(self, conditions: tuple[str, ...], params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
-        if not self._conn or limit <= 0:
+        if not self._db_path or limit <= 0:
             return [], None
         where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
-        rows = self._conn.execute(
-            f"SELECT id, data FROM events {where}ORDER BY id DESC LIMIT ?",
-            (*params, limit + 1),
-        ).fetchall()
+        # Open a short-lived read connection rather than reusing self._conn (bound to the
+        # event loop thread): this lets callers run the query off the loop via
+        # asyncio.to_thread, so a slow scan on a large db never freezes the agent. WAL lets
+        # this reader run concurrently with the writer connection.
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            rows = conn.execute(
+                f"SELECT id, data FROM events {where}ORDER BY id DESC LIMIT ?",
+                (*params, limit + 1),
+            ).fetchall()
+        finally:
+            conn.close()
         if not rows:
             return [], None
         has_older = len(rows) > limit

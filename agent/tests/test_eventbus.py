@@ -151,6 +151,19 @@ def test_cursor_pagination(event_bus):
     assert cursor3 is None
 
 
+def test_recent_runs_off_the_connection_home_thread(event_bus):
+    """History reads must work from a worker thread so api.py can offload them via
+    asyncio.to_thread — a slow scan then never blocks the event loop (which would starve
+    vestad's status poll and flap the agent to 'starting'). A connection bound to one
+    thread raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
+    import concurrent.futures
+
+    event_bus.emit(UserEvent(type="user", text="hi"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        events, _ = pool.submit(event_bus.recent).result()
+    assert [tp.cast(tp.Any, e)["text"] for e in events] == ["hi"]
+
+
 def test_app_chat_channel_filters_out_noise(event_bus):
     """recent(channel="app-chat") keeps the conversation even when notifications and
     hidden-by-default tool calls flood the recent window — the regression that blanked
