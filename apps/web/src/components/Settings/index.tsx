@@ -17,7 +17,7 @@ type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
-import { getConnection } from "@/lib/connection";
+import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -47,16 +47,7 @@ export function AppSettings() {
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
   const appMode = useAppMode((s) => s.mode);
   const setAppMode = useAppMode((s) => s.setMode);
-
-  const hostname = (() => {
-    const conn = getConnection();
-    if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
-  })();
+  const hostname = connectionHostname();
 
   return (
     <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">

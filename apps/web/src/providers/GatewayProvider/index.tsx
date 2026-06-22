@@ -83,7 +83,6 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
-  const [, setLastConnectAttempt] = useState<number | null>(null);
   const [showDisconnected, setShowDisconnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -129,7 +128,6 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
     const doConnect = async () => {
       if (cancelled) return;
-      setLastConnectAttempt(Date.now());
 
       // A dead session (refresh token expired/revoked) can never reconnect:
       // bail out to the connect screen instead of retrying forever with a

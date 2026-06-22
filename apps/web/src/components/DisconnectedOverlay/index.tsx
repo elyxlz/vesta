@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { LogOut } from "lucide-react";
-import { getConnection } from "@/lib/connection";
+import { connectionHostname } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -14,16 +14,7 @@ import {
 
 export function DisconnectedOverlay() {
   const { disconnect } = useAuth();
-
-  const hostname = (() => {
-    const conn = getConnection();
-    if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
-  })();
+  const hostname = connectionHostname();
 
   return (
     <motion.div

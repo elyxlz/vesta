@@ -1,4 +1,4 @@
-import { getConnection } from "@/lib/connection";
+import { connectionHostname } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider";
 import { UpdatePill } from "@/components/UpdatePill";
 
@@ -8,16 +8,7 @@ interface StatusPillProps {
 
 export function StatusPill({ showHostname = true }: StatusPillProps) {
   const { reachable } = useGateway();
-
-  const hostname = (() => {
-    const conn = getConnection();
-    if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
-  })();
+  const hostname = connectionHostname();
 
   return (
     <div className="flex items-center gap-2">
