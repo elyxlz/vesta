@@ -83,9 +83,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
-  const [lastConnectAttempt, setLastConnectAttempt] = useState<number | null>(
-    null,
-  );
+  const [, setLastConnectAttempt] = useState<number | null>(null);
   const [showDisconnected, setShowDisconnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -298,9 +296,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       ) : (
         children
       )}
-      {showDisconnected && (
-        <DisconnectedOverlay lastAttempt={lastConnectAttempt} />
-      )}
+      {showDisconnected && <DisconnectedOverlay />}
     </GatewayContext.Provider>
   );
 }
