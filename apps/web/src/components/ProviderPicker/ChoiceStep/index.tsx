@@ -1,18 +1,23 @@
 import { FieldDescription } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import type { ProviderMode } from "../types";
 
 export function ChoiceStep({
   onPick,
+  hasBack,
 }: {
   onPick: (mode: ProviderMode) => void;
+  hasBack?: boolean;
 }) {
   const cardClass =
-    "flex flex-1 flex-col items-center gap-1 rounded-2xl border border-border bg-input/30 p-4 text-center transition-all cursor-pointer hover:bg-input/60 hover:border-border/80";
+    "flex flex-1 flex-col items-start gap-1 rounded-2xl border border-border bg-input/30 p-4 text-left transition-all cursor-pointer hover:bg-input/60 hover:border-border/80";
 
   return (
-    <div className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">how should it run?</h2>
+    <div className="flex w-full flex-col items-start gap-4">
+      <div className="flex flex-col items-start gap-1 text-left">
+        <h2 className={cn("text-base font-semibold", hasBack && "pl-7")}>
+          how should it run?
+        </h2>
         <FieldDescription>
           use your Claude account, or bring an OpenRouter API key.
         </FieldDescription>

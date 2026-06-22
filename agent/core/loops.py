@@ -19,7 +19,7 @@ from .client import process_message, build_client_options, attempt_interrupt, pe
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
-from .provider import CREDENTIALS_PATH
+from .provider import CREDENTIALS_PATH, ProviderAuthState
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -235,6 +235,13 @@ async def _run_messages_with_interrupts(
                 break
 
             current_msg, current_is_user, current_file_paths = pending.popleft()
+            # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
+            # just burns the CLI's full retry budget per message. Keeping the notification file on
+            # disk means it re-runs after the user re-authenticates — which restarts the agent, so
+            # monitor_loop re-reads the dir and re-queues it. (Migrations regenerate on boot anyway.)
+            if state.provider_status is not None and state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED:
+                logger.client("Provider not authenticated; deferring message until re-auth")
+                continue
             state.interrupt_event = asyncio.Event()
             process_task = asyncio.create_task(run_one(current_msg, user=current_is_user))
 
@@ -255,7 +262,10 @@ async def _run_messages_with_interrupts(
                     await _cancel_task(queue_task)
 
             await process_task
-            _delete_paths(current_file_paths)
+            # Keep the file if the turn flipped auth to not_authenticated (converse detects a
+            # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
+            if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
+                _delete_paths(current_file_paths)
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:

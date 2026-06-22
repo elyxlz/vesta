@@ -10,10 +10,10 @@ const CLAUDE_FALLBACK: OpenRouterModelOption[] = [
   { slug: "haiku", label: "Claude Haiku", author: "Anthropic" },
 ];
 
-/// The Claude model list as model-card options, single source for both the
-/// onboarding picker and the settings card. Starts from the static fallback and
-/// refines it from vestad. `enabled` gates the fetch so the OpenRouter path (or a
-/// non-Claude agent) doesn't issue a request it would throw away.
+/// The Claude model list as model-card options for the provider card's model
+/// switcher. Starts from the static fallback and refines it from vestad.
+/// `enabled` gates the fetch so the OpenRouter path (or a non-Claude agent)
+/// doesn't issue a request it would throw away.
 export function useClaudeModels(enabled = true): OpenRouterModelOption[] {
   const [models, setModels] =
     useState<OpenRouterModelOption[]>(CLAUDE_FALLBACK);

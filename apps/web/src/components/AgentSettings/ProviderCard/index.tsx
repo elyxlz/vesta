@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cpu, ArrowLeftRight, Gauge } from "lucide-react";
+import { Cpu, ArrowLeftRight, Gauge, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -9,20 +9,56 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
-import { setModel, setContextWindow } from "@/api/agents";
+import { setModel, setContextWindow, type UsageMeter } from "@/api/agents";
 import { formatTokens } from "@/lib/format";
 import { useProvider } from "@/hooks/use-provider";
-import { useClaudeModels } from "@/hooks/use-claude-models";
+import { useClaudeModels } from "./use-claude-models";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
+import { useUsage } from "./use-usage";
 
-/// Provider hub for an agent: shows the current provider, model, and context
-/// window; lets you switch between Claude and OpenRouter (reuses the reconfigure
-/// modal), change the model, and change the context window — each without
-/// re-entering credentials.
+function formatResetsAt(iso: string): string {
+  const diff = new Date(iso).getTime() - Date.now();
+  if (diff <= 0) return "now";
+  const hours = Math.floor(diff / 3_600_000);
+  const mins = Math.floor((diff % 3_600_000) / 60_000);
+  if (hours > 0) return `in ${hours}h ${mins}m`;
+  return `in ${mins}m`;
+}
+
+function UsageBar({ meter }: { meter: UsageMeter }) {
+  const pct = meter.used_pct != null ? Math.min(meter.used_pct, 100) : null;
+  const resetsAt = meter.resets_at ? formatResetsAt(meter.resets_at) : null;
+
+  if (pct == null) return null;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{meter.label}</span>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {pct.toFixed(0)}%
+        </span>
+      </div>
+      <Progress value={pct} className="h-1.5" />
+      {resetsAt && (
+        <span className="text-[10px] text-muted-foreground/60">
+          Resets {resetsAt}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/// Provider hub for an agent: shows the current provider, model, context
+/// window, and plan usage; lets you switch between Claude and OpenRouter
+/// (reuses the reconfigure modal), change the model, and change the context
+/// window — each without re-entering credentials.
 export function ProviderCard() {
   const { name, agent } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
@@ -35,9 +71,19 @@ export function ProviderCard() {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const {
+    usage,
+    loading: usageLoading,
+    error: usageError,
+    refresh: refreshUsage,
+  } = useUsage(name);
+
   if (!provider || provider.kind === "none") return null;
 
   const isOpenRouter = provider.kind === "openrouter";
+
+  const meters = usage?.meters ?? [];
+  const credits = usage?.credits ?? null;
 
   const applyModel = async (model: string) => {
     if (!name) return;
@@ -96,6 +142,57 @@ export function ProviderCard() {
                 : "1M (default)"}
           </span>
         </div>
+
+        <div className="flex flex-col gap-2.5 border-t border-border pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">
+              plan usage
+            </span>
+            <button
+              onClick={refreshUsage}
+              aria-label="refresh usage"
+              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            >
+              <RefreshCw
+                className={`size-3.5 ${usageLoading ? "animate-spin" : ""}`}
+              />
+            </button>
+          </div>
+          {usageLoading ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-8" />
+              </div>
+              <Skeleton className="h-1.5 w-full" />
+            </div>
+          ) : usageError ? (
+            <p className="text-xs text-muted-foreground">
+              failed to load usage data
+            </p>
+          ) : meters.length === 0 && !credits ? (
+            <p className="text-xs text-muted-foreground">
+              no usage data available
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {meters.map((m) => (
+                <UsageBar key={m.label} meter={m} />
+              ))}
+              {credits && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">credits</span>
+                  <span className="text-foreground tabular-nums">
+                    {credits.used != null
+                      ? `$${credits.used.toFixed(2)}${credits.limit != null ? ` / $${credits.limit.toFixed(2)}` : ""}`
+                      : "—"}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <Button variant="outline" size="sm" onClick={() => setModelOpen(true)}>
           change model
         </Button>

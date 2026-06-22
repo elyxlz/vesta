@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import type { ContextPreset } from "@/api/agent-defaults";
 
 // Presets + the default come from vestad (GET /agent-defaults), passed in by the parent,
@@ -10,11 +11,13 @@ export function ContextStep({
   initial,
   onSubmit,
   submitLabel = "continue",
+  hasBack,
 }: {
   presets: ContextPreset[];
   initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
+  hasBack?: boolean;
 }) {
   const [selected, setSelected] = useState<number>(initial);
 
@@ -24,10 +27,12 @@ export function ContextStep({
         e.preventDefault();
         onSubmit(selected);
       }}
-      className="flex w-full flex-col items-center gap-4"
+      className="flex w-full flex-col items-start gap-4"
     >
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">context window</h2>
+      <div className="flex flex-col items-start gap-1 text-left">
+        <h2 className={cn("text-base font-semibold", hasBack && "pl-7")}>
+          context window
+        </h2>
         <FieldDescription>
           how much the agent keeps in context before it compacts. larger holds
           more at once; smaller is cheaper and compacts sooner.

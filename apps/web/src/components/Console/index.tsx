@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type Components } from "react-virtuoso";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
 import { cn } from "@/lib/utils";
+import { createScroller } from "@/lib/virtuoso";
 
 const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
@@ -96,36 +97,42 @@ interface ConsoleContext {
   ended: boolean;
 }
 
-const Scroller: Components<LogLine, ConsoleContext>["Scroller"] = forwardRef(
-  function Scroller({ context, style, ...props }, ref) {
-    const fullscreen = context?.fullscreen;
-    const navbarHeight = context?.navbarHeight ?? 0;
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className={fullscreen ? "px-page pb-page" : "px-3 py-2"}
-        style={{
-          ...style,
-          ...(fullscreen
-            ? {
-                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
-              }
-            : {}),
-        }}
-      />
-    );
-  },
+const Scroller = createScroller<LogLine, ConsoleContext>((context) =>
+  context?.fullscreen
+    ? {
+        style: {
+          maskImage: `linear-gradient(to bottom, transparent, black ${context.navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+        },
+      }
+    : undefined,
 );
 
 function ReconnectingNotice() {
   return <div className="text-center text-white/70 py-2">— reconnecting —</div>;
 }
 
+function Header({ context }: { context?: ConsoleContext }) {
+  if (!context) return null;
+  return (
+    <div
+      style={
+        context.fullscreen
+          ? {
+              height: `calc(${context.navbarHeight}px + var(--page-padding-x))`,
+            }
+          : undefined
+      }
+      className={context.fullscreen ? undefined : "h-2"}
+    />
+  );
+}
+
 function Footer({ context }: { context?: ConsoleContext }) {
-  if (!context?.ended) return null;
-  return <ReconnectingNotice />;
+  return (
+    <div className={context?.fullscreen ? "pb-page" : "pb-2"}>
+      {context?.ended && <ReconnectingNotice />}
+    </div>
+  );
 }
 
 function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
@@ -144,6 +151,7 @@ function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
 
 const consoleComponents: Components<LogLine, ConsoleContext> = {
   Scroller,
+  Header,
   Footer,
   EmptyPlaceholder,
 };
@@ -277,7 +285,11 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
           initialTopMostItemIndex={{ index: "LAST", align: "end" }}
           itemContent={(_index, line) => (
             <div
-              className={cn("break-words whitespace-pre-wrap", line.colorClass)}
+              className={cn(
+                "break-words whitespace-pre-wrap",
+                fullscreen ? "px-page" : "px-3",
+                line.colorClass,
+              )}
               dangerouslySetInnerHTML={{ __html: line.html }}
             />
           )}

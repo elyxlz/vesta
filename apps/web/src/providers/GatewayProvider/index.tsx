@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   useState,
@@ -11,13 +9,16 @@ import { apiFetch, apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
+import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { GatewayContext, disconnectedValue } from "./context";
+
+export { useGateway } from "./context";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
 // A manual check fetches from GitHub server-side, so allow longer than the
@@ -58,45 +59,6 @@ const VERSION_POLL_MS = 60000;
 // Brief grace before the disconnect overlay appears, so quick WS blips and the
 // gap between the initial version fetch and the first socket open don't flash it.
 const DISCONNECT_GRACE_MS = 750;
-
-interface GatewayContextValue {
-  reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
-  managed: boolean;
-  gatewayVersion: string;
-  gatewayBranch: string | null;
-  gatewayChannel: ReleaseChannel;
-  gatewayAutoUpdate: boolean;
-  gatewayPort: number;
-  versionChecked: boolean;
-  updateAvailable: boolean;
-  latestVersion: string | null;
-  agents: AgentInfo[];
-  agentsFetched: boolean;
-  send: (event: object) => boolean;
-  triggerGatewayUpdate: () => Promise<boolean>;
-  checkForUpdate: () => Promise<void>;
-}
-
-const GatewayContext = createContext<GatewayContextValue | null>(null);
-
-const disconnectedValue: GatewayContextValue = {
-  reachable: false,
-  managed: false,
-  gatewayVersion: "",
-  gatewayBranch: null,
-  gatewayChannel: "stable",
-  gatewayAutoUpdate: true,
-  gatewayPort: 0,
-  versionChecked: true,
-  updateAvailable: false,
-  latestVersion: null,
-  agents: [],
-  agentsFetched: false,
-  send: () => false,
-  triggerGatewayUpdate: async () => false,
-  checkForUpdate: async () => {},
-};
 
 function controlWsUrl(): string {
   const conn = getConnection();
@@ -329,7 +291,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchDialog
+        <VersionMismatchScreen
           gatewayVersion={gatewayVersion}
           onUpdateGateway={triggerGatewayUpdate}
         />
@@ -355,12 +317,4 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       {children}
     </GatewayContext.Provider>
   );
-}
-
-export function useGateway() {
-  const context = useContext(GatewayContext);
-  if (!context) {
-    throw new Error("useGateway must be used within GatewayProvider");
-  }
-  return context;
 }

@@ -4,7 +4,7 @@ Routes:
   - WS   /ws                   bidirectional event bus
   - GET  /history              paginated event history (cursor optional)
   - GET  /search               full-text search over events
-  - GET  /usage                plan usage limits and rate limit status
+  - GET  /provider/usage       normalized, provider-agnostic plan usage
   - GET  /provider/status      LLM-provider auth state
   - POST /provider             set Claude credentials or OpenRouter key (auth only)
   - GET  /config               current editable preferences (model, context, personality, thinking)
@@ -14,6 +14,7 @@ Routes:
 """
 
 import asyncio
+import dataclasses as dc
 import json
 import logging
 import sqlite3
@@ -27,7 +28,7 @@ from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
-from .provider import CREDENTIALS_PATH, set_claude, set_openrouter
+from .provider import UsageError, get_usage, set_claude, set_openrouter
 
 
 logger = logging.getLogger("vesta.api")
@@ -167,46 +168,15 @@ async def _search_handler(request: web.Request) -> web.Response:
     return web.json_response({"results": results})
 
 
-ANTHROPIC_API_URL = "https://api.anthropic.com"
-OAUTH_BETA_HEADER = "oauth-2025-04-20"
-
-
-def _read_oauth_token() -> str | None:
+async def _provider_usage_handler(request: web.Request) -> web.Response:
+    """Report normalized, provider-agnostic plan usage for the agent's active provider."""
+    config = request.app["config"]
     try:
-        data = json.loads(CREDENTIALS_PATH.read_text())
-        return data["claudeAiOauth"]["accessToken"]
-    except (OSError, KeyError, json.JSONDecodeError):
-        return None
-
-
-async def _usage_handler(request: web.Request) -> web.Response:
-    """Proxy plan usage limits from Anthropic API."""
-    token = _read_oauth_token()
-    if not token:
-        return web.json_response({"error": "no oauth credentials"}, status=503)
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "anthropic-beta": OAUTH_BETA_HEADER,
-        "Content-Type": "application/json",
-        "User-Agent": "claude-code/2.1.92",
-    }
-    try:
-        async with _aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{ANTHROPIC_API_URL}/api/oauth/usage",
-                headers=headers,
-                timeout=_aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    # Read as text first: an upstream error body may not be JSON, and resp.json() would
-                    # raise ContentTypeError, masking the real status behind a generic 502.
-                    body = await resp.text()
-                    return web.json_response({"error": f"anthropic returned {resp.status}", "body": body}, status=resp.status)
-                return web.json_response(await resp.json())
-    except (TimeoutError, _aiohttp.ClientError) as e:
+        usage = await get_usage(config)
+    except UsageError as e:
         logger.error(f"usage fetch failed: {e}")
         return web.json_response({"error": str(e)}, status=502)
+    return web.json_response(dc.asdict(usage))
 
 
 async def _provider_status_handler(request: web.Request) -> web.Response:
@@ -376,7 +346,7 @@ async def start_ws_server(
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
-    app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/provider/usage", _provider_usage_handler)
     app.router.add_get("/provider/status", _provider_status_handler)
     app.router.add_post("/provider", _provider_set_handler)
     app.router.add_get("/config", _config_get_handler)

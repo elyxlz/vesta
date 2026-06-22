@@ -11,6 +11,7 @@ import { openrouterProvider } from "@/api";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { ProviderIcon } from "../ProviderIcon";
 import { fuzzyMatch } from "../fuzzy";
 
@@ -21,6 +22,7 @@ export function ModelStep({
   models,
   allowCustom = true,
   submitLabel = "continue",
+  hasBack,
 }: {
   initialModel: string;
   onModelChange?: (model: string) => void;
@@ -30,6 +32,7 @@ export function ModelStep({
   models?: OpenRouterModelOption[];
   allowCustom?: boolean;
   submitLabel?: string;
+  hasBack?: boolean;
 }) {
   const isFixed = models !== undefined;
   const [model, setModelInternal] = useState(
@@ -88,9 +91,11 @@ export function ModelStep({
   };
 
   return (
-    <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">pick a model</h2>
+    <form onSubmit={submit} className="flex w-full flex-col items-start gap-4">
+      <div className="flex flex-col items-start gap-1 text-left">
+        <h2 className={cn("text-base font-semibold", hasBack && "pl-7")}>
+          pick a model
+        </h2>
         <FieldDescription>
           {isFixed ? "choose a model." : "top models on OpenRouter this week."}
         </FieldDescription>

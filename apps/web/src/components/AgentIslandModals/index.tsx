@@ -50,7 +50,9 @@ export function AgentIslandModals() {
       >
         <DialogContent className="sm:max-w-lg" showCloseButton>
           <DialogHeader>
-            <DialogTitle>provider for {name}</DialogTitle>
+            <DialogTitle className="text-sm font-normal text-muted-foreground">
+              provider for {name}
+            </DialogTitle>
             <DialogDescription className="sr-only">
               switch providers or refresh credentials for this agent
             </DialogDescription>
@@ -62,6 +64,7 @@ export function AgentIslandModals() {
           ) : (
             <div className="flex flex-col items-center gap-3 py-2">
               <ProviderPicker
+                className="w-full px-0"
                 onDone={async (result) => {
                   setSubmitting(true);
                   setSubmitError(null);

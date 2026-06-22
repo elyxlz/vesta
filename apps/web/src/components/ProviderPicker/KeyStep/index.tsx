@@ -8,13 +8,16 @@ import {
   FieldDescription,
 } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
+import { cn } from "@/lib/utils";
 
 export function KeyStep({
   initialKey,
   onNext,
+  hasBack,
 }: {
   initialKey: string;
   onNext: (key: string) => void;
+  hasBack?: boolean;
 }) {
   const [key, setKey] = useState(initialKey);
   const [validating, setValidating] = useState(false);
@@ -38,9 +41,11 @@ export function KeyStep({
   };
 
   return (
-    <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">OpenRouter API key</h2>
+    <form onSubmit={submit} className="flex w-full flex-col items-start gap-4">
+      <div className="flex flex-col items-start gap-1 text-left">
+        <h2 className={cn("text-base font-semibold", hasBack && "pl-7")}>
+          OpenRouter API key
+        </h2>
         <FieldDescription>
           paste a key from openrouter.ai/keys. it stays on this machine.
         </FieldDescription>

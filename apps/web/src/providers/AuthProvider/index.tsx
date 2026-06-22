@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { connectToServer } from "@/api";
 import {
   clearConnection,
@@ -13,21 +6,9 @@ import {
   initConnection,
   parseConnectKey,
 } from "@/lib/connection";
+import { AuthContext } from "./context";
 
-interface AuthContextValue {
-  loading: boolean;
-  initialized: boolean;
-  connected: boolean;
-  /** True when the stored session was rejected by vestad (refresh token
-   * expired/revoked) and the user was bounced back to the connect screen. */
-  sessionExpired: boolean;
-  setLoading: (loading: boolean) => void;
-  connect: (url: string, apiKey: string) => Promise<void>;
-  disconnect: () => void;
-  expireSession: () => void;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
+export { useAuth } from "./context";
 
 function hasStoredConnection(): boolean {
   return getConnection() !== null;
@@ -114,12 +95,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
-  return context;
 }

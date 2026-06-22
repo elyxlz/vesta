@@ -1,9 +1,10 @@
-import { forwardRef, useMemo, type RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { createScroller } from "@/lib/virtuoso";
 import { ChatBubble } from "../ChatBubble";
 import {
   buildDecorated,
@@ -17,8 +18,6 @@ interface ChatListContext {
   hasMessages: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  connected: boolean;
-  agentName: string;
   isMobile: boolean;
 }
 
@@ -33,26 +32,19 @@ interface ChatMessageAreaProps {
   chatMessages: VestaEvent[];
   connected: boolean;
   agentName: string;
+  notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
 }
 
-const Scroller: Components<DecoratedRow, ChatListContext>["Scroller"] =
-  forwardRef(function Scroller({ context, style, ...props }, ref) {
-    const fullscreen = context?.fullscreen;
-    const navbarHeight = context?.navbarHeight ?? 0;
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className="px-4"
-        style={{
-          ...style,
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
-        }}
-      />
-    );
-  });
+const Scroller = createScroller<DecoratedRow, ChatListContext>((context) => {
+  const navbarHeight = context?.navbarHeight ?? 0;
+  return {
+    style: {
+      maskImage: `linear-gradient(to bottom, transparent, black ${context?.fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+    },
+  };
+});
 
 function Header({ context }: { context?: ChatListContext }) {
   if (!context) return null;
@@ -74,7 +66,7 @@ function Header({ context }: { context?: ChatListContext }) {
 
 function Footer({ context }: { context?: ChatListContext }) {
   return (
-    <div className="pb-4">
+    <div className="px-4 pb-4">
       {context?.isTyping && (
         <div className="flex justify-start mt-2">
           <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
@@ -88,24 +80,10 @@ function Footer({ context }: { context?: ChatListContext }) {
   );
 }
 
-function EmptyPlaceholder({ context }: { context?: ChatListContext }) {
-  if (!context) return null;
-  return (
-    <div className="flex flex-col items-center gap-2 py-2">
-      <span className="text-xs text-muted-foreground">
-        {context.connected
-          ? `${context.agentName} is setting things up`
-          : "connecting..."}
-      </span>
-    </div>
-  );
-}
-
 const components: Components<DecoratedRow, ChatListContext> = {
   Scroller,
   Header,
   Footer,
-  EmptyPlaceholder,
 };
 
 export function ChatMessageArea({
@@ -119,6 +97,7 @@ export function ChatMessageArea({
   chatMessages,
   connected,
   agentName,
+  notAuthenticated,
   isTyping,
   isMobile,
 }: ChatMessageAreaProps) {
@@ -132,24 +111,24 @@ export function ChatMessageArea({
       hasMessages: decorated.length > 0,
       fullscreen,
       navbarHeight,
-      connected,
-      agentName,
       isMobile,
     }),
-    [
-      isTyping,
-      hasMore,
-      decorated.length,
-      fullscreen,
-      navbarHeight,
-      connected,
-      agentName,
-      isMobile,
-    ],
+    [isTyping, hasMore, decorated.length, fullscreen, navbarHeight, isMobile],
   );
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+      {decorated.length === 0 && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
+          <span className="text-xs text-muted-foreground">
+            {!connected
+              ? "connecting..."
+              : notAuthenticated
+                ? `${agentName} needs to sign in`
+                : `${agentName} is setting things up`}
+          </span>
+        </div>
+      )}
       <AnimatePresence>
         {loadingMore && (
           <motion.div
@@ -184,7 +163,7 @@ export function ChatMessageArea({
         atBottomThreshold={48}
         increaseViewportBy={{ top: 600, bottom: 200 }}
         itemContent={(_index, row, ctx) => (
-          <div className="flex flex-col">
+          <div className="flex flex-col px-4">
             {row.showDayStamp && row.dayLabel && (
               <div
                 className={cn("flex justify-center", !row.isFirst && "mt-5")}

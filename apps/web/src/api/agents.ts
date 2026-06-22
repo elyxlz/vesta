@@ -265,27 +265,25 @@ export async function deleteBackup(
   );
 }
 
-export interface RateLimit {
-  utilization: number | null;
+/// Normalized, provider-agnostic plan usage (agent's GET /provider/usage). `meters` are
+/// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
+/// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
+export interface UsageMeter {
+  label: string;
+  used_pct: number | null;
   resets_at: string | null;
 }
 
-export interface ExtraUsage {
-  is_enabled: boolean;
-  monthly_limit: number | null;
-  used_credits: number | null;
-  utilization: number | null;
+export interface UsageCredits {
+  used: number | null;
+  limit: number | null;
 }
 
-export interface Utilization {
-  five_hour?: RateLimit | null;
-  seven_day?: RateLimit | null;
-  seven_day_oauth_apps?: RateLimit | null;
-  seven_day_opus?: RateLimit | null;
-  seven_day_sonnet?: RateLimit | null;
-  extra_usage?: ExtraUsage | null;
+export interface Usage {
+  meters: UsageMeter[];
+  credits: UsageCredits | null;
 }
 
-export async function fetchUsage(name: string): Promise<Utilization> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
+export async function fetchUsage(name: string): Promise<Usage> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/provider/usage`);
 }

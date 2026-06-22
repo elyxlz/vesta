@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { Home, Plus } from "lucide-react";
-import { Settings } from "@/components/Settings";
+import { SettingsButton } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,7 +79,7 @@ export function HomeNavbar() {
       trailing={
         <>
           <StatusPill />
-          <Settings />
+          <SettingsButton />
         </>
       }
     />

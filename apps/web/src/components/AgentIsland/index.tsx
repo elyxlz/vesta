@@ -49,14 +49,30 @@ export function AgentIsland() {
           borderRadius: BORDER_RADIUS,
         }}
         animate={{
-          borderRadius: expanded ? BORDER_RADIUS : BORDER_RADIUS,
+          borderRadius: BORDER_RADIUS,
         }}
+        role={expanded ? undefined : "button"}
+        tabIndex={expanded ? -1 : 0}
+        aria-expanded={expanded}
+        aria-label={expanded ? undefined : `${name}, ${orbState}`}
+        onClick={expanded ? undefined : () => setExpanded(true)}
+        onFocus={expanded ? undefined : () => setExpanded(true)}
+        onKeyDown={
+          expanded
+            ? undefined
+            : (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpanded(true);
+                }
+              }
+        }
         className={cn(
           "will-change-[transform,opacity]",
           "border border-border bg-popover text-base text-popover-foreground shadow-sm",
           expanded
             ? "absolute top-0 left-1/2 -translate-x-1/2 aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-hidden"
-            : "mx-auto h-full w-fit max-w-[min(100vw-2rem,280px)] overflow-hidden flex items-center",
+            : "mx-auto h-full w-fit max-w-[min(100vw-2rem,280px)] cursor-pointer touch-manipulation overflow-hidden flex items-center",
         )}
       >
         <div
@@ -79,8 +95,6 @@ export function AgentIsland() {
                 <AgentIslandCollapsed
                   name={name}
                   orbState={orbState}
-                  expanded={expanded}
-                  onExpand={() => setExpanded(true)}
                   statusLabel={statusLabel}
                   error={error}
                 />

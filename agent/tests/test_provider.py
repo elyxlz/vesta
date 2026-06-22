@@ -10,13 +10,57 @@ import core.models as vm
 from core.config import read_config_store
 from core.provider import (
     ProviderAuthState,
+    UsageCredits,
+    UsageError,
     _check_claude_auth,
     derive_status,
+    get_usage,
+    is_terminal_auth_error,
     observed_provider_failure,
     set_claude,
     set_openrouter,
 )
 from core.state_store import PersistedState, load_state
+
+
+# --- Terminal auth-error classification (Claude path) ---
+
+
+@pytest.mark.parametrize(
+    "is_api_error,text,expected",
+    [
+        (True, "API Error: 401 Invalid authentication credentials", True),
+        (True, "API Error: 402 insufficient credits", True),  # billing terminal
+        (True, "API Error: 502 Bad Gateway. This is a server-side issue, usually temporary", False),  # transient
+        (True, "API Error: 529 overloaded", False),  # transient
+        (True, "API Error: 429 rate limit exceeded", False),  # transient
+        # The is_api_error gate is the safety property: the agent writing *about* a 401 in a normal
+        # (non-error) turn must never flip itself to unauthenticated, even with a matching marker.
+        (False, "API Error: 401 Invalid authentication credentials", False),
+        (False, "here's how to debug a 401: check your token", False),
+        (True, None, False),  # api error but no text content
+    ],
+)
+def test_is_terminal_auth_error(is_api_error, text, expected):
+    assert is_terminal_auth_error(is_api_error=is_api_error, text=text) is expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Exact strings captured from a real claude-CLI auth failure (2026-06-21 incident). Pinning
+        # them guards the markers against being narrowed below what we've actually observed; a CLI
+        # reword would still slip past (no live test can catch that), but a marker regression won't.
+        ("Please run /login · API Error: 401 Invalid authentication credentials", True),
+        (
+            "API Error: 502 Bad Gateway. This is a server-side issue, usually temporary — try again in a moment. "
+            "If it persists, check https://status.claude.com.",
+            False,
+        ),
+    ],
+)
+def test_is_terminal_auth_error_pins_real_cli_wording(text, expected):
+    assert is_terminal_auth_error(is_api_error=True, text=text) is expected
 
 
 # --- Claude credentials auth check ---
@@ -119,3 +163,113 @@ def test_boot_with_no_credentials_at_all_is_not_authenticated(prov):
     status = derive_status(config, persisted)
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
+
+
+# --- model is only reported for an authenticated provider ---
+
+
+def test_authenticated_provider_reports_model(prov):
+    config, persisted = prov
+    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+    status = set_claude(creds_json, config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.model == config.agent_model
+
+
+def test_boot_derives_no_model_when_credentials_are_invalid(prov):
+    from core import provider as provider_mod
+
+    config, persisted = prov
+    # Credentials on disk (so kind=claude) but unusable (expired, no refresh token) -> not authenticated.
+    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}))
+    status = derive_status(config, persisted)
+    assert status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert status.kind == "claude"
+    assert status.model is None
+
+
+def test_runtime_failure_clears_reported_model(prov):
+    config, persisted = prov
+    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+    status = set_claude(creds_json, config=config, persisted=persisted)
+    assert status.model is not None
+    flipped = observed_provider_failure(status, config=config, persisted=persisted)
+    assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert flipped.model is None
+
+
+# --- provider-agnostic plan usage ---
+
+
+def _write_claude_creds(provider_mod):
+    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
+
+
+@pytest.mark.anyio
+async def test_get_usage_empty_when_no_provider(prov):
+    config, _ = prov
+    # No credentials on disk and no openrouter key -> kind none -> nothing to report (not an error).
+    usage = await get_usage(config)
+    assert usage.meters == []
+    assert usage.credits is None
+
+
+@pytest.mark.anyio
+async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch):
+    from core import provider as provider_mod
+
+    config, _ = prov
+    _write_claude_creds(provider_mod)
+    sample = {
+        "five_hour": {"utilization": 42, "resets_at": "2026-06-22T12:00:00Z"},
+        "seven_day": {"utilization": 10, "resets_at": "2026-06-28T00:00:00Z"},
+        "seven_day_opus": {"utilization": 5, "resets_at": "2026-06-28T00:00:00Z"},
+        # cents upstream; normalized to dollars below.
+        "extra_usage": {"is_enabled": True, "used_credits": 1234, "monthly_limit": 5000},
+    }
+
+    async def fake_fetch(url, *, headers):
+        assert "oauth/usage" in url
+        return sample
+
+    monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
+    usage = await get_usage(config)
+    assert [m.label for m in usage.meters] == ["current session", "current week", "current week (opus)"]
+    assert usage.meters[0].used_pct == 42
+    assert usage.meters[0].resets_at == "2026-06-22T12:00:00Z"
+    assert usage.credits == UsageCredits(used=12.34, limit=50.0)
+
+
+@pytest.mark.anyio
+async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
+    from core import provider as provider_mod
+
+    config, persisted = prov
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
+    fresh = vm.VestaConfig()
+
+    async def fake_fetch(url, *, headers):
+        assert url == provider_mod.OPENROUTER_KEY_URL
+        return {"data": {"usage": 3.5, "limit": 10.0}}
+
+    monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
+    usage = await get_usage(fresh)
+    assert usage.meters == []
+    assert usage.credits == UsageCredits(used=3.5, limit=10.0)
+
+
+@pytest.mark.anyio
+async def test_get_usage_propagates_fetch_error(prov, monkeypatch):
+    from core import provider as provider_mod
+
+    config, _ = prov
+    _write_claude_creds(provider_mod)
+
+    async def fake_fetch(url, *, headers):
+        raise UsageError("upstream returned 500")
+
+    monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
+    with pytest.raises(UsageError):
+        await get_usage(config)

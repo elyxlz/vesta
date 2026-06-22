@@ -27,7 +27,8 @@ interface ChatProps {
 }
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
-  const { name } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
+  const notAuthenticated = agent?.status === "not_authenticated";
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
@@ -132,7 +133,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
   };
 
   return (
@@ -144,8 +145,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     >
       <Card
         className={cn(
-          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
-          fullscreen && "shadow-none ring-0",
+          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
+          fullscreen && "ring-0",
           isMobile && "bg-transparent overflow-visible",
         )}
         style={
@@ -173,6 +174,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           agentName={name}
+          notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
         />
@@ -188,6 +190,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           <ChatComposer
             fullscreen={fullscreen}
             connected={connected}
+            notAuthenticated={notAuthenticated}
             sttAvailable={sttAvailable}
             isRecording={isRecording}
             voiceAutoSend={voiceAutoSend}
