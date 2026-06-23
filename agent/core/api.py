@@ -7,8 +7,10 @@ Routes:
   - GET  /provider/usage       normalized, provider-agnostic plan usage
   - GET  /provider/status      LLM-provider auth state
   - POST /provider             set Claude credentials or OpenRouter key (auth only)
-  - GET  /config               current editable preferences (model, context, personality, thinking)
-  - PUT  /config               update preferences (applies on next restart)
+  - PUT  /provider/config      update provider-owned prefs (model, context, thinking)
+  - DELETE /provider           sign out: clear credentials, leaving not_authenticated
+  - GET  /config               full live config (read), secrets redacted
+  - PUT  /config               update general preferences (personality, operational); provider-owned keys rejected
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -25,10 +27,10 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig, update_config_store, validate_config_updates
+from .config import VestaConfig, update_config_store, validate_config_updates, validate_provider_prefs
 from .helpers import get_memory_path
 from .models import State
-from .provider import UsageError, get_usage, set_claude, set_openrouter
+from .provider import UsageError, clear_provider, get_usage, set_claude, set_openrouter, set_provider_prefs
 
 
 logger = logging.getLogger("vesta.api")
@@ -257,6 +259,40 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _provider_config_put_handler(request: web.Request) -> web.Response:
+    """Update provider-owned preferences (model, context window, thinking). Sparse: an omitted field
+    is left unchanged, a null clears it. Vestad restarts the agent to apply."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    try:
+        updates = validate_provider_prefs(config, data)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider config: {e.errors(include_url=False)}"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not updates:
+        return web.json_response({"error": "no provider preferences provided"}, status=400)
+    try:
+        set_provider_prefs(updates, config=config)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write provider config: {e}"}, status=500)
+    return web.json_response({"ok": True, "restart_required": True})
+
+
+async def _provider_clear_handler(request: web.Request) -> web.Response:
+    """Sign out: clear the agent's provider credentials, leaving it not_authenticated. Idempotent."""
+    state = request.app["state"]
+    config: VestaConfig = request.app["config"]
+    try:
+        state.provider_status = clear_provider(config=config, persisted=state.persisted)
+    except OSError as e:
+        return web.json_response({"error": f"clear_provider failed: {e}"}, status=500)
+    return web.json_response({"ok": True, "restart_required": True})
+
+
 async def _config_get_handler(request: web.Request) -> web.Response:
     """The full live config, every key, with secrets redacted by SecretStr. The client filters it."""
     config: VestaConfig = request.app["config"]
@@ -356,6 +392,8 @@ async def start_ws_server(
     app.router.add_get("/provider/usage", _provider_usage_handler)
     app.router.add_get("/provider/status", _provider_status_handler)
     app.router.add_post("/provider", _provider_set_handler)
+    app.router.add_put("/provider/config", _provider_config_put_handler)
+    app.router.add_delete("/provider", _provider_clear_handler)
     app.router.add_get("/config", _config_get_handler)
     app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)

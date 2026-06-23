@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cpu, ArrowLeftRight, Gauge, RefreshCw } from "lucide-react";
+import { Cpu, ArrowLeftRight, Gauge, RefreshCw, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -9,15 +9,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
-import { setModel, setContextWindow, type UsageMeter } from "@/api/agents";
+import {
+  setModel,
+  setContextWindow,
+  signOutProvider,
+  type UsageMeter,
+} from "@/api/agents";
 import { formatTokens } from "@/lib/format";
 import { useProvider } from "@/hooks/use-provider";
-import { useClaudeModels } from "./use-claude-models";
+import { useClaudeModels } from "@/hooks/use-claude-models";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useUsage } from "./use-usage";
@@ -68,6 +83,7 @@ export function ProviderCard() {
   const claudeModels = useClaudeModels(provider?.kind === "claude");
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,6 +131,21 @@ export function ProviderCard() {
         (e as { message?: string })?.message ||
           "failed to change context window",
       );
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!name) return;
+    setApplying(true);
+    setError(null);
+    try {
+      await signOutProvider(name);
+      setSignOutOpen(false);
+      refresh();
+    } catch (e: unknown) {
+      setError((e as { message?: string })?.message || "failed to sign out");
     } finally {
       setApplying(false);
     }
@@ -208,6 +239,15 @@ export function ProviderCard() {
           <ArrowLeftRight className="size-4" />
           switch provider
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          onClick={() => setSignOutOpen(true)}
+        >
+          <LogOut className="size-4" />
+          sign out
+        </Button>
       </CardContent>
 
       <Dialog
@@ -281,6 +321,42 @@ export function ProviderCard() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={signOutOpen}
+        onOpenChange={(next) => {
+          if (!next) {
+            setSignOutOpen(false);
+            setError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>sign out {name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              this clears its provider — credentials, model, and context window.
+              {name} won't be able to respond until you reconnect a provider.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <p className="text-xs text-destructive text-center">{error}</p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={applying}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleSignOut();
+              }}
+            >
+              {applying ? "signing out..." : "sign out"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

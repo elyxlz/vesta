@@ -13,12 +13,14 @@ from core.provider import (
     UsageCredits,
     UsageError,
     _check_claude_auth,
+    clear_provider,
     derive_status,
     get_usage,
     is_terminal_auth_error,
     observed_provider_failure,
     set_claude,
     set_openrouter,
+    set_provider_prefs,
 )
 from core.state_store import PersistedState, load_state
 
@@ -124,6 +126,40 @@ def test_set_openrouter_writes_provider_key_and_model_to_store(prov):
     fresh = vm.VestaConfig()
     assert fresh.openrouter_key is not None and fresh.openrouter_key.get_secret_value() == "sk-or-v1-secret"
     assert derive_status(fresh, persisted).kind == "openrouter"
+
+
+def test_set_provider_prefs_writes_model_context_thinking(prov):
+    config, _persisted = prov
+    set_provider_prefs({"agent_model": "opus", "max_context_tokens": 500_000}, config=config)
+    store = read_config_store()
+    assert store["agent_model"] == "opus"
+    assert store["max_context_tokens"] == 500_000
+    fresh = vm.VestaConfig()
+    assert fresh.agent_model == "opus"
+    assert fresh.max_context_tokens == 500_000
+
+
+def test_clear_provider_removes_creds_and_key_and_flips_state(prov):
+    from core import provider as provider_mod
+
+    config, persisted = prov
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=config, persisted=persisted)
+    creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+    set_claude(creds_json, config=config, persisted=persisted)
+    assert provider_mod.CREDENTIALS_PATH.exists()
+
+    status = clear_provider(config=config, persisted=persisted)
+    assert status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert status.model is None
+    assert not provider_mod.CREDENTIALS_PATH.exists()
+    # Everything provider-owned is cleared (key + model + context); only the provider-choice hint stays.
+    store = read_config_store()
+    assert "openrouter_key" not in store
+    assert "agent_model" not in store
+    assert "max_context_tokens" not in store
+    assert store["agent_provider"] == "claude"
+    # A fresh boot re-derives not_authenticated (persisted), so the agent stays signed out.
+    assert derive_status(vm.VestaConfig(), load_state(config)).state == ProviderAuthState.NOT_AUTHENTICATED
 
 
 def test_set_claude_clears_openrouter_key(prov):

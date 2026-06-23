@@ -65,18 +65,47 @@ def update_config_store(updates: dict[str, tp.Any]) -> None:
     tmp.replace(path)
 
 
-def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
-    """Validate a sparse PUT /config body by merging it onto the live config and validating the whole
-    model, so any field is settable under its real constraints (thinking coerces, gt/le hold). A null clears."""
-    if not isinstance(data, dict):
-        raise ValueError("config body must be a JSON object")
+# Provider-owned settings flow through provider.py and the /provider* endpoints, never the generic
+# config API. Preferences (model/context/thinking) are settable via PUT /provider/config; the auth
+# fields are written only by provider.py's set_claude/set_openrouter/clear_provider.
+PROVIDER_PREF_FIELDS = frozenset({"agent_model", "max_context_tokens", "thinking"})
+_PROVIDER_AUTH_FIELDS = frozenset({"agent_provider", "openrouter_key"})
+
+
+def _merge_validate(config: "VestaConfig", data: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    """Merge a sparse update onto the live config and validate the whole model, so each field is
+    checked under its real constraints (thinking coerces, gt/le hold). A null clears its key."""
     unknown = [key for key in data if key not in VestaConfig.model_fields]
     if unknown:
         raise ValueError(f"not config fields: {', '.join(sorted(unknown))}")
     candidate = config.model_dump()
     candidate.update({key: value for key, value in data.items() if value is not None})
     VestaConfig.model_validate(candidate)
-    return tp.cast("dict[str, tp.Any]", data)
+    return data
+
+
+def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
+    """Validate a sparse PUT /config body. Provider-owned settings (model, context, thinking, and the
+    auth fields) are rejected here — they flow through the /provider endpoints."""
+    if not isinstance(data, dict):
+        raise ValueError("config body must be a JSON object")
+    data = tp.cast("dict[str, tp.Any]", data)
+    provider_owned = sorted(set(data) & (PROVIDER_PREF_FIELDS | _PROVIDER_AUTH_FIELDS))
+    if provider_owned:
+        raise ValueError(f"provider-owned, set via /provider/config: {', '.join(provider_owned)}")
+    return _merge_validate(config, data)
+
+
+def validate_provider_prefs(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
+    """Validate a sparse PUT /provider/config body — only the provider preferences (model, context,
+    thinking) are accepted."""
+    if not isinstance(data, dict):
+        raise ValueError("provider config body must be a JSON object")
+    data = tp.cast("dict[str, tp.Any]", data)
+    disallowed = sorted(set(data) - PROVIDER_PREF_FIELDS)
+    if disallowed:
+        raise ValueError(f"not provider preferences: {', '.join(disallowed)}")
+    return _merge_validate(config, data)
 
 
 _LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"

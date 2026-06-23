@@ -12,7 +12,7 @@ import typing as tp
 import aiohttp
 
 from . import logger
-from .config import VestaConfig, update_config_store
+from .config import PROVIDER_PREF_FIELDS, VestaConfig, update_config_store
 from .state_store import PersistedState, save_state
 
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
@@ -108,6 +108,27 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
     status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
     _persist(status, config=config, persisted=persisted)
     logger.startup(f"Provider set to openrouter model={model}")
+    return status
+
+
+def set_provider_prefs(updates: dict[str, tp.Any], *, config: VestaConfig) -> None:
+    """Persist provider-owned preferences (agent_model, max_context_tokens, thinking) to the config
+    store. Owned here so every provider setting flows through provider.py; the keys are pre-validated
+    by validate_provider_prefs. Vestad restarts the agent to apply them."""
+    update_config_store(updates)
+    logger.startup(f"Provider prefs updated: {sorted(updates)}")
+
+
+def clear_provider(*, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+    """Sign out: clear everything provider-owned — the Claude OAuth blob, the OpenRouter key, and the
+    provider preferences (model, context, thinking) — leaving the agent not_authenticated. Only
+    general config (e.g. personality) survives; the provider choice is kept as the last-used hint.
+    Vestad restarts the agent."""
+    CREDENTIALS_PATH.unlink(missing_ok=True)
+    update_config_store({"openrouter_key": None, **{field: None for field in PROVIDER_PREF_FIELDS}})
+    status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=config.agent_provider, model=None, max_context_tokens=None)
+    _persist(status, config=config, persisted=persisted)
+    logger.startup("Provider cleared (signed out)")
     return status
 
 

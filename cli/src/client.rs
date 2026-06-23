@@ -145,6 +145,18 @@ fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String>
     value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
 }
 
+/// Build the sparse provider-owned preferences body (model + context window) for /provider/config.
+fn provider_prefs(model: Option<&str>, max_context_tokens: Option<u64>) -> serde_json::Map<String, serde_json::Value> {
+    let mut prefs = serde_json::Map::new();
+    if let Some(model) = model {
+        prefs.insert("agent_model".to_string(), serde_json::json!(model));
+    }
+    if let Some(ctx) = max_context_tokens {
+        prefs.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+    }
+    prefs
+}
+
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
     value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
@@ -441,29 +453,34 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with Claude credentials (the OAuth JSON blob), then apply the
-    /// model/context preferences through the config store. `/provider` is auth-only now.
+    /// Provision an existing agent with Claude credentials (the OAuth JSON blob) and the
+    /// model/context preferences in one request, so vestad writes both and restarts once.
+    /// Splitting this into separate restart-on-write calls raced: a later call hit the agent
+    /// mid-restart and was dropped. Model/context are provider-owned, sent under `provider_config`.
     pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        self.post_json(&format!("/agents/{name}/provider"), &serde_json::json!({"credentials": credentials}))?;
-        self.set_config(name, model, max_context_tokens)
+        self.post_json(
+            &format!("/agents/{name}/provider/config"),
+            &serde_json::json!({
+                "provider": {"credentials": credentials},
+                "provider_config": serde_json::Value::Object(provider_prefs(model, max_context_tokens)),
+            }),
+        )?;
+        Ok(())
     }
 
-    /// Update editable preferences (model and/or context window) via the agent's config store
-    /// (PUT /config). A no-op when both are None. Vestad restarts the agent so they take effect.
-    pub fn set_config(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        let mut body = serde_json::Map::new();
-        if let Some(model) = model {
-            body.insert("agent_model".to_string(), serde_json::json!(model));
-        }
-        if let Some(ctx) = max_context_tokens {
-            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
-        }
-        if body.is_empty() {
+    /// Update provider-owned preferences (model and/or context window) via POST /provider/config.
+    /// A no-op when both are None. Vestad restarts the agent so they take effect.
+    pub fn set_provider_prefs(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+        let prefs = provider_prefs(model, max_context_tokens);
+        if prefs.is_empty() {
             return Ok(());
         }
-        self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(body))?;
+        self.post_json(
+            &format!("/agents/{name}/provider/config"),
+            &serde_json::json!({"provider_config": serde_json::Value::Object(prefs)}),
+        )?;
         Ok(())
     }
 
@@ -479,6 +496,13 @@ impl Client {
             "openrouter_model": args.model,
         });
         self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
+    }
+
+    /// Sign out: clear the agent's provider credentials (DELETE /provider). Vestad restarts the
+    /// agent, which boots not_authenticated until reconnected.
+    pub fn logout(&self, name: &str) -> Result<(), String> {
+        self.delete_req(&format!("/agents/{name}/provider"))?;
         Ok(())
     }
 

@@ -62,7 +62,7 @@ export function AgentIslandModals() {
               <ProgressBar message="applying new provider config..." />
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 py-2">
+            <div className="flex min-w-0 flex-col items-center gap-3 py-2">
               <ProviderPicker
                 className="w-full px-0"
                 onDone={async (result) => {

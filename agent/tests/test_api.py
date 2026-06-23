@@ -180,24 +180,22 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
 # --- Request-body validation models (PUT /config, POST /provider) ---
 
 
-def test_config_update_accepts_any_field_and_returns_sparse(config):
+def test_config_update_accepts_general_fields_and_returns_sparse(config):
     from core.config import validate_config_updates
 
-    # Any real config field may be set, by its VestaConfig name, not a fixed allow-list.
-    assert validate_config_updates(config, {"agent_model": "sonnet"}) == {"agent_model": "sonnet"}
+    # Any general (non-provider-owned) config field may be set, by its VestaConfig name.
+    assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
     assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
         "log_level": "DEBUG",
         "response_timeout": 30,
     }
-    # thinking takes the plain string form; the model coerces it on load.
-    assert validate_config_updates(config, {"thinking": "enabled"}) == {"thinking": "enabled"}
 
 
 def test_config_update_null_clears_a_key(config):
     from core.config import validate_config_updates
 
     # A null is preserved (not dropped) so the handler can clear that key in the store.
-    assert validate_config_updates(config, {"max_context_tokens": None}) == {"max_context_tokens": None}
+    assert validate_config_updates(config, {"nightly_memory_hour": None}) == {"nightly_memory_hour": None}
 
 
 def test_config_update_rejects_unknown_field(config):
@@ -211,13 +209,20 @@ def test_config_update_rejects_bad_values(config):
     from core.config import validate_config_updates
 
     for bad in [
-        {"max_context_tokens": 0},
         {"nightly_memory_hour": 99},
-        {"thinking": "x"},
         {"log_level": "LOUD"},
     ]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)
+
+
+def test_provider_prefs_reject_bad_values(config):
+    from core.config import validate_provider_prefs
+
+    # Provider prefs go through the same field constraints, on the /provider/config path.
+    for bad in [{"max_context_tokens": 0}, {"thinking": "x"}]:
+        with pytest.raises(pyd.ValidationError):
+            validate_provider_prefs(config, bad)
 
 
 def test_provider_update_accepts_each_provider():

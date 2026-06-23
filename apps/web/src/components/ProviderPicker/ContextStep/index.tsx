@@ -1,8 +1,6 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { FieldDescription } from "@/components/ui/field";
-import { cn } from "@/lib/utils";
+import { useState, type ReactNode } from "react";
 import type { ContextPreset } from "@/api/agent-defaults";
+import { ProviderStep } from "../ProviderStep";
 
 // Presets + the default come from vestad (GET /agent-defaults), passed in by the parent,
 // so this step holds no copy of either.
@@ -11,34 +9,27 @@ export function ContextStep({
   initial,
   onSubmit,
   submitLabel = "continue",
-  hasBack,
+  logo,
+  onCancel,
 }: {
   presets: ContextPreset[];
   initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
-  hasBack?: boolean;
+  logo?: ReactNode;
+  onCancel?: () => void;
 }) {
   const [selected, setSelected] = useState<number>(initial);
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(selected);
-      }}
-      className="flex w-full flex-col items-start gap-4"
+    <ProviderStep
+      logo={logo}
+      title="context window"
+      subtitle="how much the agent keeps in context before it compacts. larger holds more at once; smaller is cheaper and compacts sooner."
+      submitLabel={submitLabel}
+      onSubmit={() => onSubmit(selected)}
+      onCancel={onCancel}
     >
-      <div className="flex flex-col items-start gap-1 text-left">
-        <h2 className={cn("text-base font-semibold", hasBack && "pl-7")}>
-          context window
-        </h2>
-        <FieldDescription>
-          how much the agent keeps in context before it compacts. larger holds
-          more at once; smaller is cheaper and compacts sooner.
-        </FieldDescription>
-      </div>
-
       <div className="flex w-full flex-col gap-1.5">
         {presets.map((preset) => (
           <button
@@ -58,10 +49,6 @@ export function ContextStep({
           </button>
         ))}
       </div>
-
-      <Button type="submit" className="w-full">
-        {submitLabel}
-      </Button>
-    </form>
+    </ProviderStep>
   );
 }
