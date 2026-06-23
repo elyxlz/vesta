@@ -19,6 +19,7 @@ interface ChatListContext {
   fullscreen?: boolean;
   navbarHeight: number;
   isMobile: boolean;
+  showToolCalls: boolean;
 }
 
 interface ChatMessageAreaProps {
@@ -37,6 +38,7 @@ interface ChatMessageAreaProps {
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  showToolCalls: boolean;
 }
 
 const Scroller = createScroller<DecoratedRow, ChatListContext>((context) => {
@@ -157,6 +159,7 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  showToolCalls,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const firstItemIndex = useStableFirstItemIndex(decorated);
@@ -169,8 +172,17 @@ export function ChatMessageArea({
       fullscreen,
       navbarHeight,
       isMobile,
+      showToolCalls,
     }),
-    [isTyping, hasMore, decorated.length, fullscreen, navbarHeight, isMobile],
+    [
+      isTyping,
+      hasMore,
+      decorated.length,
+      fullscreen,
+      navbarHeight,
+      isMobile,
+      showToolCalls,
+    ],
   );
 
   return (
@@ -240,6 +252,16 @@ export function ChatMessageArea({
               fullscreen={ctx.fullscreen}
               isMobile={ctx.isMobile}
             />
+            {ctx.showToolCalls &&
+              row.tools.map((tool, toolIndex) => (
+                <ChatBubble
+                  key={`${row.key}-tool-${toolIndex}`}
+                  event={tool}
+                  className="mt-1"
+                  fullscreen={ctx.fullscreen}
+                  isMobile={ctx.isMobile}
+                />
+              ))}
           </div>
         )}
       />

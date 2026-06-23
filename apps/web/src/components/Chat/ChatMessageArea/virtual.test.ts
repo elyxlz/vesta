@@ -95,21 +95,49 @@ describe("buildDecorated", () => {
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
   });
 
-  it("uses a tight gap between consecutive tool calls", () => {
+  it("groups tool calls onto the preceding message's row", () => {
     const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
       {
         type: "tool_start",
         tool: "Bash",
         input: "ls",
-        ts: "2026-06-08T10:00:00Z",
+        ts: "2026-06-08T10:00:01Z",
       },
       {
         type: "tool_start",
         tool: "Bash",
         input: "pwd",
+        ts: "2026-06-08T10:00:02Z",
+      },
+      { type: "chat", text: "done", ts: "2026-06-08T10:00:03Z" },
+    ]);
+    expect(rows).toHaveLength(2); // one row per conversation message
+    expect(rows[0].event.type).toBe("user");
+    expect(
+      rows[0].tools.map((t) => (t.type === "tool_start" ? t.input : "")),
+    ).toEqual(["ls", "pwd"]);
+    expect(rows[1].event.type).toBe("chat");
+    expect(rows[1].tools).toEqual([]);
+  });
+
+  it("keeps the same row set with or without tool calls (toggle invariant)", () => {
+    // The show-tools toggle must not change the virtual list's items — only row heights —
+    // or Virtuoso loses its scroll anchor. Same conversation, with/without interleaved tools.
+    const withTools = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
+      {
+        type: "tool_start",
+        tool: "Bash",
+        input: "ls",
         ts: "2026-06-08T10:00:01Z",
       },
+      { type: "chat", text: "done", ts: "2026-06-08T10:00:02Z" },
     ]);
-    expect(rows[1].gap).toBe("mt-1");
+    const withoutTools = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
+      { type: "chat", text: "done", ts: "2026-06-08T10:00:02Z" },
+    ]);
+    expect(withTools.map((r) => r.key)).toEqual(withoutTools.map((r) => r.key));
   });
 });

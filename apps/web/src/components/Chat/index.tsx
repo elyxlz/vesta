@@ -73,17 +73,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (connected) setWasConnected(true);
   }, [connected]);
 
+  // Tool calls are always kept here (minus the app-chat plumbing) so buildDecorated can
+  // group them onto their message's row; the show-tools toggle only controls whether those
+  // grouped rows are rendered, so toggling never changes the list's item count.
   const chatMessages = useMemo(
     () =>
       messages.filter(
         (m) =>
           m.type === "user" ||
           m.type === "chat" ||
-          (showToolCalls &&
-            m.type === "tool_start" &&
+          (m.type === "tool_start" &&
             !(m.tool === "Bash" && m.input.includes("app-chat"))),
       ),
-    [messages, showToolCalls],
+    [messages],
   );
 
   const lastMsgRef = useRef<string | null>(null);
@@ -187,6 +189,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           historyLoaded={historyLoaded}
+          showToolCalls={showToolCalls}
           agentName={name}
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
