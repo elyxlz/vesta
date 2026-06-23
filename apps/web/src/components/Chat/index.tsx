@@ -7,7 +7,6 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
 import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
@@ -18,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
-import { ChatMessageArea } from "./ChatMessageArea";
+import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 
 interface ChatProps {
@@ -63,7 +62,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const [wasConnected, setWasConnected] = useState(false);
 
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomVisibleRef = useRef(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
@@ -73,19 +72,17 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (connected) setWasConnected(true);
   }, [connected]);
 
-  // Tool calls are always kept here (minus the app-chat plumbing) so buildDecorated can
-  // group them onto their message's row; the show-tools toggle only controls whether those
-  // grouped rows are rendered, so toggling never changes the list's item count.
   const chatMessages = useMemo(
     () =>
       messages.filter(
         (m) =>
           m.type === "user" ||
           m.type === "chat" ||
-          (m.type === "tool_start" &&
+          (showToolCalls &&
+            m.type === "tool_start" &&
             !(m.tool === "Bash" && m.input.includes("app-chat"))),
       ),
-    [messages],
+    [messages, showToolCalls],
   );
 
   const lastMsgRef = useRef<string | null>(null);
@@ -101,28 +98,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   }, [chatMessages]);
 
-  const handleStartReached = useCallback(() => {
-    if (hasMore && !loadingMore) loadMore();
-  }, [hasMore, loadingMore, loadMore]);
-
-  // startReached is distinct-until-changed on the absolute top index, so with a
-  // bottom-anchored initial scroll it can emit once during settling and then stay
-  // suppressed when the user actually reaches the top. Reaching the top also flips
-  // the at-top state, which fires every time, so trigger the same paged load there.
-  const handleAtTopChange = useCallback(
-    (atTop: boolean) => {
-      if (atTop && hasMore && !loadingMore) loadMore();
-    },
-    [hasMore, loadingMore, loadMore],
-  );
-
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
     bottomVisibleRef.current = atBottom;
     if (atBottom) setHasNewMessage(false);
   }, []);
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
+    scrollRef.current?.scrollToBottom();
   }, []);
 
   const handleSend = () => {
@@ -178,10 +160,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         />
 
         <ChatMessageArea
-          virtuosoRef={virtuosoRef}
-          onStartReached={handleStartReached}
-          onAtTopStateChange={handleAtTopChange}
-          onAtBottomStateChange={handleAtBottomChange}
+          scrollRef={scrollRef}
+          onAtBottomChange={handleAtBottomChange}
+          loadMore={loadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
@@ -189,7 +170,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           historyLoaded={historyLoaded}
-          showToolCalls={showToolCalls}
           agentName={name}
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
