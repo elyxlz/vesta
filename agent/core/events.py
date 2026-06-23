@@ -113,23 +113,15 @@ type VestaEvent = StreamEvent | HistoryEvent
 
 PAGE_SIZE = 50
 
-# The conversation the chat surface shows by default: the user's messages and the
-# agent's replies. History pages for the "app-chat" channel filter to these so the
-# capped recent window is filled with visible messages — not notifications or
-# tool-call events that are hidden by default and would otherwise push the actual
-# conversation out of the window (tool calls still arrive live for the show-tools toggle).
+# The conversation the chat surface shows by default: the user's messages and the agent's
+# replies. The app-chat history window's cap and cursor count *these* (see _conversation_page),
+# so notifications and other noise never push the conversation out of the capped window.
 APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat")
 
-
-def _channel_condition(channel: str | None) -> tuple[str, tuple[object, ...]]:
-    """SQL condition + params selecting a history channel's event types.
-
-    channel="app-chat" keeps only APP_CHAT_TYPES; any other value (incl. None)
-    applies no filter, so the full event stream is still reachable."""
-    if channel != "app-chat":
-        return "", ()
-    placeholders = ",".join("?" for _ in APP_CHAT_TYPES)
-    return f"json_extract(data, '$.type') IN ({placeholders})", APP_CHAT_TYPES
+# Hidden-by-default events that ride along inside the window's id range (revealed by the
+# chat's show-tools toggle) without counting toward the cap — so a burst of tool calls can't
+# crowd the conversation out of the window, yet the toggle still has history to reveal.
+APP_CHAT_OVERLAY_TYPES: tuple[str, ...] = ("tool_start",)
 
 
 _EVENTS_SCHEMA = """
@@ -276,15 +268,48 @@ class EventBus:
         events = [json.loads(r[1]) for r in reversed(rows)]
         return events, rows[-1][0] if has_older else None
 
+    def _conversation_page(self, limit: int, before_cursor: int | None) -> tuple[list[StreamEvent], int | None]:
+        """The app-chat page: cap and cursor count conversation messages (APP_CHAT_TYPES),
+        while tool-call overlay events (APP_CHAT_OVERLAY_TYPES) within the window's id range
+        ride along — hidden until the show-tools toggle, but present so it has history to
+        reveal — without ever spending the cap. Two steps: find the id of the oldest of the
+        last `limit` conversation messages, then return everything visible from there up.
+        Short-lived read connection so it can run off the event loop (see _page)."""
+        if not self._db_path or limit <= 0:
+            return [], None
+        upper = "AND id < ? " if before_cursor is not None else ""
+        upper_params: tuple[object, ...] = (before_cursor,) if before_cursor is not None else ()
+        conv_ph = ",".join("?" for _ in APP_CHAT_TYPES)
+        visible = (*APP_CHAT_TYPES, *APP_CHAT_OVERLAY_TYPES)
+        vis_ph = ",".join("?" for _ in visible)
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            conv_rows = conn.execute(
+                f"SELECT id FROM events WHERE json_extract(data, '$.type') IN ({conv_ph}) {upper}ORDER BY id DESC LIMIT ?",
+                (*APP_CHAT_TYPES, *upper_params, limit + 1),
+            ).fetchall()
+            if not conv_rows:
+                return [], None
+            has_older = len(conv_rows) > limit
+            boundary = conv_rows[:limit][-1][0]
+            rows = conn.execute(
+                f"SELECT data FROM events WHERE json_extract(data, '$.type') IN ({vis_ph}) AND id >= ? {upper}ORDER BY id ASC",
+                (*visible, boundary, *upper_params),
+            ).fetchall()
+        finally:
+            conn.close()
+        events = [json.loads(r[0]) for r in rows]
+        return events, boundary if has_older else None
+
     def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
-        cond, params = _channel_condition(channel)
-        conditions = (cond,) if cond else ()
-        return self._page(conditions, params, limit)
+        if channel == "app-chat":
+            return self._conversation_page(limit, None)
+        return self._page((), (), limit)
 
     def before(self, cursor: int, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
-        cond, params = _channel_condition(channel)
-        conditions = ("id < ?", *((cond,) if cond else ()))
-        return self._page(conditions, (cursor, *params), limit)
+        if channel == "app-chat":
+            return self._conversation_page(limit, cursor)
+        return self._page(("id < ?",), (cursor,), limit)
 
     def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
         if not self._conn:

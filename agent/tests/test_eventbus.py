@@ -164,10 +164,10 @@ def test_recent_runs_off_the_connection_home_thread(event_bus):
     assert [tp.cast(tp.Any, e)["text"] for e in events] == ["hi"]
 
 
-def test_app_chat_channel_filters_out_noise(event_bus):
-    """recent(channel="app-chat") keeps the conversation even when notifications and
-    hidden-by-default tool calls flood the recent window — the regression that blanked
-    the chat, then left only a handful of messages once tool_start counted toward the cap."""
+def test_app_chat_keeps_conversation_and_tools_drops_notifications(event_bus):
+    """app-chat history keeps the conversation and the tool calls within its window (so the
+    show-tools toggle has history to reveal), but drops notification noise — the regression
+    that blanked the chat. Notifications never appear; tool_start rides along in range."""
     event_bus.emit(UserEvent(type="user", text="my real message"))
     event_bus.emit(ChatEvent(type="chat", text="my real reply"))
     for i in range(200):
@@ -176,15 +176,31 @@ def test_app_chat_channel_filters_out_noise(event_bus):
 
     events, _ = event_bus.recent(limit=50, channel="app-chat")
     types = {tp.cast(tp.Any, e)["type"] for e in events}
-    assert types == {"user", "chat"}
-    texts = [tp.cast(tp.Any, e)["text"] for e in events]
-    assert texts == ["my real message", "my real reply"]
+    assert "notification" not in types
+    assert types == {"user", "chat", "tool_start"}
+    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] in ("user", "chat")]
+    assert convo == ["my real message", "my real reply"]
 
-    # Unfiltered recent() still returns the raw tail (other consumers untouched): here
-    # it is all noise, which is exactly why the conversation needs the channel filter.
+    # Unfiltered recent() still returns the raw tail (other consumers untouched).
     raw, _ = event_bus.recent(limit=50)
-    raw_types = {tp.cast(tp.Any, e)["type"] for e in raw}
-    assert raw_types == {"notification", "tool_start"}
+    assert {tp.cast(tp.Any, e)["type"] for e in raw} == {"notification", "tool_start"}
+
+
+def test_app_chat_window_keeps_tool_calls_without_spending_the_cap(event_bus):
+    """The cap counts conversation messages; tool calls within the window's id range ride
+    along (for the show-tools toggle) without pushing real messages out of the capped window."""
+    for i in range(5):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        for j in range(10):
+            event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}-{j}", subagent=False))
+
+    events, _ = event_bus.recent(limit=3, channel="app-chat")
+    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] == "user"]
+    # Cap = 3 conversation messages: the newest 3, not crowded out by the 50 tool calls.
+    assert convo == ["msg 2", "msg 3", "msg 4"]
+    # Tool calls inside the window's range are present so the toggle has history to reveal.
+    tools = [e for e in events if tp.cast(tp.Any, e)["type"] == "tool_start"]
+    assert len(tools) == 30  # the 10 after each of msg 2, 3, 4
 
 
 def test_app_chat_channel_paginates_across_notification_runs(event_bus):
