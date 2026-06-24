@@ -42,56 +42,26 @@ func main() {
 	// Remove the subcommand from os.Args so flag parsing works on remaining args
 	os.Args = append(os.Args[:1], os.Args[2:]...)
 
-	// Resolve short command aliases
-	aliases := map[string]string{
-		"send":            "send-message",
-		"messages":        "list-messages",
-		"chats":           "list-chats",
-		"contacts":        "list-contacts",
-		"groups":          "list-groups",
-		"file":            "send-file",
-		"react":           "send-reaction",
-		"rename":          "rename-group",
-		"delivery":        "check-delivery",
-		"search-contacts": "list-contacts",
-	}
-	if canon, ok := aliases[command]; ok {
-		command = canon
-	}
-
 	// The bash execution environment escapes special chars — undo in all args
 	for i := range os.Args {
 		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
 	}
 
-	// Rewrite leading positional args into flags
-	positionalSpecs := map[string][]string{
-		"send-message":          {"to", "message"},
-		"list-messages":         {"to"},
-		"send-file":             {"to", "file-path"},
-		"send-reaction":         {"to", "message-id", "emoji"},
-		"add-contact":           {"name", "phone"},
-		"remove-contact":        {"identifier"},
-		"leave-group":           {"group"},
-		"backfill":              {"to"},
-		"rename-group":          {"group", "name"},
-		"set-group-description": {"group", "description"},
-		"check-delivery":        {"message-id"},
-		"delete-chat":           {"to"},
-		"archive-chat":          {"to"},
-	}
-	if spec, ok := positionalSpecs[command]; ok {
+	// Resolve the alias to its canonical name and rewrite the command's leading
+	// positional args into flags, both driven by the command registry.
+	if cmd, ok := lookupCommand(command); ok {
+		command = cmd.name
 		remaining := os.Args[1:]
 		var positionals []string
 		i := 0
-		for i < len(remaining) && i < len(spec) && !strings.HasPrefix(remaining[i], "-") {
+		for i < len(remaining) && i < len(cmd.positionals) && !strings.HasPrefix(remaining[i], "-") {
 			positionals = append(positionals, remaining[i])
 			i++
 		}
 		if len(positionals) > 0 {
 			var injected []string
 			for j, val := range positionals {
-				injected = append(injected, "--"+spec[j], val)
+				injected = append(injected, "--"+cmd.positionals[j], val)
 			}
 			os.Args = append([]string{os.Args[0]}, append(injected, remaining[i:]...)...)
 		}
