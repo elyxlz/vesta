@@ -530,6 +530,41 @@ async def test_converse_ignores_transient_api_error(config):
     assert not mock_client.interrupt.called
 
 
+@pytest.mark.anyio
+async def test_converse_flips_auth_on_result_api_error_status(config):
+    """A terminal 401/402 may surface on the ResultMessage's HTTP status rather than the assistant
+    turn's error field; that must still flip the agent to not_authenticated."""
+    from core.client import converse
+    from claude_agent_sdk import ResultMessage
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    async def auth_error_result():
+        yield ResultMessage(
+            subtype="error_during_execution",
+            duration_ms=100,
+            duration_api_ms=80,
+            is_error=True,
+            num_turns=1,
+            session_id="sess-xyz",
+            api_error_status=401,
+        )
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=auth_error_result())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test prompt", state=state, config=config, show_output=False)
+
+    assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
+
+
 # --- Converse streaming regression tests ---
 
 

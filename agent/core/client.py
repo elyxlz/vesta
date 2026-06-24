@@ -11,6 +11,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    ResultMessage,
     SystemMessage,
     ThinkingBlock,
 )
@@ -19,7 +20,7 @@ from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled
 from . import logger
 from . import models as vm
 from . import state_store
-from .provider import OPENROUTER_SMALL_FAST_MODEL, is_terminal_auth_error, observed_provider_failure
+from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, is_terminal_auth_error, observed_provider_failure
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -193,10 +194,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
-            # OpenRouter's upstream 401/402 is caught by its cache proxy (it sees every status code).
-            # Claude bypasses that proxy, so its terminal auth/billing errors surface as the SDK's
-            # classified AssistantMessage.error (authentication_failed / billing_error), detected by
-            # is_terminal_auth_error just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
@@ -208,10 +205,17 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 for block in thinking_blocks:
                     _emit_thinking(block)
             text = "\n".join(texts) if texts else None
-            if isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error):
-                # Claude credential died (401) or account can't pay (402). Flip to not_authenticated,
-                # stop the CLI's internal retries, and end the turn cleanly so the app shows "not
-                # signed in" in ~3s instead of hanging to the response timeout and restart-looping.
+            # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
+            # so a terminal auth/billing failure surfaces through the SDK either as the assistant
+            # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
+            # status (api_error_status). Check BOTH so a token expiry can't stay invisible to the app.
+            auth_lost = (isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error)) or (
+                isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS
+            )
+            if auth_lost:
+                # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
+                # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
+                # and restart-looping.
                 logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
                 state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
                 await attempt_interrupt(state, config=config, reason="Provider auth lost")
