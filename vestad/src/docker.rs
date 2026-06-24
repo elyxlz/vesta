@@ -121,6 +121,11 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
 
 const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
+/// `docker rm --force` can return before the container name is actually released, and a transient
+/// daemon error can leave it present; poll-and-retry until it's gone so a follow-up create under the
+/// same name (rebuild_agent) can't collide. Bounded so a genuinely stuck removal fails loudly.
+const CONTAINER_REMOVE_MAX_ATTEMPTS: u32 = 5;
+const CONTAINER_REMOVE_POLL_MS: u64 = 200;
 /// Free space the Docker storage filesystem must have before vestad will rebuild or
 /// restart agent containers at startup. Below this, reconcile is skipped entirely so a
 /// full disk can't corrupt a container's writable layer (events.db, session) mid-restart.
@@ -1235,6 +1240,30 @@ pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), 
     Ok(())
 }
 
+/// Force-remove a container and confirm it is actually gone before returning. Needed when the name
+/// is reused immediately after (rebuild_agent recreates under the same name): a bare force-remove
+/// can return before the name frees, and a transient daemon error can leave the container present —
+/// either makes the follow-up create collide on the name and silently leaves the agent down. Retry
+/// the remove and poll until docker no longer reports it; error out loudly if it never disappears
+/// rather than letting the caller hit a confusing name conflict.
+pub async fn ensure_container_removed(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    for _ in 0..CONTAINER_REMOVE_MAX_ATTEMPTS {
+        if container_status(docker, cname).await == ContainerStatus::NotFound {
+            return Ok(());
+        }
+        // Per-attempt remove is best-effort: the authoritative signal is the status check above, so
+        // a transient error just means we retry; a persistent one falls through to the loud error.
+        let _ = docker.remove_container(cname, Some(RemoveContainerOptions { force: true, v: false, link: false })).await;
+        tokio::time::sleep(std::time::Duration::from_millis(CONTAINER_REMOVE_POLL_MS)).await;
+    }
+    if container_status(docker, cname).await == ContainerStatus::NotFound {
+        return Ok(());
+    }
+    Err(DockerError::Failed(format!(
+        "container {cname} still present after {CONTAINER_REMOVE_MAX_ATTEMPTS} force-remove attempts"
+    )))
+}
+
 // --- Snapshot ---
 
 const SNAPSHOT_TIMEOUT_SECS: u64 = 7200; // 2 hours — 25GB+ containers can take a long time
@@ -2007,7 +2036,10 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
 
     tracing::info!(agent = %name, "[3/4] removing old container...");
-    remove_container_force(docker, &cname).await.ok();
+    // Confirm it's actually gone (don't swallow): the snapshot is safely captured, so failing here
+    // and re-running reconcile next boot is far better than letting [4/4] collide on the name and
+    // leave the agent stopped.
+    ensure_container_removed(docker, &cname).await?;
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
     create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None).await?;
@@ -2453,6 +2485,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rebuild_agent_confirms_removal_before_create() {
+        // rebuild_agent recreates under the SAME name, so the old container must be confirmed gone
+        // before [4/4] create. A best-effort `remove_container_force(...).await.ok()` silently left
+        // the agent stopped on the old image whenever the remove didn't take (docker rm can return
+        // before the name frees, or fail transiently) — the create then collided on the name.
+        let src = include_str!("docker.rs");
+        let rebuild_start = src.find("pub async fn rebuild_agent").expect("rebuild_agent present");
+        let rename_start = src.find("pub async fn rename_agent").expect("rename_agent present");
+        let rebuild_body = &src[rebuild_start..rename_start];
+
+        let remove_pos = rebuild_body
+            .find("ensure_container_removed")
+            .expect("rebuild_agent must confirm the old container is gone via ensure_container_removed before recreating");
+        let create_pos = rebuild_body.find("create_container").expect("create_container must be called in rebuild_agent");
+        assert!(remove_pos < create_pos, "rebuild_agent must remove the old container before creating the new one");
+        assert!(
+            !rebuild_body.contains("remove_container_force"),
+            "rebuild_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+    }
+
     // --- Docker integration tests (require Docker daemon) ---
     // Run with: cargo test -p vestad -- --ignored
 
@@ -2742,6 +2796,24 @@ mod tests {
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_container_removed_removes_and_is_idempotent() {
+        let docker = test_docker();
+        let tc = TestContainer::new("ensure-removed");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
+        assert_ne!(container_status(&docker, &tc.name).await, ContainerStatus::NotFound, "precondition: container exists");
+
+        ensure_container_removed(&docker, &tc.name).await.expect("removes a present container");
+        assert_eq!(container_status(&docker, &tc.name).await, ContainerStatus::NotFound, "container must be gone after ensure_container_removed");
+
+        // Idempotent: the name is free, which is exactly what rebuild_agent's create depends on.
+        ensure_container_removed(&docker, &tc.name).await.expect("no-op when already absent");
     }
 
     // Bound on retries while the container's `mkdir` races its start (200ms apart).
