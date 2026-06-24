@@ -37,7 +37,7 @@ export function ProviderStep({
         e.preventDefault();
         onSubmit();
       }}
-      className="flex w-full flex-col items-center gap-3"
+      className="flex w-full flex-col items-center gap-5"
     >
       {logo}
       <div className="flex w-full flex-col items-center gap-1 text-center">

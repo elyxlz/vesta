@@ -239,6 +239,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 - **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
 - **Hook placement** — hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`). `hooks/` is reserved for shared hooks used across multiple components/providers.
 - **Components in folders** — each component gets a folder with `index.tsx` and optionally `styles.ts`.
+- **No dividers inside cards** — never separate sections within a card using a divider/separator line (`border-t`/`border-b`, `<Separator>`, `<hr>`). Group sections with spacing (`gap`, padding) instead. This is a hard preference, not case-by-case.
 - **Rules of Hooks**: call Hooks only at the top level of a component or custom Hook, only from React contexts. Keep render pure (no side effects, no mutating props/state/context).
 - **Effects are a last resort**: compute derived data during render (or `useMemo`), put interaction logic in event handlers. Every Effect has complete deps (`react-hooks/exhaustive-deps`), one concern, and cleanup for any subscription, timer, listener, or fetch (ignore/abort flag).
 - **Stable list keys** from data identity, never array index for reorderable lists; reset state with a `key` prop, not an Effect.

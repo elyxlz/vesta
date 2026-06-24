@@ -1,7 +1,19 @@
 import { useState } from "react";
-import { Cpu, ArrowLeftRight, Gauge, RefreshCw, LogOut } from "lucide-react";
+import {
+  ArrowLeftRight,
+  MoreHorizontal,
+  RefreshCw,
+  LogOut,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
+import { providerMeta } from "@/components/ProviderPicker/providers";
 import {
   setModel,
   setContextWindow,
@@ -33,6 +46,7 @@ import {
 import { formatTokens } from "@/lib/format";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
+import { useAgentDefaults } from "@/hooks/use-agent-defaults";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useUsage } from "./use-usage";
@@ -81,6 +95,9 @@ export function ProviderCard() {
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent?.status);
   const claudeModels = useClaudeModels(provider?.kind === "claude");
+  // Context-window presets are owned by vestad (GET /agent-defaults); the
+  // context dialog needs them just like the setup wizard does.
+  const defaults = useAgentDefaults();
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
@@ -97,6 +114,13 @@ export function ProviderCard() {
   if (!provider || provider.kind === "none") return null;
 
   const isOpenRouter = provider.kind === "openrouter";
+  const { Logo } = providerMeta(provider.kind);
+  const contextLabel =
+    provider.max_context_tokens != null
+      ? `${formatTokens(provider.max_context_tokens)} context`
+      : isOpenRouter
+        ? "default context"
+        : "1M context";
 
   const meters = usage?.meters ?? [];
   const credits = usage?.credits ?? null;
@@ -154,27 +178,33 @@ export function ProviderCard() {
   return (
     <Card size="sm">
       <CardContent className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Cpu className="size-4" /> provider
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted-foreground">
-            {isOpenRouter ? "OpenRouter" : "Claude account"}
-          </span>
-          <span className="text-sm break-all">
-            {provider.model ?? "unknown"}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            context window:{" "}
-            {provider.max_context_tokens != null
-              ? formatTokens(provider.max_context_tokens)
-              : isOpenRouter
-                ? "default"
-                : "1M (default)"}
-          </span>
+        <div className="flex items-center gap-3">
+          <div
+            className={`flex size-11 shrink-0 items-center justify-center rounded-2xl [corner-shape:squircle] ${
+              isOpenRouter ? "bg-muted" : "bg-[#D97757]/10"
+            }`}
+          >
+            <Logo className="size-6" />
+          </div>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-xs text-muted-foreground">
+              {isOpenRouter ? "OpenRouter" : "Claude account"}
+            </span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className="truncate text-sm font-medium"
+                title={provider.model ?? "unknown"}
+              >
+                {provider.model ?? "unknown"}
+              </span>
+              <Badge variant="secondary" className="shrink-0">
+                {contextLabel}
+              </Badge>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-col gap-2.5 border-t border-border pt-3">
+        <div className="flex flex-col gap-2.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">
               plan usage
@@ -224,30 +254,48 @@ export function ProviderCard() {
           )}
         </div>
 
-        <Button variant="outline" size="sm" onClick={() => setModelOpen(true)}>
-          change model
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setContextOpen(true)}
-        >
-          <Gauge className="size-4" />
-          change context window
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => void handleOpenAuth()}>
-          <ArrowLeftRight className="size-4" />
-          switch provider
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={() => setSignOutOpen(true)}
-        >
-          <LogOut className="size-4" />
-          sign out
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => setModelOpen(true)}
+          >
+            change model
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => setContextOpen(true)}
+          >
+            change context
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label="more actions"
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => void handleOpenAuth()}>
+                <ArrowLeftRight className="size-4" />
+                switch provider
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => setSignOutOpen(true)}
+              >
+                <LogOut className="size-4" />
+                sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </CardContent>
 
       <Dialog
@@ -259,7 +307,7 @@ export function ProviderCard() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg" showCloseButton>
+        <DialogContent className="gap-8 sm:max-w-[472px]" showCloseButton>
           <DialogHeader>
             <DialogTitle>change model</DialogTitle>
             <DialogDescription className="sr-only">
@@ -271,7 +319,7 @@ export function ProviderCard() {
               <ProgressBar message="switching model, restarting agent..." />
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 py-2">
+            <div className="flex flex-col items-center gap-4 py-2">
               <ModelStep
                 initialModel={provider.model ?? ""}
                 models={isOpenRouter ? undefined : claudeModels}
@@ -296,7 +344,7 @@ export function ProviderCard() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg" showCloseButton>
+        <DialogContent className="gap-8 sm:max-w-[472px]" showCloseButton>
           <DialogHeader>
             <DialogTitle>change context window</DialogTitle>
             <DialogDescription className="sr-only">
@@ -307,10 +355,17 @@ export function ProviderCard() {
             <div className="flex flex-col items-center gap-3 py-4">
               <ProgressBar message="changing context window, restarting agent..." />
             </div>
+          ) : !defaults ? (
+            <div className="flex w-full flex-col gap-1.5 py-2">
+              <Skeleton className="h-12 w-full rounded-xl" />
+              <Skeleton className="h-12 w-full rounded-xl" />
+              <Skeleton className="h-12 w-full rounded-xl" />
+            </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 py-2">
+            <div className="flex flex-col items-center gap-4 py-2">
               <ContextStep
-                initial={provider.max_context_tokens ?? undefined}
+                presets={defaults.context_presets}
+                initial={provider.max_context_tokens ?? defaults.context_tokens}
                 submitLabel="apply"
                 onSubmit={(tokens) => void applyContext(tokens)}
               />
