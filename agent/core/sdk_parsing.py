@@ -16,7 +16,6 @@ from core.cc_sdk import (
     SystemMessage,
     TextBlock,
     ThinkingBlock,
-    ToolUseBlock,
 )
 from core.cc_sdk.types import (
     HookCallback,
@@ -72,18 +71,10 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
-    input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-
-    if name in _AGENT_TOOLS:
-        agent_type, description = _parse_agent_input(input_data)
-        return f"[TASK] [{agent_type}]: {description or input_str}", agent_type
-
-    prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
-    return f"[TOOL] {prefix}{name}: {input_str}", sub_agent_context
-
-
-def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], list[ThinkingBlock], str | None, str | None, bool]:
+def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None]:
+    """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
+    message. Tool-use blocks carry no output here: tool/subagent activity is surfaced via the native
+    hooks in make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -109,13 +100,13 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
             pass
-        return ([], [], sub_agent_context, session_id, False)
+        return [], [], session_id
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
         log_fn = logger.debug if info.status == "allowed" else logger.warning
         log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
-        return ([], [], sub_agent_context, None, False)
+        return [], [], None
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
@@ -124,28 +115,20 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
         else:
             raw = json.dumps(msg.data, default=str)
             logger.system(f"[{msg.subtype}] {raw[:500]}")
-        return ([], [], sub_agent_context, None, False)
+        return [], [], None
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
+        return ([msg] if isinstance(msg, str) else []), [], None
 
     texts = []
     thinking_blocks = []
-    has_tool_use = False
-    current_context = sub_agent_context
-
     for block in msg.content:
         if isinstance(block, TextBlock):
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
-        elif isinstance(block, ToolUseBlock):
-            has_tool_use = True
-            _, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
-            if new_context:
-                current_context = new_context
 
-    return texts, thinking_blocks, current_context, None, has_tool_use
+    return texts, thinking_blocks, None
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
