@@ -8,7 +8,6 @@ import httpx
 
 from . import graph, auth
 from .config import Config
-from .settings import MicrosoftSettings
 
 
 def _validate_timezone(timezone: str) -> None:
@@ -16,10 +15,6 @@ def _validate_timezone(timezone: str) -> None:
         ZoneInfo(timezone)
     except (ZoneInfoNotFoundError, KeyError):
         raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
-
-
-def _get_settings() -> MicrosoftSettings:
-    return MicrosoftSettings()
 
 
 def _get_calendar_day_range(
@@ -50,8 +45,7 @@ def _get_calendar_id_by_name(
     account_id: str,
     calendar_name: str,
 ) -> str:
-    settings = _get_settings()
-    calendars = list(graph.paginate_cfg(config, client, settings, "/me/calendars", account_id, params={"$select": "id,name"}))
+    calendars = list(graph.paginate_cfg(config, client, "/me/calendars", account_id, params={"$select": "id,name"}))
     name_lower = calendar_name.lower()
     for cal in calendars:
         if cal["name"].lower() == name_lower:
@@ -71,15 +65,13 @@ def list_events(
     include_details: bool = True,
     user_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
-    settings = _get_settings()
-
     if user_timezone is None:
         user_timezone = graph.get_default_iana_timezone()
     _validate_timezone(user_timezone)
     extra_prefer = [f'outlook.timezone="{user_timezone}"']
 
     try:
-        account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+        account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
         if include_details:
             select = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
@@ -101,7 +93,7 @@ def list_events(
             }
             endpoint = "/me/calendarView"
 
-        events = list(graph.paginate_cfg(config, client, settings, endpoint, account_id, params=params, extra_prefer=extra_prefer))
+        events = list(graph.paginate_cfg(config, client, endpoint, account_id, params=params, extra_prefer=extra_prefer))
 
         return events
 
@@ -115,12 +107,9 @@ def list_calendars(
     *,
     account_email: str,
 ) -> list[dict[str, Any]]:
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    calendars = list(
-        graph.paginate_cfg(config, client, settings, "/me/calendars", account_id, params={"$select": "id,name,color,isDefaultCalendar"})
-    )
+    calendars = list(graph.paginate_cfg(config, client, "/me/calendars", account_id, params={"$select": "id,name,color,isDefaultCalendar"}))
     return calendars
 
 
@@ -132,15 +121,14 @@ def get_event(
     event_id: str,
     user_timezone: str | None = None,
 ) -> dict[str, Any]:
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     if user_timezone is None:
         user_timezone = graph.get_default_iana_timezone()
     _validate_timezone(user_timezone)
     extra_prefer = [f'outlook.timezone="{user_timezone}"']
 
-    result = graph.request_cfg(config, client, settings, "GET", f"/me/events/{event_id}", account_id, extra_prefer=extra_prefer)
+    result = graph.request_cfg(config, client, "GET", f"/me/events/{event_id}", account_id, extra_prefer=extra_prefer)
     if not result:
         raise ValueError(f"Event '{event_id}' not found")
     return result
@@ -164,8 +152,7 @@ def create_event(
     recurrence_end_date: str | None = None,
 ) -> dict[str, Any]:
     _validate_timezone(timezone)
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     calendar_id = _get_calendar_id_by_name(config, client, account_id, calendar_name) if calendar_name else None
 
@@ -228,7 +215,7 @@ def create_event(
 
     endpoint = f"/me/calendars/{calendar_id}/events" if calendar_id else "/me/events"
 
-    result = graph.request_cfg(config, client, settings, "POST", endpoint, account_id, json=event)
+    result = graph.request_cfg(config, client, "POST", endpoint, account_id, json=event)
     if not result:
         raise ValueError("Failed to create event")
     return result
@@ -252,8 +239,7 @@ def update_event(
     if timezone is not None:
         _validate_timezone(timezone)
 
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     formatted_updates: dict[str, Any] = {}
 
     if subject is not None:
@@ -270,7 +256,7 @@ def update_event(
     if not formatted_updates:
         raise ValueError("Must specify at least one field to update")
 
-    result = graph.request_cfg(config, client, settings, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
+    result = graph.request_cfg(config, client, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
     return result or {"status": "updated"}
 
 
@@ -282,13 +268,12 @@ def delete_event(
     event_id: str,
     send_cancellation: bool = True,
 ) -> dict[str, str]:
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     if send_cancellation:
-        graph.request_cfg(config, client, settings, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
+        graph.request_cfg(config, client, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
-        graph.request_cfg(config, client, settings, "DELETE", f"/me/events/{event_id}", account_id)
+        graph.request_cfg(config, client, "DELETE", f"/me/events/{event_id}", account_id)
     return {"status": "deleted", "event_id": event_id}
 
 
@@ -301,11 +286,10 @@ def respond_event(
     response: str = "accept",
     message: str | None = None,
 ) -> dict[str, str]:
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     payload: dict[str, Any] = {"sendResponse": True}
     if message:
         payload["comment"] = message
 
-    graph.request_cfg(config, client, settings, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
+    graph.request_cfg(config, client, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
     return {"status": response}

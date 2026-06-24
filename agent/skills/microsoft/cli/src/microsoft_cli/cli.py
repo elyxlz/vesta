@@ -12,7 +12,6 @@ import httpx
 from .config import Config
 from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
 from .context import MicrosoftContext
-from .settings import MicrosoftSettings
 
 
 def _write_pid(config):
@@ -392,7 +391,6 @@ def _dispatch_calendar(args, config, client):
 
 def _run_serve(config: Config, notif_dir: Path):
     notif_dir.mkdir(parents=True, exist_ok=True)
-    settings = MicrosoftSettings()
     http_client = httpx.Client(timeout=30.0, follow_redirects=True)
 
     monitor_base_dir = config.data_dir / "monitor"
@@ -424,7 +422,6 @@ def _run_serve(config: Config, notif_dir: Path):
         base_url=config.base_url,
         upload_chunk_size=config.upload_chunk_size,
         folders=config.folders,
-        settings=settings,
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 
