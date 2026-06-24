@@ -133,7 +133,7 @@
   },
   {
     "name": "timezone",
-    "description": "Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when `$TZ` is not set yet."
+    "description": "Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when the timezone is still the default `UTC`."
   },
   {
     "name": "torrents",

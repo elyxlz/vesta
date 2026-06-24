@@ -514,12 +514,6 @@ async fn list_agents_handler(
 struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
-    timezone: Option<String>,
-    /// Freeform setup notes the creator wants the new agent to start with: what it
-    /// learned about the user during onboarding, plus any skills or services to set
-    /// up. Written to ~/agent/data/seed-context.md in the container; the agent folds
-    /// the background into its memory and acts on the setup it asks for at first wake.
-    seed_context: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -553,7 +547,7 @@ async fn create_agent_handler(
         phases.set_build_phase(&progress_name, phase);
     }));
 
-    let result = create_and_start(&state, &name, manage_core_code, &body, &progress).await;
+    let result = create_and_start(&state, &name, manage_core_code, &progress).await;
     state.clear_build_phase(&name);
     let name = result?;
 
@@ -566,10 +560,9 @@ async fn create_and_start(
     state: &SharedState,
     name: &str,
     manage_core_code: bool,
-    body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_context.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, progress)
         .await
         .map_err(map_docker_err)?;
 

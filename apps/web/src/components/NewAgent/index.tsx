@@ -50,8 +50,13 @@ export function NewAgent() {
         await waitUntilRunning(agentName, START_TIMEOUT_MS);
         if (cancelled) return;
 
-        // Phase 3: set credentials + preferences (provider, personality, model, context).
-        await setProvider(agentName, providerResult, personality ?? undefined);
+        // Phase 3: set credentials + preferences (provider, personality, model, context, timezone).
+        await setProvider(
+          agentName,
+          providerResult,
+          personality ?? undefined,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
         if (cancelled) return;
 
         // Phase 4: wait for the provision-triggered restart to settle.
