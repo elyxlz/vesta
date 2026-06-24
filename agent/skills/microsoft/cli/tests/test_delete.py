@@ -10,10 +10,10 @@ from microsoft_cli.config import Config
 def patched(monkeypatch):
     calls: list[dict] = []
 
-    def fake_account_id(account_email, cache_file, *, settings):
+    def fake_account_id(account_email, cache_file):
         return "acct-123"
 
-    def fake_request(client, cache_file, scopes, settings, base_url, method, path, account_id=None, **kwargs):
+    def fake_request(client, cache_file, scopes, base_url, method, path, account_id=None, **kwargs):
         calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
         if method == "GET":
             return {"value": calls_state["messages"]}
@@ -21,7 +21,6 @@ def patched(monkeypatch):
 
     calls_state = {"messages": []}
 
-    monkeypatch.setattr(email, "_get_settings", lambda: object())
     monkeypatch.setattr(email.auth, "get_account_id_by_email", fake_account_id)
     monkeypatch.setattr(email.graph, "request", fake_request)
     return calls, calls_state

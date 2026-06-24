@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,3 +22,9 @@ class MicrosoftSettings(BaseSettings):
                 "Get one from https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
             )
         return self
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> MicrosoftSettings:
+    """Single owner of the env-derived settings; read once per process."""
+    return MicrosoftSettings()
