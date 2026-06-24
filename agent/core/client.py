@@ -82,7 +82,11 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         # crossing (diagnostics.py), surface warn-level conditions as an "error" event.
         state.event_bus.emit({"type": "error", "text": msg})
         return False
-    except (OSError, RuntimeError) as e:
+    except Exception as e:
+        # interrupt() is best-effort. The official SDK surfaces failures across a wide error
+        # type (ClaudeSDKError/CLIConnectionError when disconnected, a bare Exception on a
+        # control-response error), so catch broadly here and log rather than let an interrupt
+        # failure abort the turn the caller is trying to interrupt.
         diag = diagnostics.format_hang_diagnostics(state)
         logger.error(f"Interrupt failed: {e} | {diag}")
         return False
@@ -188,9 +192,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
             # OpenRouter's upstream 401/402 is caught by its cache proxy (it sees every status code).
-            # Claude bypasses that proxy, so its terminal auth/billing errors surface only as an
-            # api-error assistant turn reconstructed from the transcript (the tmux cc_sdk never
-            # exposes the SDK's error/retry stream events) — detected on the text just below.
+            # Claude bypasses that proxy, so its terminal auth/billing errors surface as the SDK's
+            # classified AssistantMessage.error (authentication_failed / billing_error), detected by
+            # is_terminal_auth_error just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)

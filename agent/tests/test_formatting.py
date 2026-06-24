@@ -145,6 +145,20 @@ def test_parse_sdk_message_extracts_thinking_blocks():
     assert has_tool_use is False
 
 
+def test_parse_sdk_message_returns_session_id_from_init():
+    """The init message carries the session_id first; parse must return it so the caller persists
+    it immediately (resume survives a first-turn crash before any ResultMessage)."""
+    from claude_agent_sdk import SystemMessage
+
+    msg = SystemMessage(subtype="init", data={"session_id": "sess-abc-123", "slash_commands": ["compact"]})
+
+    texts, thinking_blocks, context, session_id, has_tool_use = parse_sdk_message(msg, sub_agent_context=None)
+
+    assert session_id == "sess-abc-123"
+    assert texts == []
+    assert has_tool_use is False
+
+
 def test_process_message_always_streams():
     """process_message must always pass show_output=True -- regression guard."""
     import ast

@@ -131,5 +131,8 @@ async def log_context_usage(state: vm.State) -> None:
         state.context_warning_active = over_threshold
     except TimeoutError:
         logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s, skipping")
-    except (OSError, RuntimeError, KeyError, TypeError):
-        pass
+    except Exception as e:
+        # Best-effort observability only. The official SDK's get_context_usage drives a control
+        # request that can raise ClaudeSDKError or a bare Exception on an error/timeout response;
+        # a context-usage probe must never escape and kill the message processor.
+        logger.warning(f"context-usage probe failed: {e}")

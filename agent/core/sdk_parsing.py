@@ -119,11 +119,15 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
-            sid = msg.data["session_id"][:16] if isinstance(msg.data, dict) and "session_id" in msg.data else "?"
-            logger.debug(f"[init] session_id={sid}")
-        else:
-            raw = json.dumps(msg.data, default=str)
-            logger.system(f"[{msg.subtype}] {raw[:500]}")
+            # The init message carries the session_id first, before any ResultMessage. Return it so
+            # the caller persists it immediately: a fresh turn that crashes before completing can
+            # still be resumed (the official client exposes no session_id attribute to fall back on).
+            init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
+            if init_sid:
+                logger.debug(f"[init] session_id={init_sid[:16]}")
+            return ([], [], sub_agent_context, init_sid, False)
+        raw = json.dumps(msg.data, default=str)
+        logger.system(f"[{msg.subtype}] {raw[:500]}")
         return ([], [], sub_agent_context, None, False)
 
     if not isinstance(msg, AssistantMessage):
