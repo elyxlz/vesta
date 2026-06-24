@@ -27,7 +27,7 @@ import {
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
-import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
+import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";

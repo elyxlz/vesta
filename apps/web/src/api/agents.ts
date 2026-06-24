@@ -1,4 +1,4 @@
-import { apiJson, apiFetch, jsonInit } from "./client";
+import { apiJson, apiFetch } from "./client";
 
 export interface OpenRouterConfig {
   key: string;
@@ -18,35 +18,57 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Set an agent's provider credentials (Claude OAuth blob or OpenRouter key + model), then apply
-/// the chosen preferences (personality, Claude model, context window) to the config store. Vestad
-/// restarts the agent to apply both.
+/// Provision an agent: set provider auth, provider-owned prefs (model, context window), and the
+/// general personality pref in one request. Vestad writes each to its owner and restarts the agent
+/// once — doing them as separate restart-on-write calls raced (a later write hit the agent
+/// mid-restart and was dropped). The caller splits the parts; vestad just forwards each.
 export async function setProvider(
   name: string,
   result: ProviderResult,
   personality?: string,
 ): Promise<void> {
-  const body: Record<string, unknown> =
+  const provider: Record<string, unknown> =
     result.kind === "claude"
       ? { credentials: result.credentials }
       : {
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  await apiFetch(
-    `/agents/${encodeURIComponent(name)}/provider`,
-    jsonInit("POST", body),
-  );
-  // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
-  // preference applied here in one PUT.
+  // Provider-owned prefs. OpenRouter's model rides in the auth body above (openrouter_model), so
+  // only Claude carries an explicit agent_model here; context applies to both.
+  const providerConfig: Record<string, unknown> = {};
+  if (result.kind === "claude" && result.model)
+    providerConfig.agent_model = result.model;
+  if (result.maxContextTokens != null)
+    providerConfig.max_context_tokens = result.maxContextTokens;
+  // General prefs.
   const config: Record<string, unknown> = {};
   if (personality) config.agent_personality = personality;
-  if (result.kind === "claude" && result.model)
-    config.agent_model = result.model;
-  if (result.maxContextTokens != null) {
-    config.max_context_tokens = result.maxContextTokens;
-  }
-  if (Object.keys(config).length > 0) await setConfig(name, config);
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, provider_config: providerConfig, config }),
+  });
+}
+
+/// Update provider-owned preferences (model and/or context window) without touching auth. Vestad
+/// restarts the agent to apply.
+export async function setProviderConfig(
+  name: string,
+  prefs: { agent_model?: string; max_context_tokens?: number },
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_config: prefs }),
+  });
+}
+
+/// Sign out: clear the agent's provider credentials, leaving it not_authenticated until reconnected.
+export async function signOutProvider(name: string): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "DELETE",
+  });
 }
 
 export interface ProviderInfo {
@@ -62,36 +84,28 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// Update any agent config field via its config store (PUT /config), keyed by VestaConfig field name.
-/// An omitted field is left unchanged, a null clears it; vestad restarts the agent to apply.
-export async function setConfig(
-  name: string,
-  config: Record<string, unknown>,
-): Promise<void> {
-  await apiFetch(
-    `/agents/${encodeURIComponent(name)}/config`,
-    jsonInit("PUT", config),
-  );
-}
-
-/// Change only the model preference. Vestad restarts the agent so it takes effect.
+/// Change only the model preference (provider-owned). Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await setConfig(name, { agent_model: model });
+  await setProviderConfig(name, { agent_model: model });
 }
 
-/// Change only the context window (tokens). Vestad restarts the agent so it takes effect.
+/// Change only the context window (provider-owned). Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await setConfig(name, { max_context_tokens: maxContextTokens });
+  await setProviderConfig(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
 /// context) are sent once it's up, via `setProvider`.
 export async function createAgent(name: string): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  await apiJson("/agents", jsonInit("POST", { name, timezone }));
+  await apiJson("/agents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, timezone }),
+  });
 }
 
 /// Coarse, ordered stages of first-time agent creation reported by vestad while
@@ -128,16 +142,11 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
-// A status the agent can never advance past, so polling should fail fast instead of
-// waiting for the deadline. `not_authenticated` is terminal for "alive" but a success
-// for "running" (a fresh agent boots there), so each waiter passes its own success set.
-const TERMINAL_STATUSES = ["dead", "stopped", "not_found", "not_authenticated"];
-
-async function waitForStatus(
+/// Poll /agents/{name} until it reports "alive" or "not_authenticated".
+/// A brand-new empty agent boots into not_authenticated until provisioned.
+export async function waitUntilRunning(
   name: string,
   timeoutMs: number,
-  successStatuses: string[],
-  timedOutMessage: string,
   pollIntervalMs = 500,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -145,69 +154,71 @@ async function waitForStatus(
     const resp = await apiJson<{ status: string }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (successStatuses.includes(resp.status)) return;
-    if (TERMINAL_STATUSES.includes(resp.status)) {
+    if (resp.status === "alive" || resp.status === "not_authenticated") return;
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found"
+    ) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  throw new Error(`${name}: ${timedOutMessage}`);
+  throw new Error(`${name}: timed out waiting for HTTP server`);
 }
 
-/// Poll /agents/{name} until it reports "alive" or "not_authenticated".
-/// A brand-new empty agent boots into not_authenticated until provisioned.
-export function waitUntilRunning(
+export async function waitUntilAlive(
   name: string,
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  return waitForStatus(
-    name,
-    timeoutMs,
-    ["alive", "not_authenticated"],
-    "timed out waiting for HTTP server",
-    pollIntervalMs,
-  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const resp = await apiJson<{ status: string }>(
+      `/agents/${encodeURIComponent(name)}`,
+    );
+    if (resp.status === "alive") return;
+    if (
+      resp.status === "dead" ||
+      resp.status === "stopped" ||
+      resp.status === "not_found" ||
+      resp.status === "not_authenticated"
+    ) {
+      throw new Error(`${name}: ${resp.status}`);
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`${name}: timed out waiting to become alive`);
 }
 
-export function waitUntilAlive(
-  name: string,
-  timeoutMs: number,
-  pollIntervalMs = 500,
-): Promise<void> {
-  return waitForStatus(
-    name,
-    timeoutMs,
-    ["alive"],
-    "timed out waiting to become alive",
-    pollIntervalMs,
-  );
-}
-
-async function agentAction(name: string, action: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/${action}`, {
+export async function startAgent(name: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/start`, {
     method: "POST",
   });
 }
 
-export function startAgent(name: string): Promise<void> {
-  return agentAction(name, "start");
+export async function stopAgent(name: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/stop`, {
+    method: "POST",
+  });
 }
 
-export function stopAgent(name: string): Promise<void> {
-  return agentAction(name, "stop");
+export async function restartAgent(name: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/restart`, {
+    method: "POST",
+  });
 }
 
-export function restartAgent(name: string): Promise<void> {
-  return agentAction(name, "restart");
+export async function deleteAgent(name: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/destroy`, {
+    method: "POST",
+  });
 }
 
-export function deleteAgent(name: string): Promise<void> {
-  return agentAction(name, "destroy");
-}
-
-export function rebuildAgent(name: string): Promise<void> {
-  return agentAction(name, "rebuild");
+export async function rebuildAgent(name: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(name)}/rebuild`, {
+    method: "POST",
+  });
 }
 
 export interface BackupInfo {
@@ -248,27 +259,25 @@ export async function deleteBackup(
   );
 }
 
-export interface RateLimit {
-  utilization: number | null;
+/// Normalized, provider-agnostic plan usage (agent's GET /provider/usage). `meters` are
+/// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
+/// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
+export interface UsageMeter {
+  label: string;
+  used_pct: number | null;
   resets_at: string | null;
 }
 
-export interface ExtraUsage {
-  is_enabled: boolean;
-  monthly_limit: number | null;
-  used_credits: number | null;
-  utilization: number | null;
+export interface UsageCredits {
+  used: number | null;
+  limit: number | null;
 }
 
-export interface Utilization {
-  five_hour?: RateLimit | null;
-  seven_day?: RateLimit | null;
-  seven_day_oauth_apps?: RateLimit | null;
-  seven_day_opus?: RateLimit | null;
-  seven_day_sonnet?: RateLimit | null;
-  extra_usage?: ExtraUsage | null;
+export interface Usage {
+  meters: UsageMeter[];
+  credits: UsageCredits | null;
 }
 
-export async function fetchUsage(name: string): Promise<Utilization> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
+export async function fetchUsage(name: string): Promise<Usage> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/provider/usage`);
 }

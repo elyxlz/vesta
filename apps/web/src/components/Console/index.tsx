@@ -1,5 +1,11 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
-import { Virtuoso, type Components } from "react-virtuoso";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +22,12 @@ import { cn } from "@/lib/utils";
 const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
-const START_INDEX = 1_000_000;
+// One mono line is ~19px; wrapped lines measure taller (measureElement corrects).
+const ESTIMATED_LINE_HEIGHT = 20;
+// Render margin beyond the viewport so rows are measured before they scroll into view.
+const OVERSCAN_ROWS = 16;
+// How close to the bottom still counts as pinned for follow-on-append.
+const AT_BOTTOM_THRESHOLD_PX = 80;
 
 const LOG_LEVEL_TAGS = new Set([
   "DEBUG",
@@ -90,46 +101,12 @@ interface LogLine {
   html: string;
 }
 
-interface ConsoleContext {
-  fullscreen?: boolean;
-  navbarHeight: number;
-  ended: boolean;
-}
-
-const Scroller: Components<LogLine, ConsoleContext>["Scroller"] = forwardRef(
-  function Scroller({ context, style, ...props }, ref) {
-    const fullscreen = context?.fullscreen;
-    const navbarHeight = context?.navbarHeight ?? 0;
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className={fullscreen ? "px-page pb-page" : "px-3 py-2"}
-        style={{
-          ...style,
-          ...(fullscreen
-            ? {
-                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
-              }
-            : {}),
-        }}
-      />
-    );
-  },
-);
-
 function ReconnectingNotice() {
   return <div className="text-center text-white/70 py-2">— reconnecting —</div>;
 }
 
-function Footer({ context }: { context?: ConsoleContext }) {
-  if (!context?.ended) return null;
-  return <ReconnectingNotice />;
-}
-
-function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
-  if (context?.ended) return <ReconnectingNotice />;
+function StreamingPlaceholder({ ended }: { ended: boolean }) {
+  if (ended) return <ReconnectingNotice />;
   return (
     <div className="min-h-full flex flex-col items-center justify-end gap-2 py-1">
       <div className="flex items-center gap-1">
@@ -141,12 +118,6 @@ function EmptyPlaceholder({ context }: { context?: ConsoleContext }) {
     </div>
   );
 }
-
-const consoleComponents: Components<LogLine, ConsoleContext> = {
-  Scroller,
-  Footer,
-  EmptyPlaceholder,
-};
 
 interface ConsoleProps {
   name: string;
@@ -229,12 +200,36 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [onClose]);
 
-  const context = useMemo<ConsoleContext>(
-    () => ({ fullscreen, navbarHeight, ended }),
-    [fullscreen, navbarHeight, ended],
-  );
-  const firstItemIndex =
-    lines.length > 0 ? START_INDEX + lines[0].id : START_INDEX;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const count = lines.length;
+
+  const getItemKey = useCallback((index: number) => lines[index].id, [lines]);
+
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ESTIMATED_LINE_HEIGHT,
+    getItemKey,
+    // End-anchored stream: stick to the bottom on new lines (unless the user scrolled up),
+    // and stay anchored when old lines drop off the front at the MAX_LINES cap.
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
+    overscan: OVERSCAN_ROWS,
+    directDomUpdates: true,
+  });
+
+  // Snap to the latest line when the stream first produces output (and after an agent
+  // switch resets the list).
+  const hadLinesRef = useRef(false);
+  useLayoutEffect(() => {
+    const has = count > 0;
+    if (has && !hadLinesRef.current) virtualizer.scrollToEnd();
+    hadLinesRef.current = has;
+  }, [count, virtualizer]);
+
+  const items = virtualizer.getVirtualItems();
+  const linePad = fullscreen ? "px-page" : "px-3";
 
   return (
     <div
@@ -264,24 +259,69 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
       )}
 
       <div className="flex-1 min-h-0">
-        <Virtuoso<LogLine, ConsoleContext>
-          className="h-full font-mono text-xs leading-[1.6] text-white/70"
-          data={lines}
-          context={context}
-          components={consoleComponents}
-          firstItemIndex={firstItemIndex}
-          computeItemKey={(_index, line) => line.id}
-          alignToBottom
-          followOutput={(atBottom) => (atBottom ? "auto" : false)}
-          atBottomThreshold={80}
-          initialTopMostItemIndex={{ index: "LAST", align: "end" }}
-          itemContent={(_index, line) => (
+        <div
+          ref={parentRef}
+          className="h-full overflow-y-auto overflow-x-hidden font-mono text-xs leading-[1.6] text-white/70"
+          style={
+            fullscreen
+              ? {
+                  maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+                }
+              : undefined
+          }
+        >
+          {count === 0 ? (
+            <StreamingPlaceholder ended={ended} />
+          ) : (
             <div
-              className={cn("break-words whitespace-pre-wrap", line.colorClass)}
-              dangerouslySetInnerHTML={{ __html: line.html }}
-            />
+              ref={virtualizer.containerRef}
+              style={{ position: "relative", width: "100%" }}
+            >
+              {items.map((item) => {
+                const line = lines[item.index];
+                const isFirst = item.index === 0;
+                const isLast = item.index === count - 1;
+                return (
+                  <div
+                    key={item.key}
+                    ref={virtualizer.measureElement}
+                    data-index={item.index}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                    }}
+                  >
+                    {isFirst &&
+                      (fullscreen ? (
+                        <div
+                          style={{
+                            height: `calc(${navbarHeight}px + var(--page-padding-x))`,
+                          }}
+                        />
+                      ) : (
+                        <div className="h-2" />
+                      ))}
+                    <div
+                      className={cn(
+                        "break-words whitespace-pre-wrap",
+                        linePad,
+                        line.colorClass,
+                      )}
+                      dangerouslySetInnerHTML={{ __html: line.html }}
+                    />
+                    {isLast && (
+                      <div className={fullscreen ? "pb-page" : "pb-2"}>
+                        {ended && <ReconnectingNotice />}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
-        />
+        </div>
       </div>
     </div>
   );

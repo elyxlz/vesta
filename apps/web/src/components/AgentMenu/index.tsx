@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreVertical, SlidersHorizontal } from "lucide-react";
-import { SettingsDialog } from "@/components/Settings";
+import { MoreVertical } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +28,6 @@ export function AgentMenu() {
   const appMode = useAppMode((s) => s.mode);
 
   const [open, setOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const isMobile = useIsMobile();
 
@@ -47,11 +45,13 @@ export function AgentMenu() {
     onToggle: () => void (isRunning ? stop() : start()),
     onLogs: () => navigate(`/agent/${encodeURIComponent(name)}/logs`),
     onToolCalls: () => setShowToolCalls((v) => !v),
-    onOpenSettings: () => setSettingsOpen(true),
+    onAppSettings: () => navigate("/settings"),
+    onAgentSettings: () =>
+      navigate(`/agent/${encodeURIComponent(name)}/settings`),
     onRestart: () => void restart(),
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
-    onAuthenticate: () => handleOpenAuth(),
+    onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
     isAuthenticated: Boolean(agent && agent.status !== "not_authenticated"),
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
@@ -86,17 +86,6 @@ export function AgentMenu() {
     }
   }, [debugJson]);
 
-  const agentSettingsSlot = (
-    <Button
-      variant="default"
-      className="w-full justify-start"
-      onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}
-    >
-      <SlidersHorizontal data-icon="inline-start" />
-      {name}'s settings
-    </Button>
-  );
-
   return (
     <>
       {isMobile ? (
@@ -114,11 +103,6 @@ export function AgentMenu() {
           trigger={trigger}
         />
       )}
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        agentSettingsSlot={agentSettingsSlot}
-      />
       <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
         <DialogContent
           className="max-w-lg max-h-[80vh] overflow-auto"

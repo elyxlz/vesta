@@ -168,6 +168,12 @@ enum Command {
         #[arg(long)]
         context_window: Option<u64>,
     },
+    /// Sign out an agent: clear its provider credentials. It stays running but can't respond
+    /// until you reconnect a provider with `vesta auth`.
+    Logout {
+        /// Agent name
+        name: String,
+    },
     /// View or edit an agent's constitution (a charter prepended to its memory; the agent
     /// cannot edit it). With no flags, prints the current constitution.
     Constitution {
@@ -1050,7 +1056,7 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() {
-                c.set_config(&name, model.as_deref(), context_window)
+                c.set_provider_prefs(&name, model.as_deref(), context_window)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
@@ -1144,6 +1150,12 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{name}: restarted");
+        }
+
+        Command::Logout { name } => {
+            let c = get_client(host_ref, token_ref);
+            c.logout(&name).unwrap_or_else(|e| platform::die(&e));
+            eprintln!("{name}: signed out (reconnect a provider with `vesta auth {name}`)");
         }
 
         Command::Gateway { action } => match action {

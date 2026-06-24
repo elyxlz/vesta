@@ -18,7 +18,7 @@ from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, Too
 from . import logger
 from . import models as vm
 from . import state_store
-from .provider import OPENROUTER_SMALL_FAST_MODEL
+from .provider import OPENROUTER_SMALL_FAST_MODEL, is_terminal_auth_error, observed_provider_failure
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, EXPANDED_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -188,11 +188,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
-            # Terminal upstream auth/billing errors (401/402) are detected in the
-            # OpenRouter cache proxy now: the tmux-driven cc_sdk reconstructs messages
-            # from the transcript and never surfaces the SDK's old `api_retry`/error
-            # stream events, so the proxy (which sees every upstream status) is the only
-            # place the signal exists. See openrouter_cache._handle.
+            # OpenRouter's upstream 401/402 is caught by its cache proxy (it sees every status code).
+            # Claude bypasses that proxy, so its terminal auth/billing errors surface only as an
+            # api-error assistant turn reconstructed from the transcript (the tmux cc_sdk never
+            # exposes the SDK's error/retry stream events) — detected on the text just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
@@ -200,9 +199,26 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 if state.persisted.session_id:
                     logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
                 persist_session_id(session_id, state=state, config=config)
-            text = _render(texts, thinking_blocks)
-            if text:
-                responses.append(text)
+            if show_output:
+                for block in thinking_blocks:
+                    _emit_thinking(block)
+            text = "\n".join(texts) if texts else None
+            if isinstance(msg, AssistantMessage) and is_terminal_auth_error(is_api_error=msg.is_api_error, text=text):
+                # Claude credential died (401) or account can't pay (402). Flip to not_authenticated,
+                # stop the CLI's internal retries, and end the turn cleanly so the app shows "not
+                # signed in" in ~3s instead of hanging to the response timeout and restart-looping.
+                logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
+                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
+                await attempt_interrupt(state, config=config, reason="Provider auth lost")
+                break
+            if not text:
+                continue
+            responses.append(text)
+            if not show_output:
+                continue
+            filtered = sdk_parsing.filter_tool_lines(text)
+            if filtered:
+                _emit(filtered)
     finally:
         state.compacting = False
         watchdog_stop.set()

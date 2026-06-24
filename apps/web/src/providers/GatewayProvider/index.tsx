@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   useState,
@@ -9,19 +7,18 @@ import {
 } from "react";
 import { apiFetch, apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
-import {
-  connectReconnectingWs,
-  type ReconnectingWsHandle,
-} from "@/lib/reconnecting-ws";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
+import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { GatewayContext, disconnectedValue } from "./context";
+
+export { useGateway } from "./context";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
 // A manual check fetches from GitHub server-side, so allow longer than the
@@ -54,50 +51,14 @@ async function fetchManaged(): Promise<boolean> {
   }
 }
 
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+
 const VERSION_POLL_MS = 60000;
 
 // Brief grace before the disconnect overlay appears, so quick WS blips and the
 // gap between the initial version fetch and the first socket open don't flash it.
 const DISCONNECT_GRACE_MS = 750;
-
-interface GatewayContextValue {
-  reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
-  managed: boolean;
-  gatewayVersion: string;
-  gatewayBranch: string | null;
-  gatewayChannel: ReleaseChannel;
-  gatewayAutoUpdate: boolean;
-  gatewayPort: number;
-  versionChecked: boolean;
-  updateAvailable: boolean;
-  latestVersion: string | null;
-  agents: AgentInfo[];
-  agentsFetched: boolean;
-  send: (event: object) => boolean;
-  triggerGatewayUpdate: () => Promise<boolean>;
-  checkForUpdate: () => Promise<void>;
-}
-
-const GatewayContext = createContext<GatewayContextValue | null>(null);
-
-const disconnectedValue: GatewayContextValue = {
-  reachable: false,
-  managed: false,
-  gatewayVersion: "",
-  gatewayBranch: null,
-  gatewayChannel: "stable",
-  gatewayAutoUpdate: true,
-  gatewayPort: 0,
-  versionChecked: true,
-  updateAvailable: false,
-  latestVersion: null,
-  agents: [],
-  agentsFetched: false,
-  send: () => false,
-  triggerGatewayUpdate: async () => false,
-  checkForUpdate: async () => {},
-};
 
 function controlWsUrl(): string {
   const conn = getConnection();
@@ -122,11 +83,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
-  const [lastConnectAttempt, setLastConnectAttempt] = useState<number | null>(
-    null,
-  );
   const [showDisconnected, setShowDisconnected] = useState(false);
-  const wsRef = useRef<ReconnectingWsHandle | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
@@ -164,43 +122,63 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectDelay = RECONNECT_BASE_MS;
 
-    const handle = connectReconnectingWs({
-      beforeConnect: async () => {
-        setLastConnectAttempt(Date.now());
+    const doConnect = async () => {
+      if (cancelled) return;
 
-        // A dead session (refresh token expired/revoked) can never reconnect:
-        // bail out to the connect screen instead of retrying forever with a
-        // token vestad will keep rejecting. Transient failures keep the loop.
-        if ((await ensureFreshToken()) === "expired") {
-          if (!cancelled) expireSession();
-          return "stop";
-        }
+      // A dead session (refresh token expired/revoked) can never reconnect:
+      // bail out to the connect screen instead of retrying forever with a
+      // token vestad will keep rejecting. Transient failures keep the loop.
+      if ((await ensureFreshToken()) === "expired") {
+        if (!cancelled) expireSession();
+        return;
+      }
 
-        // Fetch version early via HTTP before WS connects
-        const data = await fetchVersionInfo();
-        if (!cancelled && data?.version) {
-          setGatewayVersion(data.version);
-          setGatewayBranch(data.branch ?? null);
-          applyUpdateInfo(data);
-          setVersionChecked(true);
-          if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
-            return "stop";
-        }
-        if (!cancelled) setVersionChecked(true);
+      let url: string;
+      try {
+        url = controlWsUrl();
+      } catch {
+        reconnectTimer = setTimeout(doConnect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+        return;
+      }
 
-        // Hosted vs self-hosted — non-blocking, never gates the connection.
-        void fetchManaged().then((m) => {
-          if (!cancelled) setManaged(m);
-        });
+      // Fetch version early via HTTP before WS connects
+      const data = await fetchVersionInfo();
+      if (!cancelled && data?.version) {
+        setGatewayVersion(data.version);
+        setGatewayBranch(data.branch ?? null);
+        applyUpdateInfo(data);
+        setVersionChecked(true);
+        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
+          return;
+      }
+      if (!cancelled) setVersionChecked(true);
 
-        return "open";
-      },
-      url: controlWsUrl,
-      onOpen: () => setReachable(true),
-      onMessage: (data) => {
+      // Hosted vs self-hosted — non-blocking, never gates the connection.
+      void fetchManaged().then((m) => {
+        if (!cancelled) setManaged(m);
+      });
+
+      if (cancelled) return;
+
+      socket = new WebSocket(url);
+      wsRef.current = socket;
+
+      socket.onopen = () => {
+        if (cancelled) return;
+        reconnectDelay = RECONNECT_BASE_MS;
+        setReachable(true);
+      };
+
+      socket.onmessage = (e) => {
+        if (cancelled) return;
+        if (typeof e.data !== "string") return;
         try {
-          const msg = JSON.parse(data);
+          const msg = JSON.parse(e.data);
           switch (msg.type) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
@@ -215,16 +193,32 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             }
           }
         } catch {
-          console.warn("ws: bad message", data);
+          console.warn("ws: bad message", e.data);
         }
-      },
-      onClose: () => setReachable(false),
-    });
-    wsRef.current = handle;
+      };
+
+      socket.onclose = () => {
+        if (cancelled) return;
+        socket = null;
+        wsRef.current = null;
+        setReachable(false);
+        reconnectTimer = setTimeout(doConnect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+      };
+
+      socket.onerror = () => {};
+    };
+
+    void doConnect();
 
     return () => {
       cancelled = true;
-      handle.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+        socket = null;
+      }
       wsRef.current = null;
     };
   }, [connectEpoch, expireSession, applyUpdateInfo]);
@@ -263,7 +257,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   }, [loading, reachable]);
 
   const send = (event: object): boolean => {
-    const ws = wsRef.current?.current();
+    const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
@@ -293,16 +287,14 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchDialog
+        <VersionMismatchScreen
           gatewayVersion={gatewayVersion}
           onUpdateGateway={triggerGatewayUpdate}
         />
       ) : (
         children
       )}
-      {showDisconnected && (
-        <DisconnectedOverlay lastAttempt={lastConnectAttempt} />
-      )}
+      {showDisconnected && <DisconnectedOverlay />}
     </GatewayContext.Provider>
   );
 }
@@ -319,12 +311,4 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       {children}
     </GatewayContext.Provider>
   );
-}
-
-export function useGateway() {
-  const context = useContext(GatewayContext);
-  if (!context) {
-    throw new Error("useGateway must be used within GatewayProvider");
-  }
-  return context;
 }

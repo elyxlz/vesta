@@ -22,7 +22,7 @@ export function AgentIslandExpanded({
   const { provider } = useProvider(name);
   const model = provider && provider.kind !== "none" ? provider.model : null;
   return (
-    <div className="flex h-[168px] w-[168px] flex-col items-center justify-center gap-2 will-change-transform">
+    <div className="relative -top-2 flex h-[168px] w-[168px] flex-col items-center justify-center gap-2 will-change-transform">
       <motion.div
         layoutId="agent-island-orb"
         layout
@@ -36,21 +36,23 @@ export function AgentIslandExpanded({
           label={`${name}: ${orbState}`}
         />
       </motion.div>
-      <div className="-mt-2 flex flex-col items-center justify-center gap-1 text-center will-change-transform">
+      <div className="-mt-4 flex flex-col items-center justify-center gap-1 text-center will-change-transform">
         <motion.div
           layoutId="agent-island-name"
           layout
           transition={agentIslandContentTransition}
+          className="will-change-transform"
         >
-          <CardTitle className="line-clamp-2 px-0.5 text-center font-serif font-medium leading-tight tracking-tight">
+          <CardTitle className="line-clamp-2 px-0.5 text-center font-serif text-base sm:text-lg font-medium leading-tight tracking-tight">
             {name}
           </CardTitle>
         </motion.div>
         <motion.div
+          layoutId="agent-island-status"
+          layout
           aria-live="polite"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ ...agentIslandContentTransition, delay: 0.1 }}
+          transition={agentIslandContentTransition}
+          className="mt-0.5 will-change-transform"
         >
           <CardDescription
             className={cn(
@@ -66,7 +68,7 @@ export function AgentIslandExpanded({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ ...agentIslandContentTransition, delay: 0.1 }}
-            className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground"
+            className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground will-change-transform"
           >
             {model}
           </motion.span>

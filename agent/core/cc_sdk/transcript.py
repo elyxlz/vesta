@@ -70,7 +70,9 @@ def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:
                     input=block["input"] if "input" in block else {},
                 )
             )
-    return AssistantMessage(content=blocks, model=message["model"] if "model" in message else None)
+    model = message["model"] if "model" in message else None
+    is_api_error = bool(obj["isApiErrorMessage"]) if "isApiErrorMessage" in obj else False
+    return AssistantMessage(content=blocks, model=model, is_api_error=is_api_error)
 
 
 def is_compact_summary(obj: dict[str, tp.Any]) -> bool:

@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
-import { StepHeading } from "../StepHeading";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
 import { ProviderIcon } from "../ProviderIcon";
+import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
 
 export function ModelStep({
@@ -17,6 +16,8 @@ export function ModelStep({
   models,
   allowCustom = true,
   submitLabel = "continue",
+  logo,
+  onCancel,
 }: {
   initialModel: string;
   onModelChange?: (model: string) => void;
@@ -26,6 +27,8 @@ export function ModelStep({
   models?: OpenRouterModelOption[];
   allowCustom?: boolean;
   submitLabel?: string;
+  logo?: ReactNode;
+  onCancel?: () => void;
 }) {
   const isFixed = models !== undefined;
   const [model, setModelInternal] = useState(
@@ -77,24 +80,22 @@ export function ModelStep({
 
   const canContinue = model.trim() !== "";
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canContinue) return;
-    onSubmit(model.trim());
-  };
-
   return (
-    <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <StepHeading
-        title="pick a model"
-        description={
-          isFixed ? "choose a model." : "top models on OpenRouter this week."
-        }
-      />
-
+    <ProviderStep
+      logo={logo}
+      title="pick a model"
+      subtitle={
+        isFixed ? "choose a model." : "top models on OpenRouter this week."
+      }
+      submitLabel={submitLabel}
+      submitDisabled={!canContinue}
+      onSubmit={() => {
+        if (canContinue) onSubmit(model.trim());
+      }}
+      onCancel={onCancel}
+    >
       <FieldGroup className="w-full gap-3">
         <Field>
-          <FieldLabel htmlFor="or-model-search">Model</FieldLabel>
           {isFixed ? (
             <ModelCardList
               models={filtered}
@@ -146,11 +147,7 @@ export function ModelStep({
           )}
         </Field>
       </FieldGroup>
-
-      <Button type="submit" className="w-full" disabled={!canContinue}>
-        {submitLabel}
-      </Button>
-    </form>
+    </ProviderStep>
   );
 }
 

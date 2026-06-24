@@ -12,7 +12,7 @@ from aiohttp import ClientSession, WSMsgType, web
 
 import core.models as vm
 from core.api import _ws_handler, start_ws_server
-from core.events import ChatEvent
+from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
 
 
@@ -68,6 +68,23 @@ async def test_ws_sends_history_by_default(event_bus):
 
 
 @pytest.mark.anyio
+async def test_ws_sends_empty_history_when_no_events(event_bus):
+    """The history event is always sent on connect, even with no events, so the client
+    can distinguish 'still loading' from 'no messages' instead of guessing."""
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                data = json.loads(msg.data)
+                assert data["type"] == "history"
+                assert data["events"] == []
+                assert data["cursor"] is None
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
 async def test_ws_skip_history_omits_history_event(event_bus):
     event_bus.emit(ChatEvent(type="chat", text="stored"))
     runner, base = await _start_server(event_bus)
@@ -81,6 +98,29 @@ async def test_ws_skip_history_omits_history_event(event_bus):
                 )
                 assert not any(e.get("type") == "history" for e in received)
                 assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_history_survives_notification_storm(event_bus):
+    """Regression: a burst of notifications used to fill the recent window and the
+    seeded history rendered empty. The WS now seeds the app-chat channel, so the
+    conversation comes through and notifications are excluded from history."""
+    event_bus.emit(UserEvent(type="user", text="are you there"))
+    event_bus.emit(ChatEvent(type="chat", text="i am here"))
+    for i in range(200):
+        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                data = json.loads(msg.data)
+                assert data["type"] == "history"
+                history_types = {e["type"] for e in data["events"]}
+                assert history_types == {"user", "chat"}
+                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["events"])
     finally:
         await runner.cleanup()
 
@@ -140,24 +180,22 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
 # --- Request-body validation models (PUT /config, POST /provider) ---
 
 
-def test_config_update_accepts_any_field_and_returns_sparse(config):
+def test_config_update_accepts_general_fields_and_returns_sparse(config):
     from core.config import validate_config_updates
 
-    # Any real config field may be set, by its VestaConfig name, not a fixed allow-list.
-    assert validate_config_updates(config, {"agent_model": "sonnet"}) == {"agent_model": "sonnet"}
+    # Any general (non-provider-owned) config field may be set, by its VestaConfig name.
+    assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
     assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
         "log_level": "DEBUG",
         "response_timeout": 30,
     }
-    # thinking takes the plain string form; the model coerces it on load.
-    assert validate_config_updates(config, {"thinking": "enabled"}) == {"thinking": "enabled"}
 
 
 def test_config_update_null_clears_a_key(config):
     from core.config import validate_config_updates
 
     # A null is preserved (not dropped) so the handler can clear that key in the store.
-    assert validate_config_updates(config, {"max_context_tokens": None}) == {"max_context_tokens": None}
+    assert validate_config_updates(config, {"nightly_memory_hour": None}) == {"nightly_memory_hour": None}
 
 
 def test_config_update_rejects_unknown_field(config):
@@ -171,13 +209,20 @@ def test_config_update_rejects_bad_values(config):
     from core.config import validate_config_updates
 
     for bad in [
-        {"max_context_tokens": 0},
         {"nightly_memory_hour": 99},
-        {"thinking": "x"},
         {"log_level": "LOUD"},
     ]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)
+
+
+def test_provider_prefs_reject_bad_values(config):
+    from core.config import validate_provider_prefs
+
+    # Provider prefs go through the same field constraints, on the /provider/config path.
+    for bad in [{"max_context_tokens": 0}, {"thinking": "x"}]:
+        with pytest.raises(pyd.ValidationError):
+            validate_provider_prefs(config, bad)
 
 
 def test_provider_update_accepts_each_provider():

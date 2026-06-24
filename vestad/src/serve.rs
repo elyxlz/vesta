@@ -880,6 +880,85 @@ async fn set_config_handler(
     forward_to_agent_and_restart(&state, &name, AgentWrite::Config, body).await
 }
 
+fn has_entries(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|fields| !fields.is_empty())
+}
+
+#[derive(Deserialize)]
+struct ProviderConfigRequest {
+    /// Provider auth body for the agent's `POST /provider` (`{credentials}` for Claude or
+    /// `{openrouter_key, openrouter_model}`). Omitted when only preferences change.
+    #[serde(default)]
+    provider: serde_json::Value,
+    /// Sparse provider-owned preferences for the agent's `PUT /provider/config`
+    /// (model, context, thinking).
+    #[serde(default)]
+    provider_config: serde_json::Value,
+    /// Sparse general preferences for the agent's `PUT /config` (personality).
+    #[serde(default)]
+    config: serde_json::Value,
+}
+
+/// Apply any of provider auth / provider preferences / general preferences, then restart the
+/// container ONCE. Each named part is forwarded to its own agent endpoint, so vestad carries no
+/// field taxonomy. Doing these as separate restart-on-write calls raced — a later write hit the
+/// agent mid-restart and 502'd, dropping the change. Writing everything before a single restart
+/// designs that race out of existence.
+async fn set_provider_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(req): Json<ProviderConfigRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    if has_entries(&req.provider) {
+        provider.set(&req.provider).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+    if has_entries(&req.provider_config) {
+        provider.put_provider_config(&req.provider_config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+    if has_entries(&req.config) {
+        provider.put_config(&req.config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    Ok(ok_json())
+}
+
+/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
+/// boots not_authenticated.
+async fn clear_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.clear().await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    Ok(ok_json())
+}
+
 // --- SSE Logs ---
 
 #[derive(Deserialize)]
@@ -2078,7 +2157,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
+        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler).delete(clear_provider_handler))
+        .route("/agents/{name}/provider/config", post(set_provider_config_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))

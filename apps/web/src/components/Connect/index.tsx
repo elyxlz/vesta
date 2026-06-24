@@ -19,6 +19,24 @@ import { useAuth } from "@/providers/AuthProvider";
 // the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
+// A soft rise-and-fade so the connect card settles in rather than snapping on.
+const connectEntrance = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.3, ease: "easeOut" },
+} as const;
+
+function ConnectHeader() {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <LogoText />
+      <p className="text-sm leading-none text-muted-foreground">
+        your unfair advantage
+      </p>
+    </div>
+  );
+}
+
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
   const [value, setValue] = useState("");
@@ -67,7 +85,6 @@ export function Connect() {
     if (busy) return;
     const link = parseConnectLink(value);
     if (!link) {
-      setError("paste your connect link");
       inputRef.current?.focus();
       return;
     }
@@ -101,14 +118,21 @@ export function Connect() {
     });
   };
 
-  // Still probing /info to avoid flashing the wrong form.
+  // Still probing /info to avoid flashing the wrong form. Keep the logo in place
+  // so resolving to a form doesn't jump the layout.
   if (managed === null) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-[240px] max-w-full px-4">
-            <ProgressBar />
-          </div>
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+          >
+            <ConnectHeader />
+            <div className="w-full">
+              <ProgressBar />
+            </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -120,8 +144,11 @@ export function Connect() {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
-            <LogoText className="mb-2" />
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+          >
+            <ConnectHeader />
             {sessionExpired && (
               <FieldDescription className="text-center">
                 your session expired, sign in again
@@ -162,7 +189,7 @@ export function Connect() {
                 self-hosting? connect with a link
               </button>
             )}
-          </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -171,18 +198,19 @@ export function Connect() {
   return (
     <div className="flex h-full flex-col p-page">
       <div className="flex flex-1 items-center justify-center">
-        <form
+        <motion.form
+          {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
+          className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4"
         >
-          <LogoText className="mb-2" />
+          <ConnectHeader />
           {sessionExpired && (
             <FieldDescription className="text-center">
               your session expired, connect again
             </FieldDescription>
           )}
 
-          <Field className="w-full">
+          <Field className="w-[300px] max-w-full">
             <FieldLabel htmlFor="connect-link" className="sr-only">
               Connect link
             </FieldLabel>
@@ -190,19 +218,20 @@ export function Connect() {
               ref={inputRef}
               id="connect-link"
               type="text"
-              placeholder="paste your connect link"
+              placeholder="paste your gateway connect link"
               autoComplete="off"
               autoFocus
               value={value}
               onChange={(e) => setValue(e.target.value)}
               className="text-center"
             />
-            <FieldDescription className="text-center">
-              paste the connect link vestad printed
-            </FieldDescription>
           </Field>
 
-          <Button type="submit" disabled={busy} className="w-full">
+          <Button
+            type="submit"
+            disabled={busy}
+            className="w-[180px] max-w-full"
+          >
             {busy ? "connecting..." : "connect"}
           </Button>
 
@@ -230,7 +259,7 @@ export function Connect() {
               </motion.p>
             )}
           </AnimatePresence>
-        </form>
+        </motion.form>
       </div>
     </div>
   );

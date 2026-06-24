@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeftIcon } from "lucide-react";
-import { stepTransition } from "@/lib/motion";
-import { errorMessage } from "@/lib/utils";
 import { claudeProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
@@ -12,26 +9,37 @@ import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
 import { AuthStep } from "./AuthStep";
+import { ClaudeLogo, OpenRouterLogo } from "./logos";
 import type { ProviderMode } from "./types";
 import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
 export function ProviderPicker({
   onDone,
   onBack,
+  className,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
+  className?: string;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
+  // The chosen provider drives the shared model/context steps (which list to
+  // show, which logo, and how the final result is shaped).
+  const [provider, setProvider] = useState<ProviderMode | null>(null);
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
+  const [credentials, setCredentials] = useState<string | null>(null);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
   // Creation defaults (context window + presets) come from vestad, not a local copy.
   const defaults = useAgentDefaults();
+  // Claude's fixed model list; fetched only while on the Claude path.
+  const claudeModels = useClaudeModels(provider === "claude");
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
@@ -45,9 +53,11 @@ export function ProviderPicker({
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
-        setAuthStartError(errorMessage(e, "failed to start auth"));
+        setAuthStartError(
+          (e as { message?: string })?.message || "failed to start auth",
+        );
       });
     return () => {
       cancelled = true;
@@ -58,23 +68,29 @@ export function ProviderPicker({
   // The user reaches this picker after the personality step, so it is loaded in practice.
   if (!defaults) {
     return (
-      <div className="flex w-[380px] max-w-full flex-col items-center gap-4 px-4">
+      <div
+        className={cn(
+          "flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+          className,
+        )}
+      >
         <Skeleton className="h-40 w-full rounded-2xl" />
       </div>
     );
   }
 
   const handleChoice = (next: ProviderMode) => {
+    setProvider(next);
+    // Claude authenticates first; OpenRouter takes a key first. Both then walk
+    // the shared model -> context steps.
     setStep(next === "claude" ? "auth" : "key");
   };
 
+  // Claude auth no longer ends the flow: stash the credentials and continue to
+  // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
-    onDone({
-      kind: "claude",
-      credentials: creds,
-      model: undefined,
-      maxContextTokens: defaults.context_tokens,
-    });
+    setCredentials(creds);
+    setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
@@ -83,11 +99,17 @@ export function ProviderPicker({
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
-    onDone({
-      kind: "openrouter",
-      config: { key, model },
-      maxContextTokens,
-    });
+    if (provider === "claude") {
+      if (credentials === null) return;
+      onDone({
+        kind: "claude",
+        credentials,
+        model: model || undefined,
+        maxContextTokens,
+      });
+      return;
+    }
+    onDone({ kind: "openrouter", config: { key, model }, maxContextTokens });
   };
 
   const resetAuth = () => {
@@ -95,66 +117,87 @@ export function ProviderPicker({
     setAuthStartError(null);
   };
 
+  // Cancel abandons the chosen provider and returns to the choice screen,
+  // distinct from the back-chevron which steps back one screen at a time.
+  const cancelToChoice = () => {
+    resetAuth();
+    setCredentials(null);
+    setProvider(null);
+    setStep("choice");
+  };
+
   const back = (() => {
     if (step === "choice") return onBack;
-    if (step === "model") return () => setStep("key");
+    // The model step's previous screen depends on how the provider started.
+    if (step === "model")
+      return () => setStep(provider === "claude" ? "auth" : "key");
     if (step === "context") return () => setStep("model");
     // auth and key both return to the choice screen.
-    return () => {
-      resetAuth();
-      setStep("choice");
-    };
+    return cancelToChoice;
   })();
 
+  const stepLogo = provider === "claude" ? <ClaudeLogo /> : <OpenRouterLogo />;
+
   return (
-    <div className="relative flex w-[380px] max-w-full flex-col items-center gap-4 px-4">
+    <div
+      className={cn(
+        "relative flex w-[380px] max-w-full flex-col items-start gap-4 px-4",
+        className,
+      )}
+    >
       {back && (
         <button
           type="button"
           onClick={back}
-          className="absolute top-0 left-0 -ml-1 flex size-7 items-center justify-center rounded-full text-muted-foreground transition hover:bg-input/60 hover:text-foreground"
+          className="absolute top-0 left-0 -ml-1 flex size-6 items-center justify-center rounded-full text-muted-foreground transition hover:bg-input/60 hover:text-foreground"
           aria-label="back"
         >
           <ChevronLeftIcon className="size-4" />
         </button>
       )}
 
-      <AnimatePresence mode="wait">
-        <motion.div key={step} {...stepTransition} className="w-full">
-          {step === "choice" && <ChoiceStep onPick={handleChoice} />}
-          {step === "auth" && (
-            <AuthStep
-              authStart={authStart}
-              startError={authStartError}
-              onCredentialsReady={handleCredentialsReady}
-              onCancel={() => {
-                resetAuth();
-                setStep("choice");
-              }}
-            />
-          )}
-          {step === "key" && (
-            <KeyStep initialKey={key} onNext={handleKeyNext} />
-          )}
-          {step === "model" && (
-            <ModelStep
-              initialModel={model}
-              onModelChange={setModel}
-              onSubmit={(m) => {
-                setModel(m);
-                setStep("context");
-              }}
-            />
-          )}
-          {step === "context" && (
-            <ContextStep
-              presets={defaults.context_presets}
-              initial={defaults.context_tokens}
-              onSubmit={handleContextSubmit}
-            />
-          )}
-        </motion.div>
-      </AnimatePresence>
+      <div className="w-full">
+        {step === "choice" && <ChoiceStep onPick={handleChoice} />}
+        {step === "auth" && (
+          <AuthStep
+            authStart={authStart}
+            startError={authStartError}
+            onCredentialsReady={handleCredentialsReady}
+            onCancel={cancelToChoice}
+          />
+        )}
+        {step === "key" && (
+          <KeyStep
+            initialKey={key}
+            onNext={handleKeyNext}
+            logo={<OpenRouterLogo />}
+            onCancel={cancelToChoice}
+          />
+        )}
+        {step === "model" && (
+          <ModelStep
+            initialModel={model}
+            onModelChange={setModel}
+            onSubmit={(m) => {
+              setModel(m);
+              setStep("context");
+            }}
+            models={provider === "claude" ? claudeModels : undefined}
+            allowCustom={provider !== "claude"}
+            logo={stepLogo}
+            onCancel={cancelToChoice}
+          />
+        )}
+        {step === "context" && (
+          <ContextStep
+            presets={defaults.context_presets}
+            initial={defaults.context_tokens}
+            onSubmit={handleContextSubmit}
+            logo={stepLogo}
+            onCancel={cancelToChoice}
+          />
+        )}
+      </div>
     </div>
   );
 }

@@ -14,18 +14,10 @@ from core.loops import (
     delete_notification_files,
     format_notification_batch,
     load_notifications,
-    load_new_notifications,
     monitor_loop,
     process_batch,
 )
 from wait_util import wait_for_condition
-
-
-@pytest.fixture
-def notif_config(config):
-    """config fixture with its notifications dir created — the setup nearly every test here shares."""
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    return config
 
 
 # --- _load_notification_files ---
@@ -78,10 +70,12 @@ VALID_NOTIF = json.dumps({"timestamp": "2025-01-01T00:00:00", "source": "test", 
     ids=["valid", "extra-fields", "bad-json", "missing-timestamp", "empty-object"],
 )
 @pytest.mark.anyio
-async def test_load_notifications_parsing(notif_config, content, should_parse):
-    (notif_config.notifications_dir / "test.json").write_text(content)
+async def test_load_notifications_parsing(tmp_path, content, should_parse):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    (config.notifications_dir / "test.json").write_text(content)
 
-    result = await load_notifications(config=notif_config)
+    result = await load_notifications(config=config)
 
     if should_parse:
         assert len(result) == 1
@@ -91,23 +85,27 @@ async def test_load_notifications_parsing(notif_config, content, should_parse):
 
 
 @pytest.mark.anyio
-async def test_load_notifications_deletes_bad_files(notif_config):
-    bad_file = notif_config.notifications_dir / "bad.json"
+async def test_load_notifications_deletes_bad_files(tmp_path):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    bad_file = config.notifications_dir / "bad.json"
     bad_file.write_text("not json")
 
-    await load_notifications(config=notif_config)
+    await load_notifications(config=config)
 
     assert not bad_file.exists(), "bad notification file should be deleted"
 
 
 @pytest.mark.anyio
-async def test_load_notifications_partial_success(notif_config):
+async def test_load_notifications_partial_success(tmp_path):
     """Mix of valid and invalid files: valid ones parse, invalid ones are deleted."""
-    (notif_config.notifications_dir / "good.json").write_text(VALID_NOTIF)
-    bad_file = notif_config.notifications_dir / "bad.json"
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    (config.notifications_dir / "good.json").write_text(VALID_NOTIF)
+    bad_file = config.notifications_dir / "bad.json"
     bad_file.write_text("broken")
 
-    result = await load_notifications(config=notif_config)
+    result = await load_notifications(config=config)
     assert len(result) == 1
     assert not bad_file.exists()
 
@@ -290,27 +288,14 @@ def test_batch_no_hint_for_non_message_type():
     assert "→ Reply using" not in formatted
 
 
-# --- load_new_notifications ---
-
-
-@pytest.mark.anyio
-async def test_load_new_notifications_emits_events(notif_config, state):
-    (notif_config.notifications_dir / "n.json").write_text(VALID_NOTIF)
-    q = state.event_bus.subscribe()
-
-    result = await load_new_notifications(state=state, config=notif_config)
-    assert len(result) == 1
-
-    event = q.get_nowait()
-    assert event["type"] == "notification"
-    assert event["source"] == "test"
-
-
 # --- process_batch ---
 
 
 @pytest.mark.anyio
-async def test_process_batch_queues_prompt(tmp_path, notif_config, state):
+async def test_process_batch_queues_prompt(tmp_path):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "n.json"
@@ -318,7 +303,7 @@ async def test_process_batch_queues_prompt(tmp_path, notif_config, state):
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
-        await process_batch([notif], queue=queue, state=state, config=notif_config)
+        await process_batch([notif], queue=queue, state=state, config=config)
 
     assert not queue.empty()
     prompt, is_user, file_paths = await queue.get()
@@ -327,7 +312,9 @@ async def test_process_batch_queues_prompt(tmp_path, notif_config, state):
 
 
 @pytest.mark.anyio
-async def test_process_batch_empty_is_noop(config, state):
+async def test_process_batch_empty_is_noop():
+    config = vm.VestaConfig()
+    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     await process_batch([], queue=queue, state=state, config=config)
@@ -335,9 +322,12 @@ async def test_process_batch_empty_is_noop(config, state):
 
 
 @pytest.mark.anyio
-async def test_process_batch_keeps_files_until_processing(tmp_path, notif_config, state):
+async def test_process_batch_keeps_files_until_processing(tmp_path):
     """process_batch must NOT delete files at enqueue time; files stay on disk until the message
     is fully processed so that a mid-compaction restart can recover unprocessed notifications."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "to-keep.json"
@@ -345,7 +335,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path, notif_config
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, state=state, config=notif_config)
+        await process_batch([notif], queue=queue, state=state, config=config)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths = await queue.get()
@@ -376,11 +366,12 @@ def test_is_new_json(change_val, path, expected):
 # --- monitor_loop routing ---
 
 
-@pytest.fixture
-def passive_config(notif_config):
-    """notif_config with proactive/dreamer side effects disabled so monitor_loop only does notification routing."""
-    notif_config.ephemeral = True  # no dreamer drops
-    return notif_config
+def _passive_config(tmp_path):
+    """Config that disables proactive/dreamer side effects so monitor_loop only does notification routing."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    config.ephemeral = True  # no dreamer drops
+    return config
 
 
 def _write_notif(directory, stem, *, interrupt, source="test", type_="message"):
@@ -403,15 +394,18 @@ async def _run_monitor(queue, *, state, config):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_interrupt_queued_while_not_idle(passive_config, state):
+async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
     """An interrupt:true notification is queued immediately even when the bus is not idle."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # explicitly NOT idle
     queue: asyncio.Queue = asyncio.Queue()
 
-    runner = _run_monitor(queue, state=state, config=passive_config)
+    runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        _write_notif(passive_config.notifications_dir, "urgent", interrupt=True)
+        _write_notif(config.notifications_dir, "urgent", interrupt=True)
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
         prompt, is_user, file_paths = await queue.get()
@@ -423,15 +417,18 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(passive_config, stat
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_passive_held_until_idle_then_flushed_once(passive_config, state):
+async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
     """A passive notification is held while the bus is not idle, then flushed exactly once on idle."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # held while busy
     queue: asyncio.Queue = asyncio.Queue()
 
-    runner = _run_monitor(queue, state=state, config=passive_config)
+    runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        path = _write_notif(passive_config.notifications_dir, "passive", interrupt=False)
+        path = _write_notif(config.notifications_dir, "passive", interrupt=False)
 
         # While not idle, the passive notification must stay on disk and not be queued.
         await wait_for_condition(lambda: not path.exists() or queue.qsize() == 0)
@@ -455,23 +452,26 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(passive_co
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_passive_not_double_queued_across_ticks(passive_config, state):
+async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
     """A passive file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
+    config = _passive_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # keep passive batch pending across ticks
     queue: asyncio.Queue = asyncio.Queue()
 
     notify_taps: list[None] = []
-    real_load = load_new_notifications
+    real_load = load_notifications
 
-    async def counting_load(*, state, config):
+    async def counting_load(*, config):
         notify_taps.append(None)
-        return await real_load(state=state, config=config)
+        return await real_load(config=config)
 
-    runner = _run_monitor(queue, state=state, config=passive_config)
+    runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        with patch("core.loops.load_new_notifications", counting_load):
-            path = _write_notif(passive_config.notifications_dir, "dup", interrupt=False)
+        with patch("core.loops.load_notifications", counting_load):
+            path = _write_notif(config.notifications_dir, "dup", interrupt=False)
             # Wait for the loader to observe the file across at least two ticks while held (not idle).
             await wait_for_condition(lambda: len(notify_taps) >= 2, message="monitor_loop did not tick twice")
             assert queue.empty(), "held passive file must not be queued while not idle"
@@ -484,6 +484,40 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(passive_confi
             # File stays on disk (deleted only after processing), but queued_paths dedup prevents re-queueing.
             assert queue.qsize() == 1, f"passive file must be queued once, got {queue.qsize()}"
             assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
+    finally:
+        await runner.aclose()
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
+    """A persisted file re-read every tick must emit a single 'notification' event, not one
+    per tick. Files kept on disk (e.g. deferred while unauthenticated) re-emitting every 2s
+    tick was the notification storm: 16 kept files -> ~8 db rows/sec, 3.6M rows."""
+    config = _passive_config(tmp_path)
+    config.monitor_tick_interval = 1
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("thinking")  # hold the passive file on disk across ticks
+    queue: asyncio.Queue = asyncio.Queue()
+    sub = state.event_bus.subscribe()
+
+    ticks = [0]
+    real_load = load_notifications
+
+    async def counting_load(*, config):
+        ticks[0] += 1
+        return await real_load(config=config)
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        with patch("core.loops.load_notifications", counting_load):
+            _write_notif(config.notifications_dir, "kept", interrupt=False)
+            await wait_for_condition(lambda: ticks[0] >= 3, message="monitor_loop did not re-read across ticks")
+
+        emitted = [sub.get_nowait() for _ in range(sub.qsize())]
+        notifs = [e for e in emitted if e["type"] == "notification"]
+        assert len(notifs) == 1, f"each notification must emit exactly once, got {len(notifs)} across {ticks[0]} ticks"
     finally:
         await runner.aclose()
 

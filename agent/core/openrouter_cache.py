@@ -36,13 +36,7 @@ from . import logger
 from .config import VestaConfig
 from .models import State
 from .provider import OPENROUTER_SMALL_FAST_MODEL
-from .provider import observed_provider_failure
-
-# Terminal upstream statuses that mean the provider can't be used as configured:
-# 401 (invalid/expired auth) and 402 (insufficient credits). Either flips the agent
-# to not_authenticated so a broken key fails `vesta setup` in seconds instead of the
-# agent idling until the ready timeout.
-TERMINAL_PROVIDER_ERRORS = (401, 402)
+from .provider import TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
 OPENROUTER_API = "https://openrouter.ai/api"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"

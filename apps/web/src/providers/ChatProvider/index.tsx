@@ -1,23 +1,11 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useChat } from "./use-chat";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
 import { useVoice } from "@/stores/use-voice";
+import { ChatContext, type ChatContextValue } from "./context";
 
-type ChatContextValue = ReturnType<typeof useChat> & {
-  showToolCalls: boolean;
-  setShowToolCalls: Dispatch<SetStateAction<boolean>>;
-};
-
-const ChatContext = createContext<ChatContextValue | null>(null);
+export { useChatContext } from "./context";
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { name, agent, setAgentState } = useSelectedAgent();
@@ -30,10 +18,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return () => setChattingAgent(null);
   }, [name, setChattingAgent]);
 
-  const ready = agent?.status === "alive";
+  // Connect once the agent's WS is up so chat history loads — including when the
+  // agent isn't authenticated yet (the composer stays disabled until sign-in).
+  const connectable =
+    agent?.status === "alive" || agent?.status === "not_authenticated";
   const chat = useChat({
     name,
-    active: ready,
+    active: connectable,
     onAssistantMessage: (text) => {
       speak(text);
       notifyAssistant(name, text);
@@ -48,12 +39,4 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const value: ChatContextValue = { ...chat, showToolCalls, setShowToolCalls };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
-}
-
-export function useChatContext() {
-  const context = useContext(ChatContext);
-  if (!context) {
-    throw new Error("useChatContext must be used within ChatProvider");
-  }
-  return context;
 }

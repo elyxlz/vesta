@@ -227,6 +227,26 @@ impl Client {
         }
     }
 
+    /// Poll until the agent is no longer up (settled to `stopped`/`dead`/`not_found`).
+    /// `stop`/`destroy` are asynchronous — the container takes time to wind down — so
+    /// tests must wait for the transition rather than reading status immediately.
+    pub fn wait_until_stopped(&self, name: &str, timeout_secs: u64) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut backoff = std::time::Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?.status;
+            if !crate::is_up(&status) {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
+                return Err(format!("{}: timeout waiting for stopped (status: {})", name, status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+        }
+    }
+
     /// Poll until the agent's HTTP server is bound (a settled status, not the
     /// transient "starting"). Auth state is now served by the agent over its WS
     /// port, so callers must wait for that port before asserting auth status.

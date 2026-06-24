@@ -1,13 +1,18 @@
 import * as React from "react";
 import { isTauri } from "@/lib/env";
+import {
+  ThemeProviderContext,
+  type ResolvedTheme,
+  type Theme,
+  type ThemeProviderState,
+} from "./context";
+
+export { useTheme } from "./context";
 
 const tauriCore = isTauri ? import("@tauri-apps/api/core") : null;
 function tauriInvoke(cmd: string, args?: Record<string, unknown>) {
   tauriCore?.then(({ invoke }) => invoke(cmd, args));
 }
-
-type Theme = "dark" | "light" | "system";
-type ResolvedTheme = "dark" | "light";
 
 type ThemeProviderProps = {
   children: React.ReactNode;
@@ -16,19 +21,8 @@ type ThemeProviderProps = {
   disableTransitionOnChange?: boolean;
 };
 
-type ThemeProviderState = {
-  theme: Theme;
-  resolvedTheme: ResolvedTheme;
-  setTheme: (theme: Theme) => void;
-  cycleTheme: () => void;
-};
-
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 const THEME_VALUES: Theme[] = ["dark", "light", "system"];
-
-const ThemeProviderContext = React.createContext<
-  ThemeProviderState | undefined
->(undefined);
 
 function isTheme(value: string | null): value is Theme {
   if (value === null) {
@@ -184,13 +178,3 @@ export function ThemeProvider({
     </ThemeProviderContext.Provider>
   );
 }
-
-export const useTheme = () => {
-  const context = React.useContext(ThemeProviderContext);
-
-  if (context === undefined) {
-    throw new Error("useTheme must be used within a ThemeProvider");
-  }
-
-  return context;
-};

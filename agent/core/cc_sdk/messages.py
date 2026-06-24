@@ -43,6 +43,10 @@ ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock
 class AssistantMessage:
     content: list[ContentBlock]
     model: str | None = None
+    # True when the claude CLI recorded this turn as an upstream API error (transcript
+    # `isApiErrorMessage`), so callers can distinguish a real error from the agent merely
+    # writing about one.
+    is_api_error: bool = False
 
 
 @dc.dataclass

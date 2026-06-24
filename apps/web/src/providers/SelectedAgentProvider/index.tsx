@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   startAgent,
   stopAgent,
@@ -17,40 +11,13 @@ import {
   deleteAgent,
   type BackupInfo,
 } from "@/api";
-import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useAgentOps } from "@/stores/use-agent-ops";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
-import {
-  getAgentVisualStatus,
-  type OrbVisualState,
-} from "@/components/Orb/styles";
+import { getAgentVisualStatus } from "@/components/Orb/styles";
+import { SelectedAgentContext } from "./context";
+import type { SelectedAgentContextValue } from "./context";
 
-interface SelectedAgentContextValue {
-  name: string;
-  agent: AgentInfo;
-  agentState: AgentActivityState;
-  setAgentState: (state: AgentActivityState) => void;
-
-  operation: AgentOperation;
-  error: string;
-  statusLabel: string;
-  orbState: OrbVisualState;
-  isBusy: boolean;
-
-  start: () => void;
-  stop: () => void;
-  restart: () => void;
-  rebuild: () => void;
-  backup: () => void;
-  backups: BackupInfo[];
-  refreshBackups: () => Promise<void>;
-  restore: (backupId: string) => void;
-  removeBackup: (backupId: string) => void;
-  remove: () => Promise<void>;
-}
-
-const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(
-  null,
-);
+export { useSelectedAgent } from "./context";
 
 export function SelectedAgentProvider({
   agent,
@@ -182,14 +149,4 @@ export function SelectedAgentProvider({
       {children}
     </SelectedAgentContext.Provider>
   );
-}
-
-export function useSelectedAgent() {
-  const context = useContext(SelectedAgentContext);
-  if (!context) {
-    throw new Error(
-      "useSelectedAgent must be used within SelectedAgentProvider",
-    );
-  }
-  return context;
 }

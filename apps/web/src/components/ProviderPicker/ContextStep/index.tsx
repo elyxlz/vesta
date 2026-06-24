@@ -1,7 +1,6 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState, type ReactNode } from "react";
 import type { ContextPreset } from "@/api/agent-defaults";
-import { StepHeading } from "../StepHeading";
+import { ProviderStep } from "../ProviderStep";
 
 // Presets + the default come from vestad (GET /agent-defaults), passed in by the parent,
 // so this step holds no copy of either.
@@ -10,27 +9,27 @@ export function ContextStep({
   initial,
   onSubmit,
   submitLabel = "continue",
+  logo,
+  onCancel,
 }: {
   presets: ContextPreset[];
   initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
+  logo?: ReactNode;
+  onCancel?: () => void;
 }) {
   const [selected, setSelected] = useState<number>(initial);
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(selected);
-      }}
-      className="flex w-full flex-col items-center gap-4"
+    <ProviderStep
+      logo={logo}
+      title="context window"
+      subtitle="how much the agent keeps in context before it compacts. larger holds more at once; smaller is cheaper and compacts sooner."
+      submitLabel={submitLabel}
+      onSubmit={() => onSubmit(selected)}
+      onCancel={onCancel}
     >
-      <StepHeading
-        title="context window"
-        description="how much the agent keeps in context before it compacts. larger holds more at once; smaller is cheaper and compacts sooner."
-      />
-
       <div className="flex w-full flex-col gap-1.5">
         {presets.map((preset) => (
           <button
@@ -50,10 +49,6 @@ export function ContextStep({
           </button>
         ))}
       </div>
-
-      <Button type="submit" className="w-full">
-        {submitLabel}
-      </Button>
-    </form>
+    </ProviderStep>
   );
 }
