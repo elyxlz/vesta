@@ -465,7 +465,9 @@ async def test_all_core_hook_events_reach_bridge(sandbox: Sandbox) -> None:
 
         return HookMatcher(matcher="*", hooks=[cb])
 
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})
+    # core.sdk_parsing is typed against the official claude_agent_sdk HookEvent set (a superset of
+    # cc_sdk's), so feeding its event keys into cc_sdk's ClaudeAgentOptions is a type-only seam.
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})  # ty: ignore[invalid-argument-type]
     # Representative payloads for the fields core's callbacks actually read.
     extras = {
         "PostToolUseFailure": {"tool_name": "Bash", "error": "boom"},

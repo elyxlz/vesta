@@ -5,7 +5,7 @@ import collections
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from core.cc_sdk import ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
 from core.diagnostics import format_crash_detail

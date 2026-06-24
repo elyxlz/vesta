@@ -62,9 +62,6 @@ def test_build_client_options_passes_resolved_context_window(tmp_path, state):
     options = build_client_options(config, state)
     # Overrides claude-code's 200k default for non-Anthropic models (claude-code#46416).
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
-    # Usage is reported against the RESOLVED window, not the raw config cap, so the
-    # context-usage % matches the real autocompact threshold.
-    assert options.max_context_tokens == 1_000_000
 
 
 def test_build_client_options_omits_context_window_when_unresolved(tmp_path, state):
@@ -72,7 +69,6 @@ def test_build_client_options_omits_context_window_when_unresolved(tmp_path, sta
     state.openrouter_proxy_url = "http://127.0.0.1:40000"
     options = build_client_options(config, state)
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
-    assert options.max_context_tokens is None
 
 
 def test_build_client_options_claude_default_keeps_1m_window(tmp_path, state):
@@ -81,7 +77,6 @@ def test_build_client_options_claude_default_keeps_1m_window(tmp_path, state):
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
-    assert options.max_context_tokens is None
 
 
 def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
@@ -90,7 +85,6 @@ def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "500000"
-    assert options.max_context_tokens == 500_000
 
 
 def test_build_client_options_claude_200k_drops_beta(tmp_path, state):

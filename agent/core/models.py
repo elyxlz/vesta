@@ -6,7 +6,7 @@ import time
 
 import pydantic as pyd
 from aiohttp.web import AppRunner
-from core.cc_sdk import ClaudeSDKClient
+from claude_agent_sdk import ClaudeSDKClient
 
 from .config import VestaConfig, load_config
 from .events import EventBus

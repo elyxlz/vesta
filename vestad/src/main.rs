@@ -71,14 +71,6 @@ enum Command {
         /// Agent name
         name: String,
     },
-    /// Attach to the agent's live claude session to watch (read-only) what it's doing
-    Attach {
-        /// Agent name
-        name: String,
-        /// Allow typing into the session. Risky: keystrokes race the agent's own driver
-        #[arg(long)]
-        write: bool,
-    },
     /// Connect a Cloudflare domain so your agent gets a public URL
     Connect,
     /// Manage the Cloudflare tunnel (advanced)
@@ -130,21 +122,6 @@ enum TunnelAction {
     },
     /// Tear down tunnel and DNS record
     Destroy,
-}
-
-/// Shell run inside the agent container to attach to the live claude session.
-///
-/// The claude TUI runs under a cc_sdk-named tmux socket (`ccsdk_<suffix>`) in the default
-/// per-uid socket dir; discover the newest one and attach to its session. Attaches read-only
-/// (`-r`) unless `write` is set: the agent's own driver is writing this same pane, so an
-/// unguarded second writer would inject keystrokes into claude's input and race it.
-fn attach_script(name: &str, write: bool) -> String {
-    let attach_flags = if write { "" } else { "-r" };
-    format!(
-        "sock=$(ls -t /tmp/tmux-0/ccsdk_* 2>/dev/null | head -1); \
-         if [ -z \"$sock\" ]; then echo 'no live claude session found for {name}'; exit 1; fi; \
-         exec tmux -S \"$sock\" attach {attach_flags}"
-    )
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -614,28 +591,6 @@ fn main() {
             }
         }
 
-        Command::Attach { name, write } => {
-            docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-            let docker = docker::connect().unwrap_or_else(|e| die(&e));
-            let cname = docker::container_name(&name);
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
-
-            let script = attach_script(&name, write);
-            let mode = if write { "read-write" } else { "read-only" };
-            eprintln!("attaching to {name}'s claude session ({mode}; detach with Ctrl-Q)…");
-            let status = std::process::Command::new("docker")
-                .args(["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash", "-lc", &script])
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
-            if !status.success() {
-                std::process::exit(status.code().unwrap_or(1));
-            }
-        }
-
         Command::Backup { action } => {
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -866,20 +821,5 @@ mod tests {
     fn local_health_url_none_without_port_file() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(local_health_url(dir.path()), None);
-    }
-
-    #[test]
-    fn attach_script_is_read_only_by_default() {
-        let script = attach_script("vesta", false);
-        assert!(script.contains("tmux -S \"$sock\" attach -r"));
-        assert!(script.contains("ccsdk_*"));
-        assert!(script.contains("no live claude session found for vesta"));
-    }
-
-    #[test]
-    fn attach_script_drops_read_only_guard_when_write() {
-        let script = attach_script("vesta", true);
-        assert!(script.contains("tmux -S \"$sock\" attach "));
-        assert!(!script.contains("attach -r"));
     }
 }

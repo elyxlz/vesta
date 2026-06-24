@@ -26,14 +26,10 @@ RUN for d in agent/skills/*/; do \
 WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project
 
-# Claude Code is pinned and owned by cc_sdk (CLAUDE_VERSION in core/cc_sdk/_claude_bin.py):
-# it downloads+verifies the matching native binary on demand, so the version never depends on
-# what's installed on the host or drifts via auto-update. Pre-fetch it into the image here
-# (so first-start pays no download) and symlink it onto PATH for any direct `claude` calls.
-RUN CLAUDE_BIN="$(uv run python -m core.cc_sdk._claude_bin)" && \
-    ln -sf "$CLAUDE_BIN" /usr/local/bin/claude && \
-    claude --version && \
-    mkdir -p /root/.claude
+# claude_agent_sdk ships its own bundled Claude Code CLI and resolves it at runtime, so the
+# image installs no separate `claude` binary. cc_sdk stays in the tree (tmux is kept) but is
+# dormant; if ever reactivated it fetches its own pinned binary under ~/.cache/cc-sdk.
+RUN mkdir -p /root/.claude
 WORKDIR /root
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall

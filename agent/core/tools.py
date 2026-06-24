@@ -5,7 +5,7 @@ import os
 import signal
 import typing as tp
 
-from core.cc_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from . import logger
 from . import models as vm
@@ -53,7 +53,7 @@ def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50
     return "\n\n".join(lines)
 
 
-def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
@@ -121,7 +121,8 @@ def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
         logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
         return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
-    return create_sdk_mcp_server(
-        "vesta-tools",
-        tools=[restart_vesta, search_conversation_history, mark_setup_done, mark_migration_applied, mark_dreamer_complete],
-    )
+    return [restart_vesta, search_conversation_history, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
+
+
+def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+    return create_sdk_mcp_server("vesta-tools", tools=_vesta_tools(state, config))

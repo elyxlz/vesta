@@ -129,7 +129,7 @@ def test_contains_dashes_multiple_texts():
 def test_parse_sdk_message_extracts_thinking_blocks():
     from unittest.mock import MagicMock
 
-    from core.cc_sdk import AssistantMessage, TextBlock, ThinkingBlock
+    from claude_agent_sdk import AssistantMessage, TextBlock, ThinkingBlock
 
     msg = MagicMock(spec=AssistantMessage)
     msg.content = [ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")]

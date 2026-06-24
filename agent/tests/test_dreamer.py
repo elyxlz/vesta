@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import core.models as vm
-from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
@@ -159,10 +159,10 @@ def test_drop_does_not_persist_last_dreamer_run(tmp_path):
 
 
 def _mark_dreamer_complete_handler(state, config):
-    from core.tools import build_vesta_tools_server
+    from core.tools import _vesta_tools
 
-    server = build_vesta_tools_server(state, config)
-    return next(t.handler for t in server.tools if t.name == "mark_dreamer_complete")
+    tools = _vesta_tools(state, config)
+    return next(t.handler for t in tools if t.name == "mark_dreamer_complete")
 
 
 @pytest.mark.anyio

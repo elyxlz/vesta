@@ -8,7 +8,7 @@ import pathlib as pl
 import time
 
 import pydantic
-from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
 from . import models as vm
@@ -210,7 +210,14 @@ async def _run_messages_with_interrupts(
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
-                sid = state.client.session_id
+                # cc_sdk exposes session_id as a client attribute; the official
+                # claude_agent_sdk emits it only via the message stream (sdk_parsing
+                # captures it there). Fall back to None on the official SDK so this
+                # early-failure path doesn't AttributeError before the id is seen.
+                try:
+                    sid = state.client.session_id  # ty: ignore[unresolved-attribute]
+                except AttributeError:
+                    sid = None
                 if sid:
                     persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
@@ -280,7 +287,11 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     state.event_bus.set_state("thinking")
     state.compacting = True
     try:
-        await state.client.compact()
+        await state.client.compact()  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        # cc_sdk reaches the CLI's /compact through tmux; the official claude_agent_sdk
+        # client has no compact() method. Skip compaction and restart regardless.
+        logger.client("Compaction unsupported on this SDK, restarting without it")
     except (ClaudeSDKError, OSError, RuntimeError) as exc:
         logger.warning(f"Compaction before restart failed: {exc} — restarting anyway")
     finally:

@@ -6,7 +6,7 @@ import time
 import typing as tp
 from collections.abc import Mapping
 
-from core.cc_sdk import (
+from claude_agent_sdk import (
     AssistantMessage,
     HookContext,
     HookMatcher,
@@ -18,7 +18,7 @@ from core.cc_sdk import (
     ThinkingBlock,
     ToolUseBlock,
 )
-from core.cc_sdk.types import (
+from claude_agent_sdk.types import (
     HookCallback,
     HookEvent,
     HookJSONOutput,

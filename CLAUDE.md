@@ -9,7 +9,9 @@ agent follows. Read it before writing or shipping code.
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. The agent drives the `claude` CLI interactively inside tmux via an in-repo SDK (`agent/core/cc_sdk/`, see its README) that exposes the same client surface, because driving the CLI directly is simpler than wiring up the official Claude Agent SDK.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. The agent drives Claude through the official **Claude Agent SDK** (`claude-agent-sdk`): `core/client.py` builds a `ClaudeAgentOptions`, opens a `ClaudeSDKClient`, and streams response blocks back from the SDK message stream and its native hooks.
+
+> **cc_sdk is dormant — leave it alone.** `agent/core/cc_sdk/` is an in-repo SDK that drives the interactive `claude` CLI inside tmux and exposes the *same* `ClaudeSDKClient` surface. The agent used it for a stretch and it is retained deliberately as a drop-in alternative driver in case we need to return to CLI-driving (e.g. for behavior the headless SDK can't reach). It is **not** imported by `core/` anymore and is **not** on the running agent's path. Do not delete it, do not "tidy" it, and do not wire it back into `core/` without an explicit ask. Its transport tests (`tests/test_cc_sdk.py`, `tests/test_e2e_transport.py`, `tests/test_stop_race.py`) keep it healthy; keep them green.
 
 ## Architecture
 
@@ -21,14 +23,14 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 - **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in both Tauri wrappers. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
 - **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web` for macOS/Windows/Linux. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
 - **Mobile App** (`apps/mobile/`): Separate Tauri wrapper around `@vesta/web` for iOS/Android. Self-contained — independent Cargo crate (`vesta-mobile`), bundle id `com.vestarun.mobile`, no shared Rust code with desktop.
-- **Skills** (`agent/skills/` + `agent/core/skills/`): Each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-in skills shipped with the agent (e.g. `app-chat`); `agent/skills/` holds the rest. Skills are plain directories, not MCP servers — the only MCP server is the agent's own native tool registry, exposed to `claude` in-process by cc_sdk (`cc_sdk/mcp.py`).
+- **Skills** (`agent/skills/` + `agent/core/skills/`): Each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-in skills shipped with the agent (e.g. `app-chat`); `agent/skills/` holds the rest. Skills are plain directories, not MCP servers — the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed to Claude in-process via the Claude Agent SDK's `create_sdk_mcp_server`.
 - **Integration Tests** (`vestad/tests-integration/`): Rust crate (`vesta-tests`, workspace member of `vestad/`) with end-to-end tests (real vestad + client, requires Docker).
 
 ### Key Flows
 
 **Agent creation**: CLI/app -> `POST /agents` on vestad -> allocates unique WS port, generates agent token, writes `~/.config/vesta/vestad/agents/{agent}.env` -> builds/pulls Docker image -> creates container with host networking and bind-mounted env file (`/run/vestad-env`) -> container starts, sources env, runs `uv run python -m core.main` -> initializes EventBus (SQLite), starts WS server on allocated port, starts message processor and notification monitor tasks.
 
-**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls the cc_sdk client (`client.query()`, which pastes the prompt into the tmux `claude` session) -> streams response blocks (text, thinking, tool use), reconstructed from the session transcript and native hooks, back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
+**Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls the Claude Agent SDK client (`client.query()`) -> streams response blocks (text, thinking, tool use) from the SDK message stream and native hooks, back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
 
 **Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
@@ -62,9 +64,9 @@ The Karpathy Guidelines (in [`CONTRIBUTING.md`](./CONTRIBUTING.md#karpathy-guide
 
 Reconciled rubric for this system. Where canonical architecture advice fights Vesta's intentional design, the design wins (see resolved conflicts at the end of this section).
 
-- **Deep modules, hidden decisions.** cc_sdk (`agent/core/cc_sdk/`) is the model: a small `ClaudeSDKClient` surface hiding all tmux paste, transcript tailing, hook bridging, and MCP stdio. Consume that surface, do not reach into `tmux.py`, `transcript.py`, or `_forward.py`.
-- **Confine IO to edge modules.** Docker in `vestad/src/docker.rs`, restic in `restic.rs`, the claude driver in cc_sdk, SQLite + FTS5 in `agent/core/events.py`. No raw shellouts, HTTP calls, or SQL strings scattered into `loops.py`, `client.py`, or request handlers.
-- **One owner per decision.** Notification format, the `agents/{name}.env` config contract, the cc_sdk interrupt protocol (double Escape, Stop-hook crediting): each lives in exactly one module. A constant or format appearing in two modules moves to its owner.
+- **Deep modules, hidden decisions.** The Claude Agent SDK is the model: a small `ClaudeSDKClient` surface hiding the whole headless control protocol. Consume that surface; keep the SDK seam in `core/client.py` + `core/sdk_parsing.py`, do not scatter SDK internals across `loops.py`. (The dormant `cc_sdk` exemplifies the same principle for the CLI-driving path — see the Project Overview note.)
+- **Confine IO to edge modules.** Docker in `vestad/src/docker.rs`, restic in `restic.rs`, the claude driver behind the `claude_agent_sdk` client surface, SQLite + FTS5 in `agent/core/events.py`. No raw shellouts, HTTP calls, or SQL strings scattered into `loops.py`, `client.py`, or request handlers.
+- **One owner per decision.** Notification format, the `agents/{name}.env` config contract, the SDK option/hook mapping (`core/client.py` builds `ClaudeAgentOptions`, `core/sdk_parsing.py` owns the hook wiring): each lives in exactly one module. A constant or format appearing in two modules moves to its owner.
 - **No shared crate between `cli` and `vestad`.** The JSON/WS wire contract, Tauri `invoke()` command strings, and the `X-Agent-Token` header are the only coupling. Duplicate small DTO shapes per crate rather than sharing a library.
 - **Python stays functional.** Pure functions plus dataclasses/TypedDicts/pydantic models, no classes-with-methods. Pass `State` and `VestaConfig` as explicit keyword arguments (the functional stand-in for dependency injection).
 - **Banned accessors.** No `getattr`, dict `.get()` fallback, or `hasattr` in Python. No `panic!`/`unwrap`/`expect` on fallible paths in `vestad/`/`cli/` (`expect` only where failure is impossible); return `Result`.
