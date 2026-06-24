@@ -19,7 +19,7 @@ from . import logger
 from . import models as vm
 from . import state_store
 from .provider import OPENROUTER_SMALL_FAST_MODEL
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, EXPANDED_CONTEXT_WINDOW
+from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, FULL_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_constitution_path, get_memory_path
@@ -310,23 +310,21 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
 
-    # The window claude-code actually enforces: for OpenRouter the resolved (capped)
-    # value, for Claude the user's chosen cap (None = model default). Drives the
-    # context-usage percentage, so it must match the real autocompact threshold —
-    # the raw, uncapped config value would under-report OpenRouter usage.
-    effective_max_context = state.openrouter_max_tokens if is_openrouter else config.max_context_tokens
+    # The one window the context-usage percentage is reported against: OpenRouter's resolved
+    # model window (200k fallback when unresolved), or the Claude window — the user's chosen cap,
+    # else the full 1M window the beta unlocks by default. This is the real window the agent
+    # runs at; claude-code's own autocompact threshold is set separately above via
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS.
+    if is_openrouter:
+        context_window = state.openrouter_max_tokens or DEFAULT_CONTEXT_WINDOW
+    else:
+        context_window = config.max_context_tokens or FULL_CONTEXT_WINDOW
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
         betas=betas,
-        max_context_tokens=effective_max_context,
-        # Windows for the context-usage %: the conservative fallback and the larger window it
-        # may unlock. cc_sdk reports against context_window until usage proves the expanded one
-        # is really active (the 1M beta is silently ignored on some auth modes), so the values
-        # live here, not in the transport.
-        context_window=DEFAULT_CONTEXT_WINDOW,
-        expanded_context_window=EXPANDED_CONTEXT_WINDOW if CONTEXT_1M_BETA in betas else None,
+        context_window=context_window,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
