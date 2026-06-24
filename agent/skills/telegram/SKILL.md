@@ -11,14 +11,52 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 ## Quick Reference
 ```bash
 telegram send '<contact_name>' 'Hello!'
-telegram send '<chat_id>' 'Photo' --attachment /path/to/image.jpg
+telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # avoid shell-escaping
+telegram send '<contact_name>' 'reply' --reply-to '<message_id>'          # quote a message
 telegram chats
 telegram contacts
 telegram messages --to "<contact_name>" --limit 20
 telegram groups
 telegram react '<contact_name>' '<message_id>' '👍'
 telegram send-file --to "<contact_name>" --file-path /path/to/document.pdf
+telegram send-voice --to "<contact_name>" --file-path /path/to/note.ogg
 ```
+
+## Interactive UI (inline buttons + callbacks)
+
+Send tappable buttons, get notified when the owner taps, then answer the tap and/or edit the
+message in place. This is the full "dynamic UI" loop: menus, confirm/deny prompts, live-updating
+status messages.
+
+```bash
+# 1. Send a message with an inline keyboard.
+#    --buttons format: rows separated by ';', buttons within a row by ',',
+#    each button is "Label=callback_data" (or "Label=url:https://..." for a link button).
+telegram send 'Elio' 'Approve the draft?' --buttons 'yes=approve,no=reject;edit first=edit'
+
+# 2. The owner taps a button → a notification arrives:
+#    {"source":"telegram","type":"callback_query","data":"approve",
+#     "callback_id":"...","chat_id":...,"message_id":...}
+
+# 3. Answer the tap (stops the button's loading spinner; --text shows a toast, --alert a popup).
+telegram answer-callback '<callback_id>' --text 'approved ✓'
+
+# 4. Optionally edit the message in place to reflect the choice (and drop/replace the buttons).
+telegram edit-message 'Elio' '<message_id>' 'Approved ✓' [--buttons '...']
+```
+
+## Other commands
+```bash
+telegram edit-message '<to>' '<message_id>' 'new text' [--buttons '...']  # edit in place
+telegram delete-message '<to>' '<message_id>'                              # unsend (alias: del)
+telegram send-chat-action '<to>' typing                                   # transient "typing…" status
+telegram pin-message '<to>' '<message_id>' [--silent]
+telegram unpin-message '<to>' ['<message_id>']                            # omit id to unpin latest
+```
+
+Notification types written for the agent: `message`, `callback_query` (button tap), `reaction`
+(inbound reactions are not decoded by the v5 library, so they don't currently fire; sending
+reactions via `react` works). Aliases: `send`/`edit`/`del`/`voice`/`action`/`pin`/`unpin`.
 
 ## Notes
 - Chat IDs are numeric (e.g., `123456789` for private, `-1001234567890` for groups)
