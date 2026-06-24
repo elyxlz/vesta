@@ -4,6 +4,7 @@ import asyncio
 import json
 import socket
 import time
+import typing
 import weakref
 
 import pydantic as pyd
@@ -253,7 +254,7 @@ async def test_config_put_does_not_write_auth_when_a_pref_is_invalid(config, mon
         async def json(self):
             return {"auth": {"credentials": "{}"}, "max_context_tokens": -1}
 
-    resp = await _config_put_handler(_Req())
+    resp = await _config_put_handler(typing.cast("web.Request", _Req()))
     assert resp.status == 400
     assert wrote == []  # credentials were NOT written because the pref failed validation first
 
