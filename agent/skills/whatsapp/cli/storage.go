@@ -530,27 +530,25 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 	}, nil
 }
 
-func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+// getManualContact loads a manual contact by a single equality column (jid or
+// phone_number); returns (nil, nil) when no row matches.
+func (ms *MessageStore) getManualContact(whereColumn, value string) (*Contact, error) {
+	var jid, phone string
 	var name sql.NullString
-	var phone string
-	err := ms.db.QueryRow(`
-		SELECT name, phone_number
-		FROM contacts
-		WHERE jid = ?
-	`, jid).Scan(&name, &phone)
+	err := ms.db.QueryRow(
+		"SELECT jid, name, phone_number FROM contacts WHERE "+whereColumn+" = ?", value,
+	).Scan(&jid, &name, &phone)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return &Contact{JID: jid, Name: name.String, PhoneNumber: phone, IsManual: true}, nil
+}
 
-	return &Contact{
-		JID:         jid,
-		Name:        name.String,
-		PhoneNumber: phone,
-		IsManual:    true,
-	}, nil
+func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+	return ms.getManualContact("jid", jid)
 }
 
 func (ms *MessageStore) DeleteManualContact(identifier string) error {
@@ -813,26 +811,7 @@ func (ms *MessageStore) listChatsFiltered(
 }
 
 func (ms *MessageStore) GetManualContactByPhone(phone string) (*Contact, error) {
-	var jid string
-	var name sql.NullString
-	err := ms.db.QueryRow(`
-		SELECT jid, name, phone_number
-		FROM contacts
-		WHERE phone_number = ?
-	`, phone).Scan(&jid, &name, &phone)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &Contact{
-		JID:         jid,
-		Name:        name.String,
-		PhoneNumber: phone,
-		IsManual:    true,
-	}, nil
+	return ms.getManualContact("phone_number", phone)
 }
 
 func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]string, error) {
