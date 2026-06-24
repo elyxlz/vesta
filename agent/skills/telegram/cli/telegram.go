@@ -23,17 +23,28 @@ const (
 )
 
 type TelegramClient struct {
-	bot              *tgbotapi.BotAPI
-	store            *MessageStore
-	dataDir          string
-	notificationsDir string
-	instance         string
-	readOnly         bool
-	skipSenders      map[string]bool
-	botUserID        int64
-	token            string
-	mu               sync.RWMutex
+	bot               *tgbotapi.BotAPI
+	store             *MessageStore
+	dataDir           string
+	notificationsDir  string
+	instance          string
+	readOnly          bool
+	skipSenders       map[string]bool
+	botUserID         int64
+	token             string
+	mu                sync.RWMutex
+	lastMessageSentAt time.Time
 }
+
+// Human-pacing constants, mirrored from the whatsapp skill so both channels feel the same.
+const (
+	tgTypingPerChar = 25 * time.Millisecond
+	tgTypingMin     = 1500 * time.Millisecond
+	tgTypingMax     = 6 * time.Second
+	tgReadingBeat   = 550 * time.Millisecond // beat before typing when not a rapid follow-on
+	tgPreSendDelay  = 300 * time.Millisecond
+	tgRapidWindow   = 3 * time.Second // within this since last send, skip the reading beat
+)
 
 func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool) (*TelegramClient, error) {
 	store, err := NewMessageStore(dataDir)
@@ -254,6 +265,33 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 }
 
+// humanPause makes the bot feel like a person typing rather than a burst: it shows the typing
+// indicator, then waits a beat scaled to message length (capped). Because the daemon blocks here
+// before delivering, sequential sends are spaced automatically without the caller managing sleeps,
+// and a short reply stays near-instant. action defaults to "typing".
+func (tc *TelegramClient) humanPause(chatID int64, action string, textLen int) {
+	if action == "" {
+		action = tgbotapi.ChatTyping
+	}
+	// Reading beat before a fresh reply, skipped for a rapid follow-on (you don't re-read the
+	// thread before continuing your own thought). Mirrors the whatsapp skill's pacing.
+	tc.mu.RLock()
+	rapid := time.Since(tc.lastMessageSentAt) < tgRapidWindow
+	tc.mu.RUnlock()
+	if !rapid {
+		time.Sleep(tgReadingBeat)
+	}
+	tc.bot.Request(tgbotapi.NewChatAction(chatID, action))
+	typing := tgTypingMin + time.Duration(textLen)*tgTypingPerChar
+	if typing > tgTypingMax {
+		typing = tgTypingMax
+	}
+	time.Sleep(typing + tgPreSendDelay)
+	tc.mu.Lock()
+	tc.lastMessageSentAt = time.Now()
+	tc.mu.Unlock()
+}
+
 func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, error) {
 	// Split long messages
 	if len(text) > MaxMessageLength {
@@ -266,6 +304,7 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 			}
 			msg := tgbotapi.NewMessage(recipientID, prefix+chunk)
 			msg.ParseMode = "Markdown"
+			tc.humanPause(recipientID, "", len(chunk))
 			sent, err := tc.bot.Send(msg)
 			if err != nil {
 				// Retry without parse mode
@@ -287,6 +326,7 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 
 	msg := tgbotapi.NewMessage(recipientID, text)
 	msg.ParseMode = "Markdown"
+	tc.humanPause(recipientID, "", len(text))
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
 		// Retry without parse mode
@@ -461,6 +501,7 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 	if kb, ok := parseInlineKeyboard(buttons); ok {
 		msg.ReplyMarkup = kb
 	}
+	tc.humanPause(recipientID, "", len(text))
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
 		msg.ParseMode = ""
