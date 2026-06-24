@@ -62,15 +62,6 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// An agent's config, proxied from the agent (GET /config). Keys are VestaConfig's own field names;
-/// secrets are redacted. The client picks which to show/edit. This lists the commonly-edited subset.
-export interface AgentConfig {
-  agent_model: string;
-  max_context_tokens: number | null;
-  agent_personality: string;
-  thinking: string;
-}
-
 /// Update any agent config field via its config store (PUT /config), keyed by VestaConfig field name.
 /// An omitted field is left unchanged, a null clears it; vestad restarts the agent to apply.
 export async function setConfig(
@@ -81,11 +72,6 @@ export async function setConfig(
     `/agents/${encodeURIComponent(name)}/config`,
     jsonInit("PUT", config),
   );
-}
-
-/// Read an agent's current config, proxied from the agent.
-export async function getConfig(name: string): Promise<AgentConfig> {
-  return apiJson<AgentConfig>(`/agents/${encodeURIComponent(name)}/config`);
 }
 
 /// Change only the model preference. Vestad restarts the agent so it takes effect.
