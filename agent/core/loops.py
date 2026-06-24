@@ -15,7 +15,15 @@ from . import models as vm
 from . import logger
 from . import state_store
 from .config import DEFAULT_CONTEXT_WINDOW
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
+from .client import (
+    process_message,
+    build_client_options,
+    attempt_interrupt,
+    persist_session_id,
+    resolve_openrouter_max_tokens,
+    compact_session,
+    _cancel_task,
+)
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
@@ -289,13 +297,9 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     state.event_bus.set_state("thinking")
     state.compacting = True
     try:
-        await state.client.compact()  # ty: ignore[unresolved-attribute]
-    except AttributeError:
-        # cc_sdk reaches the CLI's /compact through tmux; the official claude_agent_sdk
-        # client has no compact() method. Skip compaction and restart regardless.
-        logger.client("Compaction unsupported on this SDK, restarting without it")
-    except (ClaudeSDKError, OSError, RuntimeError) as exc:
-        logger.warning(f"Compaction before restart failed: {exc} — restarting anyway")
+        await compact_session(state=state)
+    except (ClaudeSDKError, OSError, RuntimeError, TimeoutError) as exc:
+        logger.warning(f"Compaction before restart failed: {exc}, restarting anyway")
     finally:
         state.compacting = False
         state.event_bus.set_state("idle")

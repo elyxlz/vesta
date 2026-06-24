@@ -11,6 +11,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    SystemMessage,
     ThinkingBlock,
 )
 from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
@@ -254,6 +255,28 @@ async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], cont
 
 
 _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
+_COMPACT_TIMEOUT_S = 600.0  # day-sized contexts can take minutes to summarize
+
+
+async def compact_session(*, state: vm.State) -> None:
+    """Compact the live conversation in place and block until it finishes.
+
+    The official Claude Agent SDK has no compact() method; the documented path is to send the
+    `/compact` slash command as a query (code.claude.com/docs/en/agent-sdk/slash-commands). Manual
+    /compact rewrites the same session, so resume keeps working and the dreamer can restart into
+    the compacted conversation. The turn ends with SystemMessage(subtype="compact_boundary") then
+    a ResultMessage; draining the response blocks until compaction completes. Bounded so a stuck
+    summarization still lets the caller restart."""
+    assert state.client is not None
+    client = state.client
+    await client.query("/compact")
+
+    async def _drain() -> None:
+        async for msg in client.receive_response():
+            if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
+                logger.client("Compaction boundary reached")
+
+    await asyncio.wait_for(_drain(), timeout=_COMPACT_TIMEOUT_S)
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
