@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv, find_dotenv
 from microsoft_cli import auth
-from microsoft_cli.settings import MicrosoftSettings
+from microsoft_cli.settings import get_settings
 
 load_dotenv(find_dotenv())
 
@@ -28,7 +28,7 @@ def main():
     cache_file = data_dir / "auth_cache.bin"
 
     try:
-        settings = MicrosoftSettings()
+        get_settings()
     except Exception as e:
         print(f"Error loading settings: {e}")
         print("\nPlease set MICROSOFT_MCP_CLIENT_ID in your .env file")
@@ -38,7 +38,7 @@ def main():
     print("============================\n")
 
     # List current accounts
-    accounts = auth.list_accounts(cache_file, settings=settings)
+    accounts = auth.list_accounts(cache_file)
     if accounts:
         print("Currently authenticated accounts:")
         for i, account in enumerate(accounts, 1):
@@ -50,7 +50,7 @@ def main():
     # Authenticate new account
     print("Starting authentication flow...\n")
     try:
-        new_account = auth.authenticate_new_account(cache_file, ["https://graph.microsoft.com/.default"], settings=settings)
+        new_account = auth.authenticate_new_account(cache_file, ["https://graph.microsoft.com/.default"])
 
         if new_account:
             print("\n✓ Authentication successful!")
@@ -62,7 +62,7 @@ def main():
         print(f"\n✗ Authentication failed: {e}")
 
     # Final account summary
-    accounts = auth.list_accounts(cache_file, settings=settings)
+    accounts = auth.list_accounts(cache_file)
     if accounts:
         print("\nAuthenticated accounts summary:")
         print("==============================")
