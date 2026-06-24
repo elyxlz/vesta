@@ -109,14 +109,6 @@ def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: Pers
     return status
 
 
-def set_provider_prefs(updates: dict[str, tp.Any], *, config: VestaConfig) -> None:
-    """Persist provider-owned preferences (agent_model, max_context_tokens, thinking) to the config
-    store. Owned here so every provider setting flows through provider.py; the keys are pre-validated
-    by validate_provider_prefs. Vestad restarts the agent to apply them."""
-    update_config_store(updates)
-    logger.startup(f"Provider prefs updated: {sorted(updates)}")
-
-
 def clear_provider(*, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
     """Sign out: clear everything provider-owned — the Claude OAuth blob, the OpenRouter key, and the
     provider preferences (model, context, thinking) — leaving the agent not_authenticated. Only

@@ -7,10 +7,9 @@ Routes:
   - GET  /provider/usage       normalized, provider-agnostic plan usage
   - GET  /provider/status      LLM-provider auth state
   - POST /provider             set Claude credentials or OpenRouter key (auth only)
-  - PUT  /provider/config      update provider-owned prefs (model, context, thinking)
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
   - GET  /config               full live config (read), secrets redacted
-  - PUT  /config               update general preferences (personality, operational); provider-owned keys rejected
+  - PUT  /config               update any preference (model, context, thinking, personality, timezone, ...); auth fields rejected
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -28,10 +27,10 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig, update_config_store, validate_config_updates, validate_provider_prefs
+from .config import VestaConfig, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
-from .provider import UsageError, clear_provider, get_usage, set_claude, set_openrouter, set_provider_prefs
+from .provider import UsageError, clear_provider, get_usage, set_claude, set_openrouter
 
 
 logger = logging.getLogger("vesta.api")
@@ -267,8 +266,8 @@ async def _apply_sparse_update(
     validate: tp.Callable[[VestaConfig, object], dict[str, tp.Any]],
     apply: tp.Callable[[dict[str, tp.Any]], None],
 ) -> web.Response:
-    """Shared body of the sparse PUT-and-restart endpoints (/config, /provider/config): parse, validate,
-    apply the non-empty update, ask vestad to restart. `noun` names the surface in error messages."""
+    """Shared body of the sparse PUT-and-restart config endpoint: parse, validate, apply the non-empty
+    update, ask vestad to restart. `noun` names the surface in error messages."""
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
@@ -287,15 +286,6 @@ async def _apply_sparse_update(
     except OSError as e:
         return web.json_response({"error": f"failed to write {noun}: {e}"}, status=500)
     return web.json_response({"ok": True, "restart_required": True})
-
-
-async def _provider_config_put_handler(request: web.Request) -> web.Response:
-    """Update provider-owned preferences (model, context window, thinking). Sparse: an omitted field
-    is left unchanged, a null clears it. Vestad restarts the agent to apply."""
-    config: VestaConfig = request.app["config"]
-    return await _apply_sparse_update(
-        request, noun="provider config", validate=validate_provider_prefs, apply=lambda updates: set_provider_prefs(updates, config=config)
-    )
 
 
 async def _provider_clear_handler(request: web.Request) -> web.Response:
@@ -387,7 +377,6 @@ async def start_ws_server(
     app.router.add_get("/provider/usage", _provider_usage_handler)
     app.router.add_get("/provider/status", _provider_status_handler)
     app.router.add_post("/provider", _provider_set_handler)
-    app.router.add_put("/provider/config", _provider_config_put_handler)
     app.router.add_delete("/provider", _provider_clear_handler)
     app.router.add_get("/config", _config_get_handler)
     app.router.add_get("/config/schema", _config_schema_handler)

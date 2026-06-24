@@ -62,9 +62,12 @@ def update_config_store(updates: dict[str, tp.Any]) -> None:
     tmp.replace(path)
 
 
-# Provider-owned settings flow through provider.py and the /provider* endpoints, never the generic
-# config API. Preferences (model/context/thinking) are settable via PUT /provider/config; the auth
-# fields are written only by provider.py's set_claude/set_openrouter/clear_provider.
+# PROVIDER_PREF_FIELDS names the preferences that are tied to the provider/account lifecycle: they
+# are wiped on sign-out (clear_provider) because a new account may not offer the same model, while
+# general config (personality, timezone, ...) survives. They are still set through the generic PUT
+# /config like any other preference — this set exists only for the sign-out wipe, not for routing.
+# The auth fields are written only by provider.py's set_claude/set_openrouter/clear_provider and are
+# rejected by PUT /config (they carry credential-file + provider-status side effects).
 PROVIDER_PREF_FIELDS = frozenset({"agent_model", "max_context_tokens", "thinking"})
 _PROVIDER_AUTH_FIELDS = frozenset({"agent_provider", "openrouter_key"})
 
@@ -82,26 +85,17 @@ def _merge_validate(config: "VestaConfig", data: dict[str, tp.Any]) -> dict[str,
 
 
 def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
-    """Validate a sparse PUT /config body. Provider-owned settings (model, context, thinking, and the
-    auth fields) are rejected here — they flow through the /provider endpoints."""
+    """Validate a sparse PUT /config body. Every agent preference is settable here — model, context,
+    thinking, personality, timezone, seed_context — since they all live in one config store. Only the
+    auth fields (provider choice + OpenRouter key) are rejected: those flow through POST /provider,
+    which owns the credential files and the derived provider status. PROVIDER_PREF_FIELDS still names
+    the model/context/thinking subset, but only for clear_provider's sign-out wipe, not for routing."""
     if not isinstance(data, dict):
         raise ValueError("config body must be a JSON object")
     data = tp.cast("dict[str, tp.Any]", data)
-    provider_owned = sorted(set(data) & (PROVIDER_PREF_FIELDS | _PROVIDER_AUTH_FIELDS))
-    if provider_owned:
-        raise ValueError(f"provider-owned, set via /provider/config: {', '.join(provider_owned)}")
-    return _merge_validate(config, data)
-
-
-def validate_provider_prefs(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
-    """Validate a sparse PUT /provider/config body — only the provider preferences (model, context,
-    thinking) are accepted."""
-    if not isinstance(data, dict):
-        raise ValueError("provider config body must be a JSON object")
-    data = tp.cast("dict[str, tp.Any]", data)
-    disallowed = sorted(set(data) - PROVIDER_PREF_FIELDS)
-    if disallowed:
-        raise ValueError(f"not provider preferences: {', '.join(disallowed)}")
+    auth_owned = sorted(set(data) & _PROVIDER_AUTH_FIELDS)
+    if auth_owned:
+        raise ValueError(f"auth-owned, set via POST /provider: {', '.join(auth_owned)}")
     return _merge_validate(config, data)
 
 

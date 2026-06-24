@@ -1057,7 +1057,7 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() {
-                c.set_provider_prefs(&name, model.as_deref(), context_window)
+                c.set_prefs(&name, model.as_deref(), context_window)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {

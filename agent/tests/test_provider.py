@@ -7,7 +7,7 @@ import json
 import pytest
 
 import core.models as vm
-from core.config import read_config_store
+from core.config import read_config_store, update_config_store
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
@@ -20,7 +20,6 @@ from core.provider import (
     observed_provider_failure,
     set_claude,
     set_openrouter,
-    set_provider_prefs,
 )
 from core.state_store import PersistedState, load_state
 
@@ -109,9 +108,10 @@ def test_set_openrouter_writes_provider_key_and_model_to_store(prov):
     assert derive_status(fresh, persisted).kind == "openrouter"
 
 
-def test_set_provider_prefs_writes_model_context_thinking(prov):
-    config, _persisted = prov
-    set_provider_prefs({"agent_model": "opus", "max_context_tokens": 500_000}, config=config)
+def test_model_context_prefs_persist_to_store_and_reload(prov):
+    # Model/context are plain config keys now (PUT /config -> update_config_store); a fresh config
+    # reads them back. This is the persistence the merged config surface relies on.
+    update_config_store({"agent_model": "opus", "max_context_tokens": 500_000})
     store = read_config_store()
     assert store["agent_model"] == "opus"
     assert store["max_context_tokens"] == 500_000

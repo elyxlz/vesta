@@ -216,13 +216,13 @@ def test_config_update_rejects_bad_values(config):
             validate_config_updates(config, bad)
 
 
-def test_provider_prefs_reject_bad_values(config):
-    from core.config import validate_provider_prefs
+def test_config_update_rejects_bad_pref_values(config):
+    from core.config import validate_config_updates
 
-    # Provider prefs go through the same field constraints, on the /provider/config path.
+    # Model/context/thinking are now plain config keys; they keep their field constraints on PUT /config.
     for bad in [{"max_context_tokens": 0}, {"thinking": "x"}]:
         with pytest.raises(pyd.ValidationError):
-            validate_provider_prefs(config, bad)
+            validate_config_updates(config, bad)
 
 
 def test_provider_update_accepts_each_provider():
