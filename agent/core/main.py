@@ -4,6 +4,7 @@ import asyncio
 import errno
 import os
 import signal
+import tomllib
 import types
 import typing as tp
 
@@ -187,6 +188,19 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 
 
+def _vesta_version(*, config: vm.VestaConfig) -> str:
+    """Version of the code actually running, read from the bind-mounted pyproject.toml (re-extracted
+    on upgrade, so it tracks the running core). Best-effort: never block startup over a version label."""
+    pyproject = config.agent_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return "unknown"
+    try:
+        return tomllib.loads(pyproject.read_text())["project"]["version"]
+    except (tomllib.TOMLDecodeError, KeyError, OSError) as e:
+        logger.init(f"could not read version: {e}")
+        return "unknown"
+
+
 async def async_main() -> None:
     config, config_issues = vm.load_config()
     logger.init("Config:")
@@ -196,7 +210,7 @@ async def async_main() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
-    logger.init(f"{config.agent_name} starting")
+    logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
     _report_config_issues(config_issues, config=config)
 
     # Converge a legacy agent's env-based preferences into the writable config store, so the whole
