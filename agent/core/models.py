@@ -25,6 +25,7 @@ TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_MIGRATION = "migration"
 TYPE_CONFIG_INVALID = "config_invalid"
+TYPE_DEFAULT_SKILL_SYNC = "default_skill_sync"
 
 CLEAN_RESTART = "restart: clean restart"
 NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"

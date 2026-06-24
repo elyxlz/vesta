@@ -7,6 +7,7 @@ email-client
 onboard
 personality
 proactive-check
+recall
 restart
 service
 skills-registry
