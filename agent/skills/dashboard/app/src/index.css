@@ -6,6 +6,7 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/public-sans";
 @import "@fontsource-variable/outfit";
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -49,6 +50,9 @@
   --sidebar-border: oklch(0.923 0.01 80);
   --sidebar-ring: oklch(0.709 0.02 80);
   --page-padding-x: 1.5rem;
+  /* Inset frame (web desktop): gutter width from viewport edge to the frame line.
+     The fake clip is drawn by InsetFrame. */
+  --frame-inset: 0.875rem;
 }
 
 html[data-platform="android"] {
@@ -82,21 +86,21 @@ html[data-platform="android"] {
 }
 
 [data-platform="linux"].vibrancy {
-  --background: oklch(0.995 0.005 80 / 85%);
-  --card: oklch(0.995 0.005 80 / 85%);
-  --muted: oklch(0.97 0.006 80 / 90%);
-  --accent: oklch(0.97 0.006 80 / 85%);
-  --sidebar: oklch(0.985 0.006 80 / 85%);
-  --sidebar-accent: oklch(0.97 0.006 80 / 85%);
+  --background: oklch(0.995 0.005 80 / 92.5%);
+  --card: oklch(0.995 0.005 80 / 92.5%);
+  --muted: oklch(0.97 0.006 80 / 95%);
+  --accent: oklch(0.97 0.006 80 / 92.5%);
+  --sidebar: oklch(0.985 0.006 80 / 92.5%);
+  --sidebar-accent: oklch(0.97 0.006 80 / 92.5%);
 }
 
 [data-platform="linux"].vibrancy.dark {
-  --background: oklch(0.147 0.005 80 / 85%);
-  --card: oklch(0.216 0.007 80 / 85%);
-  --muted: oklch(0.19 0.007 80 / 90%);
-  --accent: oklch(0.268 0.008 80 / 85%);
-  --sidebar: oklch(0.216 0.007 80 / 85%);
-  --sidebar-accent: oklch(0.268 0.008 80 / 85%);
+  --background: oklch(0.147 0.005 80 / 92.5%);
+  --card: oklch(0.216 0.007 80 / 92.5%);
+  --muted: oklch(0.19 0.007 80 / 95%);
+  --accent: oklch(0.268 0.008 80 / 92.5%);
+  --sidebar: oklch(0.216 0.007 80 / 92.5%);
+  --sidebar-accent: oklch(0.268 0.008 80 / 92.5%);
 }
 
 .dark {
@@ -137,6 +141,9 @@ html[data-platform="android"] {
 @theme inline {
   --font-sans: "Public Sans Variable", sans-serif;
   --font-heading: "Outfit Variable", sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
   --text-sm: 0.9375rem;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);

@@ -18,7 +18,7 @@ export function PersonalityStep({
   // Until the user picks, fall through to vestad's default once it loads.
   const defaults = useAgentDefaults();
   const [picked, setPicked] = useState<string | null>(null);
-  const selected = picked ?? defaults?.personality ?? "";
+  const selected = picked ?? defaults?.agent_personality ?? "";
 
   useEffect(() => {
     fetchPersonalities()

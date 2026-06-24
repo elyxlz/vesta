@@ -88,12 +88,10 @@ from imap_client import (  # noqa: E402
 
 def _from_address(from_header: str) -> str:
     """Extract the bare email from a From header (e.g. ``Foo <a@b>`` becomes ``a@b``)."""
-    if not from_header:
-        return ""
-    m = _re.search(r"<([^>]+)>", from_header)
+    m = _re.search(r"<([^>]+)>", from_header or "")
     if m:
         return m.group(1).strip()
-    return from_header.strip()
+    return (from_header or "").strip()
 
 
 def _re_subject(subject: str) -> str:

@@ -17,10 +17,7 @@ def _write_pid(config):
 
 
 def _remove_pid(config):
-    try:
-        (config.data_dir / "serve.pid").unlink()
-    except FileNotFoundError:
-        pass
+    (config.data_dir / "serve.pid").unlink(missing_ok=True)
 
 
 def _require_daemon(config):
@@ -172,18 +169,14 @@ def main():
         if args.group not in ("auth", "meet"):
             _require_daemon(config)
 
-        if args.group == "auth":
-            result = _dispatch_auth(args, config)
-            print(json.dumps(result, indent=2))
-        elif args.group == "email":
-            result = _dispatch_email(args, config)
-            print(json.dumps(result, indent=2))
-        elif args.group == "calendar":
-            result = _dispatch_calendar(args, config)
-            print(json.dumps(result, indent=2))
-        elif args.group == "meet":
-            result = _dispatch_meet(args, config)
-            print(json.dumps(result, indent=2))
+        dispatchers = {
+            "auth": _dispatch_auth,
+            "email": _dispatch_email,
+            "calendar": _dispatch_calendar,
+            "meet": _dispatch_meet,
+        }
+        result = dispatchers[args.group](args, config)
+        print(json.dumps(result, indent=2))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

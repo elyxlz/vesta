@@ -94,29 +94,6 @@ def create_offer_request(
     return _check(resp)
 
 
-def list_offers(
-    offer_request_id: str,
-    sort: str = "total_amount",
-    limit: int = 50,
-    max_connections: int | None = None,
-) -> list[dict]:
-    """List offers for an offer request."""
-    params: dict[str, Any] = {
-        "offer_request_id": offer_request_id,
-        "sort": sort,
-        "limit": limit,
-    }
-    if max_connections is not None:
-        params["max_connections"] = max_connections
-
-    resp = requests.get(
-        f"{BASE_URL}/air/offers",
-        headers=_headers(),
-        params=params,
-    )
-    return _check(resp)
-
-
 def get_offer(offer_id: str, return_services: bool = True) -> dict:
     """Get a single offer with refreshed pricing."""
     resp = requests.get(

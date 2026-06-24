@@ -12,6 +12,12 @@ const TYPING_DELAY_MIN = 1500;
 const TYPING_DELAY_MAX = 6000;
 const TYPING_VARIANCE = 0.2;
 
+function capTail(messages: VestaEvent[]): VestaEvent[] {
+  return messages.length > MAX_MESSAGES
+    ? messages.slice(-MAX_MESSAGES)
+    : messages;
+}
+
 function typingDelay(charCount: number): number {
   const raw = Math.min(
     TYPING_DELAY_MIN + TYPING_DELAY_PER_CHAR * charCount,
@@ -63,12 +69,7 @@ export function useChat({
 
   const flushQueue = useCallback(() => {
     for (const event of chatQueueRef.current) {
-      setMessages((prev) => {
-        const updated = [...prev, event];
-        return updated.length > MAX_MESSAGES
-          ? updated.slice(-MAX_MESSAGES)
-          : updated;
-      });
+      setMessages((prev) => capTail([...prev, event]));
       if (event.type === "chat") {
         onAssistantMessageRef.current?.(event.text);
       }
@@ -97,12 +98,7 @@ export function useChat({
     const delay = typingDelay(text?.length ?? 0);
     typingTimerRef.current = setTimeout(() => {
       queue.shift();
-      setMessages((prev) => {
-        const updated = [...prev, next];
-        return updated.length > MAX_MESSAGES
-          ? updated.slice(-MAX_MESSAGES)
-          : updated;
-      });
+      setMessages((prev) => capTail([...prev, next]));
       if (text) {
         onAssistantMessageRef.current?.(text);
       }
@@ -171,10 +167,7 @@ export function useChat({
         try {
           const event = JSON.parse(e.data) as VestaEvent;
           if (event.type === "history") {
-            const evts = event.events;
-            setMessages(
-              evts.length > MAX_MESSAGES ? evts.slice(-MAX_MESSAGES) : evts,
-            );
+            setMessages(capTail(event.events));
             cursorRef.current = event.cursor;
             setHistoryLoaded(true);
             if (event.state) setAgentState(event.state);
@@ -190,12 +183,7 @@ export function useChat({
           if (event.type === "chat") {
             enqueueChatMessage(event);
           } else {
-            setMessages((prev) => {
-              const updated = [...prev, event];
-              return updated.length > MAX_MESSAGES
-                ? updated.slice(-MAX_MESSAGES)
-                : updated;
-            });
+            setMessages((prev) => capTail([...prev, event]));
           }
           if (event.type === "status") {
             setAgentState(event.state);
@@ -245,8 +233,8 @@ export function useChat({
         JSON.stringify({ type: "message", text, input_method: inputMethod }),
       );
       pendingEchoesRef.current.push(text);
-      setMessages((prev) => {
-        const updated: VestaEvent[] = [
+      setMessages((prev) =>
+        capTail([
           ...prev,
           {
             type: "user",
@@ -254,11 +242,8 @@ export function useChat({
             input_method: inputMethod,
             ts: new Date().toISOString(),
           },
-        ];
-        return updated.length > MAX_MESSAGES
-          ? updated.slice(-MAX_MESSAGES)
-          : updated;
-      });
+        ]),
+      );
       return true;
     },
     [],

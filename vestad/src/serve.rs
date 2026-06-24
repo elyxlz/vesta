@@ -6,7 +6,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Sse,
     },
-    routing::{any, get, post},
+    routing::{any, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,10 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // forever). Deliberately NOT applied to the WS-upgrade route or the long-lived SSE/proxy
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
+
+// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
+const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -315,13 +319,8 @@ async fn version_check(State(state): State<SharedState>) -> Json<serde_json::Val
 
 async fn version_json(state: &SharedState) -> serde_json::Value {
     let update = state.update_info.lock().await;
-    let (latest, update_available) = match update.as_ref() {
-        Some(info) => (
-            Some(info.latest.clone()),
-            Some(info.update_available),
-        ),
-        None => (None, None),
-    };
+    let latest = update.as_ref().map(|info| info.latest.clone());
+    let update_available = update.as_ref().map(|info| info.update_available);
     let auto_update = state.settings.read().await.auto_update;
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -508,11 +507,6 @@ struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
-    /// Active personality preset (e.g. "dry"). Exported as AGENT_PERSONALITY; the
-    /// agent loads the matching preset into its system prompt on every boot. The
-    /// old `seed_personality` field name is still accepted from older clients.
-    #[serde(alias = "seed_personality")]
-    personality: Option<String>,
     /// Freeform setup notes the creator wants the new agent to start with: what it
     /// learned about the user during onboarding, plus any skills or services to set
     /// up. Written to ~/agent/data/seed-context.md in the container; the agent folds
@@ -568,7 +562,7 @@ async fn create_and_start(
     body: &CreateBody,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.personality.as_deref(), body.seed_context.as_deref(), progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_context.as_deref(), progress)
         .await
         .map_err(map_docker_err)?;
 
@@ -846,6 +840,124 @@ async fn set_provider_handler(
 
     // TODO: poke agent_status_cache so the web sees the change inside ~50ms
     // instead of waiting for the next 3s poll.
+    Ok(ok_json())
+}
+
+/// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
+async fn get_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .get_config()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
+/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart the
+/// container so the change applies on next boot.
+async fn set_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.put_config(&body).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    Ok(ok_json())
+}
+
+fn has_entries(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|fields| !fields.is_empty())
+}
+
+#[derive(Deserialize)]
+struct ProviderConfigRequest {
+    /// Provider auth body for the agent's `POST /provider` (`{credentials}` for Claude or
+    /// `{openrouter_key, openrouter_model}`). Omitted when only preferences change.
+    #[serde(default)]
+    provider: serde_json::Value,
+    /// Sparse provider-owned preferences for the agent's `PUT /provider/config`
+    /// (model, context, thinking).
+    #[serde(default)]
+    provider_config: serde_json::Value,
+    /// Sparse general preferences for the agent's `PUT /config` (personality).
+    #[serde(default)]
+    config: serde_json::Value,
+}
+
+/// Apply any of provider auth / provider preferences / general preferences, then restart the
+/// container ONCE. Each named part is forwarded to its own agent endpoint, so vestad carries no
+/// field taxonomy. Doing these as separate restart-on-write calls raced — a later write hit the
+/// agent mid-restart and 502'd, dropping the change. Writing everything before a single restart
+/// designs that race out of existence.
+async fn set_provider_config_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(req): Json<ProviderConfigRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    if has_entries(&req.provider) {
+        provider.set(&req.provider).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+    if has_entries(&req.provider_config) {
+        provider.put_provider_config(&req.provider_config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+    if has_entries(&req.config) {
+        provider.put_config(&req.config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+    }
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    Ok(ok_json())
+}
+
+/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
+/// boots not_authenticated.
+async fn clear_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
+        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
+    }
+
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider.clear().await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
+
+    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -1590,6 +1702,14 @@ async fn list_services_handler(
 
 // --- Backup/Restore ---
 
+/// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
+/// carrying the same `{status, error}` shape clients parse from both endpoints.
+fn sse_error_event(e: docker::DockerError) -> Event {
+    let (status, body) = map_docker_err(e);
+    let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+    Event::default().event("error").data(err.to_string())
+}
+
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1623,9 +1743,7 @@ async fn create_backup_handler(
                 yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
@@ -1697,9 +1815,7 @@ async fn restore_backup_handler(
                 yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
             }
             Ok(Err(e)) => {
-                let (status, body) = map_docker_err(e);
-                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
-                yield Ok(Event::default().event("error").data(err.to_string()));
+                yield Ok(sse_error_event(e));
             }
             Err(_) => {} // pipeline task panicked; nothing to forward
         }
@@ -2052,6 +2168,10 @@ fn control_timeout_layer() -> tower_http::timeout::TimeoutLayer {
     request_timeout_layer(std::time::Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS))
 }
 
+fn longrun_timeout_layer() -> tower_http::timeout::TimeoutLayer {
+    request_timeout_layer(std::time::Duration::from_secs(LONGRUN_REQUEST_TIMEOUT_SECS))
+}
+
 pub fn build_router(state: SharedState) -> Router {
 
     let vestad_public = Router::new()
@@ -2085,7 +2205,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
-        .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/build-phase", get(build_phase_handler))
@@ -2093,9 +2212,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler))
+        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler).delete(clear_provider_handler))
+        .route("/agents/{name}/provider/config", post(set_provider_config_handler))
+        .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
@@ -2119,6 +2239,13 @@ pub fn build_router(state: SharedState) -> Router {
             state.clone(),
             auth::auth_middleware,
         ));
+
+    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
+    let vestad_protected_longrun = Router::new()
+        .route("/agents", post(create_agent_handler))
+        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
+        .layer(longrun_timeout_layer())
+        .layer(middleware::from_fn_with_state(state.clone(), auth::auth_middleware));
 
     // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
     // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
@@ -2174,6 +2301,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected_timed)
+        .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
         .merge(agents_services)
         .merge(agents_services_read)
@@ -2272,10 +2400,6 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
-                let today = today_date.to_string();
-                let week_ago = seven_days_ago.clone();
-                let month_ago = thirty_days_ago.clone();
-
                 if let Some(age) = backup::container_age_secs(&state.docker, name).await {
                     if age < backup::MIN_AGE_FOR_BACKUP_SECS {
                         tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
@@ -2295,21 +2419,21 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && b.created_at.starts_with(&today)
+                        && b.created_at.starts_with(today_date)
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
                 }
 
                 let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
+                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= seven_days_ago
                 });
                 if !has_recent_weekly {
                     needed.push(crate::types::BackupType::Weekly);
                 }
 
                 let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
+                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= thirty_days_ago
                 });
                 if !has_recent_monthly {
                     needed.push(crate::types::BackupType::Monthly);
@@ -2394,6 +2518,7 @@ pub struct ServerConfig {
     pub config_dir: std::path::PathBuf,
     pub docker: bollard::Docker,
     pub dev_mode: bool,
+    pub expose_lan: bool,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2407,6 +2532,7 @@ pub async fn run_server(cfg: ServerConfig) {
         config_dir,
         docker,
         dev_mode,
+        expose_lan,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2428,10 +2554,17 @@ pub async fn run_server(cfg: ServerConfig) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
     let agent_settings = load_settings().agents.clone();
-    docker::reconcile_containers(&docker, &env_config, &|name| {
-        agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-    }).await;
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
+    // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
+    // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
+    let reconcile_docker = docker.clone();
+    let reconcile_env = state.env_config.clone();
+    tokio::spawn(async move {
+        docker::reconcile_containers(&reconcile_docker, &reconcile_env, &move |name| {
+            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+        })
+        .await;
+    });
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
@@ -2457,9 +2590,21 @@ pub async fn run_server(cfg: ServerConfig) {
     // the async block, closing the TOCTOU race on the HTTP port. HTTPS binds
     // inside axum_server::bind_rustls below; its window is short and a loss is
     // loud (the task panics) rather than silent.
-    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    // Bind the HTTPS control API to loopback by default — every normal path
+    // reaches vestad via localhost (cloudflared dials https://localhost:{port}),
+    // so this keeps the API off the LAN and the public internet. `--expose-lan`
+    // opts into binding all interfaces so other devices on the LAN can connect
+    // (0.0.0.0 still includes loopback, so the tunnel keeps working); the API is
+    // then guarded only by the API key + fingerprint-pinned self-signed TLS. The
+    // plain HTTP server stays loopback-only regardless (see main.rs).
+    let https_bind_addr = if expose_lan {
+        std::net::Ipv4Addr::UNSPECIFIED
+    } else {
+        std::net::Ipv4Addr::LOCALHOST
+    };
+    let https_addr = std::net::SocketAddr::from((https_bind_addr, port));
 
-    tracing::info!(port, "https listening on 0.0.0.0");
+    tracing::info!(port, %https_bind_addr, "https listening");
     tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
 
     let http_app = app.clone();
@@ -2598,6 +2743,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn longrun_layer_allows_a_request_past_the_control_deadline() {
+        // A handler slower than a control-class deadline must survive under the longrun layer —
+        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        let slow = || async {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            "ok"
+        };
+        let control_deadline = std::time::Duration::from_millis(100);
+        let longrun_deadline = std::time::Duration::from_millis(2000);
+        let router = axum::Router::new()
+            .route("/control", axum::routing::post(slow))
+            .layer(super::request_timeout_layer(control_deadline))
+            .merge(
+                axum::Router::new()
+                    .route("/longrun", axum::routing::post(slow))
+                    .layer(super::request_timeout_layer(longrun_deadline)),
+            );
+        let (port, handle) = serve_router(router).await;
+        let client = reqwest::Client::new();
+
+        let timed = client.post(format!("http://127.0.0.1:{}/control", port)).send().await.unwrap();
+        assert_eq!(timed.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
+        let long = client.post(format!("http://127.0.0.1:{}/longrun", port)).send().await.unwrap();
+        assert_eq!(long.status(), reqwest::StatusCode::OK);
+
+        assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS);
         handle.abort();
     }
 

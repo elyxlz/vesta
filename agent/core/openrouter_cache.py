@@ -25,7 +25,6 @@ path for the OpenRouter provider; the SDK never talks to OpenRouter directly.
 
 import asyncio
 import json
-import os
 import re
 import socket
 import typing as tp
@@ -36,13 +35,8 @@ from aiohttp import web
 from . import logger
 from .config import VestaConfig
 from .models import State
-from .provider import observed_provider_failure
-
-# Terminal upstream statuses that mean the provider can't be used as configured:
-# 401 (invalid/expired auth) and 402 (insufficient credits). Either flips the agent
-# to not_authenticated so a broken key fails `vesta setup` in seconds instead of the
-# agent idling until the ready timeout.
-TERMINAL_PROVIDER_ERRORS = (401, 402)
+from .provider import OPENROUTER_SMALL_FAST_MODEL
+from .provider import TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
 OPENROUTER_API = "https://openrouter.ai/api"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
@@ -296,18 +290,16 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
     started = False
     try:
         providers: dict[str, str | None] = {}
-        if "ANTHROPIC_AUTH_TOKEN" in os.environ and os.environ["ANTHROPIC_AUTH_TOKEN"]:
-            key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+        if config.openrouter_key is not None:
+            key = config.openrouter_key.get_secret_value()
             models = [config.agent_model]
-            if "ANTHROPIC_SMALL_FAST_MODEL" in os.environ and os.environ["ANTHROPIC_SMALL_FAST_MODEL"]:
-                small_fast = os.environ["ANTHROPIC_SMALL_FAST_MODEL"]
-                if small_fast not in models:
-                    models.append(small_fast)
+            if OPENROUTER_SMALL_FAST_MODEL not in models:
+                models.append(OPENROUTER_SMALL_FAST_MODEL)
             # Probe models concurrently so boot isn't serialized across them.
             resolved = await asyncio.gather(*(_resolve_provider(client, model, key) for model in models))
             providers = dict(zip(models, resolved))
         else:
-            logger.warning("OpenRouter caching: no ANTHROPIC_AUTH_TOKEN to probe with; proxy passes through uncached")
+            logger.warning("OpenRouter caching: no key to probe with; proxy passes through uncached")
 
         app = web.Application()
         app["providers"] = providers

@@ -20,7 +20,8 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     onRestart: state.onRestart,
     onRebuild: state.onRebuild,
     onBackup: state.onBackup,
-    onOpenSettings: state.onOpenSettings,
+    onAppSettings: state.onAppSettings,
+    onAgentSettings: state.onAgentSettings,
     onDebugInfo: state.onDebugInfo,
   });
 

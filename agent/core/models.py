@@ -8,12 +8,12 @@ import pydantic as pyd
 from aiohttp.web import AppRunner
 from claude_agent_sdk import ClaudeSDKClient
 
-from .config import VestaConfig, load_config
+from .config import VestaConfig, load_config, migrate_legacy_config_to_store
 from .events import EventBus
 from .provider import ProviderStatus
 from .state_store import PersistedState
 
-__all__ = ["State", "Notification", "VestaConfig", "PersistedState", "load_config"]
+__all__ = ["State", "Notification", "VestaConfig", "PersistedState", "load_config", "migrate_legacy_config_to_store"]
 
 CORE_SOURCE = "core"
 

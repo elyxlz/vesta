@@ -169,7 +169,22 @@ fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     // Follow the real user creation path: build the image, then discover
     // the container via the API (not by hardcoding the naming convention).
     let client = Box::leak(Box::new(SERVER.client()));
-    let agent = TestAgent::create(client, name).unwrap();
+    // Retry create over transient infra hiccups (a cold image build that times out, a momentary
+    // docker daemon stall). This runs inside the pool's LazyLock init, so an unwrap on a transient
+    // would poison the LazyLock and cascade every test in the pool — retrying first keeps one flake
+    // from failing the whole suite.
+    let mut attempt = 0;
+    let agent = loop {
+        attempt += 1;
+        match TestAgent::create(client, name) {
+            Ok(agent) => break agent,
+            Err(e) if attempt < 3 => {
+                eprintln!("live setup: create attempt {attempt} for {name} failed ({e}); retrying");
+                thread::sleep(Duration::from_secs(5));
+            }
+            Err(e) => panic!("create live agent {name} after {attempt} attempts: {e}"),
+        }
+    };
 
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));

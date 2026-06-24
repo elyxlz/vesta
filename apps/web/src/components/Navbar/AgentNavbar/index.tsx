@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
@@ -29,12 +30,13 @@ export function AgentNavbar({
   swipeProgress: MotionValue<number>;
 }) {
   const { connected } = useAuth();
+  const { reachable } = useGateway();
   const { name, agent } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
-  const needsAuth = agent?.status === "not_authenticated";
+  const needsAuth = agent?.status === "not_authenticated" && reachable;
 
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
@@ -87,23 +89,7 @@ export function AgentNavbar({
             </Tooltip>
           )
         }
-        center={
-          <>
-            <AgentIsland />
-            {isMobile && needsAuth && (
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center gap-2">
-                <Button
-                  variant="default"
-                  size="lg"
-                  onClick={() => void handleOpenAuth()}
-                >
-                  <KeyRound data-icon="inline-start" />
-                  sign in
-                </Button>
-              </div>
-            )}
-          </>
-        }
+        center={<AgentIsland />}
         trailing={
           connected ? (
             <div className="flex items-center gap-2">

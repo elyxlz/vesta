@@ -175,6 +175,12 @@ enum Command {
         #[arg(long)]
         context_window: Option<u64>,
     },
+    /// Sign out an agent: clear its provider credentials. It stays running but can't respond
+    /// until you reconnect a provider with `vesta auth`.
+    Logout {
+        /// Agent name
+        name: String,
+    },
     /// View or edit an agent's constitution (a charter prepended to its memory; the agent
     /// cannot edit it). With no flags, prints the current constitution.
     Constitution {
@@ -214,10 +220,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Connect to a remote server (e.g. vesta connect https://host#apikey)
+    /// Connect to a remote server (paste the connect link vestad printed)
     Connect {
-        /// Server URL, optionally with API key after #
-        host: String,
+        /// The connect link vestad printed, e.g. https://host/app#k=key
+        link: String,
     },
     /// Update vesta to the latest version
     Update,
@@ -323,6 +329,16 @@ enum BackupAction {
 enum Toggle {
     On,
     Off,
+}
+
+/// Build a `{daily?, weekly?, monthly?}` retention object from the optional flags,
+/// omitting any the user didn't pass.
+fn retention_map(daily: Option<usize>, weekly: Option<usize>, monthly: Option<usize>) -> serde_json::Map<String, serde_json::Value> {
+    let mut ret = serde_json::Map::new();
+    if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
+    if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
+    if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+    ret
 }
 
 fn print_retention(ret: &serde_json::Value) {
@@ -927,12 +943,7 @@ fn run(cli: Cli) {
         return;
     };
 
-    let is_update = matches!(command, Command::Update);
-    let bg_handle = if is_update {
-        None
-    } else {
-        check_update_cached()
-    };
+    let bg_handle = if matches!(command, Command::Update) { None } else { check_update_cached() };
 
     let host_ref = cli.host.as_deref();
     let token_ref = cli.token.as_deref();
@@ -1047,7 +1058,7 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() {
-                c.set_provider_settings(&name, model.as_deref(), context_window)
+                c.set_provider_prefs(&name, model.as_deref(), context_window)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
@@ -1141,6 +1152,12 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{name}: restarted");
+        }
+
+        Command::Logout { name } => {
+            let c = get_client(host_ref, token_ref);
+            c.logout(&name).unwrap_or_else(|e| platform::die(&e));
+            eprintln!("{name}: signed out (reconnect a provider with `vesta auth {name}`)");
         }
 
         Command::Gateway { action } => match action {
@@ -1290,10 +1307,7 @@ fn run(cli: Cli) {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
                     } else {
-                        let mut ret = serde_json::Map::new();
-                        if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                        if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                        if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+                        let ret = retention_map(daily, weekly, monthly);
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
                             .unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
@@ -1315,11 +1329,7 @@ fn run(cli: Cli) {
                             body.insert("enabled".into(), matches!(toggle, Toggle::On).into());
                         }
                         if daily.is_some() || weekly.is_some() || monthly.is_some() {
-                            let mut ret = serde_json::Map::new();
-                            if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                            if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                            if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
-                            body.insert("retention".into(), serde_json::Value::Object(ret));
+                            body.insert("retention".into(), retention_map(daily, weekly, monthly).into());
                         }
                         let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
                             .unwrap_or_else(|e| platform::die(&e));
@@ -1349,13 +1359,9 @@ fn run(cli: Cli) {
             eprintln!("{name}: ready");
         }
 
-        Command::Connect { host } => {
-            let (url, key) = if let Some((url, key)) = host.split_once('#') {
-                (url.to_string(), key.to_string())
-            } else {
-                let key = prompt("API key");
-                (host, key)
-            };
+        Command::Connect { link } => {
+            let (url, key) = common::parse_connect_link(&link)
+                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {

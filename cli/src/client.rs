@@ -97,10 +97,6 @@ fn cert_fingerprint(der: &[u8]) -> String {
     )
 }
 
-pub fn make_ws_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
-    make_rustls_config(fingerprint)
-}
-
 fn ws_base_url(url: &str) -> String {
     url.replace("https://", "wss://")
         .replace("http://", "ws://")
@@ -143,6 +139,26 @@ fn status_error_message(status: u16, error_msg: Option<String>) -> String {
 
 fn read_json<T: serde::de::DeserializeOwned>(resp: Response<Body>) -> Result<T, String> {
     resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+}
+
+fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String> {
+    value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
+}
+
+/// Build the sparse provider-owned preferences body (model + context window) for /provider/config.
+fn provider_prefs(model: Option<&str>, max_context_tokens: Option<u64>) -> serde_json::Map<String, serde_json::Value> {
+    let mut prefs = serde_json::Map::new();
+    if let Some(model) = model {
+        prefs.insert("agent_model".to_string(), serde_json::json!(model));
+    }
+    if let Some(ctx) = max_context_tokens {
+        prefs.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+    }
+    prefs
+}
+
+fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
+    value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
 
 fn map_error(host: &str, e: ureq::Error) -> String {
@@ -393,39 +409,25 @@ impl Client {
     }
 
     pub fn get_channel(&self) -> Result<String, String> {
-        let resp = self.get("/settings/channel")?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        let value: serde_json::Value = read_json(self.get("/settings/channel")?)?;
+        require_str(&value, "channel")
     }
 
     pub fn set_channel(&self, channel: &str) -> Result<String, String> {
         let resp = self.put_json("/settings/channel", &serde_json::json!({ "channel": channel }))?;
         let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        require_str(&value, "channel")
     }
 
     pub fn get_auto_update(&self) -> Result<bool, String> {
-        let resp = self.get("/settings/auto-update")?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("auto_update").and_then(|v| v.as_bool()) {
-            Some(enabled) => Ok(enabled),
-            None => Err("response missing auto_update".into()),
-        }
+        let value: serde_json::Value = read_json(self.get("/settings/auto-update")?)?;
+        require_bool(&value, "auto_update")
     }
 
     pub fn set_auto_update(&self, enabled: bool) -> Result<bool, String> {
         let resp = self.put_json("/settings/auto-update", &serde_json::json!({ "auto_update": enabled }))?;
         let value: serde_json::Value = read_json(resp)?;
-        match value.get("auto_update").and_then(|v| v.as_bool()) {
-            Some(enabled) => Ok(enabled),
-            None => Err("response missing auto_update".into()),
-        }
+        require_bool(&value, "auto_update")
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
@@ -451,33 +453,34 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with provider credentials. Either Claude
-    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
+    /// Provision an existing agent with Claude credentials (the OAuth JSON blob) and the
+    /// model/context preferences in one request, so vestad writes both and restarts once.
+    /// Splitting this into separate restart-on-write calls raced: a later call hit the agent
+    /// mid-restart and was dropped. Model/context are provider-owned, sent under `provider_config`.
     pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        let mut body = serde_json::json!({"credentials": credentials});
-        if let Some(model) = model {
-            body["model"] = serde_json::json!(model);
-        }
-        if let Some(ctx) = max_context_tokens {
-            body["max_context_tokens"] = serde_json::json!(ctx);
-        }
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        self.post_json(
+            &format!("/agents/{name}/provider/config"),
+            &serde_json::json!({
+                "provider": {"credentials": credentials},
+                "provider_config": serde_json::Value::Object(provider_prefs(model, max_context_tokens)),
+            }),
+        )?;
         Ok(())
     }
 
-    /// Change the model and/or context window on a provisioned agent, keeping its
-    /// provider and credentials. POSTs `{model?, max_context_tokens?}`.
-    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        let mut body = serde_json::Map::new();
-        if let Some(model) = model {
-            body.insert("model".to_string(), serde_json::json!(model));
+    /// Update provider-owned preferences (model and/or context window) via POST /provider/config.
+    /// A no-op when both are None. Vestad restarts the agent so they take effect.
+    pub fn set_provider_prefs(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+        let prefs = provider_prefs(model, max_context_tokens);
+        if prefs.is_empty() {
+            return Ok(());
         }
-        if let Some(ctx) = max_context_tokens {
-            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
-        }
-        self.post_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(body))?;
+        self.post_json(
+            &format!("/agents/{name}/provider/config"),
+            &serde_json::json!({"provider_config": serde_json::Value::Object(prefs)}),
+        )?;
         Ok(())
     }
 
@@ -493,6 +496,13 @@ impl Client {
             "openrouter_model": args.model,
         });
         self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        Ok(())
+    }
+
+    /// Sign out: clear the agent's provider credentials (DELETE /provider). Vestad restarts the
+    /// agent, which boots not_authenticated until reconnected.
+    pub fn logout(&self, name: &str) -> Result<(), String> {
+        self.delete_req(&format!("/agents/{name}/provider"))?;
         Ok(())
     }
 
@@ -810,7 +820,7 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
         .try_clone()
         .map_err(|e| format!("failed to clone ws socket: {e}"))?;
     let connector =
-        tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
+        tungstenite::Connector::Rustls(make_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
         .map_err(|e| format!("ws connect failed: {e}"))?;
     timeout_handle

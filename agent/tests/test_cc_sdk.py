@@ -311,6 +311,22 @@ def test_assistant_message_skips_sidechain():
     assert assistant_message_from(sub) is None
 
 
+def test_assistant_message_carries_api_error_flag():
+    err = {
+        "type": "assistant",
+        "isApiErrorMessage": True,
+        "message": {"content": [{"type": "text", "text": "API Error: 401 Invalid authentication credentials"}]},
+    }
+    normal = {"type": "assistant", "message": {"content": [{"type": "text", "text": "all good"}]}}
+    err_message = assistant_message_from(err)
+    assert err_message is not None
+    assert err_message.is_api_error is True
+    # Absent flag defaults to False, so an agent merely writing about a 401 isn't treated as one.
+    normal_message = assistant_message_from(normal)
+    assert normal_message is not None
+    assert normal_message.is_api_error is False
+
+
 def test_read_new_objects_only_consumes_complete_lines(tmp_path):
     path = tmp_path / "t.jsonl"
     path.write_text(json.dumps({"type": "user"}) + "\n" + '{"partial":')

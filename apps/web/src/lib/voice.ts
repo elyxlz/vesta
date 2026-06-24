@@ -81,8 +81,6 @@ export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
 
 export const setSttEnabled = (n: string, value: boolean) =>
   voicePost(n, "stt/set-enabled", { value });
-export const setSttAutoSend = (n: string, value: boolean) =>
-  voicePost(n, "stt/set-auto-send", { value });
 export const setSttEot = (
   n: string,
   params: { threshold?: number; timeout_ms?: number },

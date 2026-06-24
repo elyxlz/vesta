@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections.abc import Iterator
 from .auth import get_token
+from .config import Config
 from .settings import MicrosoftSettings
 
 logger = logging.getLogger(__name__)
@@ -395,3 +396,55 @@ def upload_large_mail_attachment(
 
     headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
     return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
+
+
+# Config-bound convenience wrappers: the command modules always source cache_file,
+# scopes, base_url (and upload_chunk_size) from a Config, so these fill them in.
+
+
+def request_cfg(
+    config: Config,
+    client: httpx.Client,
+    settings: MicrosoftSettings,
+    method: str,
+    path: str,
+    account_id: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any] | None:
+    return request(client, config.cache_file, config.scopes, settings, config.base_url, method, path, account_id, **kwargs)
+
+
+def paginate_cfg(
+    config: Config,
+    client: httpx.Client,
+    settings: MicrosoftSettings,
+    path: str,
+    account_id: str | None = None,
+    **kwargs: Any,
+) -> Iterator[dict[str, Any]]:
+    return request_paginated(client, config.cache_file, config.scopes, settings, config.base_url, path, account_id, **kwargs)
+
+
+def upload_mail_attachment_cfg(
+    config: Config,
+    client: httpx.Client,
+    settings: MicrosoftSettings,
+    message_id: str,
+    name: str,
+    data: bytes,
+    account_id: str | None = None,
+    content_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    return upload_large_mail_attachment(
+        client,
+        config.cache_file,
+        config.scopes,
+        settings,
+        config.base_url,
+        config.upload_chunk_size,
+        message_id,
+        name,
+        data,
+        account_id,
+        content_type,
+    )

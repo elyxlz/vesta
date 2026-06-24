@@ -14,7 +14,6 @@ from core.loops import (
     delete_notification_files,
     format_notification_batch,
     load_notifications,
-    load_new_notifications,
     monitor_loop,
     process_batch,
 )
@@ -289,26 +288,6 @@ def test_batch_no_hint_for_non_message_type():
     assert "→ Reply using" not in formatted
 
 
-# --- load_new_notifications ---
-
-
-@pytest.mark.anyio
-async def test_load_new_notifications_emits_events(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    (config.notifications_dir / "n.json").write_text(VALID_NOTIF)
-
-    state = vm.State()
-    q = state.event_bus.subscribe()
-
-    result = await load_new_notifications(state=state, config=config)
-    assert len(result) == 1
-
-    event = q.get_nowait()
-    assert event["type"] == "notification"
-    assert event["source"] == "test"
-
-
 # --- process_batch ---
 
 
@@ -482,16 +461,16 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
 
     notify_taps: list[None] = []
-    real_load = load_new_notifications
+    real_load = load_notifications
 
-    async def counting_load(*, state, config):
+    async def counting_load(*, config):
         notify_taps.append(None)
-        return await real_load(state=state, config=config)
+        return await real_load(config=config)
 
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        with patch("core.loops.load_new_notifications", counting_load):
+        with patch("core.loops.load_notifications", counting_load):
             path = _write_notif(config.notifications_dir, "dup", interrupt=False)
             # Wait for the loader to observe the file across at least two ticks while held (not idle).
             await wait_for_condition(lambda: len(notify_taps) >= 2, message="monitor_loop did not tick twice")
@@ -505,6 +484,40 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
             # File stays on disk (deleted only after processing), but queued_paths dedup prevents re-queueing.
             assert queue.qsize() == 1, f"passive file must be queued once, got {queue.qsize()}"
             assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
+    finally:
+        await runner.aclose()
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
+    """A persisted file re-read every tick must emit a single 'notification' event, not one
+    per tick. Files kept on disk (e.g. deferred while unauthenticated) re-emitting every 2s
+    tick was the notification storm: 16 kept files -> ~8 db rows/sec, 3.6M rows."""
+    config = _passive_config(tmp_path)
+    config.monitor_tick_interval = 1
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("thinking")  # hold the passive file on disk across ticks
+    queue: asyncio.Queue = asyncio.Queue()
+    sub = state.event_bus.subscribe()
+
+    ticks = [0]
+    real_load = load_notifications
+
+    async def counting_load(*, config):
+        ticks[0] += 1
+        return await real_load(config=config)
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        with patch("core.loops.load_notifications", counting_load):
+            _write_notif(config.notifications_dir, "kept", interrupt=False)
+            await wait_for_condition(lambda: ticks[0] >= 3, message="monitor_loop did not re-read across ticks")
+
+        emitted = [sub.get_nowait() for _ in range(sub.qsize())]
+        notifs = [e for e in emitted if e["type"] == "notification"]
+        assert len(notifs) == 1, f"each notification must emit exactly once, got {len(notifs)} across {ticks[0]} ticks"
     finally:
         await runner.aclose()
 

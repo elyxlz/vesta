@@ -60,9 +60,7 @@ def _cmd_charge(args: argparse.Namespace, config: Config) -> int:
         _print({"status": "error", "error": "auth_error", "message": str(e)})
         return 3
     _print(result)
-    if result["status"] == "approved":
-        return 0
-    if result["status"] == "rejected":
+    if result["status"] in ("approved", "rejected"):
         return 0
     if result["status"] == "timeout":
         return 4
@@ -113,9 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": _cmd_status,
         "charge": _cmd_charge,
     }
-    handler = handlers.get(args.command)
-    if not handler:
-        parser.error(f"unknown command: {args.command}")
+    handler = handlers[args.command]
     try:
         return handler(args, config)
     except KeyboardInterrupt:

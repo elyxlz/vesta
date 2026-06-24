@@ -3,7 +3,17 @@
 import sqlite3
 import typing as tp
 
-from core.events import _EVENTS_SCHEMA, _SCHEMA_VERSION, SUBSCRIBER_QUEUE_MAXSIZE, ChatEvent, EventBus, SubagentStartEvent, UserEvent
+from core.events import (
+    _EVENTS_SCHEMA,
+    _SCHEMA_VERSION,
+    SUBSCRIBER_QUEUE_MAXSIZE,
+    ChatEvent,
+    EventBus,
+    NotificationEvent,
+    SubagentStartEvent,
+    ToolStartEvent,
+    UserEvent,
+)
 
 
 # --- Emit & persist ---
@@ -139,6 +149,74 @@ def test_cursor_pagination(event_bus):
     assert len(oldest) == 20
     assert tp.cast(tp.Any, oldest[0])["text"] == "msg 0"
     assert cursor3 is None
+
+
+def test_recent_runs_off_the_connection_home_thread(event_bus):
+    """History reads must work from a worker thread so api.py can offload them via
+    asyncio.to_thread — a slow scan then never blocks the event loop (which would starve
+    vestad's status poll and flap the agent to 'starting'). A connection bound to one
+    thread raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
+    import concurrent.futures
+
+    event_bus.emit(UserEvent(type="user", text="hi"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        events, _ = pool.submit(event_bus.recent).result()
+    assert [tp.cast(tp.Any, e)["text"] for e in events] == ["hi"]
+
+
+def test_app_chat_keeps_conversation_and_tools_drops_notifications(event_bus):
+    """app-chat history keeps the conversation and the tool calls within its window (so the
+    show-tools toggle has history to reveal), but drops notification noise — the regression
+    that blanked the chat. Notifications never appear; tool_start rides along in range."""
+    event_bus.emit(UserEvent(type="user", text="my real message"))
+    event_bus.emit(ChatEvent(type="chat", text="my real reply"))
+    for i in range(200):
+        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+        event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}", subagent=False))
+
+    events, _ = event_bus.recent(limit=50, channel="app-chat")
+    types = {tp.cast(tp.Any, e)["type"] for e in events}
+    assert "notification" not in types
+    assert types == {"user", "chat", "tool_start"}
+    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] in ("user", "chat")]
+    assert convo == ["my real message", "my real reply"]
+
+    # Unfiltered recent() still returns the raw tail (other consumers untouched).
+    raw, _ = event_bus.recent(limit=50)
+    assert {tp.cast(tp.Any, e)["type"] for e in raw} == {"notification", "tool_start"}
+
+
+def test_app_chat_window_keeps_tool_calls_without_spending_the_cap(event_bus):
+    """The cap counts conversation messages; tool calls within the window's id range ride
+    along (for the show-tools toggle) without pushing real messages out of the capped window."""
+    for i in range(5):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        for j in range(10):
+            event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}-{j}", subagent=False))
+
+    events, _ = event_bus.recent(limit=3, channel="app-chat")
+    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] == "user"]
+    # Cap = 3 conversation messages: the newest 3, not crowded out by the 50 tool calls.
+    assert convo == ["msg 2", "msg 3", "msg 4"]
+    # Tool calls inside the window's range are present so the toggle has history to reveal.
+    tools = [e for e in events if tp.cast(tp.Any, e)["type"] == "tool_start"]
+    assert len(tools) == 30  # the 10 after each of msg 2, 3, 4
+
+
+def test_app_chat_channel_paginates_across_notification_runs(event_bus):
+    """before(cursor, channel) skips notification noise between conversation pages."""
+    for i in range(5):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        for j in range(20):
+            event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"noise {i}-{j}"))
+
+    page, cursor = event_bus.recent(limit=3, channel="app-chat")
+    assert [tp.cast(tp.Any, e)["text"] for e in page] == ["msg 2", "msg 3", "msg 4"]
+    assert cursor is not None
+
+    older, cursor2 = event_bus.before(cursor, limit=3, channel="app-chat")
+    assert [tp.cast(tp.Any, e)["text"] for e in older] == ["msg 0", "msg 1"]
+    assert cursor2 is None
 
 
 # --- Search ---

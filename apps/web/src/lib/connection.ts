@@ -3,6 +3,34 @@ import type { VestaEvent } from "@/lib/types";
 
 const STORAGE_KEY = "vesta-connection";
 
+/** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
+ * `vestad status` embeds so opening the link connects without pasting the key.
+ * Pure (takes the raw hash) so it unit-tests without a DOM. Null when absent. */
+export function parseConnectKey(hash: string): string | null {
+  if (!hash.startsWith("#")) return null;
+  return new URLSearchParams(hash.slice(1)).get("k");
+}
+
+/** Split a full connect link (`https://host/app#k=<key>`, printed by `vestad
+ * status`) into the vestad origin and the key, so the native app's self-host
+ * form can take a single paste instead of two fields. Drops the `/app` path
+ * and the fragment to recover the origin. Null when the input isn't a link. */
+export function parseConnectLink(
+  input: string,
+): { host: string; key: string } | null {
+  const trimmed = input.trim();
+  const hashIndex = trimmed.indexOf("#");
+  if (hashIndex === -1) return null;
+  const key = parseConnectKey(trimmed.slice(hashIndex));
+  if (!key) return null;
+  const host = trimmed
+    .slice(0, hashIndex)
+    .replace(/\/+$/, "")
+    .replace(/\/app$/, "");
+  if (!host) return null;
+  return { host, key };
+}
+
 export interface ConnectionConfig {
   url: string;
   accessToken: string;
@@ -86,6 +114,18 @@ export function getConnection(): ConnectionConfig | null {
   return cached;
 }
 
+/** Display hostname of the current connection (falls back to the raw url if it
+ * doesn't parse, "" when not connected). */
+export function connectionHostname(): string {
+  const conn = getConnection();
+  if (!conn) return "";
+  try {
+    return new URL(conn.url).hostname;
+  } catch {
+    return conn.url;
+  }
+}
+
 export function setConnection(
   url: string,
   accessToken: string,
@@ -150,10 +190,6 @@ export function clearConnection(): void {
   if (isTauri) {
     deleteFromStore();
   }
-}
-
-export function isConnected(): boolean {
-  return getConnection() !== null;
 }
 
 export function isTokenExpiringSoon(): boolean {

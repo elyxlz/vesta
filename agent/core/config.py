@@ -1,14 +1,158 @@
+import json
 import os
 import pathlib as pl
 import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
+from core import logger
 from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
+
+# Shipped new-agent defaults, read here as the config floor and by vestad (from the embedded agent
+# source) for GET /agent-defaults, so they live in one place across Python and Rust.
+CONFIG_DEFAULTS_PATH = pl.Path(__file__).parent / "defaults.json"
+
+
+def _resolve_agent_dir() -> pl.Path:
+    # Mirrors the agent_dir field, but resolved from env before the config exists so the store path can be located.
+    if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
+        return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
+    return _DEFAULT_AGENT_DIR
+
+
+def config_store_path() -> pl.Path:
+    """The writable per-agent config store (sparse overrides written by PUT /config)."""
+    return _resolve_agent_dir() / "data" / "config.json"
+
+
+def _shipped_defaults() -> dict[str, tp.Any]:
+    return json.loads(CONFIG_DEFAULTS_PATH.read_text())
+
+
+def read_config_store() -> dict[str, tp.Any]:
+    """The store's sparse overrides, or {} when absent/corrupt (never raises: it's on the boot path)."""
+    path = config_store_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        logger.error(f"config store {path} is corrupt ({exc}); ignoring it")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def update_config_store(updates: dict[str, tp.Any]) -> None:
+    """Merge updates into the store (atomic tmp+rename). A None clears the key; non-field keys are rejected."""
+    fields = VestaConfig.model_fields
+    for key in updates:
+        if key not in fields:
+            raise ValueError(f"{key!r} is not a config field")
+    current = read_config_store()
+    for key, value in updates.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+    path = config_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(current, indent=2))
+    tmp.replace(path)
+
+
+# Provider-owned settings flow through provider.py and the /provider* endpoints, never the generic
+# config API. Preferences (model/context/thinking) are settable via PUT /provider/config; the auth
+# fields are written only by provider.py's set_claude/set_openrouter/clear_provider.
+PROVIDER_PREF_FIELDS = frozenset({"agent_model", "max_context_tokens", "thinking"})
+_PROVIDER_AUTH_FIELDS = frozenset({"agent_provider", "openrouter_key"})
+
+
+def _merge_validate(config: "VestaConfig", data: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    """Merge a sparse update onto the live config and validate the whole model, so each field is
+    checked under its real constraints (thinking coerces, gt/le hold). A null clears its key."""
+    unknown = [key for key in data if key not in VestaConfig.model_fields]
+    if unknown:
+        raise ValueError(f"not config fields: {', '.join(sorted(unknown))}")
+    candidate = config.model_dump()
+    candidate.update({key: value for key, value in data.items() if value is not None})
+    VestaConfig.model_validate(candidate)
+    return data
+
+
+def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
+    """Validate a sparse PUT /config body. Provider-owned settings (model, context, thinking, and the
+    auth fields) are rejected here — they flow through the /provider endpoints."""
+    if not isinstance(data, dict):
+        raise ValueError("config body must be a JSON object")
+    data = tp.cast("dict[str, tp.Any]", data)
+    provider_owned = sorted(set(data) & (PROVIDER_PREF_FIELDS | _PROVIDER_AUTH_FIELDS))
+    if provider_owned:
+        raise ValueError(f"provider-owned, set via /provider/config: {', '.join(provider_owned)}")
+    return _merge_validate(config, data)
+
+
+def validate_provider_prefs(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
+    """Validate a sparse PUT /provider/config body — only the provider preferences (model, context,
+    thinking) are accepted."""
+    if not isinstance(data, dict):
+        raise ValueError("provider config body must be a JSON object")
+    data = tp.cast("dict[str, tp.Any]", data)
+    disallowed = sorted(set(data) - PROVIDER_PREF_FIELDS)
+    if disallowed:
+        raise ValueError(f"not provider preferences: {', '.join(disallowed)}")
+    return _merge_validate(config, data)
+
+
+_LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"
+
+
+def _parse_legacy_export(content: str, key: str) -> str | None:
+    """Read a `[export ]KEY=value` line from a shell env file, unquoting once; None if absent/empty."""
+    for raw_line in content.splitlines():
+        line = raw_line.strip().removeprefix("export ")
+        name, _, value = line.partition("=")
+        if "=" not in line or name.strip() != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
+            value = value[1:-1]
+        return value or None
+    return None
+
+
+def migrate_legacy_config_to_store() -> None:
+    """Drain a legacy agent's preferences (env) and provider choice/key (old vesta-provider.env, then
+    deleted) into the store, seeding only unset keys. Idempotent.
+
+    LEGACY(remove-when: every fleet agent has a config.json and no vesta-provider.env): this function,
+    its boot call site, and the env layer in settings_customise_sources.
+    """
+    store = read_config_store()
+    content = _LEGACY_PROVIDER_ENV.read_text() if _LEGACY_PROVIDER_ENV.is_file() else ""
+
+    def legacy(key: str) -> str | None:  # env wins over the old provider file
+        return (os.environ[key] if key in os.environ else "") or _parse_legacy_export(content, key)
+
+    provider = legacy("AGENT_PROVIDER")
+    ctx = legacy("MAX_CONTEXT_TOKENS")
+    candidates: dict[str, tp.Any] = {
+        "agent_model": legacy("AGENT_MODEL"),
+        "agent_personality": legacy("AGENT_PERSONALITY"),
+        "agent_provider": provider if provider in ("claude", "openrouter") else None,
+        "openrouter_key": legacy("ANTHROPIC_AUTH_TOKEN") if provider == "openrouter" else None,
+        "max_context_tokens": int(ctx) if ctx and ctx.isdigit() else None,
+    }
+    updates = {key: value for key, value in candidates.items() if value is not None and key not in store}
+    if updates:
+        logger.startup(f"migrated legacy config into the store: {sorted(updates)}")
+        update_config_store(updates)
+    _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
+
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback
 # when the user hasn't explicitly chosen a context window.
@@ -27,11 +171,14 @@ class VestaConfig(pyd_settings.BaseSettings):
     Every field can be overridden via env var (uppercased field name, no prefix).
     Set in ~/.bashrc and run restart_vesta to apply.
 
+    Defaults come from the shipped defaults.json; the writable config store (~/agent/data/config.json,
+    PUT /config) overrides them and wins over env. See settings_customise_sources.
+
     Key overrides:
-        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (required from env; vestad
-                        seeds the default and the provider file overrides it)
+        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (config-store preference;
+                        default from defaults.json)
         AGENT_NAME    - agent name (default: "vesta")
-        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key) (required from env, as AGENT_MODEL)
+        AGENT_PROVIDER - "claude" (OAuth) or "openrouter" (API key); set by /provider, default from defaults.json
         LOG_LEVEL     - DEBUG | INFO | WARNING | ERROR (default: "INFO")
         THINKING      - adaptive | enabled | disabled (default: "adaptive")
         PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
@@ -59,7 +206,8 @@ class VestaConfig(pyd_settings.BaseSettings):
         type="adaptive", display="summarized"
     )
     ws_port: int = 0
-    agent_token: str | None = None
+    # SecretStr so it's redacted in GET /config dumps; the auth middleware reads its real value.
+    agent_token: pyd.SecretStr | None = None
 
     agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
 
@@ -118,18 +266,6 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "skills"
 
     @property
-    def core_skills_dir(self) -> pl.Path:
-        return self.agent_dir / "core" / "skills"
-
-    def skill_dirs(self) -> list[pl.Path]:
-        """Return every existing skills/<name>/ directory with a SKILL.md."""
-        dirs: list[pl.Path] = []
-        for sd in [self.core_skills_dir, self.skills_dir]:
-            if sd.exists():
-                dirs.extend(p for p in sd.iterdir() if p.is_dir() and (p / "SKILL.md").exists())
-        return sorted(dirs)
-
-    @property
     def core_prompts_dir(self) -> pl.Path:
         return self.agent_dir / "core" / "prompts"
 
@@ -138,17 +274,39 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "dreamer"
 
     agent_name: str = "vesta"
-    # Model and provider are required from the env, not defaulted here: vestad is the single
-    # source of truth (vestad/src/defaults.rs) and seeds AGENT_MODEL / AGENT_PROVIDER into the
-    # agent env at creation, while the provider file (vesta-provider.env, sourced after) overrides
-    # them once a provider is configured. Keeping a Python default would duplicate that default.
+    # init=False: these come from the layered sources (store > env > defaults.json floor), never init args.
     agent_model: str = pyd.Field(init=False)
     agent_provider: tp.Literal["claude", "openrouter"] = pyd.Field(init=False)
-    # Active personality preset, read on every boot (a live selector, not consumed once at creation).
-    # build_client_options loads the shared personality SKILL.md plus presets/<value>.md into
-    # the system prompt. Required from the env: vestad always writes AGENT_PERSONALITY, and the
-    # legacy AGENT_SEED_PERSONALITY name is still accepted for agents whose env file predates the rename.
-    agent_personality: str = pyd.Field(init=False, validation_alias=pyd.AliasChoices("AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"))
+    agent_personality: str = pyd.Field(init=False)
+    # None for Claude. SecretStr redacts it in GET /config; client.py injects the real value into the SDK env.
+    openrouter_key: pyd.SecretStr | None = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[pyd_settings.BaseSettings],
+        init_settings: pyd_settings.PydanticBaseSettingsSource,
+        env_settings: pyd_settings.PydanticBaseSettingsSource,
+        dotenv_settings: pyd_settings.PydanticBaseSettingsSource,
+        file_secret_settings: pyd_settings.PydanticBaseSettingsSource,
+    ) -> tuple[pyd_settings.PydanticBaseSettingsSource, ...]:
+        # Precedence high -> low: init args, config store (PUT /config wins over a stale env), env, defaults floor.
+        sources: list[pyd_settings.PydanticBaseSettingsSource] = [init_settings]
+        store = config_store_path()
+        # Layer the store in only when it parses; a corrupt store falls back to env/defaults instead of
+        # crashing the boot (JsonConfigSettingsSource raises on malformed JSON).
+        if store.is_file():
+            try:
+                json.loads(store.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.error(f"config store {store} unreadable ({exc}); ignoring it")
+            else:
+                sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=store))
+        # LEGACY(remove-when: every fleet agent has a config.json): env as a source of store preferences,
+        # for agents that predate the store.
+        sources.extend([env_settings, dotenv_settings, file_secret_settings])
+        sources.append(pyd_settings.JsonConfigSettingsSource(settings_cls, json_file=CONFIG_DEFAULTS_PATH))
+        return tuple(sources)
 
 
 def load_config() -> tuple[VestaConfig, list[str]]:
@@ -179,7 +337,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     dropped.add(env_name)
                     progressed = True
             if not progressed:
-                # No offending env var to drop (would mean an invalid field default — a bug, not
-                # bad config). Fall back to pure defaults rather than crash-loop the boot.
+                # No env var to drop (bad store value or invalid field default). Fall back to defaults
+                # rather than crash-loop; seed the shipped floor so the init=False fields are populated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                return VestaConfig.model_construct(), issues
+                return VestaConfig.model_construct(**_shipped_defaults()), issues

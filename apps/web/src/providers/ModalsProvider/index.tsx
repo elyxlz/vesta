@@ -1,18 +1,9 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { ModalsContext, type ModalsContextValue } from "./context";
 
-interface ModalsContextValue {
-  showAuth: boolean;
-  handleOpenAuth: () => void;
-  clearAuthState: () => void;
-
-  deleteDialogOpen: boolean;
-  setDeleteDialogOpen: (open: boolean) => void;
-  handleDelete: () => Promise<void>;
-}
-
-const ModalsContext = createContext<ModalsContextValue | null>(null);
+export { useModals } from "./context";
 
 export function ModalsProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -43,12 +34,4 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
   return (
     <ModalsContext.Provider value={value}>{children}</ModalsContext.Provider>
   );
-}
-
-export function useModals() {
-  const context = useContext(ModalsContext);
-  if (!context) {
-    throw new Error("useModals must be used within ModalsProvider");
-  }
-  return context;
 }

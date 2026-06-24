@@ -65,13 +65,9 @@ def _state_dir() -> pathlib.Path:
       2. ``~/.email-client``
     """
     explicit = os.environ.get("EMAIL_CLIENT_DIR")
-    if explicit:
-        d = pathlib.Path(explicit)
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    new = pathlib.Path.home() / ".email-client"
-    new.mkdir(parents=True, exist_ok=True)
-    return new
+    d = pathlib.Path(explicit) if explicit else pathlib.Path.home() / ".email-client"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 # -- multi-account state layout -------------------------------------
@@ -217,13 +213,7 @@ def account_profile(account: str) -> tuple[str, dict]:
         _, profile = resolve_provider(dict(os.environ))
         profile = dict(profile)
     # Layer per-account config overrides, then env overrides, on top.
-    for key in (
-        "imap_host",
-        "smtp_host",
-        "smtp_port",
-        "oauth_client_id",
-        "oauth_authority",
-    ):
+    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority"):
         if cfg.get(key):
             profile[key] = cfg[key]
     if cfg.get("oauth_scopes"):

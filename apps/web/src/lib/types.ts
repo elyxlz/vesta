@@ -21,8 +21,6 @@ export interface AgentInfo {
 
 export type AgentActivityState = "idle" | "thinking";
 
-export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
-
 export type InputMethod = "voice" | "typed";
 
 type BaseEvent = { ts?: string };

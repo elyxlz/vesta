@@ -129,8 +129,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     except (KeyboardInterrupt, asyncio.CancelledError):
         state.shutdown_event.set()
 
-    if not state.shutdown_event.is_set():
-        state.shutdown_event.set()
+    state.shutdown_event.set()
 
     reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
@@ -201,6 +200,10 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
     _report_config_issues(config_issues, config=config)
+
+    # Converge a legacy agent's env-based preferences into the writable config store, so the whole
+    # fleet ends up on the new config system. Idempotent and safe (see migrate_legacy_config_to_store).
+    vm.migrate_legacy_config_to_store()
 
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done

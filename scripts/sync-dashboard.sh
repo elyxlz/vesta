@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Sync shared files from the main Vesta app into the dashboard skill.
 # Run this before committing dashboard changes or as part of CI.
+#
+# `apps/web/src/components/ui/` is the CANONICAL shadcn registry for this repo:
+# it is the single source of truth that this script mirrors into the dashboard
+# skill's own `app/src/components/ui/`. Those primitives are intentionally the
+# FULL set, not only what apps/web itself renders, so the dashboard skill (which
+# the agent uses to build arbitrary UIs) always has every component on hand.
+# Do NOT delete a primitive from apps/web just because it looks unimported there
+# (knip/dead-code tools will flag them) -- the dashboard is the other consumer.
+# The ui/ mirror below uses rsync --delete so the two trees stay strictly 1-to-1
+# and CI's dashboard-sync-check catches any drift in either direction.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,7 +24,9 @@ cp "$REPO_ROOT/apps/web/components.json" "$DASHBOARD/components.json"
 cp "$APP_SRC/index.css" "$DASHBOARD_SRC/index.css"
 cp "$APP_SRC/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
 cp "$APP_SRC/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
-cp "$APP_SRC/components/ui/"*.tsx "$DASHBOARD_SRC/components/ui/"
+# Strict mirror (delete-on-sync) so the dashboard's ui/ exactly matches the
+# canonical registry; a primitive removed from one side fails the CI check.
+rsync -a --delete --include='*.tsx' --exclude='*' "$APP_SRC/components/ui/" "$DASHBOARD_SRC/components/ui/"
 
 # Patch index.css for iframe embedding (transparent background, tailwind sources)
 # Use perl for portable in-place editing (BSD/macOS sed differs from GNU sed).

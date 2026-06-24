@@ -43,16 +43,15 @@ export function NewAgent() {
     (async () => {
       try {
         // Phase 1: create the empty agent container.
-        await createAgent(agentName, personality);
+        await createAgent(agentName);
         if (cancelled) return;
 
         // Phase 2: wait for the agent's HTTP server to be reachable.
         await waitUntilRunning(agentName, START_TIMEOUT_MS);
         if (cancelled) return;
 
-        // Phase 3: provision the provider via POST /agents/{name}/provider.
-        // The picker's result carries the chosen model + context window.
-        await setProvider(agentName, providerResult);
+        // Phase 3: set credentials + preferences (provider, personality, model, context).
+        await setProvider(agentName, providerResult, personality ?? undefined);
         if (cancelled) return;
 
         // Phase 4: wait for the provision-triggered restart to settle.

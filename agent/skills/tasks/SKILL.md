@@ -127,7 +127,7 @@ screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $
 
 One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
-**Restart**: Add this startup command to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+**Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
 ```

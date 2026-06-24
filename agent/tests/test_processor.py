@@ -240,6 +240,88 @@ async def test_process_message_no_correction_on_empty_response(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_message_deferred_when_provider_not_authenticated(tmp_path):
+    """When already not_authenticated, the processor must not drive claude (a dead token burns the
+    full retry budget) AND must not delete the notification file — it has to re-run after re-auth."""
+    import asyncio
+
+    from core.loops import _run_messages_with_interrupts
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="claude", model=None)
+    drove_claude = False
+
+    async def mock_process_message(*args, **kwargs):
+        nonlocal drove_claude
+        drove_claude = True
+        return ([], state)
+
+    notif_file = tmp_path / "notif.json"
+    notif_file.write_text("{}")
+    queue: asyncio.Queue = asyncio.Queue()
+    with patch("core.loops.process_message", side_effect=mock_process_message):
+        await _run_messages_with_interrupts(
+            "migration notif", is_user=False, file_paths=[str(notif_file)], queue=queue, state=state, config=config
+        )
+
+    assert drove_claude is False
+    assert notif_file.exists(), "deferred notification file must survive for re-run after re-auth"
+
+
+@pytest.mark.anyio
+async def test_notification_file_kept_when_auth_lost_mid_turn(tmp_path):
+    """If a turn flips auth to not_authenticated while processing (terminal 401/402 detected in
+    converse), that message's notification file must be kept so it re-runs after re-auth."""
+    import asyncio
+
+    from core.loops import _run_messages_with_interrupts
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async def mock_process_message(*args, **kwargs):
+        # Simulate converse detecting a dead token mid-turn.
+        state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="claude", model=None)
+        return ([], state)
+
+    notif_file = tmp_path / "notif.json"
+    notif_file.write_text("{}")
+    queue: asyncio.Queue = asyncio.Queue()
+    with patch("core.loops.process_message", side_effect=mock_process_message):
+        await _run_messages_with_interrupts("notif", is_user=False, file_paths=[str(notif_file)], queue=queue, state=state, config=config)
+
+    assert notif_file.exists(), "file for the turn that lost auth must survive for re-run after re-auth"
+
+
+@pytest.mark.anyio
+async def test_notification_file_deleted_on_normal_processing(tmp_path):
+    """Sanity: an authenticated, normally-processed notification still has its file deleted."""
+    import asyncio
+
+    from core.loops import _run_messages_with_interrupts
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async def mock_process_message(*args, **kwargs):
+        return ([], state)
+
+    notif_file = tmp_path / "notif.json"
+    notif_file.write_text("{}")
+    queue: asyncio.Queue = asyncio.Queue()
+    with patch("core.loops.process_message", side_effect=mock_process_message):
+        await _run_messages_with_interrupts("notif", is_user=False, file_paths=[str(notif_file)], queue=queue, state=state, config=config)
+
+    assert not notif_file.exists(), "normally-processed notification file should be deleted"
+
+
+@pytest.mark.anyio
 async def test_cancellation_triggers_restart(tmp_path):
     """If process_message raises CancelledError, restart_reason + graceful_shutdown must be set.
 

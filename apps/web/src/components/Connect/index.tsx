@@ -3,18 +3,14 @@ import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  FieldGroup,
-  Field,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { LogoText } from "@/components/Logo/LogoText";
 import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
 import { isTauri } from "@/lib/env";
+import { parseConnectLink } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
@@ -23,29 +19,39 @@ import { useAuth } from "@/providers/AuthProvider";
 // the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
-function normalizeHost(input: string): string {
-  const trimmed = input.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
-  return trimmed;
+// A soft rise-and-fade so the connect card settles in rather than snapping on.
+const connectEntrance = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.3, ease: "easeOut" },
+} as const;
+
+function ConnectHeader() {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <LogoText />
+      <p className="text-sm leading-none text-muted-foreground">
+        your unfair advantage
+      </p>
+    </div>
+  );
 }
 
 export function Connect() {
   const { connected, connect, sessionExpired } = useAuth();
-  const [apiKey, setApiKey] = useState("");
-  const [host, setHost] = useState("");
+  const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const hostRef = useRef<HTMLInputElement>(null);
-  const keyRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // In the native app (and any vesta-account surface) we lead with "continue
-  // with vesta account"; `selfHost` flips to the host+key form for people
+  // with vesta account"; `selfHost` flips to the connect-link form for people
   // running their own agent. Only ever set on Tauri (the web bundles know which
   // form they need from `managed`).
   const [selfHost, setSelfHost] = useState(false);
   // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
   // instance. Probe /info.managed: managed instances log in via the vesta.run
   // handoff (PKCE, issue #19) since the user never gets the api_key; self-hosted
-  // ones keep the paste-key form. `null` = still probing.
+  // ones keep the connect-link form. `null` = still probing.
   const [managed, setManaged] = useState<boolean | null>(
     needHostInput ? false : null,
   );
@@ -71,22 +77,23 @@ export function Connect() {
 
   if (connected) return <Navigate to="/" replace />;
 
+  // One brain-dead field: paste the whole connect link `vestad` printed and we
+  // pull out both the host and the key. A vestad-served bundle uses its own
+  // origin (the link's host is irrelevant there); the native app has no origin
+  // to assume, so it relies on the host from the link.
   const handleConnect = async () => {
     if (busy) return;
-    if (needHostInput && !host.trim()) {
-      hostRef.current?.focus();
+    const link = parseConnectLink(value);
+    if (!link) {
+      inputRef.current?.focus();
       return;
     }
-    if (!apiKey.trim()) {
-      keyRef.current?.focus();
-      return;
-    }
+    const url = needHostInput ? link.host : window.location.origin;
     setBusy(true);
     setError("");
 
     try {
-      const url = needHostInput ? normalizeHost(host) : window.location.origin;
-      await connect(url, apiKey.trim());
+      await connect(url, link.key);
     } catch (e: unknown) {
       setError(errorMessage(e, "connection failed"));
       setBusy(false);
@@ -111,14 +118,21 @@ export function Connect() {
     });
   };
 
-  // Still probing /info to avoid flashing the wrong form.
+  // Still probing /info to avoid flashing the wrong form. Keep the logo in place
+  // so resolving to a form doesn't jump the layout.
   if (managed === null) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-[240px] max-w-full px-4">
-            <ProgressBar />
-          </div>
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+          >
+            <ConnectHeader />
+            <div className="w-full">
+              <ProgressBar />
+            </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -130,8 +144,11 @@ export function Connect() {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4 text-center">
-            <LogoText className="mb-2" />
+          <motion.div
+            {...connectEntrance}
+            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+          >
+            <ConnectHeader />
             {sessionExpired && (
               <FieldDescription className="text-center">
                 your session expired, sign in again
@@ -169,10 +186,10 @@ export function Connect() {
                 }}
                 className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
               >
-                self-hosting? connect with a key
+                self-hosting? connect with a link
               </button>
             )}
-          </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -181,62 +198,40 @@ export function Connect() {
   return (
     <div className="flex h-full flex-col p-page">
       <div className="flex flex-1 items-center justify-center">
-        <form
+        <motion.form
+          {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
+          className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4"
         >
-          <LogoText className="mb-2" />
+          <ConnectHeader />
           {sessionExpired && (
             <FieldDescription className="text-center">
               your session expired, connect again
             </FieldDescription>
           )}
 
-          <FieldGroup className="gap-3">
-            {needHostInput && (
-              <Field>
-                <FieldLabel htmlFor="host" className="sr-only">
-                  Host
-                </FieldLabel>
-                <Input
-                  ref={hostRef}
-                  id="host"
-                  type="url"
-                  placeholder="fox-mybox.example.com"
-                  autoComplete="url"
-                  autoFocus
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  className="text-center"
-                />
-                <FieldDescription className="text-center">
-                  the url vestad printed on first run
-                </FieldDescription>
-              </Field>
-            )}
-            <Field>
-              <FieldLabel htmlFor="key" className="sr-only">
-                Key
-              </FieldLabel>
-              <Input
-                ref={keyRef}
-                id="key"
-                name="password"
-                type="password"
-                placeholder="key"
-                autoComplete="current-password"
-                autoFocus={!needHostInput}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="text-center"
-              />
-              <FieldDescription className="text-center">
-                the key vestad printed (also at ~/.config/vesta/vestad/api-key)
-              </FieldDescription>
-            </Field>
-          </FieldGroup>
+          <Field className="w-[300px] max-w-full">
+            <FieldLabel htmlFor="connect-link" className="sr-only">
+              Connect link
+            </FieldLabel>
+            <Input
+              ref={inputRef}
+              id="connect-link"
+              type="text"
+              placeholder="paste your gateway connect link"
+              autoComplete="off"
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="text-center"
+            />
+          </Field>
 
-          <Button type="submit" disabled={busy} className="w-full">
+          <Button
+            type="submit"
+            disabled={busy}
+            className="w-[180px] max-w-full"
+          >
             {busy ? "connecting..." : "connect"}
           </Button>
 
@@ -264,7 +259,7 @@ export function Connect() {
               </motion.p>
             )}
           </AnimatePresence>
-        </form>
+        </motion.form>
       </div>
     </div>
   );

@@ -27,7 +27,7 @@ import {
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
-import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
+import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
@@ -206,6 +206,23 @@ export function TtsCard() {
   );
 }
 
+// --- Shared collapsible trigger ---
+
+function CollapsibleChevronButton({ children }: { children: React.ReactNode }) {
+  return (
+    <CollapsibleTrigger asChild>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
+        {children}
+      </Button>
+    </CollapsibleTrigger>
+  );
+}
+
 // --- Shared usage collapsible ---
 
 function UsageCollapsible({
@@ -221,16 +238,7 @@ function UsageCollapsible({
         if (isOpen) onOpen();
       }}
     >
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          usage
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>usage</CollapsibleChevronButton>
       <CollapsibleContent>{children}</CollapsibleContent>
     </Collapsible>
   );
@@ -369,16 +377,7 @@ function SubSettingsCollapsible({
   const label = setting.config_label ?? "configuration";
   return (
     <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          {label}
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>{label}</CollapsibleChevronButton>
       <CollapsibleContent>
         <div className="flex flex-col gap-3 pt-2 px-6">
           {items.map((child) => (
@@ -511,20 +510,12 @@ function SelectSetting({
   return (
     <>
       <Collapsible>
-        <CollapsibleTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-            {setting.label}:{" "}
-            <span className="text-foreground font-medium">
-              {options.find((o) => o.value === setting.value)?.label ??
-                "Unknown"}
-            </span>
-          </Button>
-        </CollapsibleTrigger>
+        <CollapsibleChevronButton>
+          {setting.label}:{" "}
+          <span className="text-foreground font-medium">
+            {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
+          </span>
+        </CollapsibleChevronButton>
         <CollapsibleContent>
           <div className="flex flex-col gap-1 pt-2 px-6">
             {options.map((opt) => (
@@ -595,19 +586,12 @@ function VoicePicker({
 
   return (
     <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          {setting.label}:{" "}
-          <span className="text-foreground font-medium">
-            {selectedOption?.label ?? "Unknown"}
-          </span>
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>
+        {setting.label}:{" "}
+        <span className="text-foreground font-medium">
+          {selectedOption?.label ?? "Unknown"}
+        </span>
+      </CollapsibleChevronButton>
 
       <CollapsibleContent>
         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-2">

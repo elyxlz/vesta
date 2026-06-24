@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useGateway } from "@/providers/GatewayProvider";
 import { wsUrl } from "@/lib/connection";
 import { isTauri } from "@/lib/env";
@@ -15,6 +7,9 @@ import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { router } from "@/router";
 import type { AgentInfo, VestaEvent } from "@/lib/types";
+import { NotificationContext } from "./context";
+
+export { useNotifications } from "./context";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -48,27 +43,6 @@ async function focusAndNavigate(agentName: string): Promise<void> {
     window.focus();
   }
   router.navigate(`/agent/${encodeURIComponent(agentName)}`);
-}
-
-interface NotificationContextValue {
-  notifyAssistant: (agentName: string, text: string) => void;
-  // The agent whose chat the user is actively viewing. Its tap suppresses
-  // direct firing so that ChatProvider can instead fire after the UI's
-  // typing delay, keeping notification and visible-text in sync.
-  setChattingAgent: (agentName: string | null) => void;
-}
-
-const NotificationContext = createContext<NotificationContextValue | null>(
-  null,
-);
-
-export function useNotifications(): NotificationContextValue {
-  return (
-    useContext(NotificationContext) ?? {
-      notifyAssistant: () => {},
-      setChattingAgent: () => {},
-    }
-  );
 }
 
 interface TapEntry {

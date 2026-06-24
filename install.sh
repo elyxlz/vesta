@@ -286,11 +286,11 @@ EOF
     echo "Open that URL in a browser to create your first agent."
   else
     echo "Connect to a vestad server:"
-    echo "    vesta connect <host>#<key>"
+    echo "    vesta connect <connect-link>"
   fi
   if has_gui; then
     echo ""
-    echo "Prefer an app? Open the Vesta app and connect with your server's URL + key."
+    echo "Prefer an app? Open the Vesta app and paste your connect link."
   fi
   if [ -n "$PATH_UPDATED" ]; then
     echo ""

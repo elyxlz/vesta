@@ -1,22 +1,15 @@
-import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Settings as SettingsIcon,
   Sun,
   Moon,
   Monitor,
   LogOut,
-  RefreshCw,
   CreditCard,
   ExternalLink,
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { MenuSection } from "@/components/ui/menu-section";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
@@ -24,10 +17,8 @@ type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
-import { getConnection } from "@/lib/connection";
-import { apiJson } from "@/api/client";
+import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
-import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,
@@ -38,116 +29,30 @@ import {
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
+import { KeybindsCard } from "@/components/Settings/KeybindsSection";
+import { ConnectionControls } from "@/components/ConnectionControls";
 
 // Hosted (managed) boxes are always under vesta.run; the account + billing page
 // lives on the control plane. Self-hosted boxes never reach this.
 const ACCOUNT_URL = "https://vesta.run/account";
 
-interface SettingsDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  agentSettingsSlot?: React.ReactNode;
-}
-
-export function SettingsDialog({
-  open,
-  onOpenChange,
-  agentSettingsSlot,
-}: SettingsDialogProps) {
+// The app-level settings surface, rendered as a page at /settings. App/client +
+// box concerns only — per-agent config lives at /agent/:name/settings.
+export function AppSettings() {
   const { theme, setTheme } = useTheme();
-  const { disconnect } = useAuth();
-  const {
-    reachable,
-    managed,
-    gatewayVersion,
-    gatewayBranch,
-    gatewayChannel,
-    gatewayAutoUpdate,
-    updateAvailable,
-    checkForUpdate,
-  } = useGateway();
-  const [checking, setChecking] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
-  const [channelSaving, setChannelSaving] = useState(false);
-  const [autoUpdateSaving, setAutoUpdateSaving] = useState(false);
-
-  const onToggleBeta = async (enabled: boolean) => {
-    setChannelSaving(true);
-    try {
-      await apiJson("/settings/channel", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
-      });
-      // Re-check so /version reflects the new channel (and surfaces the matching
-      // version to update to). Switching channel never downgrades, so leaving beta
-      // only stops future betas until stable catches up.
-      await checkForUpdate();
-    } catch (err) {
-      console.warn("[settings] failed to set release channel:", err);
-    } finally {
-      setChannelSaving(false);
-    }
-  };
-
-  const onToggleAutoUpdate = async (enabled: boolean) => {
-    setAutoUpdateSaving(true);
-    try {
-      await apiJson("/settings/auto-update", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auto_update: enabled }),
-      });
-      // Re-read so the toggle reflects the daemon's persisted value.
-      await checkForUpdate();
-    } catch (err) {
-      console.warn("[settings] failed to set auto-update:", err);
-    } finally {
-      setAutoUpdateSaving(false);
-    }
-  };
-
-  const onCheckForUpdate = async () => {
-    setChecking(true);
-    try {
-      await checkForUpdate();
-    } finally {
-      setChecking(false);
-    }
-  };
   const { isTauri } = useTauri();
+  const { disconnect } = useAuth();
+  const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
   const appMode = useAppMode((s) => s.mode);
   const setAppMode = useAppMode((s) => s.setMode);
-
-  const hostname = (() => {
-    const conn = getConnection();
-    if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
-  })();
+  const hostname = connectionHostname();
 
   return (
-    <Dialog drawerOnMobile open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription className="sr-only">
-            Application settings
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4">
-          {agentSettingsSlot && (
-            <MenuSection title="Agent">
-              <div onClick={() => onOpenChange(false)}>{agentSettingsSlot}</div>
-            </MenuSection>
-          )}
-
+    <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
+      <Card size="sm">
+        <CardContent>
           <MenuSection title="Appearance">
             <ToggleGroup
               type="single"
@@ -171,7 +76,11 @@ export function SettingsDialog({
               </ToggleGroupItem>
             </ToggleGroup>
           </MenuSection>
+        </CardContent>
+      </Card>
 
+      <Card size="sm">
+        <CardContent>
           <MenuSection title="Chat">
             <Field
               orientation="horizontal"
@@ -189,17 +98,21 @@ export function SettingsDialog({
               />
             </Field>
           </MenuSection>
+        </CardContent>
+      </Card>
 
-          <MenuSection title="Mode">
+      <Card size="sm">
+        <CardContent>
+          <MenuSection title="App">
             <Field
               orientation="horizontal"
               className="items-center justify-between"
             >
               <FieldContent>
-                <FieldLabel className="text-sm">level</FieldLabel>
+                <FieldLabel className="text-sm">detail level</FieldLabel>
                 <FieldDescription>
-                  simple hides advanced controls and shows curated views;
-                  advanced exposes the full file tree, debug info, and more
+                  simple keeps the interface focused with curated views;
+                  advanced reveals the full set of controls and detail
                 </FieldDescription>
               </FieldContent>
               <ToggleGroup
@@ -216,132 +129,84 @@ export function SettingsDialog({
               </ToggleGroup>
             </Field>
           </MenuSection>
+        </CardContent>
+      </Card>
 
-          <MenuSection title="Connection">
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+      <KeybindsCard />
+
+      <Card size="sm" className="md:col-span-2">
+        <CardContent>
+          <MenuSection
+            title="Gateway"
+            trailing={
+              (gatewayVersion || gatewayBranch) && (
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  {gatewayVersion && <>v{gatewayVersion}</>}
+                  {gatewayVersion && gatewayBranch && " "}
+                  {gatewayBranch && <>({gatewayBranch})</>}
+                </span>
+              )
+            }
+          >
+            <div className="mt-2 flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm leading-none">
                 <StatusPill showHostname={false} />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-muted-foreground">
+                <span className="flex min-w-0 flex-1 items-baseline gap-1">
+                  <span className="shrink-0 text-muted-foreground">
                     {reachable ? "Connected to" : "Cannot reach"}
                   </span>
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {hostname}
                   </span>
-                  {(gatewayVersion || gatewayBranch) && (
-                    <span className="text-xs text-muted-foreground">
-                      {gatewayVersion && <>gateway v{gatewayVersion}</>}
-                      {gatewayVersion && gatewayBranch && " "}
-                      {gatewayBranch && <>({gatewayBranch})</>}
-                    </span>
-                  )}
-                  {reachable && (
-                    <button
-                      type="button"
-                      onClick={onCheckForUpdate}
-                      disabled={checking}
-                      className="mt-1 inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-                    >
-                      <RefreshCw
-                        data-icon="inline-start"
-                        className={checking ? "animate-spin" : undefined}
-                      />
-                      {updateAvailable
-                        ? "Update available"
-                        : checking
-                          ? "Checking…"
-                          : "Check for updates"}
-                    </button>
-                  )}
-                </div>
+                </span>
               </div>
               <Button
                 variant="destructive"
                 className="w-full shrink-0 whitespace-nowrap sm:w-auto"
-                onClick={() => {
-                  onOpenChange(false);
-                  disconnect();
-                }}
+                onClick={() => disconnect()}
               >
                 <LogOut data-icon="inline-start" />
                 Disconnect
               </Button>
             </div>
-            {reachable && managed && (
+            <ConnectionControls />
+          </MenuSection>
+        </CardContent>
+      </Card>
+
+      {reachable && managed && (
+        <Card size="sm">
+          <CardContent>
+            <MenuSection title="Account">
               <Button
-                variant="secondary"
-                className="mt-3 w-full justify-start"
+                variant="outline"
+                className="w-full justify-start"
                 onClick={() => openExternalUrl(ACCOUNT_URL)}
               >
                 <CreditCard data-icon="inline-start" />
                 Manage account &amp; billing
                 <ExternalLink data-icon="inline-end" className="ml-auto" />
               </Button>
-            )}
-            {reachable && (
-              <Field
-                orientation="horizontal"
-                className="mt-3 items-center justify-between"
-              >
-                <FieldContent>
-                  <FieldLabel className="text-sm">beta releases</FieldLabel>
-                  <FieldDescription>
-                    receive prereleases first to test them before everyone else;
-                    switching off stops future betas (it never downgrades)
-                  </FieldDescription>
-                </FieldContent>
-                <Switch
-                  checked={gatewayChannel === "beta"}
-                  disabled={channelSaving}
-                  onCheckedChange={onToggleBeta}
-                />
-              </Field>
-            )}
-            {reachable && (
-              <Field
-                orientation="horizontal"
-                className="mt-3 items-center justify-between"
-              >
-                <FieldContent>
-                  <FieldLabel className="text-sm">automatic updates</FieldLabel>
-                  <FieldDescription>
-                    apply new releases automatically in the background;
-                    switching off keeps you on the current version until you
-                    update manually
-                  </FieldDescription>
-                </FieldContent>
-                <Switch
-                  checked={gatewayAutoUpdate}
-                  disabled={autoUpdateSaving}
-                  onCheckedChange={onToggleAutoUpdate}
-                />
-              </Field>
-            )}
-          </MenuSection>
-        </div>
-      </DialogContent>
-      <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
-    </Dialog>
+            </MenuSection>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }
 
-export function Settings({
-  agentSettingsSlot,
-}: {
-  agentSettingsSlot?: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
+// The gear button. Navigates to the app settings page.
+export function SettingsButton() {
+  const navigate = useNavigate();
 
   return (
-    <>
-      <Button variant="outline" size="icon-lg" onClick={() => setOpen(true)}>
-        <SettingsIcon />
-      </Button>
-      <SettingsDialog
-        open={open}
-        onOpenChange={setOpen}
-        agentSettingsSlot={agentSettingsSlot}
-      />
-    </>
+    <Button
+      variant="outline"
+      size="icon-lg"
+      aria-label="settings"
+      onClick={() => navigate("/settings")}
+    >
+      <SettingsIcon />
+    </Button>
   );
 }

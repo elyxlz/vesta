@@ -19,7 +19,7 @@ from .client import process_message, build_client_options, attempt_interrupt, pe
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
-from .provider import CREDENTIALS_PATH
+from .provider import CREDENTIALS_PATH, ProviderAuthState
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -74,9 +74,7 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
-    paths = {n.file_path for n in notifications if n.file_path}
-    for path_str in paths:
-        pl.Path(path_str).unlink(missing_ok=True)
+    _delete_paths([n.file_path for n in notifications if n.file_path])
 
 
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
@@ -104,13 +102,6 @@ def format_notification_batch(notifications: list[vm.Notification], *, suffix: s
     return f"<notifications>\n{inner}\n</notifications>{suffix_str}"
 
 
-async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> list[vm.Notification]:
-    notifications = await load_notifications(config=config)
-    for notif in notifications:
-        state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
-    return notifications
-
-
 def _delete_paths(file_paths: list[str]) -> None:
     for path_str in file_paths:
         pl.Path(path_str).unlink(missing_ok=True)
@@ -132,13 +123,14 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
+    async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
+        paths = [n.file_path for n in group if n.file_path]
+        await queue.put((format_notification_batch(group, suffix=suffix), False, paths))
+
     if system:
-        system_paths = [n.file_path for n in system if n.file_path]
-        await queue.put((format_notification_batch(system, suffix=""), False, system_paths))
+        await queue_section(system, suffix="")
     if external:
-        suffix = load_prompt("notification_suffix", config) or ""
-        external_paths = [n.file_path for n in external if n.file_path]
-        await queue.put((format_notification_batch(external, suffix=suffix), False, external_paths))
+        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
 
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
@@ -243,6 +235,13 @@ async def _run_messages_with_interrupts(
                 break
 
             current_msg, current_is_user, current_file_paths = pending.popleft()
+            # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
+            # just burns the CLI's full retry budget per message. Keeping the notification file on
+            # disk means it re-runs after the user re-authenticates — which restarts the agent, so
+            # monitor_loop re-reads the dir and re-queues it. (Migrations regenerate on boot anyway.)
+            if state.provider_status is not None and state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED:
+                logger.client("Provider not authenticated; deferring message until re-auth")
+                continue
             state.interrupt_event = asyncio.Event()
             process_task = asyncio.create_task(run_one(current_msg, user=current_is_user))
 
@@ -263,7 +262,10 @@ async def _run_messages_with_interrupts(
                     await _cancel_task(queue_task)
 
             await process_task
-            _delete_paths(current_file_paths)
+            # Keep the file if the turn flipped auth to not_authenticated (converse detects a
+            # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
+            if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
+                _delete_paths(current_file_paths)
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
@@ -433,7 +435,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
     watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, shutdown=state.shutdown_event))
 
     try:
-        while state.shutdown_event and not state.shutdown_event.is_set():
+        while not state.shutdown_event.is_set():
             # Wait for either a file change or the periodic tick
             try:
                 await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
@@ -441,7 +443,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
                 pass
             notify.clear()
 
-            if state.shutdown_event and state.shutdown_event.is_set():
+            if state.shutdown_event.is_set():
                 break
 
             now = _now()
@@ -461,11 +463,17 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
             # completed and its file is gone, preventing unbounded set growth.
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
-            notifications = await load_new_notifications(state=state, config=config)
+            notifications = await load_notifications(config=config)
             interrupt_notifs = [n for n in notifications if n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
-            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
-
             new_passive = [n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
+
+            # Emit each genuinely-new notification to the bus exactly once. load_notifications
+            # re-reads every file each tick, so files kept on disk (e.g. deferred while
+            # unauthenticated) must not re-emit — that was the notification storm.
+            for notif in (*interrupt_notifs, *new_passive):
+                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
+
+            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
             queued_paths.update(n.file_path for n in new_passive if n.file_path)
             pending_passive.extend(new_passive)
 

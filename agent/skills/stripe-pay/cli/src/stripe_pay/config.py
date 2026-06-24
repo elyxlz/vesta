@@ -26,7 +26,6 @@ LINK_OAUTH_TOKEN_URL = os.environ.get(
 
 # The localhost port the CLI listens on to capture the OAuth redirect.
 DEFAULT_CALLBACK_PORT = 53682
-DEFAULT_REDIRECT_URI = f"http://127.0.0.1:{DEFAULT_CALLBACK_PORT}/callback"
 
 
 @dataclass(frozen=True)
@@ -49,14 +48,6 @@ class Config:
     def history_file(self) -> Path:
         """Append-only jsonl log, one entry per charge attempt."""
         return self.data_dir / "history.jsonl"
-
-    @property
-    def callback_port(self) -> int:
-        return DEFAULT_CALLBACK_PORT
-
-    @property
-    def redirect_uri(self) -> str:
-        return DEFAULT_REDIRECT_URI
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 {
   "name": "@vesta/desktop",
   "private": true,
-  "version": "0.1.159",
+  "version": "0.1.160",
   "description": "Vesta desktop app (Tauri wrapper around @vesta/web)",
   "license": "MIT",
   "repository": {
@@ -15,6 +15,6 @@
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.2"
+    "@tauri-apps/cli": "^2.11.3"
   }
 }

@@ -1,6 +1,5 @@
 import {
-  createContext,
-  useContext,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -10,13 +9,16 @@ import { apiFetch, apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
+import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { GatewayContext, disconnectedValue } from "./context";
+
+export { useGateway } from "./context";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
 // A manual check fetches from GitHub server-side, so allow longer than the
@@ -58,45 +60,6 @@ const VERSION_POLL_MS = 60000;
 // gap between the initial version fetch and the first socket open don't flash it.
 const DISCONNECT_GRACE_MS = 750;
 
-interface GatewayContextValue {
-  reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
-  managed: boolean;
-  gatewayVersion: string;
-  gatewayBranch: string | null;
-  gatewayChannel: ReleaseChannel;
-  gatewayAutoUpdate: boolean;
-  gatewayPort: number;
-  versionChecked: boolean;
-  updateAvailable: boolean;
-  latestVersion: string | null;
-  agents: AgentInfo[];
-  agentsFetched: boolean;
-  send: (event: object) => boolean;
-  triggerGatewayUpdate: () => Promise<boolean>;
-  checkForUpdate: () => Promise<void>;
-}
-
-const GatewayContext = createContext<GatewayContextValue | null>(null);
-
-const disconnectedValue: GatewayContextValue = {
-  reachable: false,
-  managed: false,
-  gatewayVersion: "",
-  gatewayBranch: null,
-  gatewayChannel: "stable",
-  gatewayAutoUpdate: true,
-  gatewayPort: 0,
-  versionChecked: true,
-  updateAvailable: false,
-  latestVersion: null,
-  agents: [],
-  agentsFetched: false,
-  send: () => false,
-  triggerGatewayUpdate: async () => false,
-  checkForUpdate: async () => {},
-};
-
 function controlWsUrl(): string {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vesta gateway");
@@ -120,14 +83,18 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
-  const [lastConnectAttempt, setLastConnectAttempt] = useState<number | null>(
-    null,
-  );
   const [showDisconnected, setShowDisconnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
+
+  const applyUpdateInfo = useCallback((data: GatewayVersionInfo) => {
+    setUpdateAvailable(!!data.update_available);
+    setLatestVersion(data.latest_version ?? null);
+    setGatewayChannel(data.channel ?? "stable");
+    setGatewayAutoUpdate(data.auto_update ?? true);
+  }, []);
 
   const triggerGatewayUpdate = async (): Promise<boolean> => {
     try {
@@ -147,10 +114,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         method: "POST",
         signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
       });
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
-      setGatewayAutoUpdate(data.auto_update ?? true);
+      applyUpdateInfo(data);
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
@@ -164,7 +128,6 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
     const doConnect = async () => {
       if (cancelled) return;
-      setLastConnectAttempt(Date.now());
 
       // A dead session (refresh token expired/revoked) can never reconnect:
       // bail out to the connect screen instead of retrying forever with a
@@ -188,10 +151,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       if (!cancelled && data?.version) {
         setGatewayVersion(data.version);
         setGatewayBranch(data.branch ?? null);
-        setGatewayChannel(data.channel ?? "stable");
-        setGatewayAutoUpdate(data.auto_update ?? true);
-        setUpdateAvailable(!!data.update_available);
-        setLatestVersion(data.latest_version ?? null);
+        applyUpdateInfo(data);
         setVersionChecked(true);
         if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
           return;
@@ -261,7 +221,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }
       wsRef.current = null;
     };
-  }, [connectEpoch, expireSession]);
+  }, [connectEpoch, expireSession, applyUpdateInfo]);
 
   useEffect(() => {
     if (!reachable) return;
@@ -270,10 +230,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     const pollVersion = async () => {
       const data = await fetchVersionInfo();
       if (cancelled || !data) return;
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
-      setGatewayAutoUpdate(data.auto_update ?? true);
+      applyUpdateInfo(data);
     };
 
     const timer = setInterval(pollVersion, VERSION_POLL_MS);
@@ -281,7 +238,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reachable]);
+  }, [reachable, applyUpdateInfo]);
 
   // Surface a blocking overlay once the gateway has been unreachable past a
   // brief grace period, and dismiss it the moment it reconnects. The grace
@@ -330,16 +287,14 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchDialog
+        <VersionMismatchScreen
           gatewayVersion={gatewayVersion}
           onUpdateGateway={triggerGatewayUpdate}
         />
       ) : (
         children
       )}
-      {showDisconnected && (
-        <DisconnectedOverlay lastAttempt={lastConnectAttempt} />
-      )}
+      {showDisconnected && <DisconnectedOverlay />}
     </GatewayContext.Provider>
   );
 }
@@ -356,12 +311,4 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       {children}
     </GatewayContext.Provider>
   );
-}
-
-export function useGateway() {
-  const context = useContext(GatewayContext);
-  if (!context) {
-    throw new Error("useGateway must be used within GatewayProvider");
-  }
-  return context;
 }

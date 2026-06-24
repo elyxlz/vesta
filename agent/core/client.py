@@ -18,6 +18,7 @@ from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled
 from . import logger
 from . import models as vm
 from . import state_store
+from .provider import OPENROUTER_SMALL_FAST_MODEL, is_terminal_auth_error, observed_provider_failure
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -34,13 +35,13 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     The caller caps this at config.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default, same behavior as before."""
-    if config.agent_provider != "openrouter" or "ANTHROPIC_AUTH_TOKEN" not in os.environ:
+    if config.agent_provider != "openrouter" or config.openrouter_key is None:
         return None
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 OPENROUTER_MODELS_URL,
-                headers={"Authorization": f"Bearer {os.environ['ANTHROPIC_AUTH_TOKEN']}"},
+                headers={"Authorization": f"Bearer {config.openrouter_key.get_secret_value()}"},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
@@ -185,11 +186,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
-            # Terminal upstream auth/billing errors (401/402) are detected in the
-            # OpenRouter cache proxy now: the tmux-driven cc_sdk reconstructs messages
-            # from the transcript and never surfaces the SDK's old `api_retry`/error
-            # stream events, so the proxy (which sees every upstream status) is the only
-            # place the signal exists. See openrouter_cache._handle.
+            # OpenRouter's upstream 401/402 is caught by its cache proxy (it sees every status code).
+            # Claude bypasses that proxy, so its terminal auth/billing errors surface only as an
+            # api-error assistant turn reconstructed from the transcript (the tmux cc_sdk never
+            # exposes the SDK's error/retry stream events) — detected on the text just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
@@ -201,6 +201,14 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 for block in thinking_blocks:
                     _emit_thinking(block)
             text = "\n".join(texts) if texts else None
+            if isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error):
+                # Claude credential died (401) or account can't pay (402). Flip to not_authenticated,
+                # stop the CLI's internal retries, and end the turn cleanly so the app shows "not
+                # signed in" in ~3s instead of hanging to the response timeout and restart-looping.
+                logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
+                state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
+                await attempt_interrupt(state, config=config, reason="Provider auth lost")
+                break
             if not text:
                 continue
             responses.append(text)
@@ -289,6 +297,11 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if not state.openrouter_proxy_url:
             raise RuntimeError("OpenRouter cache proxy not started before building client options")
         sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
+        # The OpenRouter key + background model the subprocess talks to OpenRouter with, injected
+        # from the config store (no shell env inheritance).
+        if config.openrouter_key is not None:
+            sdk_env["ANTHROPIC_AUTH_TOKEN"] = config.openrouter_key.get_secret_value()
+        sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
         # Tell claude-code the model's real window so autocompact uses the right
         # threshold instead of its 200k default for non-Anthropic models.
         if state.openrouter_max_tokens:
