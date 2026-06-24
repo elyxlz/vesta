@@ -279,26 +279,27 @@ async def test_interrupt_at_idle_is_noop(tmp_path, monkeypatch):
     assert client._stops_received == 3
 
 
-# --- get_context_usage stays conservative until the larger window is proven active ---
+# --- get_context_usage reports against the single window the caller supplied ---
 
 
 @pytest.mark.anyio
-async def test_context_usage_conservative_without_proof(tmp_path):
-    client = _new_client(tmp_path, context_window=200_000, expanded_context_window=1_000_000)
+async def test_context_usage_reports_configured_window(tmp_path):
+    client = _new_client(tmp_path, context_window=1_000_000)
     client._last_usage = {"input_tokens": 160_000, "output_tokens": 10_000}
     usage = await client.get_context_usage()
-    # 170k of a presumed 200k window -> already >80%, so the overflow warning can fire.
-    assert usage["maxTokens"] == 200_000
-    assert usage["percentage"] > 80
+    # The configured window is reported as-is, no conservative under-reporting.
+    assert usage["maxTokens"] == 1_000_000
+    assert usage["percentage"] == pytest.approx(17.0, abs=0.1)
 
 
 @pytest.mark.anyio
-async def test_context_usage_unlocks_1m_when_exceeded(tmp_path):
-    client = _new_client(tmp_path, context_window=200_000, expanded_context_window=1_000_000)
-    client._last_usage = {"input_tokens": 300_000, "output_tokens": 10_000}
+async def test_context_usage_window_can_be_small(tmp_path):
+    client = _new_client(tmp_path, context_window=200_000)
+    client._last_usage = {"input_tokens": 160_000, "output_tokens": 10_000}
     usage = await client.get_context_usage()
-    # Past 200k proves the 1M window is really active.
-    assert usage["maxTokens"] == 1_000_000
+    # 170k of a 200k window -> >80%, so the overflow warning can fire near the real limit.
+    assert usage["maxTokens"] == 200_000
+    assert usage["percentage"] > 80
 
 
 # --- transcript parsing skips subagent (sidechain) lines ---

@@ -275,20 +275,8 @@ class ClaudeSDKClient:
         usage = self._last_usage or {}
         keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
         total = sum(usage[k] for k in keys if k in usage and isinstance(usage[k], int))
-        configured = self._options.max_context_tokens
-        if configured:
-            # The user pinned a window; report usage against exactly that.
-            max_tokens = configured
-        else:
-            # The caller supplies both windows (no model constants here). Stay on the conservative
-            # `context_window` until usage actually exceeds it — which can only happen if the larger
-            # `expanded_context_window` is really active (the 1M beta is silently ignored on some
-            # auth modes) — so the overflow warning in diagnostics.log_context_usage still fires
-            # near the real limit instead of never.
-            max_tokens = self._options.context_window or 0
-            expanded = self._options.expanded_context_window
-            if expanded and max_tokens and total > max_tokens:
-                max_tokens = expanded
+        # The caller supplies the one window to report against (no model constants here).
+        max_tokens = self._options.context_window or 0
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
