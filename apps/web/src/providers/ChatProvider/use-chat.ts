@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState, InputMethod } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
+import {
+  connectReconnectingWs,
+  type ReconnectingWsHandle,
+} from "@/lib/reconnecting-ws";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
-const RECONNECT_BASE = 1000;
-const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
 const TYPING_DELAY_PER_CHAR = 25;
@@ -56,7 +58,7 @@ export function useChat({
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<ReconnectingWsHandle | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
   const cursorRef = useRef<number | null>(null);
   const onAssistantMessageRef = useRef(onAssistantMessage);
@@ -118,11 +120,6 @@ export function useChat({
   useEffect(() => {
     if (!active || !name) return;
 
-    let cancelled = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = RECONNECT_BASE;
-
     const resetTyping = () => {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       chatQueueRef.current = [];
@@ -140,33 +137,15 @@ export function useChat({
 
     resetConnection();
 
-    const doConnect = () => {
-      if (cancelled) return;
-
-      let url: string;
-      try {
-        url = wsUrl(name);
-      } catch {
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
-        return;
-      }
-
-      socket = new WebSocket(url);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        if (cancelled) return;
-        reconnectDelay = RECONNECT_BASE;
+    const handle = connectReconnectingWs({
+      url: () => wsUrl(name),
+      onOpen: () => {
         setConnected(true);
         resetConnection();
-      };
-
-      socket.onmessage = (e) => {
-        if (cancelled) return;
-        if (typeof e.data !== "string") return;
+      },
+      onMessage: (data) => {
         try {
-          const event = JSON.parse(e.data) as VestaEvent;
+          const event = JSON.parse(data) as VestaEvent;
           if (event.type === "history") {
             setMessages(capTail(event.events));
             cursorRef.current = event.cursor;
@@ -192,31 +171,16 @@ export function useChat({
         } catch (err) {
           console.warn("ws: bad message", err);
         }
-      };
-
-      socket.onclose = () => {
-        if (cancelled) return;
-        socket = null;
-        wsRef.current = null;
+      },
+      onClose: () => {
         setConnected(false);
         setAgentState("idle");
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
-      };
-
-      socket.onerror = () => {};
-    };
-
-    doConnect();
+      },
+    });
+    wsRef.current = handle;
 
     return () => {
-      cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-        socket = null;
-      }
+      handle.close();
       wsRef.current = null;
       setConnected(false);
       resetTyping();
@@ -224,7 +188,7 @@ export function useChat({
   }, [active, name]);
 
   const sendEvent = useCallback((event: object): boolean => {
-    const ws = wsRef.current;
+    const ws = wsRef.current?.current();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;

@@ -9,6 +9,10 @@ import {
 } from "react";
 import { apiFetch, apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
+import {
+  connectReconnectingWs,
+  type ReconnectingWsHandle,
+} from "@/lib/reconnecting-ws";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
@@ -49,9 +53,6 @@ async function fetchManaged(): Promise<boolean> {
     return false;
   }
 }
-
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
 
 const VERSION_POLL_MS = 60000;
 
@@ -125,7 +126,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     null,
   );
   const [showDisconnected, setShowDisconnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<ReconnectingWsHandle | null>(null);
 
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
@@ -163,64 +164,43 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = RECONNECT_BASE_MS;
 
-    const doConnect = async () => {
-      if (cancelled) return;
-      setLastConnectAttempt(Date.now());
+    const handle = connectReconnectingWs({
+      beforeConnect: async () => {
+        setLastConnectAttempt(Date.now());
 
-      // A dead session (refresh token expired/revoked) can never reconnect:
-      // bail out to the connect screen instead of retrying forever with a
-      // token vestad will keep rejecting. Transient failures keep the loop.
-      if ((await ensureFreshToken()) === "expired") {
-        if (!cancelled) expireSession();
-        return;
-      }
+        // A dead session (refresh token expired/revoked) can never reconnect:
+        // bail out to the connect screen instead of retrying forever with a
+        // token vestad will keep rejecting. Transient failures keep the loop.
+        if ((await ensureFreshToken()) === "expired") {
+          if (!cancelled) expireSession();
+          return "stop";
+        }
 
-      let url: string;
-      try {
-        url = controlWsUrl();
-      } catch {
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-        return;
-      }
+        // Fetch version early via HTTP before WS connects
+        const data = await fetchVersionInfo();
+        if (!cancelled && data?.version) {
+          setGatewayVersion(data.version);
+          setGatewayBranch(data.branch ?? null);
+          applyUpdateInfo(data);
+          setVersionChecked(true);
+          if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
+            return "stop";
+        }
+        if (!cancelled) setVersionChecked(true);
 
-      // Fetch version early via HTTP before WS connects
-      const data = await fetchVersionInfo();
-      if (!cancelled && data?.version) {
-        setGatewayVersion(data.version);
-        setGatewayBranch(data.branch ?? null);
-        applyUpdateInfo(data);
-        setVersionChecked(true);
-        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
-          return;
-      }
-      if (!cancelled) setVersionChecked(true);
+        // Hosted vs self-hosted — non-blocking, never gates the connection.
+        void fetchManaged().then((m) => {
+          if (!cancelled) setManaged(m);
+        });
 
-      // Hosted vs self-hosted — non-blocking, never gates the connection.
-      void fetchManaged().then((m) => {
-        if (!cancelled) setManaged(m);
-      });
-
-      if (cancelled) return;
-
-      socket = new WebSocket(url);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        if (cancelled) return;
-        reconnectDelay = RECONNECT_BASE_MS;
-        setReachable(true);
-      };
-
-      socket.onmessage = (e) => {
-        if (cancelled) return;
-        if (typeof e.data !== "string") return;
+        return "open";
+      },
+      url: controlWsUrl,
+      onOpen: () => setReachable(true),
+      onMessage: (data) => {
         try {
-          const msg = JSON.parse(e.data);
+          const msg = JSON.parse(data);
           switch (msg.type) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
@@ -235,32 +215,16 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             }
           }
         } catch {
-          console.warn("ws: bad message", e.data);
+          console.warn("ws: bad message", data);
         }
-      };
-
-      socket.onclose = () => {
-        if (cancelled) return;
-        socket = null;
-        wsRef.current = null;
-        setReachable(false);
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-      };
-
-      socket.onerror = () => {};
-    };
-
-    void doConnect();
+      },
+      onClose: () => setReachable(false),
+    });
+    wsRef.current = handle;
 
     return () => {
       cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-        socket = null;
-      }
+      handle.close();
       wsRef.current = null;
     };
   }, [connectEpoch, expireSession, applyUpdateInfo]);
@@ -299,7 +263,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   }, [loading, reachable]);
 
   const send = (event: object): boolean => {
-    const ws = wsRef.current;
+    const ws = wsRef.current?.current();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
