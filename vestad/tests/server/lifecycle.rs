@@ -38,17 +38,19 @@ fn start_stop_restart() {
     let agent = TestAgent::create(&c, &unique_agent("start-stop")).unwrap();
 
     c.start_agent(&agent.name).unwrap();
-    let st = c.agent_status(&agent.name).unwrap();
-    assert!(is_up(&st.status), "expected up, got {}", st.status);
+    c.wait_until_running(&agent.name, 60)
+        .expect("agent should come up after start");
 
+    // stop is asynchronous — wait for the container to wind down rather than reading
+    // status immediately (the immediate read raced the still-running container).
     c.stop_agent(&agent.name).unwrap();
-    let st = c.agent_status(&agent.name).unwrap();
-    assert!(!is_up(&st.status), "expected stopped, got {}", st.status);
+    c.wait_until_stopped(&agent.name, 60)
+        .expect("agent should wind down after stop");
 
     c.start_agent(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
-    let st = c.agent_status(&agent.name).unwrap();
-    assert!(is_up(&st.status), "expected up after restart, got {}", st.status);
+    c.wait_until_running(&agent.name, 60)
+        .expect("agent should be up after restart");
 }
 
 #[test]

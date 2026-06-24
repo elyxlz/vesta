@@ -23,6 +23,14 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
 pub static SHARED_RO_AGENT: LazyLock<String> = LazyLock::new(|| {
     let client = SERVER.client();
     let raw = unique_agent("ro-shared");
+    // The shared SERVER runs under the ambient $USER (not a unique per-run test user),
+    // so its agent containers aren't matched by `cleanup_orphan_test_containers` and
+    // survive across runs. A prior run's `ro-shared-N` therefore still exists on a CI
+    // retry. Destroy any leftover first so creation is idempotent — otherwise the retry's
+    // create hit "already exists", which panicked here and *poisoned* this LazyLock,
+    // cascading a single failure into every read-only test.
+    let _ = client.stop_agent(&raw);
+    let _ = client.destroy_agent(&raw);
     client
         .create_agent(&raw)
         .unwrap_or_else(|e| panic!("failed to create shared read-only agent: {e}"))
