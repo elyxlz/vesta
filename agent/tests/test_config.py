@@ -164,8 +164,24 @@ def test_migrate_drains_genuine_env_values_into_store(agentdir, monkeypatch):
     monkeypatch.setenv("AGENT_MODEL", "sonnet")
     monkeypatch.setenv("AGENT_PERSONALITY", "warm")
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "500000")
+    monkeypatch.delenv("TZ", raising=False)
     migrate_legacy_config_to_store()
     assert read_config_store() == {"agent_model": "sonnet", "agent_personality": "warm", "max_context_tokens": 500000}
+
+
+def test_migrate_drains_legacy_tz_into_store(agentdir, monkeypatch):
+    # A legacy agent carries its real timezone in the TZ env var (old /run/vestad-env or ~/.bashrc);
+    # converge it into the store so the store owns it.
+    monkeypatch.setenv("TZ", "America/New_York")
+    migrate_legacy_config_to_store()
+    assert read_config_store()["timezone"] == "America/New_York"
+
+
+def test_migrate_skips_utc_default_tz(agentdir, monkeypatch):
+    # UTC is the default floor, so there's nothing to converge — keep a fresh agent's store clean.
+    monkeypatch.setenv("TZ", "UTC")
+    migrate_legacy_config_to_store()
+    assert "timezone" not in read_config_store()
 
 
 def test_migrate_skips_keys_absent_from_env_no_default_lock_in(agentdir, monkeypatch):
@@ -260,6 +276,23 @@ def test_validate_config_accepts_general_keys(config):
     from core.config import validate_config_updates
 
     assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
+
+
+def test_validate_config_accepts_timezone_and_seed_context(config):
+    # Both are general (agent-owned) config delivered via PUT /config, not provider-owned.
+    from core.config import validate_config_updates
+
+    update = {"timezone": "Europe/London", "seed_context": "they like terse replies"}
+    assert validate_config_updates(config, update) == update
+
+
+def test_config_applies_timezone_to_process_env(monkeypatch):
+    # The config object owns timezone: constructing it pushes the value into TZ so every child
+    # process (shell, calendar/reminders skills, tasks' tzlocal) inherits it.
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    config = vm.VestaConfig()
+    assert config.timezone == "Asia/Tokyo"
+    assert os.environ["TZ"] == "Asia/Tokyo"
 
 
 def test_validate_provider_prefs_accepts_only_prefs(config):

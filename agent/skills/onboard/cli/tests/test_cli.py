@@ -202,13 +202,13 @@ def test_create_agent_needs_active_server(capsys, monkeypatch):
     assert rc == 2 and "not ready" in data["error"]
 
 
-def test_create_agent_passes_seed(capsys, monkeypatch):
+def test_create_agent_stashes_personality_and_seed(capsys, monkeypatch):
     _verified()
     _active_server(monkeypatch)
     captured = {}
 
-    def fake_create(self, *, subdomain, server_token, name, personality, context):
-        captured.update(subdomain=subdomain, server_token=server_token, name=name, personality=personality, context=context)
+    def fake_create(self, *, subdomain, server_token, name):
+        captured.update(subdomain=subdomain, server_token=server_token, name=name)
         # vestad normalizes the name and returns the actual created name.
         return {"name": "ada"}
 
@@ -218,11 +218,14 @@ def test_create_agent_passes_seed(capsys, monkeypatch):
         capsys,
     )
     assert rc == 0 and data["created"] is True and data["name"] == "ada"
-    assert captured["subdomain"] == "ada" and captured["server_token"] == "VTOK"
-    assert captured["personality"] == "dry" and captured["context"] == "designer in NYC; set up email and calendar"
-    # the NORMALIZED name vestad returned is stored, so claude-finish addresses a
-    # path vestad's validate_name accepts (not the raw "Ada").
-    assert state_mod.load(E)["agent_name"] == "ada"
+    # Create carries only the name now; vestad no longer accepts personality/seed at create time.
+    assert captured == {"subdomain": "ada", "server_token": "VTOK", "name": "Ada"}
+    # Personality + seed context are stashed for claude-finish to deliver via the config channel. The
+    # NORMALIZED name vestad returned is stored so claude-finish addresses a path vestad accepts.
+    stashed = state_mod.load(E)
+    assert stashed["agent_name"] == "ada"
+    assert stashed["personality"] == "dry"
+    assert stashed["seed_context"] == "designer in NYC; set up email and calendar"
 
 
 # --- claude connect ---------------------------------------------------------
@@ -243,7 +246,8 @@ def test_claude_start_stores_session(capsys, monkeypatch):
 
 def test_claude_finish_connects_and_clears(capsys, monkeypatch):
     _verified()
-    state_mod.update(E, claude_session_id="CS", agent_name="Ada")
+    # create-agent stashed the personality + seed context; claude-finish delivers them.
+    state_mod.update(E, claude_session_id="CS", agent_name="Ada", personality="dry", seed_context="designer in NYC")
     _active_server(monkeypatch)
     monkeypatch.setattr(
         cli_mod.Client,
@@ -254,8 +258,8 @@ def test_claude_finish_connects_and_clears(capsys, monkeypatch):
     )
     captured = {}
 
-    def fake_set(self, *, subdomain, server_token, name, credentials, model):
-        captured.update(name=name, credentials=credentials, model=model)
+    def fake_set(self, *, subdomain, server_token, name, credentials, model, personality, seed_context):
+        captured.update(name=name, credentials=credentials, model=model, personality=personality, seed_context=seed_context)
         return {"ok": True}
 
     monkeypatch.setattr(cli_mod.Client, "set_provider", fake_set)
@@ -263,7 +267,13 @@ def test_claude_finish_connects_and_clears(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"model": "opus"})
     rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
     assert rc == 0 and data["connected"] is True and data["name"] == "Ada"
-    assert captured == {"name": "Ada", "credentials": "CREDS", "model": "opus"}
+    assert captured == {
+        "name": "Ada",
+        "credentials": "CREDS",
+        "model": "opus",
+        "personality": "dry",
+        "seed_context": "designer in NYC",
+    }
     # onboarding complete -> session forgotten
     assert state_mod.token_for(E) is None
 
@@ -289,7 +299,7 @@ def test_claude_finish_clears_session_when_attach_fails(capsys, monkeypatch):
     monkeypatch.setattr(
         cli_mod.Client,
         "set_provider",
-        lambda self, *, subdomain, server_token, name, credentials, model: {"error": "bad gateway"},
+        lambda self, *, subdomain, server_token, name, credentials, model, personality, seed_context: {"error": "bad gateway"},
     )
     rc, data = _run(["claude-finish", "--email", E, "--code", "PASTE"], capsys)
     assert rc == 2 and "claude-start" in data["error"]

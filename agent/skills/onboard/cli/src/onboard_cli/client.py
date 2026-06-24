@@ -176,23 +176,12 @@ class Client:
 
     # --- the buyer's vestad (Bearer = minted server-token) -------------------
 
-    def create_agent(
-        self,
-        *,
-        subdomain: str,
-        server_token: str,
-        name: str,
-        personality: str | None,
-        context: str | None,
-    ) -> dict[str, Any]:
-        """POST <tenant>/agents — create the buyer's first (empty) agent."""
-        body: dict[str, Any] = {"name": name}
-        if personality:
-            body["personality"] = personality
-        if context:
-            body["seed_context"] = context  # freeform setup notes, incl. any skills to install
+    def create_agent(self, *, subdomain: str, server_token: str, name: str) -> dict[str, Any]:
+        """POST <tenant>/agents — create the buyer's first (empty) agent. Personality and the
+        freeform seed context are delivered later, once the agent is up, through set_provider's
+        config field (the agent owns its config store; vestad no longer accepts them at create)."""
         url = f"{self._cfg.tenant_base(subdomain)}/agents"
-        return self._json(self._raw_post(url, json=body, token=server_token, timeout=_CREATE_TIMEOUT))
+        return self._json(self._raw_post(url, json={"name": name}, token=server_token, timeout=_CREATE_TIMEOUT))
 
     def claude_oauth_start(self, *, subdomain: str, server_token: str) -> dict[str, Any]:
         """POST <tenant>/providers/claude/oauth/start -> {auth_url, session_id}."""
@@ -216,12 +205,22 @@ class Client:
         name: str,
         credentials: str,
         model: str | None,
+        personality: str | None = None,
+        seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """POST <tenant>/agents/{name}/provider — attach Claude creds, agent wakes."""
-        body: dict[str, Any] = {"credentials": credentials}
+        """POST <tenant>/agents/{name}/provider/config — attach Claude creds and, in the same restart,
+        the model (provider pref) plus personality and the freeform seed context (general config). The
+        agent wakes with everything in place."""
+        provider_config: dict[str, Any] = {}
         if model:
-            body["model"] = model
-        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provider"
+            provider_config["agent_model"] = model
+        config: dict[str, Any] = {}
+        if personality:
+            config["agent_personality"] = personality
+        if seed_context:
+            config["seed_context"] = seed_context
+        body = {"provider": {"credentials": credentials}, "provider_config": provider_config, "config": config}
+        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provider/config"
         return self._json(self._raw_post(url, json=body, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------

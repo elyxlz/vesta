@@ -157,6 +157,16 @@ fn provider_prefs(model: Option<&str>, max_context_tokens: Option<u64>) -> serde
     prefs
 }
 
+/// General (non-provider) preferences carried in the combined `/provider/config` call's `config`
+/// field. Empty when nothing to set, which vestad treats as "skip the PUT /config".
+fn general_config(timezone: Option<&str>) -> serde_json::Value {
+    let mut config = serde_json::Map::new();
+    if let Some(tz) = timezone {
+        config.insert("timezone".to_string(), serde_json::json!(tz));
+    }
+    serde_json::Value::Object(config)
+}
+
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
     value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
@@ -414,14 +424,11 @@ impl Client {
         read_json(self.get(&format!("/agents/{name}"))?)
     }
 
-    /// Create an empty agent container. Provider config is sent separately via
-    /// `set_provider` once the agent is up (vestad no longer accepts credentials
-    /// at create time — see refactor for agent-owned auth state).
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
-        if let Some(tz) = timezone {
-            body["timezone"] = serde_json::json!(tz);
-        }
+    /// Create an empty agent container. Provider config, timezone, and other preferences are sent
+    /// separately via `set_provider_*` once the agent is up (vestad no longer accepts credentials or
+    /// timezone at create time — the agent owns its config store).
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool) -> Result<String, String> {
+        let body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         let v: serde_json::Value = read_json(self.post_json("/agents", &body)?)?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
@@ -430,7 +437,14 @@ impl Client {
     /// model/context preferences in one request, so vestad writes both and restarts once.
     /// Splitting this into separate restart-on-write calls raced: a later call hit the agent
     /// mid-restart and was dropped. Model/context are provider-owned, sent under `provider_config`.
-    pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+    pub fn set_provider_credentials(
+        &self,
+        name: &str,
+        credentials: &str,
+        model: Option<&str>,
+        max_context_tokens: Option<u64>,
+        timezone: Option<&str>,
+    ) -> Result<(), String> {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
         self.post_json(
@@ -438,6 +452,7 @@ impl Client {
             &serde_json::json!({
                 "provider": {"credentials": credentials},
                 "provider_config": serde_json::Value::Object(provider_prefs(model, max_context_tokens)),
+                "config": general_config(timezone),
             }),
         )?;
         Ok(())
@@ -462,12 +477,13 @@ impl Client {
         read_json(self.get(&format!("/agents/{name}/provider"))?)
     }
 
-    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
+    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs, timezone: Option<&str>) -> Result<(), String> {
+        // Combined endpoint so the openrouter auth and the timezone preference land in one restart.
         let body = serde_json::json!({
-            "openrouter_key": args.key,
-            "openrouter_model": args.model,
+            "provider": {"openrouter_key": args.key, "openrouter_model": args.model},
+            "config": general_config(timezone),
         });
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
+        self.post_json(&format!("/agents/{name}/provider/config"), &body)?;
         Ok(())
     }
 

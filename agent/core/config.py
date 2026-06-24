@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib as pl
+import time
 import typing as tp
 
 import pydantic as pyd
@@ -142,6 +143,11 @@ def migrate_legacy_config_to_store() -> None:
         "agent_provider": provider if provider in ("claude", "openrouter") else None,
         "openrouter_key": legacy("ANTHROPIC_AUTH_TOKEN") if provider == "openrouter" else None,
         "max_context_tokens": int(ctx) if ctx and ctx.isdigit() else None,
+        # Fleet agents created before timezone moved into the store carry it as the TZ env var
+        # (from /run/vestad-env or ~/.bashrc); drain a real value into the store so it owns it. UTC
+        # is the default floor, so there's nothing to converge (and skipping it keeps a fresh agent's
+        # store clean until the client delivers the real tz).
+        "timezone": tz if (tz := legacy("TZ")) and tz != "UTC" else None,
     }
     updates = {key: value for key, value in candidates.items() if value is not None and key not in store}
     if updates:
@@ -275,6 +281,23 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_personality: str = pyd.Field(init=False)
     # None for Claude. SecretStr redacts it in GET /config; client.py injects the real value into the SDK env.
     openrouter_key: pyd.SecretStr | None = None
+    # IANA timezone, owned here (not env): clients deliver it via PUT /config at provision time, the
+    # timezone skill changes it the same way. _apply_timezone below pushes it into the process env.
+    # The TZ alias lets a legacy agent (TZ still in /run/vestad-env or ~/.bashrc) seed the field, so
+    # _apply_timezone re-exports its real value instead of clobbering it with the UTC default.
+    timezone: str = pyd.Field(default="UTC", validation_alias=pyd.AliasChoices("timezone", "TZ"))
+    # One-shot freeform setup notes from whoever created the agent. Delivered via PUT /config; the
+    # agent materializes it to data/seed-context.md on boot and reads it once at first wake.
+    seed_context: str = pyd.Field(default="")
+
+    @pyd.model_validator(mode="after")
+    def _apply_timezone(self) -> "VestaConfig":
+        # The config object owns timezone, so applying it to the process env on construction means
+        # every consumer (shell `date`, the calendar/reminders skills, tasks' tzlocal) inherits it,
+        # and a PUT /config change just takes effect on the next boot with no separate mechanism.
+        os.environ["TZ"] = self.timezone
+        time.tzset()
+        return self
 
     @classmethod
     def settings_customise_sources(

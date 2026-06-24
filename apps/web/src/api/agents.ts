@@ -26,6 +26,7 @@ export async function setProvider(
   name: string,
   result: ProviderResult,
   personality?: string,
+  timezone?: string,
 ): Promise<void> {
   const provider: Record<string, unknown> =
     result.kind === "claude"
@@ -41,9 +42,11 @@ export async function setProvider(
     providerConfig.agent_model = result.model;
   if (result.maxContextTokens != null)
     providerConfig.max_context_tokens = result.maxContextTokens;
-  // General prefs.
+  // General prefs. Timezone is delivered here at provision time (not via env at create), so the
+  // agent's config store owns it; callers re-provisioning an existing agent omit it to keep its tz.
   const config: Record<string, unknown> = {};
   if (personality) config.agent_personality = personality;
+  if (timezone) config.timezone = timezone;
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -98,13 +101,12 @@ export async function setContextWindow(
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
-/// context) are sent once it's up, via `setProvider`.
+/// context, timezone) are sent once it's up, via `setProvider`.
 export async function createAgent(name: string): Promise<void> {
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone }),
+    body: JSON.stringify({ name }),
   });
 }
 

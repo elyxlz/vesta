@@ -209,6 +209,13 @@ async def async_main() -> None:
     for path in [config.agent_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
+    # seed_context (one-shot setup notes) is delivered through the config store; materialize it to the
+    # file the first-wake prompt reads. Only when absent, so a re-delivery never clobbers notes the
+    # agent already consumed.
+    seed_path = config.data_dir / "seed-context.md"
+    if config.seed_context and not seed_path.exists():
+        seed_path.write_text(config.seed_context)
+
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
     _report_config_issues(config_issues, config=config)

@@ -151,20 +151,17 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
 
     name = args.name.strip()
     context = args.context.strip() if args.context else None
+    personality = args.personality.strip().lower() if args.personality else None
     server_token = client.server_token(token, server["id"])
-    result = client.create_agent(
-        subdomain=server["subdomain"],
-        server_token=server_token,
-        name=name,
-        personality=(args.personality.strip().lower() if args.personality else None),
-        context=context,
-    )
+    result = client.create_agent(subdomain=server["subdomain"], server_token=server_token, name=name)
     if "error" in result:
         raise _Invalid(result)
     # vestad normalizes the name (lowercases/strips); store what it ACTUALLY created
     # so claude-finish addresses /agents/<name>/provider with a name that validates.
+    # Personality + seed context are stashed here and delivered through claude-finish's
+    # set_provider, since the agent owns its config store (no env/create-time delivery).
     created_name = result.get("name", name)
-    state.update(email, agent_name=created_name)
+    state.update(email, agent_name=created_name, personality=personality, seed_context=context)
     _print({"created": True, "name": created_name})
     return 0
 
@@ -212,6 +209,8 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         name=name,
         credentials=credentials,
         model=(args.model or client.fetch_agent_defaults()["model"]),
+        personality=st.get("personality"),
+        seed_context=st.get("seed_context"),
     )
     if "error" in result:
         raise _Invalid(
