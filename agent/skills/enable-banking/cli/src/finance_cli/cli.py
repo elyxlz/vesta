@@ -319,8 +319,9 @@ def main():
     p_config_set = config_sub.add_parser("set", help="Set configuration values")
     p_config_set.add_argument("--app-id", dest="app_id", default=None, help="Enable Banking application UUID")
     p_config_set.add_argument("--key-path", dest="key_path", default=None, help="Path to RS256 private key PEM file")
+    p_config_set.set_defaults(func=cmd_config_set)
 
-    config_sub.add_parser("show", help="Show current configuration")
+    config_sub.add_parser("show", help="Show current configuration").set_defaults(func=cmd_config_show)
 
     # --- auth ---
     p_auth = sub.add_parser("auth", help="Authentication commands")
@@ -329,20 +330,21 @@ def main():
     auth_sub.add_parser(
         "login",
         help="Start bank auth: prints URL, listens for callback, creates session",
-    )
+    ).set_defaults(func=cmd_auth_login)
     p_auth_callback = auth_sub.add_parser(
         "callback",
         help="Manual fallback: paste redirect URL if auto-catch failed",
     )
     p_auth_callback.add_argument("--url", required=True, help="Full redirect URL from browser")
-    auth_sub.add_parser("status", help="Show authentication / session status")
-    auth_sub.add_parser("revoke", help="Delete the active session")
+    p_auth_callback.set_defaults(func=cmd_auth_callback)
+    auth_sub.add_parser("status", help="Show authentication / session status").set_defaults(func=cmd_auth_status)
+    auth_sub.add_parser("revoke", help="Delete the active session").set_defaults(func=cmd_auth_revoke)
 
     # --- accounts ---
-    sub.add_parser("accounts", help="List connected accounts (from stored session)")
+    sub.add_parser("accounts", help="List connected accounts (from stored session)").set_defaults(func=cmd_accounts)
 
     # --- balances ---
-    sub.add_parser("balances", help="Show current balances for all accounts")
+    sub.add_parser("balances", help="Show current balances for all accounts").set_defaults(func=cmd_balances)
 
     # --- transactions ---
     p_txn = sub.add_parser("transactions", help="Transaction commands")
@@ -352,6 +354,7 @@ def main():
     p_txn_list.add_argument("--days", type=int, default=None, help="Number of days back (default: 30)")
     p_txn_list.add_argument("--from", dest="from_date", default=None, metavar="YYYY-MM-DD")
     p_txn_list.add_argument("--to", dest="to_date", default=None, metavar="YYYY-MM-DD")
+    p_txn_list.set_defaults(func=cmd_transactions_list)
 
     # --- summary ---
     p_summary = sub.add_parser("summary", help="Spending summary grouped by merchant/category")
@@ -359,47 +362,13 @@ def main():
     p_summary.add_argument("--days", type=int, default=None, help="Number of days back (default: 30)")
     p_summary.add_argument("--from", dest="from_date", default=None, metavar="YYYY-MM-DD")
     p_summary.add_argument("--to", dest="to_date", default=None, metavar="YYYY-MM-DD")
+    p_summary.set_defaults(func=cmd_summary)
 
     args = parser.parse_args()
 
     try:
-        result = _dispatch(args)
+        result = args.func(args)
         print(json.dumps(result, indent=2))
     except ValueError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
-
-
-def _dispatch(args):
-    cmd = args.command
-
-    if cmd == "config":
-        if args.config_command == "set":
-            return cmd_config_set(args)
-        elif args.config_command == "show":
-            return cmd_config_show(args)
-
-    elif cmd == "auth":
-        if args.auth_command == "login":
-            return cmd_auth_login(args)
-        elif args.auth_command == "callback":
-            return cmd_auth_callback(args)
-        elif args.auth_command == "status":
-            return cmd_auth_status(args)
-        elif args.auth_command == "revoke":
-            return cmd_auth_revoke(args)
-
-    elif cmd == "accounts":
-        return cmd_accounts(args)
-
-    elif cmd == "balances":
-        return cmd_balances(args)
-
-    elif cmd == "transactions":
-        if args.transactions_command == "list":
-            return cmd_transactions_list(args)
-
-    elif cmd == "summary":
-        return cmd_summary(args)
-
-    raise ValueError(f"Unknown command: {cmd}")
