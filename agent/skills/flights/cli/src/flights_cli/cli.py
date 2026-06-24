@@ -61,12 +61,10 @@ def _flight_to_dict(flight) -> dict:
 
 
 def _roundtrip_to_dict(outbound, inbound) -> dict:
-    out = _flight_to_dict(outbound)
-    ret = _flight_to_dict(inbound)
     return {
         "price_usd": round(outbound.price + inbound.price, 2),
-        "outbound": out,
-        "return": ret,
+        "outbound": _flight_to_dict(outbound),
+        "return": _flight_to_dict(inbound),
     }
 
 
@@ -334,7 +332,7 @@ def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
     conditions = offer.get("conditions") or {}
     refund_info = conditions.get("refund_before_departure") or {}
     change_info = conditions.get("change_before_departure") or {}
-    result = {
+    return {
         "index": idx + 1,
         "offer_id": offer["id"],
         "airline": (offer.get("owner") or {}).get("name", "?"),
@@ -348,7 +346,6 @@ def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
         "changeable": change_info.get("allowed", False),
         "docs_required": offer.get("passenger_identity_documents_required", False),
     }
-    return result
 
 
 def cmd_offer(args):
@@ -392,9 +389,7 @@ def cmd_offer(args):
         # Limit results
         offers = offers[: args.max_results]
 
-        formatted = []
-        for i, offer in enumerate(offers):
-            formatted.append(_fmt_duffel_offer(offer, i))
+        formatted = [_fmt_duffel_offer(offer, i) for i, offer in enumerate(offers)]
 
         output = {
             "offer_request_id": result.get("id"),

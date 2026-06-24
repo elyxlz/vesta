@@ -106,7 +106,7 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
 
 
 @pytest.mark.anyio
-async def test_message_processor_interrupts_on_new_message(tmp_path):
+async def test_message_processor_interrupts_on_new_message(config, state):
     """New messages arriving during processing set the interrupt event and are processed after."""
     processing_started = asyncio.Event()
     interrupt_seen = asyncio.Event()
@@ -118,9 +118,6 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
             interrupt_seen.set()
         return (["OK"], state)
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
     await queue.put(("slow processing message", True, []))
@@ -162,7 +159,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
+async def test_message_processor_sets_busy_flag_during_turn(config, state):
     """processor_busy is True while a turn runs and False once it finishes (gates the proactive check)."""
     processing_started = asyncio.Event()
     busy_during_turn = False
@@ -173,9 +170,6 @@ async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
         processing_started.set()
         return (["OK"], state)
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
     await queue.put(("message", True, []))
@@ -206,13 +200,10 @@ async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
+async def test_run_messages_with_interrupts_cancels_process_task(config, state):
     """Cancelling _run_messages_with_interrupts must cancel its in-flight process_task (no orphaned tasks)."""
     from core.loops import _run_messages_with_interrupts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
     task_started = asyncio.Event()
@@ -241,13 +232,10 @@ async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(tmp_path):
+async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(config, state):
     """While state.compacting is True, new messages must be queued, not interrupt the in-flight task."""
     from core.loops import _run_messages_with_interrupts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     state.compacting = True
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -277,13 +265,11 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(t
 
 
 @pytest.mark.anyio
-async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
+async def test_run_vesta_force_exits_on_hung_cleanup(config, state):
     """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
 
     force_exit_called_with: list[int] = []
     exit_event = asyncio.Event()
@@ -333,7 +319,7 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
+async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path, state, event_bus):
     """When client.interrupt() times out, attempt_interrupt warns and returns False
     instead of SIGTERMing the process.
 
@@ -343,9 +329,8 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
     from core.client import attempt_interrupt
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
-    state = vm.State()
-    state.event_bus = vm.EventBus(data_dir=tmp_path)
-    queue = state.event_bus.subscribe()
+    state.event_bus = event_bus
+    queue = event_bus.subscribe()
 
     mock_client = MagicMock()
 
@@ -382,19 +367,17 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path):
             events.append(event["text"])
     assert len(events) == 1, f"a timed-out interrupt must surface exactly one event, got {events}"
     assert "SDK interrupt timed out" in events[0]
-    state.event_bus.close()
 
 
 @pytest.mark.anyio
-async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path):
+async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, event_bus):
     """attempt_interrupt still asks the SDK to interrupt while a tool is executing. The SDK
     services the request at its next yield point; a timeout no longer SIGTERMs (see issue #737),
     so there is no reason to suppress the interrupt during tool work."""
     from core.client import attempt_interrupt
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
-    state = vm.State()
-    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    state.event_bus = event_bus
     state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="ls", started_at=0.0)
 
     interrupted = False
@@ -411,7 +394,6 @@ async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path):
 
     assert result is True, "a serviced interrupt must report success"
     assert interrupted is True, "client.interrupt() must be called even while a tool is in flight"
-    state.event_bus.close()
 
 
 # --- Converse interrupt behavior ---
@@ -434,15 +416,9 @@ async def test_converse_breaks_on_interrupt_event():
         yielded_count += 1
         yield msg
 
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    state = vm.State()
+    state, config, mock_client, *_ = _make_converse_harness()
     state.interrupt_event = asyncio.Event()
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
     mock_client.receive_response = MagicMock(return_value=slow_response())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
 
     async def trigger_interrupt():
         await wait_for_condition(lambda: yielded_count == 1, message="converse never consumed the first message")
@@ -477,14 +453,8 @@ async def test_converse_works_normally_without_interrupt():
             messages_yielded += 1
             yield msg
 
-    config = vm.VestaConfig()
-    state = vm.State()
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
+    state, config, mock_client, *_ = _make_converse_harness()
     mock_client.receive_response = MagicMock(return_value=normal_response())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
 
     await converse("test prompt", state=state, config=config, show_output=False)
 

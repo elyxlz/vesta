@@ -41,13 +41,12 @@ def _make_jwt(app_id: str, key_path: str) -> str:
         "iat": iat,
         "exp": iat + 3600,
     }
-    token = pyjwt.encode(
+    return pyjwt.encode(
         payload,
         pem,
         algorithm="RS256",
         headers={"kid": app_id},
     )
-    return token
 
 
 def _headers(conf: dict) -> dict:
@@ -82,25 +81,10 @@ def _raise_for_status(resp: httpx.Response, context: str) -> None:
         sys.exit(1)
 
 
-def _get(conf: dict, path: str, params: dict | None = None) -> Any:
-    url = f"{BASE_URL}{path}"
-    resp = httpx.get(url, headers=_headers(conf), params=params, timeout=30)
-    _raise_for_status(resp, f"GET {path}")
-    return resp.json()
-
-
-def _post(conf: dict, path: str, body: dict) -> Any:
-    url = f"{BASE_URL}{path}"
-    resp = httpx.post(url, headers=_headers(conf), json=body, timeout=30)
-    _raise_for_status(resp, f"POST {path}")
-    return resp.json()
-
-
-def _delete(conf: dict, path: str) -> Any:
-    url = f"{BASE_URL}{path}"
-    resp = httpx.delete(url, headers=_headers(conf), timeout=30)
-    _raise_for_status(resp, f"DELETE {path}")
-    # Some endpoints return empty body on success
+def _request(conf: dict, method: str, path: str, params: dict | None = None, body: dict | None = None) -> Any:
+    resp = httpx.request(method, f"{BASE_URL}{path}", headers=_headers(conf), params=params, json=body, timeout=30)
+    _raise_for_status(resp, f"{method} {path}")
+    # Some endpoints (e.g. session revoke) return an empty body on success
     if resp.content:
         return resp.json()
     return {"status": "ok"}
@@ -128,7 +112,7 @@ def initiate_auth(conf: dict) -> tuple[str, str]:
         "redirect_url": REDIRECT_URL,
         "psu_type": "personal",
     }
-    data = _post(conf, "/auth", body)
+    data = _request(conf, "POST", "/auth", body=body)
     auth_url = data.get("url", "")
     if not auth_url:
         print(
@@ -144,19 +128,19 @@ def exchange_code(conf: dict, code: str) -> dict:
     POST /sessions with the code received from the OAuth callback.
     Returns session data including session_id and accounts list.
     """
-    return _post(conf, "/sessions", {"code": code})
+    return _request(conf, "POST", "/sessions", body={"code": code})
 
 
 def get_session(conf: dict) -> dict:
     """GET /sessions/{session_id} — fetch current session details."""
     session_id = conf["session_id"]
-    return _get(conf, f"/sessions/{session_id}")
+    return _request(conf, "GET", f"/sessions/{session_id}")
 
 
 def revoke_session(conf: dict) -> dict:
     """DELETE /sessions/{session_id}."""
     session_id = conf["session_id"]
-    return _delete(conf, f"/sessions/{session_id}")
+    return _request(conf, "DELETE", f"/sessions/{session_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +150,7 @@ def revoke_session(conf: dict) -> dict:
 
 def get_balances(conf: dict, account_uid: str) -> list[dict]:
     """GET /accounts/{uid}/balances."""
-    data = _get(conf, f"/accounts/{account_uid}/balances")
+    data = _request(conf, "GET", f"/accounts/{account_uid}/balances")
     if isinstance(data, list):
         return data
     return data.get("balances", [data])
@@ -189,7 +173,7 @@ def get_transactions(
     all_txns: list[dict] = []
 
     while True:
-        data = _get(conf, f"/accounts/{account_uid}/transactions", params=params)
+        data = _request(conf, "GET", f"/accounts/{account_uid}/transactions", params=params)
 
         if isinstance(data, list):
             # Some implementations return a plain list

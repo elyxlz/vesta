@@ -194,11 +194,6 @@ def _write_json(path: Path, data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _save_config(cfg: dict) -> None:
-    """Save organize config to disk."""
-    _write_json(ORGANIZE_CONFIG, cfg)
-
-
 def _chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
@@ -310,7 +305,7 @@ def _log(msg: str) -> None:
 def init_config(config: Config) -> dict:
     """Initialize organize config with defaults."""
     cfg = {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
-    _save_config(cfg)
+    _write_json(ORGANIZE_CONFIG, cfg)
     return {
         "status": "initialized",
         "path": str(ORGANIZE_CONFIG),
@@ -346,11 +341,7 @@ def sync_likes(config: Config, dry_run: bool = False) -> dict:
 
     # Collect all liked songs
     liked_items = _paginate_saved(sp)
-    liked_ids = set()
-    for item in liked_items:
-        t = item.get("track")
-        if t and t.get("id"):
-            liked_ids.add(t["id"])
+    liked_ids = {item["track"]["id"] for item in liked_items if item.get("track") and item["track"].get("id")}
 
     to_like = list(playlist_track_ids - liked_ids)
 
@@ -389,11 +380,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
     own_playlists = _get_own_playlists(sp)
 
     # Build name → id mapping for rule targets (only playlists that exist)
-    name_to_id = {}
-    for r in rules:
-        pname = r["playlist"]
-        if pname in own_playlists:
-            name_to_id[pname] = own_playlists[pname]
+    name_to_id = {r["playlist"]: own_playlists[r["playlist"]] for r in rules if r["playlist"] in own_playlists}
 
     # Collect all tracks from own playlists
     playlist_track_ids = set()
@@ -423,10 +410,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
     orphan_ids = [tid for tid in liked_info if tid not in playlist_track_ids]
 
     # Get artist genres
-    all_artist_ids = set()
-    for tid in orphan_ids:
-        _, _, artist_ids = liked_info[tid]
-        all_artist_ids.update(artist_ids)
+    all_artist_ids = {aid for tid in orphan_ids for aid in liked_info[tid][2]}
 
     artist_genres = {}
     for batch in _chunks(list(all_artist_ids), 50):

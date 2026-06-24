@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useGateway } from "@/providers/GatewayProvider";
 import { wsUrl } from "@/lib/connection";
+import {
+  connectReconnectingWs,
+  type ReconnectingWsHandle,
+} from "@/lib/reconnecting-ws";
 import { isTauri } from "@/lib/env";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
@@ -11,8 +15,6 @@ import { NotificationContext } from "./context";
 
 export { useNotifications } from "./context";
 
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
 const PREVIEW_MAX = 100;
 const NOTIFICATION_AUTO_CLOSE_MS = 6000;
 const ASKED_KEY = "vesta-notifications-asked";
@@ -45,13 +47,6 @@ async function focusAndNavigate(agentName: string): Promise<void> {
   router.navigate(`/agent/${encodeURIComponent(agentName)}`);
 }
 
-interface TapEntry {
-  socket: WebSocket | null;
-  cancelled: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-  delay: number;
-}
-
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { agents, reachable } = useGateway();
   const focused = useWindowFocus();
@@ -61,7 +56,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   }, [focused]);
 
   const permissionRef = useRef<boolean>(false);
-  const tapsRef = useRef<Map<string, TapEntry>>(new Map());
+  const tapsRef = useRef<Map<string, ReconnectingWsHandle>>(new Map());
   const chattingAgentRef = useRef<string | null>(null);
   const prevStatusRef = useRef<Map<string, AgentInfo["status"]>>(new Map());
 
@@ -142,37 +137,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
 
     function openTap(name: string) {
-      const entry: TapEntry = {
-        socket: null,
-        cancelled: false,
-        timer: null,
-        delay: RECONNECT_BASE_MS,
-      };
-      tapsRef.current.set(name, entry);
-
-      const connect = () => {
-        if (entry.cancelled) return;
-        let url: string;
-        try {
-          url = wsUrl(name, { skipHistory: true });
-        } catch {
-          entry.timer = setTimeout(connect, entry.delay);
-          entry.delay = Math.min(entry.delay * 2, RECONNECT_MAX_MS);
-          return;
-        }
-
-        const socket = new WebSocket(url);
-        entry.socket = socket;
-
-        socket.onopen = () => {
-          entry.delay = RECONNECT_BASE_MS;
-        };
-
-        socket.onmessage = (e) => {
-          if (typeof e.data !== "string") return;
+      const handle = connectReconnectingWs({
+        url: () => wsUrl(name, { skipHistory: true }),
+        onMessage: (data) => {
           let event: VestaEvent;
           try {
-            event = JSON.parse(e.data) as VestaEvent;
+            event = JSON.parse(data) as VestaEvent;
           } catch {
             return;
           }
@@ -185,30 +155,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           // it fires after the typing delay so notification lines up with UI.
           if (chattingAgentRef.current === name) return;
           notifyAssistant(name, event.text);
-        };
-
-        socket.onclose = () => {
-          entry.socket = null;
-          if (entry.cancelled) return;
-          entry.timer = setTimeout(connect, entry.delay);
-          entry.delay = Math.min(entry.delay * 2, RECONNECT_MAX_MS);
-        };
-
-        socket.onerror = () => {};
-      };
-
-      connect();
+        },
+      });
+      tapsRef.current.set(name, handle);
     }
 
     function closeTap(name: string) {
-      const entry = tapsRef.current.get(name);
-      if (!entry) return;
-      entry.cancelled = true;
-      if (entry.timer) clearTimeout(entry.timer);
-      if (entry.socket) {
-        entry.socket.onclose = null;
-        entry.socket.close();
-      }
+      const handle = tapsRef.current.get(name);
+      if (!handle) return;
+      handle.close();
       tapsRef.current.delete(name);
     }
   }, [aliveKey, reachable, notifyAssistant]);
@@ -216,14 +171,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const taps = tapsRef.current;
     return () => {
-      for (const entry of taps.values()) {
-        entry.cancelled = true;
-        if (entry.timer) clearTimeout(entry.timer);
-        if (entry.socket) {
-          entry.socket.onclose = null;
-          entry.socket.close();
-        }
-      }
+      for (const handle of taps.values()) handle.close();
       taps.clear();
     };
   }, []);

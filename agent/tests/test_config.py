@@ -3,6 +3,17 @@
 import asyncio
 import os
 
+import pytest
+
+import core.models as vm
+from core.config import (
+    VestaConfig,
+    config_store_path,
+    load_config,
+    migrate_legacy_config_to_store,
+    read_config_store,
+    update_config_store,
+)
 from core.helpers import get_memory_path
 
 
@@ -14,8 +25,6 @@ def test_config_paths_under_agent_dir(config, tmp_path):
 
 
 def test_config_default_values():
-    import core.models as vm
-
     config = vm.VestaConfig()
     assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
@@ -24,9 +33,6 @@ def test_config_default_values():
 def test_memory_paths(config):
     assert get_memory_path(config) == config.agent_dir / "MEMORY.md"
     assert config.skills_dir == config.agent_dir / "skills"
-
-
-import pytest  # noqa: E402
 
 
 # Both the plain-string form (THINKING=adaptive) and the legacy JSON-dict form written before
@@ -42,8 +48,6 @@ import pytest  # noqa: E402
     ],
 )
 def test_thinking_coerces(monkeypatch, value, expected):
-    from core.config import VestaConfig
-
     monkeypatch.setenv("THINKING", value)
     assert VestaConfig().thinking == expected
 
@@ -51,8 +55,6 @@ def test_thinking_coerces(monkeypatch, value, expected):
 def test_load_config_reverts_invalid_env_to_default(monkeypatch):
     """A malformed override must never crash the boot: the bad var drops to its default and is
     reported, instead of raising and crash-looping the container."""
-    from core.config import load_config
-
     monkeypatch.setenv("RESPONSE_TIMEOUT", "not-a-number")
     config, issues = load_config()
 
@@ -64,8 +66,6 @@ def test_load_config_reverts_invalid_env_to_default(monkeypatch):
 
 def test_load_config_keeps_other_valid_overrides(monkeypatch):
     """Only the offending var is reverted; valid overrides alongside it survive."""
-    from core.config import load_config
-
     monkeypatch.setenv("AGENT_MODEL", "sonnet")
     monkeypatch.setenv("NIGHTLY_MEMORY_HOUR", "99")
     config, issues = load_config()
@@ -77,8 +77,6 @@ def test_load_config_keeps_other_valid_overrides(monkeypatch):
 
 
 def test_load_config_clean_env_has_no_issues(monkeypatch):
-    from core.config import load_config
-
     monkeypatch.setenv("AGENT_MODEL", "haiku")
     config, issues = load_config()
 
@@ -88,7 +86,6 @@ def test_load_config_clean_env_has_no_issues(monkeypatch):
 
 def test_report_config_issues_notifies_agent(config):
     """Config issues reach the agent as a core notification so it can tell the user."""
-    import core.models as vm
     from core.loops import load_notifications
     from core.main import _report_config_issues
 
@@ -120,9 +117,6 @@ def agentdir(tmp_path, monkeypatch):
 
 def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch):
     # The crash class: none of model/provider/personality in env, no store -> defaults, no raise.
-    import core.models as vm
-    from core.config import load_config
-
     for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"):
         monkeypatch.delenv(key, raising=False)
     config, issues = load_config()
@@ -132,18 +126,12 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch):
 
 
 def test_store_overrides_env(agentdir, monkeypatch):
-    import core.models as vm
-    from core.config import update_config_store
-
     monkeypatch.setenv("AGENT_MODEL", "haiku")  # legacy env value
     update_config_store({"agent_model": "sonnet"})  # a PUT /config write
     assert vm.VestaConfig().agent_model == "sonnet"
 
 
 def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
-    import core.models as vm
-    from core.config import read_config_store, update_config_store
-
     monkeypatch.delenv("AGENT_MODEL", raising=False)
     update_config_store({"agent_model": "sonnet", "max_context_tokens": 500_000})
     assert read_config_store() == {"agent_model": "sonnet", "max_context_tokens": 500_000}
@@ -154,8 +142,6 @@ def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
 
 
 def test_update_rejects_keys_that_are_not_config_fields(agentdir):
-    from core.config import update_config_store
-
     # Any real VestaConfig field is writable; a key that isn't a field is a typo and is rejected
     # so it can't write a dead entry the loader would silently ignore.
     with pytest.raises(ValueError):
@@ -163,8 +149,6 @@ def test_update_rejects_keys_that_are_not_config_fields(agentdir):
 
 
 def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
-    from core.config import config_store_path, load_config, read_config_store
-
     config_store_path().write_text("{ not json")
     assert read_config_store() == {}
     for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY"):
@@ -177,8 +161,6 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
 
 
 def test_migrate_drains_genuine_env_values_into_store(agentdir, monkeypatch):
-    from core.config import migrate_legacy_config_to_store, read_config_store
-
     monkeypatch.setenv("AGENT_MODEL", "sonnet")
     monkeypatch.setenv("AGENT_PERSONALITY", "warm")
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "500000")
@@ -189,8 +171,6 @@ def test_migrate_drains_genuine_env_values_into_store(agentdir, monkeypatch):
 def test_migrate_skips_keys_absent_from_env_no_default_lock_in(agentdir, monkeypatch):
     # Only the legacy AGENT_SEED_PERSONALITY is set (pre-rename); the alias is gone, so personality
     # must NOT be converged (else the default would be locked into the store).
-    from core.config import migrate_legacy_config_to_store, read_config_store
-
     monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
     monkeypatch.setenv("AGENT_SEED_PERSONALITY", "warm")
     monkeypatch.setenv("AGENT_MODEL", "opus")
@@ -201,8 +181,6 @@ def test_migrate_skips_keys_absent_from_env_no_default_lock_in(agentdir, monkeyp
 
 
 def test_migrate_does_not_overwrite_existing_store_and_is_idempotent(agentdir, monkeypatch):
-    from core.config import migrate_legacy_config_to_store, read_config_store, update_config_store
-
     update_config_store({"agent_model": "haiku"})  # a prior PUT /config choice
     monkeypatch.setenv("AGENT_MODEL", "sonnet")  # legacy env says otherwise
     migrate_legacy_config_to_store()
@@ -212,8 +190,6 @@ def test_migrate_does_not_overwrite_existing_store_and_is_idempotent(agentdir, m
 
 
 def test_migrate_ignores_nonnumeric_context(agentdir, monkeypatch):
-    from core.config import migrate_legacy_config_to_store, read_config_store
-
     monkeypatch.delenv("AGENT_MODEL", raising=False)
     monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "lots")

@@ -23,8 +23,6 @@ from .loops import (
 )
 from .migrations import drop_pending_migrations
 
-SignalHandler = tp.Callable[[int, types.FrameType | None], None]
-
 
 async def input_handler(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State) -> None:
     while not state.shutdown_event.is_set():
@@ -58,7 +56,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, st
                 raise
 
 
-def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> SignalHandler:
+def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
     def handler(signum: int, frame: types.FrameType | None) -> None:
         sig_name = signal.Signals(signum).name
         state.shutdown_count += 1

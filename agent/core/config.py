@@ -29,10 +29,6 @@ def config_store_path() -> pl.Path:
     return _resolve_agent_dir() / "data" / "config.json"
 
 
-def _shipped_defaults() -> dict[str, tp.Any]:
-    return json.loads(CONFIG_DEFAULTS_PATH.read_text())
-
-
 def read_config_store() -> dict[str, tp.Any]:
     """The store's sparse overrides, or {} when absent/corrupt (never raises: it's on the boot path)."""
     path = config_store_path()
@@ -341,4 +337,4 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 # No env var to drop (bad store value or invalid field default). Fall back to defaults
                 # rather than crash-loop; seed the shipped floor so the init=False fields are populated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                return VestaConfig.model_construct(**_shipped_defaults()), issues
+                return VestaConfig.model_construct(**json.loads(CONFIG_DEFAULTS_PATH.read_text())), issues

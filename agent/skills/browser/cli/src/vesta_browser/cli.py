@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from . import admin, helpers, snapshot
@@ -108,36 +109,29 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_navigate(args: argparse.Namespace) -> int:
+def _navigate(action: Callable[[], object]) -> int:
+    """Run a navigation action, wait for load, print the resulting snapshot."""
     admin.ensure_daemon()
-    helpers.goto(args.url)
+    action()
     helpers.wait_for_load()
     _print_snapshot()
     return 0
+
+
+def cmd_navigate(args: argparse.Namespace) -> int:
+    return _navigate(lambda: helpers.goto(args.url))
 
 
 def cmd_reload(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.reload()
-    helpers.wait_for_load()
-    _print_snapshot()
-    return 0
+    return _navigate(helpers.reload)
 
 
 def cmd_back(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.back()
-    helpers.wait_for_load()
-    _print_snapshot()
-    return 0
+    return _navigate(helpers.back)
 
 
 def cmd_forward(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.forward()
-    helpers.wait_for_load()
-    _print_snapshot()
-    return 0
+    return _navigate(helpers.forward)
 
 
 def cmd_snapshot(args: argparse.Namespace) -> int:

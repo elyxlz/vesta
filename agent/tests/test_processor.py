@@ -205,33 +205,21 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
     assert responses == ["something \u2014 with an em dash"]
 
 
+@pytest.mark.parametrize(
+    "response",
+    [["clean response, no dashes here"], []],
+    ids=["no-dashes", "empty-response"],
+)
 @pytest.mark.anyio
-async def test_process_message_no_correction_without_dashes(tmp_path):
-    """process_message should not send a correction when no dashes are present."""
+async def test_process_message_no_correction(tmp_path, response):
+    """process_message should not send a correction when no dashes are present (incl. an empty response)."""
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
     async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
-        return ["clean response, no dashes here"]
-
-    with patch("core.client.converse", side_effect=mock_converse):
-        await process_message("hello", state=state, config=config, is_user=True)
-
-    assert len(converse_calls) == 1
-
-
-@pytest.mark.anyio
-async def test_process_message_no_correction_on_empty_response(tmp_path):
-    """process_message should not send a correction when there are no responses."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    converse_calls: list[str] = []
-
-    async def mock_converse(prompt, *, state, config, show_output):
-        converse_calls.append(prompt)
-        return []
+        return response
 
     with patch("core.client.converse", side_effect=mock_converse):
         await process_message("hello", state=state, config=config, is_user=True)

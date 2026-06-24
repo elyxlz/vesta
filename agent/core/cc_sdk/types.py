@@ -8,8 +8,6 @@ TypedDicts are plain dicts at runtime; only the dataclasses carry behaviour.
 import dataclasses as dc
 import typing as tp
 
-# --- Hook events ---
-
 HookEvent = tp.Literal[
     "SessionStart",
     "SessionEnd",
@@ -127,9 +125,6 @@ class ThinkingConfigDisabled(tp.TypedDict):
 
 
 ThinkingConfig = ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled
-
-
-# --- Permissions ---
 
 
 @dc.dataclass
