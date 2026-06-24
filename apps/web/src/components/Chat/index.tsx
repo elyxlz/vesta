@@ -7,7 +7,6 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
 import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
@@ -18,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
-import { ChatMessageArea } from "./ChatMessageArea";
+import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 
 interface ChatProps {
@@ -27,7 +26,8 @@ interface ChatProps {
 }
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
-  const { name } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
+  const notAuthenticated = agent?.status === "not_authenticated";
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
@@ -46,6 +46,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     messages,
     isTyping,
     connected,
+    historyLoaded,
     hasMore,
     loadingMore,
     loadMore,
@@ -61,7 +62,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const [wasConnected, setWasConnected] = useState(false);
 
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomVisibleRef = useRef(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
@@ -97,17 +98,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   }, [chatMessages]);
 
-  const handleStartReached = useCallback(() => {
-    if (hasMore && !loadingMore) loadMore();
-  }, [hasMore, loadingMore, loadMore]);
-
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
     bottomVisibleRef.current = atBottom;
     if (atBottom) setHasNewMessage(false);
   }, []);
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
+    scrollRef.current?.scrollToBottom();
   }, []);
 
   const handleSend = () => {
@@ -132,7 +129,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
   };
 
   return (
@@ -144,8 +141,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     >
       <Card
         className={cn(
-          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
-          fullscreen && "shadow-none ring-0",
+          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
+          fullscreen && "ring-0",
           isMobile && "bg-transparent overflow-visible",
         )}
         style={
@@ -163,16 +160,18 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         />
 
         <ChatMessageArea
-          virtuosoRef={virtuosoRef}
-          onStartReached={handleStartReached}
-          onAtBottomStateChange={handleAtBottomChange}
+          scrollRef={scrollRef}
+          onAtBottomChange={handleAtBottomChange}
+          loadMore={loadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
           hasMore={hasMore}
           chatMessages={chatMessages}
           connected={connected}
+          historyLoaded={historyLoaded}
           agentName={name}
+          notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
         />
@@ -188,6 +187,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           <ChatComposer
             fullscreen={fullscreen}
             connected={connected}
+            notAuthenticated={notAuthenticated}
             sttAvailable={sttAvailable}
             isRecording={isRecording}
             voiceAutoSend={voiceAutoSend}

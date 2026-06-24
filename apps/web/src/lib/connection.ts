@@ -114,6 +114,18 @@ export function getConnection(): ConnectionConfig | null {
   return cached;
 }
 
+/** Display hostname of the current connection (falls back to the raw url if it
+ * doesn't parse, "" when not connected). */
+export function connectionHostname(): string {
+  const conn = getConnection();
+  if (!conn) return "";
+  try {
+    return new URL(conn.url).hostname;
+  } catch {
+    return conn.url;
+  }
+}
+
 export function setConnection(
   url: string,
   accessToken: string,

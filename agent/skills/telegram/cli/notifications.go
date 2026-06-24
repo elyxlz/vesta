@@ -43,6 +43,56 @@ type reactionNotif struct {
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
+// callbackNotif is emitted when the owner taps an inline-keyboard button. CallbackID is needed to
+// answer the tap (telegram answer-callback --callback-id ...); ChatID+MessageID locate the message
+// to edit in place if updating the UI.
+type callbackNotif struct {
+	Source         string `json:"source"`
+	Type           string `json:"type"`
+	Instance       string `json:"instance,omitempty"`
+	ContactName    string `json:"contact_name,omitempty"`
+	Data           string `json:"data"`
+	CallbackID     string `json:"callback_id"`
+	ChatID         int64  `json:"chat_id,omitempty"`
+	MessageID      int64  `json:"message_id,omitempty"`
+	Sender         string `json:"sender,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Timestamp      string `json:"timestamp"`
+	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+}
+
+func WriteCallbackNotification(
+	notifDir, callbackID, data string, chatID, messageID int64,
+	contactName, sender, username, instance string, contactSaved bool,
+) error {
+	if notifDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notifications dir: %v", err)
+	}
+	notif := callbackNotif{
+		Source:         "telegram",
+		Type:           "callback_query",
+		Instance:       instance,
+		ContactName:    contactName,
+		Data:           data,
+		CallbackID:     callbackID,
+		ChatID:         chatID,
+		MessageID:      messageID,
+		Sender:         sender,
+		Username:       username,
+		Timestamp:      time.Now().Format(time.RFC3339),
+		ContactUnknown: !contactSaved,
+	}
+	out, err := json.MarshalIndent(notif, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal callback notification: %v", err)
+	}
+	filename := fmt.Sprintf("%s-telegram-callback.json", uuid.New().String())
+	return os.WriteFile(filepath.Join(notifDir, filename), out, 0644)
+}
+
 func WriteNotification(
 	notifDir string, messageID int64, chatName, contactName, username, instance string,
 	contactSaved, isDirectChat bool,
