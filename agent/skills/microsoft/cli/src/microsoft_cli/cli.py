@@ -11,6 +11,7 @@ import httpx
 
 from .config import Config
 from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
+from . import backend, owa_commands
 from .context import MicrosoftContext
 from .settings import MicrosoftSettings
 
@@ -197,6 +198,17 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
     p_respond.add_argument("--message", default=None)
 
+    # Dual-path selector on every email/calendar subcommand: auto (Graph then OWA
+    # fallback), or force a single backend for testing/preference.
+    for sub in (email_sub, cal_sub):
+        for sp in sub.choices.values():
+            sp.add_argument(
+                "--backend",
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA],
+                default=backend.AUTO,
+                help="Path to use: auto (Graph, fall back to OWA/EWS on a permission error), graph, or owa.",
+            )
+
     args = parser.parse_args()
     config = Config()
 
@@ -265,21 +277,19 @@ def _dispatch_auth(args, config):
 
 
 def _dispatch_email(args, config, client):
+    choice = getattr(args, "backend", backend.AUTO)
+
+    def dual(graph_call, owa_call):
+        return backend.run(choice, graph_call, owa_call)
+
     if args.command == "list":
-        return email.list_emails(config, client, account_email=args.account, folder=args.folder, limit=args.limit)
+        kw = dict(account_email=args.account, folder=args.folder, limit=args.limit)
+        return dual(lambda: email.list_emails(config, client, **kw), lambda: owa_commands.list_emails(config, client, **kw))
     elif args.command == "get":
-        return email.get_email(
-            config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            include_attachments=not args.no_attachments,
-            save_to_file=args.save_to,
-        )
+        kw = dict(account_email=args.account, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
+        return dual(lambda: email.get_email(config, client, **kw), lambda: owa_commands.get_email(config, client, **kw))
     elif args.command == "send":
-        return email.send_email(
-            config,
-            client,
+        kw = dict(
             account_email=args.account,
             to=args.to,
             subject=args.subject,
@@ -289,22 +299,14 @@ def _dispatch_email(args, config, client):
             attachments=args.attachments,
             html=args.html,
         )
+        return dual(lambda: email.send_email(config, client, **kw), lambda: owa_commands.send_email(config, client, **kw))
     elif args.command == "draft":
-        return email.create_email_draft(
-            config,
-            client,
-            account_email=args.account,
-            to=args.to,
-            subject=args.subject,
-            body=args.body,
-            cc=args.cc,
-            bcc=args.bcc,
-            attachments=args.attachments,
+        kw = dict(
+            account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments
         )
+        return dual(lambda: email.create_email_draft(config, client, **kw), lambda: owa_commands.create_email_draft(config, client, **kw))
     elif args.command == "reply":
-        return email.reply_to_email(
-            config,
-            client,
+        kw = dict(
             account_email=args.account,
             email_id=args.email_id,
             body=args.body,
@@ -312,33 +314,44 @@ def _dispatch_email(args, config, client):
             reply_all=args.reply_all,
             html=args.html,
         )
+        return dual(lambda: email.reply_to_email(config, client, **kw), lambda: owa_commands.reply_to_email(config, client, **kw))
     elif args.command == "attachment":
-        return email.get_attachment(
-            config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
-        )
+        kw = dict(account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
+        return dual(lambda: email.get_attachment(config, client, **kw), lambda: owa_commands.get_attachment(config, client, **kw))
     elif args.command == "search":
-        return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
+        kw = dict(account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
+        return dual(lambda: email.search_emails(config, client, **kw), lambda: owa_commands.search_emails(config, client, **kw))
     elif args.command == "update":
-        return email.update_email(
-            config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
-        )
+        kw = dict(account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories)
+        return dual(lambda: email.update_email(config, client, **kw), lambda: owa_commands.update_email(config, client, **kw))
     elif args.command == "delete":
-        return email.delete_email(
-            config, client, account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent
-        )
+        kw = dict(account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent)
+        return dual(lambda: email.delete_email(config, client, **kw), lambda: owa_commands.delete_email(config, client, **kw))
     elif args.command == "block":
         if args.list:
-            return block.list_block_rules(config, client, account_email=args.account)
-        return block.block_sender(config, client, account_email=args.account, sender=args.sender)
+            return dual(
+                lambda: block.list_block_rules(config, client, account_email=args.account),
+                lambda: owa_commands.list_block_rules(config, client, account_email=args.account),
+            )
+        return dual(
+            lambda: block.block_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_commands.block_sender(config, client, account_email=args.account, sender=args.sender),
+        )
     elif args.command == "unblock":
-        return block.unblock_sender(config, client, account_email=args.account, sender=args.sender)
+        return dual(
+            lambda: block.unblock_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_commands.unblock_sender(config, client, account_email=args.account, sender=args.sender),
+        )
 
 
 def _dispatch_calendar(args, config, client):
+    choice = getattr(args, "backend", backend.AUTO)
+
+    def dual(graph_call, owa_call):
+        return backend.run(choice, graph_call, owa_call)
+
     if args.command == "list":
-        return calendar.list_events(
-            config,
-            client,
+        kw = dict(
             account_email=args.account,
             calendar_name=args.calendar_name,
             days_ahead=args.days_ahead,
@@ -346,14 +359,17 @@ def _dispatch_calendar(args, config, client):
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
         )
+        return dual(lambda: calendar.list_events(config, client, **kw), lambda: owa_commands.list_events(config, client, **kw))
     elif args.command == "calendars":
-        return calendar.list_calendars(config, client, account_email=args.account)
+        return dual(
+            lambda: calendar.list_calendars(config, client, account_email=args.account),
+            lambda: owa_commands.list_calendars(config, client, account_email=args.account),
+        )
     elif args.command == "get":
-        return calendar.get_event(config, client, account_email=args.account, event_id=args.event_id)
+        kw = dict(account_email=args.account, event_id=args.event_id)
+        return dual(lambda: calendar.get_event(config, client, **kw), lambda: owa_commands.get_event(config, client, **kw))
     elif args.command == "create":
-        return calendar.create_event(
-            config,
-            client,
+        kw = dict(
             account_email=args.account,
             subject=args.subject,
             start=args.start,
@@ -367,10 +383,9 @@ def _dispatch_calendar(args, config, client):
             recurrence=args.recurrence,
             recurrence_end_date=args.recurrence_end_date,
         )
+        return dual(lambda: calendar.create_event(config, client, **kw), lambda: owa_commands.create_event(config, client, **kw))
     elif args.command == "update":
-        return calendar.update_event(
-            config,
-            client,
+        kw = dict(
             account_email=args.account,
             event_id=args.event_id,
             subject=args.subject,
@@ -380,14 +395,13 @@ def _dispatch_calendar(args, config, client):
             body=args.body,
             timezone=args.timezone,
         )
+        return dual(lambda: calendar.update_event(config, client, **kw), lambda: owa_commands.update_event(config, client, **kw))
     elif args.command == "delete":
-        return calendar.delete_event(
-            config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation
-        )
+        kw = dict(account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation)
+        return dual(lambda: calendar.delete_event(config, client, **kw), lambda: owa_commands.delete_event(config, client, **kw))
     elif args.command == "respond":
-        return calendar.respond_event(
-            config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message
-        )
+        kw = dict(account_email=args.account, event_id=args.event_id, response=args.response, message=args.message)
+        return dual(lambda: calendar.respond_event(config, client, **kw), lambda: owa_commands.respond_event(config, client, **kw))
 
 
 def _run_serve(config: Config, notif_dir: Path):

@@ -170,7 +170,15 @@ def get_email(
         raise ValueError(f"Email with ID {email_id} not found")
 
     graph.localize_datetime_fields(result)
+    return finalize_email_body(config, email_id, result, save_to_file)
 
+
+def finalize_email_body(config: Config, email_id: str, result: dict[str, Any], save_to_file: str | None) -> dict[str, Any]:
+    """Persist an email body to disk and replace it with a pointer in the returned
+    dict. Shared by the Graph path and the OWA/EWS fallback so `email get` returns
+    an identical shape regardless of which backend fetched the message. `result`
+    must be a Graph-shaped message dict carrying a `body` of {contentType, content}.
+    """
     body_obj = result["body"] if "body" in result else None
     full_body_content = (body_obj["content"] if body_obj and "content" in body_obj else "") or ""
     _remove_attachment_bytes(result)

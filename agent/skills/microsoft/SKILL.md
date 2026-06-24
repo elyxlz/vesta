@@ -8,6 +8,39 @@ description: Outlook email, inbox, calendar, meetings, events via Microsoft. Req
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 
+## Two backends (Graph + reverse-engineered OWA fallback)
+
+Every email and calendar command runs over one of two paths, chosen with
+`--backend {auto,graph,owa}` (default `auto`):
+
+- **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
+  clean, supported path.
+- **`owa`**: a reverse-engineered fallback that speaks Exchange Web Services
+  (EWS) over the same endpoint Outlook on the web uses, authenticated with a
+  bearer token from the first-party "Microsoft Office" client. It exists for
+  locked-down tenants where Graph is unavailable because of permissions
+  (third-party apps blocked, Graph disabled, a missing delegated scope).
+- **`auto`** (default): try Graph; on a permission failure (401/403, a missing
+  scope, or no usable Graph token) transparently fall back to OWA/EWS. Any other
+  error propagates unchanged, so the fallback never hides real bugs.
+
+Force a single path with `--backend graph` or `--backend owa` (used by the test
+suite to prove parity on both). Both paths return identically shaped output.
+
+Why the OWA path survives a locked-down company tenant: the first-party client is
+trusted tenant-wide (so it is not stopped by the "block third-party apps" control
+that blocks a custom Azure app), and EWS cannot be disabled without also breaking
+Outlook on the web for the tenant's own users.
+
+**Fallback of last resort:** if a tenant somehow disables EWS itself, the
+documented escape hatch is to drive a headless browser against Outlook on the web,
+capture the live `/owa/service.svc` session (cookies + `X-OWA-CANARY`), and replay
+those calls. Strictly more fragile, so it is not built in by default. See SETUP.md.
+
+**OWA-path gaps (use `--backend graph` for these):** attachments on
+send/draft/reply, and recurring-event creation, are not yet implemented on the
+OWA/EWS path; they raise a clear error there rather than silently doing nothing.
+
 ## Email
 
 ```bash
