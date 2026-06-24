@@ -290,79 +290,71 @@ func runOneShot(command string) {
 	os.Exit(exitCode)
 }
 
-// writeCommands lists commands that are blocked in read-only mode.
-var writeCommands = map[string]bool{
-	"send-message": true, "send-file": true, "send-reaction": true,
-	"send-audio": true, "add-contact": true, "remove-contact": true,
-	"leave-group": true, "create-group": true, "rename-group": true,
-	"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
-	"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
-	"delete-chat": true, "clear-all-chats": true,
+// command describes one socket subcommand in a single place: its canonical name,
+// short aliases, the leading positional args main rewrites into flags, whether it
+// mutates state (blocked in read-only mode), and its handler.
+type command struct {
+	name        string
+	aliases     []string
+	positionals []string
+	write       bool
+	run         func([]string, *WhatsAppClient) (any, error)
 }
 
-func executeCommand(command string, args []string, wac *WhatsAppClient) (any, error) {
-	if wac.readOnly && writeCommands[command] {
-		return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
-	}
+var commands = []command{
+	{name: "list-contacts", aliases: []string{"contacts", "search-contacts"}, run: cmdListContacts},
+	{name: "add-contact", positionals: []string{"name", "phone"}, write: true, run: cmdAddContact},
+	{name: "remove-contact", positionals: []string{"identifier"}, write: true, run: cmdRemoveContact},
+	{name: "list-messages", aliases: []string{"messages"}, positionals: []string{"to"}, run: cmdListMessages},
+	{name: "list-chats", aliases: []string{"chats"}, run: cmdListChats},
+	{name: "send-message", aliases: []string{"send"}, positionals: []string{"to", "message"}, write: true, run: cmdSendMessage},
+	{name: "send-file", aliases: []string{"file"}, positionals: []string{"to", "file-path"}, write: true, run: cmdSendFile},
+	{name: "send-audio", write: true, run: cmdSendAudio},
+	{name: "download-media", run: cmdDownloadMedia},
+	{name: "send-reaction", aliases: []string{"react"}, positionals: []string{"to", "message-id", "emoji"}, write: true, run: cmdSendReaction},
+	{name: "revoke-message", write: true, run: cmdRevokeMessage},
+	{name: "create-group", write: true, run: cmdCreateGroup},
+	{name: "leave-group", positionals: []string{"group"}, write: true, run: cmdLeaveGroup},
+	{name: "list-groups", aliases: []string{"groups"}, run: cmdListGroups},
+	{name: "update-group-participants", write: true, run: cmdUpdateGroupParticipants},
+	{name: "backfill", positionals: []string{"to"}, run: cmdBackfill},
+	{name: "rename-group", aliases: []string{"rename"}, positionals: []string{"group", "name"}, write: true, run: cmdRenameGroup},
+	{name: "set-group-photo", write: true, run: cmdSetGroupPhoto},
+	{name: "set-group-description", positionals: []string{"group", "description"}, write: true, run: cmdSetGroupDescription},
+	{name: "get-group-invite-link", run: cmdGetGroupInviteLink},
+	{name: "check-delivery", aliases: []string{"delivery"}, positionals: []string{"message-id"}, run: cmdCheckDelivery},
+	{name: "pair-phone", run: cmdPairPhone},
+	{name: "list-received-contacts", run: cmdListReceivedContacts},
+	{name: "archive-chat", positionals: []string{"to"}, write: true, run: cmdArchiveChat},
+	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
+	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
+	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
+}
 
-	switch command {
-	case "list-contacts":
-		return cmdListContacts(args, wac)
-	case "add-contact":
-		return cmdAddContact(args, wac)
-	case "remove-contact":
-		return cmdRemoveContact(args, wac)
-	case "list-messages":
-		return cmdListMessages(args, wac)
-	case "list-chats":
-		return cmdListChats(args, wac)
-	case "send-message":
-		return cmdSendMessage(args, wac)
-	case "send-file":
-		return cmdSendFile(args, wac)
-	case "send-audio":
-		return cmdSendAudio(args, wac)
-	case "download-media":
-		return cmdDownloadMedia(args, wac)
-	case "send-reaction":
-		return cmdSendReaction(args, wac)
-	case "revoke-message":
-		return cmdRevokeMessage(args, wac)
-	case "create-group":
-		return cmdCreateGroup(args, wac)
-	case "leave-group":
-		return cmdLeaveGroup(args, wac)
-	case "list-groups":
-		return cmdListGroups(args, wac)
-	case "update-group-participants":
-		return cmdUpdateGroupParticipants(args, wac)
-	case "backfill":
-		return cmdBackfill(args, wac)
-	case "rename-group":
-		return cmdRenameGroup(args, wac)
-	case "set-group-photo":
-		return cmdSetGroupPhoto(args, wac)
-	case "set-group-description":
-		return cmdSetGroupDescription(args, wac)
-	case "get-group-invite-link":
-		return cmdGetGroupInviteLink(args, wac)
-	case "check-delivery":
-		return cmdCheckDelivery(args, wac)
-	case "pair-phone":
-		return cmdPairPhone(args, wac)
-	case "list-received-contacts":
-		return cmdListReceivedContacts(args, wac)
-	case "archive-chat":
-		return cmdArchiveChat(args, wac)
-	case "archive-all-chats":
-		return cmdArchiveAllChats(wac)
-	case "delete-chat":
-		return cmdDeleteChat(args, wac)
-	case "clear-all-chats":
-		return cmdClearAllChats(wac)
-	default:
-		return nil, fmt.Errorf("unknown command: %s", command)
+// lookupCommand finds a command by its canonical name or one of its aliases.
+func lookupCommand(name string) (command, bool) {
+	for _, cmd := range commands {
+		if cmd.name == name {
+			return cmd, true
+		}
+		for _, alias := range cmd.aliases {
+			if alias == name {
+				return cmd, true
+			}
+		}
 	}
+	return command{}, false
+}
+
+func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error) {
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown command: %s", name)
+	}
+	if wac.readOnly && cmd.write {
+		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
+	}
+	return cmd.run(args, wac)
 }
 
 func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
@@ -872,7 +864,7 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
-func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
+func cmdArchiveAllChats(_ []string, wac *WhatsAppClient) (any, error) {
 	archived, errs, err := wac.ArchiveAllChats()
 	if err != nil {
 		return nil, err
@@ -888,7 +880,7 @@ func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
-func cmdClearAllChats(wac *WhatsAppClient) (any, error) {
+func cmdClearAllChats(_ []string, wac *WhatsAppClient) (any, error) {
 	jids, err := wac.store.ListAllChatJIDs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list chats: %v", err)
