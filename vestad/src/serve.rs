@@ -807,24 +807,28 @@ async fn get_provider_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Which of the agent's own write endpoints a `forward_to_agent_and_restart` call targets.
+/// Which write(s) to forward to the agent's own HTTP API. Dispatched inside
+/// `write_to_agent_and_restart` so the borrowing `AgentProvider` never crosses a closure boundary.
 enum AgentWrite {
-    /// The agent's `POST /provider` — the restart picks up env-var changes (OpenRouter mode).
-    Provider,
-    /// The agent's `PUT /config` — the change applies on next boot.
-    Config,
+    /// The agent's `POST /provider` (auth), forwarded verbatim.
+    Provider(serde_json::Value),
+    /// The agent's `PUT /config` (general prefs), forwarded verbatim.
+    Config(serde_json::Value),
+    /// Any of provider auth / provider prefs / general prefs, each to its own agent endpoint.
+    ProviderConfig(ProviderConfigRequest),
+    /// The agent's `DELETE /provider` — sign out.
+    Clear,
 }
 
-/// Forward a body to one of the agent's own write endpoints (it owns the file
-/// writes, format, and validation), then restart the container so the change
-/// applies on next boot. Ensures the agent exists, takes the per-agent write
-/// lock, and auto-starts a stopped agent so it can receive the proxied call —
-/// the shared skeleton behind both the provider and config setters.
-async fn forward_to_agent_and_restart(
+/// Run a write against a (possibly stopped) agent's own HTTP API, then restart the container so the
+/// change applies on next boot. Ensures the agent exists, takes the per-agent write lock, and
+/// auto-starts a stopped agent so it can receive the proxied call — the shared skeleton behind every
+/// provider/config setter. The agent owns the file writes, format, and validation; any forward
+/// failure surfaces as BAD_GATEWAY.
+async fn write_to_agent_and_restart(
     state: &SharedState,
     name: &str,
-    target: AgentWrite,
-    body: serde_json::Value,
+    write: AgentWrite,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(name).map_err(map_docker_err)?;
     let cname = docker::container_name(name);
@@ -838,9 +842,27 @@ async fn forward_to_agent_and_restart(
     }
 
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
-    let forwarded = match target {
-        AgentWrite::Provider => provider.set(&body).await,
-        AgentWrite::Config => provider.put_config(&body).await,
+    let forwarded = match write {
+        AgentWrite::Provider(body) => provider.set(&body).await,
+        AgentWrite::Config(body) => provider.put_config(&body).await,
+        AgentWrite::Clear => provider.clear().await,
+        AgentWrite::ProviderConfig(req) => {
+            // Each present part is written before the single restart below, so a later write can't
+            // hit the agent mid-restart and 502, dropping the change.
+            async {
+                if has_entries(&req.provider) {
+                    provider.set(&req.provider).await?;
+                }
+                if has_entries(&req.provider_config) {
+                    provider.put_provider_config(&req.provider_config).await?;
+                }
+                if has_entries(&req.config) {
+                    provider.put_config(&req.config).await?;
+                }
+                Ok(())
+            }
+            .await
+        }
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
 
@@ -854,7 +876,7 @@ async fn set_provider_handler(
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    forward_to_agent_and_restart(&state, &name, AgentWrite::Provider, body).await
+    write_to_agent_and_restart(&state, &name, AgentWrite::Provider(body)).await
 }
 
 /// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
@@ -877,7 +899,7 @@ async fn set_config_handler(
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    forward_to_agent_and_restart(&state, &name, AgentWrite::Config, body).await
+    write_to_agent_and_restart(&state, &name, AgentWrite::Config(body)).await
 }
 
 fn has_entries(value: &serde_json::Value) -> bool {
@@ -909,30 +931,7 @@ async fn set_provider_config_handler(
     Path(name): Path<String>,
     Json(req): Json<ProviderConfigRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    }
-
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    if has_entries(&req.provider) {
-        provider.set(&req.provider).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-    }
-    if has_entries(&req.provider_config) {
-        provider.put_provider_config(&req.provider_config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-    }
-    if has_entries(&req.config) {
-        provider.put_config(&req.config).await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-    }
-
-    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    Ok(ok_json())
+    write_to_agent_and_restart(&state, &name, AgentWrite::ProviderConfig(req)).await
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
@@ -941,22 +940,7 @@ async fn clear_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
-
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
-
-    if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    }
-
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    provider.clear().await.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-
-    docker::restart_agent(&state.docker, &name).await.map_err(map_docker_err)?;
-    Ok(ok_json())
+    write_to_agent_and_restart(&state, &name, AgentWrite::Clear).await
 }
 
 // --- SSE Logs ---
