@@ -7,19 +7,21 @@ import typing as tp
 
 import aiohttp
 
-from core.cc_sdk import (
+from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    ResultMessage,
+    SystemMessage,
     ThinkingBlock,
 )
-from core.cc_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
+from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import logger
 from . import models as vm
 from . import state_store
-from .provider import OPENROUTER_SMALL_FAST_MODEL, is_terminal_auth_error, observed_provider_failure
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW, FULL_CONTEXT_WINDOW
+from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, is_terminal_auth_error, observed_provider_failure
+from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
 from .helpers import get_constitution_path, get_memory_path
@@ -81,7 +83,11 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         # crossing (diagnostics.py), surface warn-level conditions as an "error" event.
         state.event_bus.emit({"type": "error", "text": msg})
         return False
-    except (OSError, RuntimeError) as e:
+    except Exception as e:
+        # interrupt() is best-effort. The official SDK surfaces failures across a wide error
+        # type (ClaudeSDKError/CLIConnectionError when disconnected, a bare Exception on a
+        # control-response error), so catch broadly here and log rather than let an interrupt
+        # failure abort the turn the caller is trying to interrupt.
         diag = diagnostics.format_hang_diagnostics(state)
         logger.error(f"Interrupt failed: {e} | {diag}")
         return False
@@ -188,10 +194,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
-            # OpenRouter's upstream 401/402 is caught by its cache proxy (it sees every status code).
-            # Claude bypasses that proxy, so its terminal auth/billing errors surface only as an
-            # api-error assistant turn reconstructed from the transcript (the tmux cc_sdk never
-            # exposes the SDK's error/retry stream events) — detected on the text just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
@@ -203,10 +205,17 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 for block in thinking_blocks:
                     _emit_thinking(block)
             text = "\n".join(texts) if texts else None
-            if isinstance(msg, AssistantMessage) and is_terminal_auth_error(is_api_error=msg.is_api_error, text=text):
-                # Claude credential died (401) or account can't pay (402). Flip to not_authenticated,
-                # stop the CLI's internal retries, and end the turn cleanly so the app shows "not
-                # signed in" in ~3s instead of hanging to the response timeout and restart-looping.
+            # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
+            # so a terminal auth/billing failure surfaces through the SDK either as the assistant
+            # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
+            # status (api_error_status). Check BOTH so a token expiry can't stay invisible to the app.
+            auth_lost = (isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error)) or (
+                isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS
+            )
+            if auth_lost:
+                # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
+                # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
+                # and restart-looping.
                 logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
                 state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
                 await attempt_interrupt(state, config=config, reason="Provider auth lost")
@@ -256,6 +265,28 @@ async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], cont
 
 
 _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
+_COMPACT_TIMEOUT_S = 600.0  # day-sized contexts can take minutes to summarize
+
+
+async def compact_session(*, state: vm.State) -> None:
+    """Compact the live conversation in place and block until it finishes.
+
+    The official Claude Agent SDK has no compact() method; the documented path is to send the
+    `/compact` slash command as a query (code.claude.com/docs/en/agent-sdk/slash-commands). Manual
+    /compact rewrites the same session, so resume keeps working and the dreamer can restart into
+    the compacted conversation. The turn ends with SystemMessage(subtype="compact_boundary") then
+    a ResultMessage; draining the response blocks until compaction completes. Bounded so a stuck
+    summarization still lets the caller restart."""
+    assert state.client is not None
+    client = state.client
+    await client.query("/compact")
+
+    async def _drain() -> None:
+        async for msg in client.receive_response():
+            if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
+                logger.client("Compaction boundary reached")
+
+    await asyncio.wait_for(_drain(), timeout=_COMPACT_TIMEOUT_S)
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
@@ -319,21 +350,13 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
 
-    # The one window the context-usage percentage is reported against: OpenRouter's resolved
-    # model window (200k fallback when unresolved), or the Claude window — the user's chosen cap,
-    # else the full 1M window the beta unlocks by default. This is the real window the agent
-    # runs at; claude-code's own autocompact threshold is set separately above via
-    # CLAUDE_CODE_MAX_CONTEXT_TOKENS.
-    if is_openrouter:
-        context_window = state.openrouter_max_tokens or DEFAULT_CONTEXT_WINDOW
-    else:
-        context_window = config.max_context_tokens or FULL_CONTEXT_WINDOW
-
+    # Context-usage % is reported by the official client's get_context_usage(), which measures
+    # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
+    # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
-        betas=betas,
-        context_window=context_window,
+        betas=betas,  # ty: ignore[invalid-argument-type]
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,

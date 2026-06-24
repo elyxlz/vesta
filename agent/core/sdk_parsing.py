@@ -6,7 +6,7 @@ import time
 import typing as tp
 from collections.abc import Mapping
 
-from core.cc_sdk import (
+from claude_agent_sdk import (
     AssistantMessage,
     HookContext,
     HookMatcher,
@@ -17,7 +17,7 @@ from core.cc_sdk import (
     TextBlock,
     ThinkingBlock,
 )
-from core.cc_sdk.types import (
+from claude_agent_sdk.types import (
     HookCallback,
     HookEvent,
     HookJSONOutput,
@@ -110,11 +110,15 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
-            sid = msg.data["session_id"][:16] if isinstance(msg.data, dict) and "session_id" in msg.data else "?"
-            logger.debug(f"[init] session_id={sid}")
-        else:
-            raw = json.dumps(msg.data, default=str)
-            logger.system(f"[{msg.subtype}] {raw[:500]}")
+            # The init message carries the session_id first, before any ResultMessage. Return it so
+            # the caller persists it immediately: a fresh turn that crashes before completing can
+            # still be resumed (the official client exposes no session_id attribute to fall back on).
+            init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
+            if init_sid:
+                logger.debug(f"[init] session_id={init_sid[:16]}")
+            return [], [], init_sid
+        raw = json.dumps(msg.data, default=str)
+        logger.system(f"[{msg.subtype}] {raw[:500]}")
         return [], [], None
 
     if not isinstance(msg, AssistantMessage):

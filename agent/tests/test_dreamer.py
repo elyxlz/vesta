@@ -4,12 +4,12 @@ import asyncio
 import datetime as dt
 import json
 import typing as tp
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import core.models as vm
-from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, SystemMessage
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
@@ -75,10 +75,10 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
 
 
 def _mark_dreamer_complete_handler(state, config):
-    from core.tools import build_vesta_tools_server
+    from core.tools import _vesta_tools
 
-    server = build_vesta_tools_server(state, config)
-    return next(t.handler for t in server.tools if t.name == "mark_dreamer_complete")
+    tools = _vesta_tools(state, config)
+    return next(t.handler for t in tools if t.name == "mark_dreamer_complete")
 
 
 @pytest.mark.anyio
@@ -107,14 +107,18 @@ async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tm
 async def test_drain_compacts_then_triggers_restart():
     from core.loops import compact_then_restart_if_requested
 
+    async def compact_response():
+        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
+
     state = vm.State()
     client = AsyncMock()
+    client.receive_response = MagicMock(return_value=compact_response())
     state.client = tp.cast(ClaudeSDKClient, client)
     state.compact_then_restart = True
 
     await compact_then_restart_if_requested(state=state)
 
-    client.compact.assert_awaited_once()
+    client.query.assert_awaited_once_with("/compact")
     assert state.compact_then_restart is False
     assert state.compacting is False
     assert state.graceful_shutdown.is_set()
@@ -130,7 +134,7 @@ async def test_drain_is_noop_when_not_requested():
 
     await compact_then_restart_if_requested(state=state)
 
-    client.compact.assert_not_awaited()
+    client.query.assert_not_awaited()
     assert not state.graceful_shutdown.is_set()
 
 
@@ -142,7 +146,7 @@ async def test_drain_restarts_even_when_compaction_fails():
 
     state = vm.State()
     client = AsyncMock()
-    client.compact.side_effect = ClaudeSDKError("boom")
+    client.query.side_effect = ClaudeSDKError("boom")
     state.client = tp.cast(ClaudeSDKClient, client)
     state.compact_then_restart = True
 
@@ -157,7 +161,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     """BUG: A notification arriving while compaction runs is silently lost on restart.
 
     process_batch deletes the file immediately after queue.put (loops.py line 124).
-    compact_then_restart_if_requested then calls client.compact() and sets graceful_shutdown.
+    compact_then_restart_if_requested then compacts the session and sets graceful_shutdown.
     run_vesta cancels all tasks and the in-memory asyncio.Queue is dropped with the process.
     A restarted process finds an empty notifications dir and the message is gone with no trace.
     """
@@ -191,8 +195,12 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     assert dying_queue.qsize() == 1, "message is in the queue"
 
     # Compaction finishes: compact_then_restart_if_requested sets graceful_shutdown.
+    async def compact_response():
+        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1, "trigger": "manual"}})
+
     state.compact_then_restart = True
     client = AsyncMock()
+    client.receive_response = MagicMock(return_value=compact_response())
     state.client = tp.cast(ClaudeSDKClient, client)
     await compact_then_restart_if_requested(state=state)
     assert state.graceful_shutdown.is_set(), "graceful_shutdown fires after compaction"

@@ -6,7 +6,7 @@ import typing as tp
 import pydantic as pyd
 import pydantic_settings as pyd_settings
 from core import logger
-from core.cc_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
@@ -154,12 +154,10 @@ def migrate_legacy_config_to_store() -> None:
 # when the user hasn't explicitly chosen a context window.
 DEFAULT_CONTEXT_WINDOW = 200_000
 
-# The 1M-context beta and the window it unlocks (the default for Claude agents). These are
-# Anthropic-API facts the agent owns: build_client_options decides whether to enable the beta
-# and passes the resulting window to cc_sdk for usage reporting, so the transport keeps no
-# model-specific constants of its own.
+# The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k
+# default; the official client's get_context_usage() then reports usage against the CLI's enforced
+# window, so no model-specific window constant is passed across the SDK seam.
 CONTEXT_1M_BETA = "context-1m-2025-08-07"
-FULL_CONTEXT_WINDOW = 1_000_000
 
 
 class VestaConfig(pyd_settings.BaseSettings):

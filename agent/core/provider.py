@@ -39,23 +39,21 @@ ProviderKind = tp.Literal["claude", "openrouter", "none"]
 # What counts as a terminal provider error — the credential is rejected (401) or the account can't
 # pay (402) — owned here for every provider's reactive detector. Transient errors (5xx, 429 rate
 # limit) are deliberately excluded: those resolve on retry and must not flip the agent to
-# unauthenticated. OpenRouter sees it as an HTTP status (its cache proxy); Claude sees it as text in
-# an api-error turn (the tmux cc_sdk exposes no status code). Two transports, one definition.
+# unauthenticated. OpenRouter sees it as an HTTP status (its cache proxy); Claude sees it as the
+# Claude Agent SDK's classified error on the assistant turn. Two transports, one definition.
 TERMINAL_PROVIDER_ERRORS = (401, 402)
-_TERMINAL_AUTH_MARKERS = ("please run /login", "invalid authentication credentials", "api error: 401", "api error: 402")
+# The Claude Agent SDK's AssistantMessage.error values that mean re-auth: 401 and 402.
+_TERMINAL_AUTH_ERRORS = frozenset({"authentication_failed", "billing_error"})
 
 
-def is_terminal_auth_error(*, is_api_error: bool, text: str | None) -> bool:
+def is_terminal_auth_error(error: str | None) -> bool:
     """The single decision for the Claude path: does this assistant turn represent a terminal
-    auth/billing failure (401/402) requiring re-auth? True only when the CLI flagged the turn as a
-    real API error (is_api_error, from the transcript) AND the text carries a 401/402 marker. The
-    is_api_error gate is part of the signature so a caller can't forget it — that's what stops the
-    agent writing *about* a 401 in normal conversation from flipping itself to unauthenticated.
-    Transient errors (5xx, 429) carry no marker and return False, so retrying still fixes them."""
-    if not is_api_error or text is None:
-        return False
-    lowered = text.lower()
-    return any(marker in lowered for marker in _TERMINAL_AUTH_MARKERS)
+    auth/billing failure (401/402) requiring re-auth? The Claude Agent SDK classifies the upstream
+    error directly on the AssistantMessage, so authentication_failed (401) and billing_error (402)
+    are the terminal cases. A normal turn carries error=None and can never flip the agent to
+    unauthenticated; transient errors (rate_limit, server_error) return False, so the CLI's own
+    retries still fix them."""
+    return error in _TERMINAL_AUTH_ERRORS
 
 
 @dc.dataclass

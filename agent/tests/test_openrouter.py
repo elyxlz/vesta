@@ -62,8 +62,6 @@ def test_build_client_options_passes_resolved_context_window(tmp_path, state):
     options = build_client_options(config, state)
     # Overrides claude-code's 200k default for non-Anthropic models (claude-code#46416).
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
-    # Usage is reported against the resolved window, so the context-usage % is honest.
-    assert options.context_window == 1_000_000
 
 
 def test_build_client_options_openrouter_falls_back_when_unresolved(tmp_path, state):
@@ -73,7 +71,6 @@ def test_build_client_options_openrouter_falls_back_when_unresolved(tmp_path, st
     # No resolved window: claude-code keeps its own default (no env override) and usage is
     # reported against the conservative 200k fallback.
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
-    assert options.context_window == 200_000
 
 
 def test_build_client_options_claude_default_reports_1m_window(tmp_path, state):
@@ -83,7 +80,6 @@ def test_build_client_options_claude_default_reports_1m_window(tmp_path, state):
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
-    assert options.context_window == 1_000_000
 
 
 def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
@@ -92,7 +88,6 @@ def test_build_client_options_claude_caps_to_chosen_window(tmp_path, state):
     options = build_client_options(config, state)
     assert options.betas == ["context-1m-2025-08-07"]
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "500000"
-    assert options.context_window == 500_000
 
 
 def test_build_client_options_claude_200k_drops_beta(tmp_path, state):
@@ -101,4 +96,3 @@ def test_build_client_options_claude_200k_drops_beta(tmp_path, state):
     options = build_client_options(config, state)
     assert options.betas == []
     assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "200000"
-    assert options.context_window == 200_000

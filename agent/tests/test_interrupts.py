@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
-from core.cc_sdk.types import SubagentStartHookInput
+from claude_agent_sdk.types import SubagentStartHookInput
 from core.sdk_parsing import _subagent_hook
 from core.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from wait_util import wait_for_condition
@@ -21,7 +21,7 @@ from wait_util import wait_for_condition
     [("started", "subagent_start", "test-123", "research"), ("stopped", "subagent_stop", "test-456", "browser")],
 )
 async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type):
-    from core.cc_sdk import HookContext
+    from claude_agent_sdk import HookContext
 
     state = vm.State()
     hook = _subagent_hook(state, verb=verb, event_type=event_type)
@@ -37,7 +37,7 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
 
 
 def _assistant_msg(content):
-    from core.cc_sdk import AssistantMessage
+    from claude_agent_sdk import AssistantMessage
 
     msg = MagicMock(spec=AssistantMessage)
     msg.content = content
@@ -45,7 +45,7 @@ def _assistant_msg(content):
 
 
 def _result_msg():
-    from core.cc_sdk import ResultMessage
+    from claude_agent_sdk import ResultMessage
 
     msg = MagicMock(spec=ResultMessage)
     msg.content = []
@@ -86,7 +86,7 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
         message_queue = asyncio.Queue()
 
         async def _receive_response():
-            from core.cc_sdk import ResultMessage
+            from claude_agent_sdk import ResultMessage
 
             while True:
                 msg = await message_queue.get()
@@ -467,7 +467,7 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
     """A terminal Claude api-error turn (401) flips the provider to not_authenticated, interrupts the
     CLI's retries, and ends the turn cleanly (no exception -> no restart loop)."""
     from core.client import converse
-    from core.cc_sdk import AssistantMessage, TextBlock
+    from claude_agent_sdk import AssistantMessage, TextBlock
     from core.provider import ProviderAuthState, ProviderStatus
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -475,11 +475,12 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
     async def auth_error_response():
         yield AssistantMessage(
             content=[TextBlock(text="Please run /login · API Error: 401 Invalid authentication credentials")],
-            is_api_error=True,
+            model="opus",
+            error="authentication_failed",
         )
         # A second message would only arrive if converse failed to break.
         await asyncio.sleep(10)
-        yield AssistantMessage(content=[TextBlock(text="should never be reached")])
+        yield AssistantMessage(content=[TextBlock(text="should never be reached")], model="opus")
 
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
@@ -502,7 +503,7 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
 async def test_converse_ignores_transient_api_error(config):
     """A transient api-error turn (502) must NOT flip auth — it resolves on retry."""
     from core.client import converse
-    from core.cc_sdk import AssistantMessage, TextBlock
+    from claude_agent_sdk import AssistantMessage, TextBlock
     from core.provider import ProviderAuthState, ProviderStatus
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -510,7 +511,8 @@ async def test_converse_ignores_transient_api_error(config):
     async def transient_error_response():
         yield AssistantMessage(
             content=[TextBlock(text="API Error: 502 Bad Gateway. This is a server-side issue, usually temporary")],
-            is_api_error=True,
+            model="opus",
+            error="server_error",
         )
 
     state = vm.State()
@@ -528,13 +530,48 @@ async def test_converse_ignores_transient_api_error(config):
     assert not mock_client.interrupt.called
 
 
+@pytest.mark.anyio
+async def test_converse_flips_auth_on_result_api_error_status(config):
+    """A terminal 401/402 may surface on the ResultMessage's HTTP status rather than the assistant
+    turn's error field; that must still flip the agent to not_authenticated."""
+    from core.client import converse
+    from claude_agent_sdk import ResultMessage
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    async def auth_error_result():
+        yield ResultMessage(
+            subtype="error_during_execution",
+            duration_ms=100,
+            duration_api_ms=80,
+            is_error=True,
+            num_turns=1,
+            session_id="sess-xyz",
+            api_error_status=401,
+        )
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=auth_error_result())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test prompt", state=state, config=config, show_output=False)
+
+    assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
+
+
 # --- Converse streaming regression tests ---
 
 
 @pytest.mark.anyio
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, _, _ = _make_converse_harness()
@@ -554,7 +591,7 @@ async def test_converse_emits_text_immediately_with_tool_use():
 
 @pytest.mark.anyio
 async def test_converse_emits_thinking_events():
-    from core.cc_sdk import TextBlock, ThinkingBlock
+    from claude_agent_sdk import TextBlock, ThinkingBlock
     from core.client import converse
 
     state, config, mock_client, emitted, _, _ = _make_converse_harness()
@@ -586,7 +623,7 @@ async def test_interrupt_drains_stream_and_emits_leftovers():
     and must NOT leak into the next converse() call."""
     import time
 
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
@@ -638,7 +675,7 @@ async def test_interrupt_then_response_arrives_without_user_input():
     must arrive on its own without the user sending another message."""
     import time
 
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
@@ -688,7 +725,7 @@ async def test_interrupt_then_response_arrives_without_user_input():
 async def test_drain_timeout_does_not_block_forever():
     """If the SDK is slow to send ResultMessage after interrupt, the drain must
     time out and not block the next conversation forever."""
-    from core.cc_sdk import ToolUseBlock
+    from claude_agent_sdk import ToolUseBlock
     from core.client import converse
 
     state, config, mock_client, _, _, _ = _make_converse_harness()

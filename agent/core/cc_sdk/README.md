@@ -1,5 +1,11 @@
 # cc_sdk
 
+> **Status: dormant, retained on purpose.** `core/` now drives the official
+> `claude_agent_sdk` again; nothing in the running agent imports `cc_sdk`. It is kept as a
+> ready drop-in alternative driver (same `ClaudeSDKClient` surface) in case we need to go
+> back to CLI-driving. Do not delete or refactor it without an explicit ask; its transport
+> tests keep it working. See the cc_sdk note in the repo `CLAUDE.md`.
+
 A drop-in replacement for the public surface of the official `claude_agent_sdk`,
 implemented by driving the **interactive `claude` CLI** inside tmux rather than the
 headless control protocol, because driving the CLI directly turned out simpler than

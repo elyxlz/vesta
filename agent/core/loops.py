@@ -8,14 +8,22 @@ import pathlib as pl
 import time
 
 import pydantic
-from core.cc_sdk import ClaudeSDKClient, ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
 from . import models as vm
 from . import logger
 from . import state_store
 from .config import DEFAULT_CONTEXT_WINDOW
-from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, resolve_openrouter_max_tokens, _cancel_task
+from .client import (
+    process_message,
+    build_client_options,
+    attempt_interrupt,
+    persist_session_id,
+    resolve_openrouter_max_tokens,
+    compact_session,
+    _cancel_task,
+)
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
@@ -196,8 +204,16 @@ async def _run_messages_with_interrupts(
             raise
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
-            if not state.persisted.session_id and state.client and state.client.session_id:
-                persist_session_id(state.client.session_id, state=state, config=config)
+            if not state.persisted.session_id and state.client:
+                # Belt-and-suspenders: sdk_parsing already persists the session_id from the init
+                # message. The official claude_agent_sdk client has no session_id attribute, so this
+                # very-early-crash fallback degrades to None rather than AttributeError-ing here.
+                try:
+                    sid = state.client.session_id  # ty: ignore[unresolved-attribute]
+                except AttributeError:
+                    sid = None
+                if sid:
+                    persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
@@ -274,9 +290,9 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     state.event_bus.set_state("thinking")
     state.compacting = True
     try:
-        await state.client.compact()
-    except (ClaudeSDKError, OSError, RuntimeError) as exc:
-        logger.warning(f"Compaction before restart failed: {exc} — restarting anyway")
+        await compact_session(state=state)
+    except (ClaudeSDKError, OSError, RuntimeError, TimeoutError) as exc:
+        logger.warning(f"Compaction before restart failed: {exc}, restarting anyway")
     finally:
         state.compacting = False
         state.event_bus.set_state("idle")

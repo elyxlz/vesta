@@ -8,13 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
-from core.cc_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core.client import converse
 from wait_util import wait_for_condition
 from core.diagnostics import (
     _check_sdk_subprocess_alive,
     format_hang_diagnostics,
-    format_pane_tail,
     longest_running_tool,
     sdk_idle_seconds,
     sdk_watchdog,
@@ -115,33 +114,6 @@ def test_format_hang_diagnostics_includes_stderr_tail():
     assert "line 9" in diag
 
 
-# --- format_pane_tail ---
-
-
-def test_format_pane_tail_strips_ansi_and_box_drawing():
-    pane = (
-        "\x1b[2m  Searched for 1 pattern\x1b[0m\n"
-        "\n"
-        "──────────────────────────────\n"
-        "\x1b[34m●\x1b[0m Services back up\n"
-        "❯ yeah run it\n"
-        "  ⏵⏵ bypass permissions on\n"
-    )
-    tail = format_pane_tail(pane)
-    assert "❯ yeah run it" in tail
-    assert "bypass permissions on" in tail
-    assert "\x1b[" not in tail  # ANSI stripped
-    assert "──────" not in tail  # Box-drawing rule dropped
-
-
-def test_format_pane_tail_keeps_only_last_lines_and_caps_length():
-    pane = "\n".join(f"content line number {i} here" for i in range(50))
-    tail = format_pane_tail(pane)
-    assert len(tail) <= 240
-    assert "content line number 49 here" in tail
-    assert "content line number 10 here" not in tail  # Only the tail survives
-
-
 # --- _check_sdk_subprocess_alive ---
 # Liveness is read through the client's public is_alive() accessor. The alive/dead
 # distinction needs a launched claude process and lives in test_e2e_transport.py; the
@@ -178,29 +150,6 @@ async def test_watchdog_warns_at_thresholds(captured_warnings, fast_watchdog_pol
     await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_warning())
 
     assert any("SDK silent for 60s" in w for w in captured_warnings), f"Expected 60s warning, got: {captured_warnings}"
-
-
-@pytest.mark.anyio
-async def test_watchdog_warning_includes_pane_tail(captured_warnings, fast_watchdog_poll):
-    """A suspicious silence captures the live claude pane so the warning shows what's wedged."""
-    state = vm.State()
-    state.last_sdk_activity = time.monotonic() - 65  # Idle for 65s
-    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
-    client = MagicMock()
-    client.is_alive = MagicMock(return_value=True)
-    client.snapshot_pane = AsyncMock(return_value="\x1b[34m●\x1b[0m wedged\n❯ yeah run it\n  ⏵⏵ bypass permissions on\n")
-    state.client = client
-    stop = asyncio.Event()
-
-    async def stop_after_warning():
-        await wait_for_condition(lambda: any("SDK silent for 60s" in w for w in captured_warnings), message="watchdog never warned")
-        stop.set()
-
-    await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_warning())
-
-    silent = next(w for w in captured_warnings if "SDK silent for 60s" in w)
-    assert "pane_tail=" in silent
-    assert "yeah run it" in silent
 
 
 @pytest.mark.anyio
@@ -327,8 +276,8 @@ async def test_watchdog_stays_quiet_when_silence_is_benign(
 @pytest.mark.anyio
 async def test_tool_hooks_track_active_tools():
     """PreToolUse adds to active_tools, PostToolUse removes and logs duration."""
-    from core.cc_sdk import HookContext
-    from core.cc_sdk.types import PostToolUseHookInput, PreToolUseHookInput
+    from claude_agent_sdk import HookContext
+    from claude_agent_sdk.types import PostToolUseHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 
@@ -354,8 +303,8 @@ async def test_tool_hooks_track_active_tools():
 
 @pytest.mark.anyio
 async def test_tool_failure_hook_cleans_up():
-    from core.cc_sdk import HookContext
-    from core.cc_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
+    from claude_agent_sdk import HookContext
+    from claude_agent_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
 
     from core import sdk_parsing
 

@@ -29,40 +29,21 @@ from core.state_store import PersistedState, load_state
 
 
 @pytest.mark.parametrize(
-    "is_api_error,text,expected",
+    "error,expected",
     [
-        (True, "API Error: 401 Invalid authentication credentials", True),
-        (True, "API Error: 402 insufficient credits", True),  # billing terminal
-        (True, "API Error: 502 Bad Gateway. This is a server-side issue, usually temporary", False),  # transient
-        (True, "API Error: 529 overloaded", False),  # transient
-        (True, "API Error: 429 rate limit exceeded", False),  # transient
-        # The is_api_error gate is the safety property: the agent writing *about* a 401 in a normal
-        # (non-error) turn must never flip itself to unauthenticated, even with a matching marker.
-        (False, "API Error: 401 Invalid authentication credentials", False),
-        (False, "here's how to debug a 401: check your token", False),
-        (True, None, False),  # api error but no text content
+        ("authentication_failed", True),  # 401, terminal
+        ("billing_error", True),  # 402, terminal
+        ("rate_limit", False),  # transient, resolves on retry
+        ("server_error", False),  # transient (5xx)
+        ("invalid_request", False),
+        ("unknown", False),
+        # A normal (non-error) turn carries error=None: the agent writing *about* a 401 in
+        # conversation must never flip itself to unauthenticated.
+        (None, False),
     ],
 )
-def test_is_terminal_auth_error(is_api_error, text, expected):
-    assert is_terminal_auth_error(is_api_error=is_api_error, text=text) is expected
-
-
-@pytest.mark.parametrize(
-    "text,expected",
-    [
-        # Exact strings captured from a real claude-CLI auth failure (2026-06-21 incident). Pinning
-        # them guards the markers against being narrowed below what we've actually observed; a CLI
-        # reword would still slip past (no live test can catch that), but a marker regression won't.
-        ("Please run /login · API Error: 401 Invalid authentication credentials", True),
-        (
-            "API Error: 502 Bad Gateway. This is a server-side issue, usually temporary — try again in a moment. "
-            "If it persists, check https://status.claude.com.",
-            False,
-        ),
-    ],
-)
-def test_is_terminal_auth_error_pins_real_cli_wording(text, expected):
-    assert is_terminal_auth_error(is_api_error=True, text=text) is expected
+def test_is_terminal_auth_error(error, expected):
+    assert is_terminal_auth_error(error) is expected
 
 
 # --- Claude credentials auth check ---

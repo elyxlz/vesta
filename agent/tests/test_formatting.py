@@ -116,7 +116,7 @@ def test_contains_dashes_multiple_texts():
 def test_parse_sdk_message_extracts_thinking_blocks_and_ignores_tool_use():
     from unittest.mock import MagicMock
 
-    from core.cc_sdk import AssistantMessage, TextBlock, ThinkingBlock, ToolUseBlock
+    from claude_agent_sdk import AssistantMessage, TextBlock, ThinkingBlock, ToolUseBlock
 
     msg = MagicMock(spec=AssistantMessage)
     msg.content = [
@@ -136,14 +136,27 @@ def test_parse_sdk_message_extracts_thinking_blocks_and_ignores_tool_use():
 
 
 def test_parse_sdk_message_returns_session_id_from_result():
-    from core.cc_sdk import ResultMessage
+    from claude_agent_sdk import ResultMessage
 
-    msg = ResultMessage(session_id="sess-abc", usage=None, total_cost_usd=None, duration_ms=None)
+    msg = ResultMessage(subtype="success", duration_ms=100, duration_api_ms=80, is_error=False, num_turns=1, session_id="sess-abc")
     texts, thinking_blocks, session_id = parse_sdk_message(msg)
 
     assert texts == []
     assert thinking_blocks == []
     assert session_id == "sess-abc"
+
+
+def test_parse_sdk_message_returns_session_id_from_init():
+    """The init message carries the session_id first; parse must return it so the caller persists
+    it immediately (resume survives a first-turn crash before any ResultMessage)."""
+    from claude_agent_sdk import SystemMessage
+
+    msg = SystemMessage(subtype="init", data={"session_id": "sess-abc-123", "slash_commands": ["compact"]})
+
+    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+
+    assert session_id == "sess-abc-123"
+    assert texts == []
 
 
 def test_process_message_always_streams():
