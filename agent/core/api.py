@@ -20,6 +20,7 @@ import dataclasses as dc
 import json
 import logging
 import sqlite3
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
@@ -259,27 +260,42 @@ async def _provider_set_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _provider_config_put_handler(request: web.Request) -> web.Response:
-    """Update provider-owned preferences (model, context window, thinking). Sparse: an omitted field
-    is left unchanged, a null clears it. Vestad restarts the agent to apply."""
+async def _apply_sparse_update(
+    request: web.Request,
+    *,
+    noun: str,
+    validate: tp.Callable[[VestaConfig, object], dict[str, tp.Any]],
+    apply: tp.Callable[[dict[str, tp.Any]], None],
+) -> web.Response:
+    """Shared body of the sparse PUT-and-restart endpoints (/config, /provider/config): parse, validate,
+    apply the non-empty update, ask vestad to restart. `noun` names the surface in error messages."""
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
     try:
-        updates = validate_provider_prefs(config, data)
+        updates = validate(config, data)
     except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid provider config: {e.errors(include_url=False)}"}, status=400)
+        return web.json_response({"error": f"invalid {noun}: {e.errors(include_url=False)}"}, status=400)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     if not updates:
-        return web.json_response({"error": "no provider preferences provided"}, status=400)
+        return web.json_response({"error": f"no {noun} provided"}, status=400)
     try:
-        set_provider_prefs(updates, config=config)
+        apply(updates)
     except OSError as e:
-        return web.json_response({"error": f"failed to write provider config: {e}"}, status=500)
+        return web.json_response({"error": f"failed to write {noun}: {e}"}, status=500)
     return web.json_response({"ok": True, "restart_required": True})
+
+
+async def _provider_config_put_handler(request: web.Request) -> web.Response:
+    """Update provider-owned preferences (model, context window, thinking). Sparse: an omitted field
+    is left unchanged, a null clears it. Vestad restarts the agent to apply."""
+    config: VestaConfig = request.app["config"]
+    return await _apply_sparse_update(
+        request, noun="provider config", validate=validate_provider_prefs, apply=lambda updates: set_provider_prefs(updates, config=config)
+    )
 
 
 async def _provider_clear_handler(request: web.Request) -> web.Response:
@@ -307,24 +323,7 @@ async def _config_schema_handler(request: web.Request) -> web.Response:
 async def _config_put_handler(request: web.Request) -> web.Response:
     """Update any config field in the store, validated against VestaConfig. An omitted field is left
     unchanged; a null clears it back to its env/default. Vestad restarts the agent to apply."""
-    config: VestaConfig = request.app["config"]
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, TypeError):
-        return web.json_response({"error": "invalid json body"}, status=400)
-    try:
-        updates = validate_config_updates(config, data)
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    if not updates:
-        return web.json_response({"error": "no config fields provided"}, status=400)
-    try:
-        update_config_store(updates)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
-    return web.json_response({"ok": True, "restart_required": True})
+    return await _apply_sparse_update(request, noun="config", validate=validate_config_updates, apply=update_config_store)
 
 
 async def _memory_get_handler(request: web.Request) -> web.Response:
