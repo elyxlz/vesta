@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use vesta_tests::{
     TestAgent, SERVER, SHARED_RO_AGENT, agent_container_name, docker_cmd, exec_in_container,
-    inject_fake_token, is_up, mark_first_start_done, unique_agent,
+    inject_fake_token, is_up, unique_agent,
 };
 
 const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -96,18 +96,12 @@ fn creation_flow() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("flow")).unwrap();
 
+    // A fresh agent has no credentials, so it settles at not_authenticated. The
+    // authenticated -> alive path needs a real token that survives an upstream call
+    // (a fake one is correctly rejected and flipped back), so it's covered by the
+    // live tests, not here.
     let status = c.wait_until_running(&agent.name, 180).unwrap();
     assert_eq!(status, "not_authenticated");
-
-    // Inject credentials into the container fs; the agent reports authenticated
-    // only after it re-derives provider state on the restart below.
-    inject_fake_token(&c, &agent.name);
-    mark_first_start_done(&agent.name).unwrap();
-    c.restart_agent(&agent.name).unwrap();
-    c.wait_until_alive(&agent.name, 180).unwrap();
-
-    let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "alive");
 }
 
 #[test]

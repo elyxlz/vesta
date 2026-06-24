@@ -214,14 +214,8 @@ impl Client {
             let status = self.agent_status(name)?;
             match status.status.as_str() {
                 "alive" => return Ok(()),
-                // Only `dead`/`not_found` are genuinely terminal. `not_authenticated`,
-                // `stopped`, `starting`, `setting_up`, and `restarting` are all transient
-                // while an agent boots and re-derives provider state after a restart, so we
-                // poll through them until `alive` or the timeout. Treating `not_authenticated`
-                // as terminal was the dominant integration-test flake: a poll landing in the
-                // post-restart window (WS up, but injected creds not loaded yet) failed the
-                // whole test. A genuinely unauthenticated agent now surfaces as a timeout.
-                "dead" | "not_found" => return Err(format!("{}: {}", name, status.status)),
+                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                    return Err(format!("{}: {}", name, status.status)),
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
