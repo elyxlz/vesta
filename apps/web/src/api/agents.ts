@@ -30,17 +30,31 @@ export interface AgentSettings {
   timezone?: string;
 }
 
-/// The single settings writer: PUT a sparse settings diff to the agent's `/config`. Credentials and
-/// preferences travel together so a fresh agent is provisioned in one call; vestad restarts once.
+/// Apply a settings change: write the preferences (`PUT /config`) and/or credentials
+/// (`PUT /config/auth`), then restart the agent once to apply. The writes don't restart on their own,
+/// so a fresh agent gets its model + credentials in a single race-free restart.
 export async function updateSettings(
   name: string,
   settings: AgentSettings,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
+  const { auth, ...prefs } = settings;
+  const hasPrefs = Object.keys(prefs).length > 0;
+  const enc = encodeURIComponent(name);
+  if (hasPrefs) {
+    await apiFetch(`/agents/${enc}/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    });
+  }
+  if (auth) {
+    await apiFetch(`/agents/${enc}/config/auth`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(auth),
+    });
+  }
+  if (hasPrefs || auth) await restartAgent(name);
 }
 
 /// Provision/attach a provider: map the chosen `ProviderResult` to the `auth` sub-object and send it
@@ -71,11 +85,13 @@ export async function setProvider(
   await updateSettings(name, settings);
 }
 
-/// Sign out: clear the agent's provider credentials, leaving it not_authenticated until reconnected.
+/// Sign out: clear the agent's provider credentials (`DELETE /config/auth`), then restart so it boots
+/// not_authenticated.
 export async function signOutProvider(name: string): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config/auth`, {
     method: "DELETE",
   });
+  await restartAgent(name);
 }
 
 export interface ProviderInfo {

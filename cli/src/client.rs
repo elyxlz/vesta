@@ -421,10 +421,10 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// The single settings writer: PUT a sparse settings diff to the agent's `/config`, vestad
-    /// restarts once. `auth` is the optional credentials sub-object (see `claude_auth`/`openrouter_auth`);
-    /// model/context/timezone are optional preferences. Auth and prefs land before one restart, so a
-    /// fresh agent gets its credentials and model in a single call without racing. No-op if all None.
+    /// Apply a settings change in one go: write the preferences (`PUT /config`) and/or credentials
+    /// (`PUT /config/auth`, see `claude_auth`/`openrouter_auth`), then restart the agent once to apply.
+    /// The writes don't restart on their own, so a fresh agent gets its model + credentials in a single
+    /// race-free restart. No-op (no restart) if nothing is set.
     pub fn update_settings(
         &self,
         name: &str,
@@ -433,15 +433,21 @@ impl Client {
         max_context_tokens: Option<u64>,
         timezone: Option<&str>,
     ) -> Result<(), String> {
-        let mut body = serde_json::Map::new();
+        let mut prefs = serde_json::Map::new();
         if let Some(model) = model {
-            body.insert("agent_model".to_string(), serde_json::json!(model));
+            prefs.insert("agent_model".to_string(), serde_json::json!(model));
         }
         if let Some(ctx) = max_context_tokens {
-            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+            prefs.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
         }
         if let Some(tz) = timezone {
-            body.insert("timezone".to_string(), serde_json::json!(tz));
+            prefs.insert("timezone".to_string(), serde_json::json!(tz));
+        }
+        if prefs.is_empty() && auth.is_none() {
+            return Ok(());
+        }
+        if !prefs.is_empty() {
+            self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(prefs))?;
         }
         if let Some(auth) = auth {
             // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
@@ -449,13 +455,9 @@ impl Client {
             if let Some(creds) = auth.get("credentials").and_then(|c| c.as_str()) {
                 serde_json::from_str::<serde_json::Value>(creds).map_err(|e| format!("invalid credentials JSON: {e}"))?;
             }
-            body.insert("auth".to_string(), auth);
+            self.put_json(&format!("/agents/{name}/config/auth"), &auth)?;
         }
-        if body.is_empty() {
-            return Ok(());
-        }
-        self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(body))?;
-        Ok(())
+        self.restart_agent(name)
     }
 
     /// The agent's current config + derived `{authed, kind, ...}`, proxied from its `GET /config`.
@@ -463,11 +465,11 @@ impl Client {
         read_json(self.get(&format!("/agents/{name}/config"))?)
     }
 
-    /// Sign out: clear the agent's provider credentials (DELETE /provider). Vestad restarts the
-    /// agent, which boots not_authenticated until reconnected.
+    /// Sign out: clear the agent's provider credentials (`DELETE /config/auth`), then restart so it
+    /// boots not_authenticated.
     pub fn logout(&self, name: &str) -> Result<(), String> {
-        self.delete_req(&format!("/agents/{name}/provider"))?;
-        Ok(())
+        self.delete_req(&format!("/agents/{name}/config/auth"))?;
+        self.restart_agent(name)
     }
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {

@@ -208,18 +208,21 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """PUT <tenant>/agents/{name}/config — attach Claude creds (the `auth` sub-object) and the
-        agent's preferences (model, personality, freeform seed context) in one settings write. The
-        agent wakes with everything in place after a single restart."""
-        settings: dict[str, Any] = {"auth": {"credentials": credentials}}
+        """Provision the agent: write its preferences (PUT /config) and Claude credentials
+        (PUT /config/auth), then restart once so it wakes with everything in place. Writes don't
+        restart on their own, so this is several writes + a single restart."""
+        base = self._cfg.tenant_base(subdomain)
+        prefs: dict[str, Any] = {}
         if model:
-            settings["agent_model"] = model
+            prefs["agent_model"] = model
         if personality:
-            settings["agent_personality"] = personality
+            prefs["agent_personality"] = personality
         if seed_context:
-            settings["seed_context"] = seed_context
-        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/config"
-        return self._json(self._raw_put(url, json=settings, token=server_token, timeout=120))
+            prefs["seed_context"] = seed_context
+        if prefs:
+            self._json(self._raw_put(f"{base}/agents/{name}/config", json=prefs, token=server_token, timeout=120))
+        self._json(self._raw_put(f"{base}/agents/{name}/config/auth", json={"credentials": credentials}, token=server_token, timeout=120))
+        return self._json(self._raw_post(f"{base}/agents/{name}/restart", json={}, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------
 

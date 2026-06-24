@@ -290,13 +290,13 @@ impl Client {
         v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
     }
 
-    /// Provision an agent with Claude credentials via the unified settings endpoint.
-    /// `token` is the credentials JSON string, sent as the `auth` sub-object of PUT /config.
+    /// Sign an agent in with Claude credentials via `PUT /config/auth`. `token` is the credentials
+    /// JSON string. The write doesn't restart — callers (e.g. provision_and_settle) restart afterwards.
     /// The agent must be running (its WS port bound) to receive the call, so this waits first.
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"auth": {"credentials": token}});
-        self.put_json(&format!("/agents/{}/config", name), &body)?;
+        let body = serde_json::json!({"credentials": token});
+        self.put_json(&format!("/agents/{}/config/auth", name), &body)?;
         Ok(())
     }
 

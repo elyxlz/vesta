@@ -784,21 +784,23 @@ pub(crate) async fn drop_rename_notification(
     Ok(file_name)
 }
 
-/// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent_and_restart`
-/// so the borrowing `AgentProvider` never crosses a closure boundary.
+/// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
+/// borrowing `AgentProvider` never crosses a closure boundary.
 enum AgentWrite {
-    /// The agent's `PUT /config` — a sparse settings diff, optionally with an `auth` sub-object that
-    /// sets credentials. Auth and prefs land before the single restart, so nothing races.
+    /// The agent's `PUT /config` — a sparse preferences diff.
     Config(serde_json::Value),
-    /// The agent's `DELETE /provider` — sign out.
-    Clear,
+    /// The agent's `PUT /config/auth` — set provider credentials (sign in).
+    Auth(serde_json::Value),
+    /// The agent's `DELETE /config/auth` — clear credentials (sign out).
+    ClearAuth,
 }
 
-/// Run a write against a (possibly stopped) agent's own HTTP API, then restart the container so the
-/// change applies on next boot. Ensures the agent exists, takes the per-agent write lock, and
-/// auto-starts a stopped agent so it can receive the proxied call. The agent owns the file writes,
-/// format, and validation; any forward failure surfaces as BAD_GATEWAY.
-async fn write_to_agent_and_restart(
+/// Forward a write to the agent's own HTTP API. Writes only set desired state — they do NOT restart;
+/// the caller applies them with one `POST /agents/{name}/restart` after its writes (so provisioning
+/// is several writes + a single restart, with nothing racing a restarting agent). Ensures the agent
+/// exists, takes the per-agent write lock, and auto-starts a stopped agent so it can receive the
+/// proxied call. The agent owns the file writes, format, and validation; a forward failure is BAD_GATEWAY.
+async fn write_to_agent(
     state: &SharedState,
     name: &str,
     write: AgentWrite,
@@ -817,12 +819,11 @@ async fn write_to_agent_and_restart(
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
-        AgentWrite::Clear => provider.clear().await,
+        AgentWrite::Auth(body) => provider.put_auth(&body).await,
+        AgentWrite::ClearAuth => provider.delete_auth().await,
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-
-    docker::restart_agent(&state.docker, name).await.map_err(map_docker_err)?;
-    Ok(ok_json())
+    Ok(Json(serde_json::json!({"ok": true, "restart_required": true})))
 }
 
 /// Relay the agent's `GET /config` (config plus derived auth state; the agent owns it, vestad proxies
@@ -840,23 +841,30 @@ async fn get_config_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Forward a settings diff (prefs + optional `auth`) to the agent's `PUT /config`, then restart once.
-/// This is the single write path for credentials and every preference.
+/// Forward a preferences diff to the agent's `PUT /config`. Write only — caller restarts to apply.
 async fn set_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Config(body)).await
+    write_to_agent(&state, &name, AgentWrite::Config(body)).await
 }
 
-/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
-/// boots not_authenticated.
-async fn clear_provider_handler(
+/// Sign in: forward credentials to the agent's `PUT /config/auth`. Write only — caller restarts to apply.
+async fn set_auth_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    write_to_agent(&state, &name, AgentWrite::Auth(body)).await
+}
+
+/// Sign out: forward to the agent's `DELETE /config/auth`. Write only — caller restarts to apply.
+async fn clear_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Clear).await
+    write_to_agent(&state, &name, AgentWrite::ClearAuth).await
 }
 
 // --- SSE Logs ---
@@ -2057,8 +2065,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", axum::routing::delete(clear_provider_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
+        .route("/agents/{name}/config/auth", put(set_auth_handler).delete(clear_auth_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))

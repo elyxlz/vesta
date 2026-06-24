@@ -83,41 +83,43 @@ impl<'a> AgentProvider<'a> {
         resp.json().await.map_err(|e| format!("agent /config parse failed: {e}"))
     }
 
-    /// PUT a sparse config body to the agent's /config. Applies on next restart.
+    /// PUT a sparse preferences body to the agent's /config. Write only — caller restarts to apply.
     pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
-        let (port, token) = self.port_and_token()?;
-        let resp = self.http_client
-            .put(format!("http://127.0.0.1:{port}/config"))
-            .header("X-Agent-Token", token)
-            .json(body)
-            .timeout(SET_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| format!("agent /config request failed: {e}"))?;
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        let body_text = resp.text().await.unwrap_or_default();
-        Err(format!("agent /config returned HTTP {status}: {body_text}"))
+        self.write("PUT", "/config", Some(body)).await
     }
 
-    /// DELETE the agent's /provider — sign out, clearing its credentials. Applies on next restart.
-    pub async fn clear(&self) -> Result<(), String> {
+    /// PUT credentials to the agent's /config/auth (sign in). Write only — caller restarts to apply.
+    pub async fn put_auth(&self, body: &serde_json::Value) -> Result<(), String> {
+        self.write("PUT", "/config/auth", Some(body)).await
+    }
+
+    /// DELETE the agent's /config/auth (sign out, clearing credentials). Write only — caller restarts.
+    pub async fn delete_auth(&self) -> Result<(), String> {
+        self.write("DELETE", "/config/auth", None).await
+    }
+
+    /// Shared body for the write endpoints: send `method path` with the agent token and an optional
+    /// JSON body, mapping any non-2xx (or transport error) to a descriptive string.
+    async fn write(&self, method: &str, path: &str, body: Option<&serde_json::Value>) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
-        let resp = self.http_client
-            .delete(format!("http://127.0.0.1:{port}/provider"))
-            .header("X-Agent-Token", token)
-            .timeout(SET_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| format!("agent /provider request failed: {e}"))?;
+        let url = format!("http://127.0.0.1:{port}{path}");
+        let mut req = match method {
+            "PUT" => self.http_client.put(url),
+            "DELETE" => self.http_client.delete(url),
+            other => return Err(format!("unsupported agent write method {other}")),
+        }
+        .header("X-Agent-Token", token)
+        .timeout(SET_TIMEOUT);
+        if let Some(body) = body {
+            req = req.json(body);
+        }
+        let resp = req.send().await.map_err(|e| format!("agent {path} request failed: {e}"))?;
         let status = resp.status();
         if status.is_success() {
             return Ok(());
         }
         let body_text = resp.text().await.unwrap_or_default();
-        Err(format!("agent /provider returned HTTP {status}: {body_text}"))
+        Err(format!("agent {path} returned HTTP {status}: {body_text}"))
     }
 
     fn port_and_token(&self) -> Result<(u16, String), String> {
