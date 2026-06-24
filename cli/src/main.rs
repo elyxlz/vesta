@@ -620,7 +620,7 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
 }
 
 // Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
-// returns the credentials JSON. Caller passes it to set_provider_credentials.
+// returns the credentials JSON. Caller passes it to update_settings.
 fn oauth_dance(client: &client::Client) -> String {
     let auth = client
         .start_auth_standalone()
@@ -1063,16 +1063,22 @@ fn run(cli: Cli) {
             } else {
                 let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
+                // Only report model/context when a provider is actually configured; a signed-out
+                // agent (kind "none") has a stored default model but no active provider.
                 if let Ok(config) = c.get_config(&name) {
-                    if let Some(m) = config["agent_model"].as_str() {
-                        eprintln!("model = {m}");
-                    }
-                    match config["max_context_tokens"].as_u64() {
-                        Some(ctx) => eprintln!("context_window = {ctx}"),
-                        None if config["kind"].as_str() == Some("openrouter") => {
-                            eprintln!("context_window = default (model window, capped at 200K)")
+                    if config["kind"].as_str() == Some("none") {
+                        eprintln!("provider = not configured (run 'vesta auth {name}')");
+                    } else {
+                        if let Some(m) = config["agent_model"].as_str() {
+                            eprintln!("model = {m}");
                         }
-                        None => eprintln!("context_window = default (1M for Claude)"),
+                        match config["max_context_tokens"].as_u64() {
+                            Some(ctx) => eprintln!("context_window = {ctx}"),
+                            None if config["kind"].as_str() == Some("openrouter") => {
+                                eprintln!("context_window = default (model window, capped at 200K)")
+                            }
+                            None => eprintln!("context_window = default (1M for Claude)"),
+                        }
                     }
                 }
             }

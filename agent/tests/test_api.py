@@ -233,6 +233,31 @@ def test_provider_update_accepts_each_provider():
     assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
 
 
+@pytest.mark.anyio
+async def test_config_put_does_not_write_auth_when_a_pref_is_invalid(config, monkeypatch):
+    # A settings call carrying valid auth + an invalid pref must reject BEFORE writing credentials,
+    # so a 400 never leaves a half-provisioned agent.
+    import core.api as api_mod
+    from core.api import _config_put_handler
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    wrote = []
+    monkeypatch.setattr(api_mod, "set_claude", lambda creds, *, config: wrote.append(creds))
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
+
+    class _Req:
+        app = {"state": state, "config": config}
+
+        async def json(self):
+            return {"auth": {"credentials": "{}"}, "max_context_tokens": -1}
+
+    resp = await _config_put_handler(_Req())
+    assert resp.status == 400
+    assert wrote == []  # credentials were NOT written because the pref failed validation first
+
+
 def test_provider_update_requires_exactly_one_provider():
 
     from core.api import _ProviderUpdate

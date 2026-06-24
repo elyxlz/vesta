@@ -21,15 +21,17 @@ const SET_TIMEOUT: Duration = Duration::from_secs(10);
 /// NotAuthenticated. The rest of the config is opaque to vestad (it just relays it to the app).
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
-    #[serde(default)]
+    /// Defaults to `true` for back-compat: an agent still running pre-unification core serves a
+    /// GET /config with no `authed` key, and must not be mislabeled NotAuthenticated until it
+    /// restarts into new core. A new-core not-authenticated agent reports `authed: false` explicitly.
+    #[serde(default = "default_true")]
     pub authed: bool,
-    /// Whether the agent finished first-start setup. Defaults to `true` so an
-    /// older agent that doesn't report the field isn't stuck reporting `SettingUp`.
-    #[serde(default = "default_setup_complete")]
+    /// Same back-compat default so an older agent that doesn't report the field isn't stuck in `SettingUp`.
+    #[serde(default = "default_true")]
     pub setup_complete: bool,
 }
 
-fn default_setup_complete() -> bool {
+fn default_true() -> bool {
     true
 }
 
@@ -136,6 +138,14 @@ mod tests {
         // Older agents predate the field; absence must not strand them in SettingUp.
         let s: AgentStatusView = serde_json::from_str(r#"{"authed":true}"#).unwrap();
         assert!(s.setup_complete);
+    }
+
+    #[test]
+    fn authed_defaults_true_for_pre_unification_core() {
+        // A pre-unification agent's GET /config is just the config dump with no `authed` key; it must
+        // not be mislabeled NotAuthenticated mid-upgrade (it defaults Alive until it restarts).
+        let s: AgentStatusView = serde_json::from_str(r#"{"agent_model":"opus"}"#).unwrap();
+        assert!(s.authed && s.setup_complete);
     }
 
     #[test]

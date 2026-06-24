@@ -17,6 +17,7 @@ import dataclasses as dc
 import json
 import logging
 import sqlite3
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
@@ -254,6 +255,12 @@ async def _config_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "config body must be a JSON object"}, status=400)
 
     auth = data.pop("auth", None)
+    if auth is None and not data:
+        return web.json_response({"error": "no config provided"}, status=400)
+
+    # Validate BOTH parts before applying EITHER, so a bad pref can't leave a half-written credential
+    # (the auth write touches .credentials.json + the config store) on a 400.
+    update: _ProviderUpdate | None = None
     if auth is not None:
         if state.provider_status is None:
             return web.json_response({"error": "provider not initialized"}, status=503)
@@ -261,6 +268,16 @@ async def _config_put_handler(request: web.Request) -> web.Response:
             update = _ProviderUpdate.model_validate(auth)
         except pyd.ValidationError as e:
             return web.json_response({"error": f"invalid auth: {e.errors(include_url=False)}"}, status=400)
+    updates: dict[str, tp.Any] = {}
+    if data:
+        try:
+            updates = validate_config_updates(config, data)
+        except pyd.ValidationError as e:
+            return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    if update is not None:
         try:
             if update.credentials is not None:
                 state.provider_status = set_claude(update.credentials, config=config)
@@ -270,21 +287,12 @@ async def _config_put_handler(request: web.Request) -> web.Response:
             return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
         except OSError as e:
             return web.json_response({"error": f"auth write failed: {e}"}, status=500)
-
-    if data:
-        try:
-            updates = validate_config_updates(config, data)
-        except pyd.ValidationError as e:
-            return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
+    if updates:
         try:
             update_config_store(updates)
         except OSError as e:
             return web.json_response({"error": f"failed to write config: {e}"}, status=500)
 
-    if auth is None and not data:
-        return web.json_response({"error": "no config provided"}, status=400)
     return web.json_response({"ok": True, "restart_required": True})
 
 

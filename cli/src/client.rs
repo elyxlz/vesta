@@ -412,8 +412,8 @@ impl Client {
         read_json(self.get(&format!("/agents/{name}"))?)
     }
 
-    /// Create an empty agent container. Provider config, timezone, and other preferences are sent
-    /// separately via `set_provider_*` once the agent is up (vestad no longer accepts credentials or
+    /// Create an empty agent container. Credentials, timezone, and other preferences are sent
+    /// separately via `update_settings` once the agent is up (vestad no longer accepts credentials or
     /// timezone at create time — the agent owns its config store).
     pub fn create_agent(&self, name: &str, manage_agent_code: bool) -> Result<String, String> {
         let body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
@@ -444,6 +444,11 @@ impl Client {
             body.insert("timezone".to_string(), serde_json::json!(tz));
         }
         if let Some(auth) = auth {
+            // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
+            // round-trip + agent restart that surfaces as an opaque BAD_GATEWAY.
+            if let Some(creds) = auth.get("credentials").and_then(|c| c.as_str()) {
+                serde_json::from_str::<serde_json::Value>(creds).map_err(|e| format!("invalid credentials JSON: {e}"))?;
+            }
             body.insert("auth".to_string(), auth);
         }
         if body.is_empty() {
