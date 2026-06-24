@@ -124,6 +124,14 @@ say "Narrow sparse cone"
 "$HERE/narrow-sparse-checkout.sh"
 
 say "Fetch $REF"
+# A shallow clone carries no history, so every sync finds no common ancestor with the
+# fetched ref and re-anchors via --allow-unrelated-histories: a full-tree conflict on every
+# owned file, every single sync, plus a fake "root" commit accumulating per version. Unshallow
+# once so merges find the real merge-base and become clean incremental diffs from then on.
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  say "Repo is shallow; unshallowing for full history (one-time, makes future syncs incremental)"
+  git fetch -q --unshallow origin 2>/dev/null || git fetch -q --deepen=2147483647 origin 2>/dev/null || true
+fi
 git fetch -q origin "$REF"
 
 if git rev-parse -q --verify HEAD >/dev/null 2>&1 && git merge-base --is-ancestor FETCH_HEAD HEAD 2>/dev/null; then
