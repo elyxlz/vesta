@@ -73,44 +73,6 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         commands.restore_jobs_by_ids(config, scheduler, missing, notif_dir=notif_dir)
 
 
-def _build_remind_set_parser():
-    """Build the parser for `tasks remind <message> [options]`."""
-    p = argparse.ArgumentParser(prog="tasks remind", add_help=False)
-    p.add_argument("message_pos", nargs="?", default=None, metavar="message")
-    p.add_argument("--message", default=None)
-    p.add_argument("--task", default=None, dest="task_id")
-    p.add_argument("--at", default=None, dest="scheduled_datetime")
-    p.add_argument("--tz", default=None)
-    p.add_argument("--in-minutes", type=int, default=None)
-    p.add_argument("--in-hours", type=int, default=None)
-    p.add_argument("--in-days", type=int, default=None)
-    p.add_argument("--recurring", default=None, choices=["hourly", "daily", "weekly", "monthly", "yearly"])
-    return p
-
-
-def _build_remind_list_parser():
-    p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
-    p.add_argument("--task", default=None, dest="task_id")
-    p.add_argument("--limit", type=int, default=50)
-    _add_format_flags(p)
-    return p
-
-
-def _build_remind_delete_parser():
-    p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
-    return p
-
-
-def _build_remind_update_parser():
-    p = argparse.ArgumentParser(prog="tasks remind update", add_help=False)
-    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p.add_argument("--id", default=None, dest="reminder_id")
-    p.add_argument("--message", required=True)
-    return p
-
-
 def main():
     # We manually handle `tasks remind ...` because argparse cannot mix
     # positional arguments with subparsers on the same parser level.
@@ -219,7 +181,6 @@ def _main_remind():
         return
 
     subcmd = remind_args[0]
-    subcommands = {"list", "delete", "update"}
     # Reject common false-subcommands that would silently become the message
     rejected = {"create", "add", "new", "set", "get", "show"}
     if subcmd in rejected:
@@ -232,22 +193,53 @@ def _main_remind():
     try:
         _require_daemon(config)
 
-        if subcmd in subcommands:
-            rest = remind_args[1:]
-
-            if subcmd == "list":
-                args = _build_remind_list_parser().parse_args(rest)
-                _print_list(args, _do_remind_list(config, args), fmt.format_reminder_list)
-                return
-            elif subcmd == "delete":
-                args = _build_remind_delete_parser().parse_args(rest)
-                result = _do_remind_delete(config, args)
-            elif subcmd == "update":
-                args = _build_remind_update_parser().parse_args(rest)
-                result = _do_remind_update(config, args)
+        if subcmd == "list":
+            p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
+            p.add_argument("--task", default=None, dest="task_id")
+            p.add_argument("--limit", type=int, default=50)
+            _add_format_flags(p)
+            args = p.parse_args(remind_args[1:])
+            _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=args.limit), fmt.format_reminder_list)
+            return
+        elif subcmd == "delete":
+            p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
+            p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+            p.add_argument("--id", default=None, dest="reminder_id")
+            args = p.parse_args(remind_args[1:])
+            reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind delete <id> or tasks remind delete --id <id>")
+            result = commands.remind_delete(config, reminder_id=reminder_id)
+        elif subcmd == "update":
+            p = argparse.ArgumentParser(prog="tasks remind update", add_help=False)
+            p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+            p.add_argument("--id", default=None, dest="reminder_id")
+            p.add_argument("--message", required=True)
+            args = p.parse_args(remind_args[1:])
+            reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind update <id> or tasks remind update --id <id>")
+            result = commands.remind_update(config, reminder_id=reminder_id, message=args.message)
         else:
-            args = _build_remind_set_parser().parse_args(remind_args)
-            result = _do_remind_set(config, args)
+            p = argparse.ArgumentParser(prog="tasks remind", add_help=False)
+            p.add_argument("message_pos", nargs="?", default=None, metavar="message")
+            p.add_argument("--message", default=None)
+            p.add_argument("--task", default=None, dest="task_id")
+            p.add_argument("--at", default=None, dest="scheduled_datetime")
+            p.add_argument("--tz", default=None)
+            p.add_argument("--in-minutes", type=int, default=None)
+            p.add_argument("--in-hours", type=int, default=None)
+            p.add_argument("--in-days", type=int, default=None)
+            p.add_argument("--recurring", default=None, choices=["hourly", "daily", "weekly", "monthly", "yearly"])
+            args = p.parse_args(remind_args)
+            message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
+            result = commands.remind_set(
+                config,
+                message=message,
+                task_id=args.task_id,
+                scheduled_datetime=args.scheduled_datetime,
+                tz=args.tz,
+                in_minutes=args.in_minutes,
+                in_hours=args.in_hours,
+                in_days=args.in_days,
+                recurring=args.recurring,
+            )
 
         print(json.dumps(result, indent=2))
 
@@ -281,35 +273,6 @@ subcommands:
   list                  List active reminders
   delete                Delete a reminder
   update                Update a reminder message""")
-
-
-def _do_remind_set(config, args):
-    message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
-    return commands.remind_set(
-        config,
-        message=message,
-        task_id=args.task_id,
-        scheduled_datetime=args.scheduled_datetime,
-        tz=args.tz,
-        in_minutes=args.in_minutes,
-        in_hours=args.in_hours,
-        in_days=args.in_days,
-        recurring=args.recurring,
-    )
-
-
-def _do_remind_list(config, args):
-    return commands.remind_list(config, task_id=args.task_id, limit=args.limit)
-
-
-def _do_remind_delete(config, args):
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind delete <id> or tasks remind delete --id <id>")
-    return commands.remind_delete(config, reminder_id=reminder_id)
-
-
-def _do_remind_update(config, args):
-    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind update <id> or tasks remind update --id <id>")
-    return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
 
 
 def _handle_task(args, config: Config):
