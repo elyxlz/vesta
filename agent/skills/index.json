@@ -92,6 +92,10 @@
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
+    "name": "recall",
+    "description": "Recall past conversations from long-term memory. Use to look up specific past discussions, decisions, names, or facts that are no longer in the current context, across ALL sessions and days (not just today). Full-text search over the whole conversation history."
+  },
+  {
     "name": "reduce-loc",
     "description": "Shrink a codebase's line count without changing behavior; dead code, dedup, then architectural simplification. Use when asked to reduce LOC, simplify, or trim a repo."
   },

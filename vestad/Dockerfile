@@ -18,10 +18,13 @@ WORKDIR /root
 
 COPY agent/ ./agent/
 
+# Prune optional skills out of the image: keep only the defaults listed in the
+# version-pinned core list (agent/core/default-skills.txt). That list ships inside
+# core so the runtime reconciler reads it from the read-only core mount.
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
-      grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
-    done && rm -f agent/skills/default-skills.txt
+      grep -qx "$name" agent/core/default-skills.txt || rm -rf "$d"; \
+    done
 
 WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project

@@ -10,7 +10,6 @@ from core.sdk_parsing import (
     filter_tool_lines,
     parse_sdk_message,
 )
-from core.tools import _format_search_results
 
 
 # --- Agent input parsing ---
@@ -174,15 +173,3 @@ def test_process_message_always_streams():
             assert isinstance(val, ast.Constant) and val.value is True, (
                 f"process_message must pass show_output=True to converse(), found show_output={ast.dump(val)}"
             )
-
-
-# --- Search results formatting ---
-
-
-def test_format_search_results():
-    assert _format_search_results([]) == "No results found."
-
-    results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
-    formatted = _format_search_results(results)
-    assert "hello" in formatted
-    assert "user" in formatted

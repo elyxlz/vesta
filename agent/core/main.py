@@ -22,6 +22,7 @@ from .loops import (
     message_processor,
     monitor_loop,
 )
+from .default_skills import reconcile_default_skills
 from .migrations import drop_pending_migrations
 
 
@@ -104,6 +105,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     message_queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
 
     drop_pending_migrations(state=state, config=config, first_start=first_start)
+    reconcile_default_skills(config=config, first_start=first_start)
     greeting_reason = "first_start" if first_start else restart_reason
     drop_greeting_notification(config=config, state=state, reason=greeting_reason)
 

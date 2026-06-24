@@ -1,4 +1,4 @@
-"""MCP tool server exposed to the Claude SDK: search, restart, completion-mark tools."""
+"""MCP tool server exposed to the Claude SDK: restart and completion-mark tools."""
 
 import datetime as dt
 import os
@@ -12,46 +12,6 @@ from . import models as vm
 from . import state_store
 from .api import start_ws_server
 
-_SEARCH_CONVERSATION_HISTORY_DESCRIPTION = (
-    "Search past conversation memory using full-text search (SQLite FTS5). "
-    "Searches ALL past conversations across sessions and days, not just the current session. "
-    "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
-    "FTS5 query syntax:\n"
-    '- Simple words: "meeting notes" finds messages containing both words\n'
-    "- Phrases: '\"exact phrase\"' finds the exact phrase\n"
-    '- OR: "cats OR dogs" finds messages with either word\n'
-    '- Prefix: "sched*" matches schedule, scheduled, scheduling, etc.\n'
-    '- NOT: "meeting NOT cancelled" excludes matches\n\n'
-    "Results are ranked by relevance with a recency boost — recent conversations surface higher."
-)
-
-_SEARCH_CONVERSATION_HISTORY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "query": {"type": "string", "description": "FTS5 search query"},
-        "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
-    },
-    "required": ["query"],
-}
-
-
-def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
-    if not results:
-        return "No results found."
-    lines = []
-    total = 0
-    for r in results:
-        content = r["content"]
-        if len(content) > 2000:
-            content = content[:2000] + "..."
-        line = f"[{r['timestamp']}] {r['role']}: {content}"
-        if total + len(line) > max_chars:
-            lines.append(f"... ({len(results) - len(lines)} more results truncated)")
-            break
-        lines.append(line)
-        total += len(line)
-    return "\n\n".join(lines)
-
 
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
@@ -62,16 +22,6 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.shutdown("Container restart requested")
         os.kill(os.getpid(), signal.SIGTERM)
         return {"content": [{"type": "text", "text": "Container restart initiated."}]}
-
-    @tool("search_conversation_history", _SEARCH_CONVERSATION_HISTORY_DESCRIPTION, _SEARCH_CONVERSATION_HISTORY_SCHEMA)
-    async def search_conversation_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        query = str(args["query"])
-        limit = int(args["limit"]) if "limit" in args else 20
-        try:
-            results = state.event_bus.search(query, limit=limit)
-        except Exception as e:
-            return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
-        return {"content": [{"type": "text", "text": _format_search_results(results)}]}
 
     @tool(
         "mark_setup_done",
@@ -120,7 +70,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
         return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
-    return [restart_vesta, search_conversation_history, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
+    return [restart_vesta, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
