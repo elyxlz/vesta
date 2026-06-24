@@ -4,7 +4,7 @@ Routes:
   - WS   /ws                   bidirectional event bus
   - GET  /history              paginated event history (cursor optional)
   - GET  /search               full-text search over events
-  - GET  /provider/usage       normalized, provider-agnostic plan usage
+  - GET  /usage                normalized, provider-agnostic plan usage
   - GET  /config               full live config + derived {authed, kind, setup_complete}
   - PUT  /config               update preferences (model, context, thinking, personality, timezone, ...)
   - PUT  /config/auth          sign in: set Claude/OpenRouter credentials
@@ -176,7 +176,7 @@ async def _search_handler(request: web.Request) -> web.Response:
     return web.json_response({"results": results})
 
 
-async def _provider_usage_handler(request: web.Request) -> web.Response:
+async def _usage_handler(request: web.Request) -> web.Response:
     """Report normalized, provider-agnostic plan usage for the agent's active provider."""
     config = request.app["config"]
     try:
@@ -350,7 +350,7 @@ async def start_ws_server(
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
-    app.router.add_get("/provider/usage", _provider_usage_handler)
+    app.router.add_get("/usage", _usage_handler)
     app.router.add_get("/config", _config_get_handler)
     app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)

@@ -362,7 +362,7 @@ impl Client {
     // Force vestad to refresh from GitHub, then return the latest tag. Used by
     // the explicit `vesta update` so it does not act on a stale cached value.
     pub fn check_latest_release_tag(&self) -> Result<Option<String>, String> {
-        let value: serde_json::Value = read_json(self.post("/version/check")?)?;
+        let value: serde_json::Value = read_json(self.get("/version/check")?)?;
         Ok(extract_latest_version(&value))
     }
 
@@ -507,7 +507,7 @@ impl Client {
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{name}/destroy"))?;
+        self.delete_req(&format!("/agents/{name}"))?;
         Ok(())
     }
 

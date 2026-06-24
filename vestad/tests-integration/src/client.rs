@@ -138,6 +138,20 @@ impl Client {
         check_response(resp)
     }
 
+    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.patch(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
+    fn delete(&self, path: &str) -> Result<Response<Body>, String> {
+        let resp = self.agent.delete(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call().map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
         check_response(resp)?;
@@ -198,7 +212,7 @@ impl Client {
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/destroy", name))?;
+        self.delete(&format!("/agents/{}", name))?;
         Ok(())
     }
 
@@ -209,7 +223,7 @@ impl Client {
 
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
-        let resp = self.post_json(&format!("/agents/{}/rename", name), &body)?;
+        let resp = self.patch_json(&format!("/agents/{}", name), &body)?;
         let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(new_name).to_string())
     }

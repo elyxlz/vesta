@@ -2048,7 +2048,7 @@ pub fn build_router(state: SharedState) -> Router {
         // refresh token for an unauthenticated caller.
         .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/version", get(version))
-        .route("/version/check", post(version_check))
+        .route("/version/check", get(version_check))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))
@@ -2058,13 +2058,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents/start", post(start_all_handler))
-        .route("/agents/{name}", get(agent_status_handler))
+        .route(
+            "/agents/{name}",
+            get(agent_status_handler).delete(destroy_agent_handler).patch(rename_agent_handler),
+        )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
-        .route("/agents/{name}/destroy", post(destroy_agent_handler))
-        .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/config/auth", put(set_auth_handler).delete(clear_auth_handler))
         .route("/agents/{name}/tree", get(tree_handler))

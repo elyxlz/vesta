@@ -239,8 +239,8 @@ export async function restartAgent(name: string): Promise<void> {
 }
 
 export async function deleteAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/destroy`, {
-    method: "POST",
+  await apiJson(`/agents/${encodeURIComponent(name)}`, {
+    method: "DELETE",
   });
 }
 
@@ -288,7 +288,7 @@ export async function deleteBackup(
   );
 }
 
-/// Normalized, provider-agnostic plan usage (agent's GET /provider/usage). `meters` are
+/// Normalized, provider-agnostic plan usage (agent's GET /usage). `meters` are
 /// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
 /// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
 export interface UsageMeter {
@@ -308,5 +308,5 @@ export interface Usage {
 }
 
 export async function fetchUsage(name: string): Promise<Usage> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/provider/usage`);
+  return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
 }
