@@ -131,6 +131,13 @@ impl Client {
         check_response(resp)
     }
 
+    fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.put(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
         check_response(resp)?;
@@ -283,13 +290,13 @@ impl Client {
         v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
     }
 
-    /// Provision an agent with Claude credentials via the new provider endpoint.
-    /// `token` is the credentials JSON string. The agent must be running (its WS
-    /// port bound) to receive the call, so this waits for it first.
+    /// Provision an agent with Claude credentials via the unified settings endpoint.
+    /// `token` is the credentials JSON string, sent as the `auth` sub-object of PUT /config.
+    /// The agent must be running (its WS port bound) to receive the call, so this waits first.
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"credentials": token});
-        self.post_json(&format!("/agents/{}/provider", name), &body)?;
+        let body = serde_json::json!({"auth": {"credentials": token}});
+        self.put_json(&format!("/agents/{}/config", name), &body)?;
         Ok(())
     }
 

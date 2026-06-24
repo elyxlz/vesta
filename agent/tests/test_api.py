@@ -177,7 +177,7 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING)
 
 
-# --- Request-body validation models (PUT /config, POST /provider) ---
+# --- Request-body validation for PUT /config (prefs + the auth sub-object) ---
 
 
 def test_config_update_accepts_general_fields_and_returns_sparse(config):

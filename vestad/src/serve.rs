@@ -536,11 +536,11 @@ async fn create_agent_handler(
         save_settings(&settings);
     }
 
-    // Create + start an empty agent. Provider config arrives via a separate
-    // POST /agents/{name}/provider once the agent is up — the agent owns its
-    // own credential files now, vestad only orchestrates. `create_agent` reports
-    // coarse phases into shared state so GET /agents/{name}/build-phase can drive
-    // honest onboarding status while this synchronous call is in flight.
+    // Create + start an empty agent. Credentials and preferences arrive via a separate
+    // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
+    // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
+    // state so GET /agents/{name}/build-phase can drive honest onboarding status while this
+    // synchronous call is in flight.
     let phases = state.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
@@ -784,40 +784,20 @@ pub(crate) async fn drop_rename_notification(
     Ok(file_name)
 }
 
-/// GET an existing agent's provider status (state/kind/model/setup_complete),
-/// proxied from the agent's `/provider/status`. Lets the web show the current
-/// provider and model (e.g. to offer a model switch) without owning that state.
-async fn get_provider_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<agent_provider::ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    provider
-        .status()
-        .await
-        .map(Json)
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
-}
-
-/// Which write(s) to forward to the agent's own HTTP API. Dispatched inside
-/// `write_to_agent_and_restart` so the borrowing `AgentProvider` never crosses a closure boundary.
+/// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent_and_restart`
+/// so the borrowing `AgentProvider` never crosses a closure boundary.
 enum AgentWrite {
-    /// The agent's `POST /provider` (auth), forwarded verbatim.
-    Provider(serde_json::Value),
-    /// The agent's `PUT /config` (any preference), forwarded verbatim.
+    /// The agent's `PUT /config` — a sparse settings diff, optionally with an `auth` sub-object that
+    /// sets credentials. Auth and prefs land before the single restart, so nothing races.
     Config(serde_json::Value),
-    /// Provisioning: auth and/or preferences, each to its own agent endpoint, one restart.
-    Provision(ProvisionRequest),
     /// The agent's `DELETE /provider` — sign out.
     Clear,
 }
 
 /// Run a write against a (possibly stopped) agent's own HTTP API, then restart the container so the
 /// change applies on next boot. Ensures the agent exists, takes the per-agent write lock, and
-/// auto-starts a stopped agent so it can receive the proxied call — the shared skeleton behind every
-/// auth/config/provision setter. The agent owns the file writes, format, and validation; any forward
-/// failure surfaces as BAD_GATEWAY.
+/// auto-starts a stopped agent so it can receive the proxied call. The agent owns the file writes,
+/// format, and validation; any forward failure surfaces as BAD_GATEWAY.
 async fn write_to_agent_and_restart(
     state: &SharedState,
     name: &str,
@@ -836,23 +816,8 @@ async fn write_to_agent_and_restart(
 
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
-        AgentWrite::Provider(body) => provider.set(&body).await,
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Clear => provider.clear().await,
-        AgentWrite::Provision(req) => {
-            // Each present part is written before the single restart below, so a later write can't
-            // hit the agent mid-restart and 502, dropping the change.
-            async {
-                if has_entries(&req.provider) {
-                    provider.set(&req.provider).await?;
-                }
-                if has_entries(&req.config) {
-                    provider.put_config(&req.config).await?;
-                }
-                Ok(())
-            }
-            .await
-        }
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
 
@@ -860,16 +825,8 @@ async fn write_to_agent_and_restart(
     Ok(ok_json())
 }
 
-/// Set or refresh an existing agent's provider config, forwarded verbatim to the agent's `POST /provider`.
-async fn set_provider_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Provider(body)).await
-}
-
-/// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
+/// Relay the agent's `GET /config` (config plus derived auth state; the agent owns it, vestad proxies
+/// it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -883,42 +840,14 @@ async fn get_config_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart.
+/// Forward a settings diff (prefs + optional `auth`) to the agent's `PUT /config`, then restart once.
+/// This is the single write path for credentials and every preference.
 async fn set_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     write_to_agent_and_restart(&state, &name, AgentWrite::Config(body)).await
-}
-
-fn has_entries(value: &serde_json::Value) -> bool {
-    value.as_object().is_some_and(|fields| !fields.is_empty())
-}
-
-#[derive(Deserialize)]
-struct ProvisionRequest {
-    /// Provider auth body for the agent's `POST /provider` (`{credentials}` for Claude or
-    /// `{openrouter_key, openrouter_model}`). Omitted when only preferences change.
-    #[serde(default)]
-    provider: serde_json::Value,
-    /// Sparse preferences for the agent's `PUT /config` (model, context, thinking, personality,
-    /// timezone, seed_context). Omitted when only auth changes.
-    #[serde(default)]
-    config: serde_json::Value,
-}
-
-/// Provision an agent: apply provider auth and/or preferences, then restart the container ONCE. Each
-/// named part is forwarded to its own agent endpoint, so vestad carries no field taxonomy. Doing
-/// these as separate restart-on-write calls raced — a later write hit the agent mid-restart and
-/// 502'd, dropping the change. Writing everything before a single restart designs that race out of
-/// existence.
-async fn provision_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(req): Json<ProvisionRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Provision(req)).await
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
@@ -2128,8 +2057,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler).delete(clear_provider_handler))
-        .route("/agents/{name}/provision", post(provision_handler))
+        .route("/agents/{name}/provider", axum::routing::delete(clear_provider_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))

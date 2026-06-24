@@ -226,7 +226,7 @@ async def _handle(request: web.Request) -> web.StreamResponse:
         if upstream.status in TERMINAL_PROVIDER_ERRORS:
             state: State = request.app["state"]
             config: VestaConfig = request.app["config"]
-            state.provider_status = observed_provider_failure(state.provider_status, config=config, persisted=state.persisted)
+            state.provider_status = observed_provider_failure(state.provider_status, config=config)
         resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
         response = web.StreamResponse(status=upstream.status, headers=resp_headers)
         await response.prepare(request)

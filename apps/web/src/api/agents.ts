@@ -18,52 +18,57 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Provision an agent: set provider auth and the agent's preferences (model, context, personality,
-/// timezone) in one request. Vestad forwards auth to POST /provider and the config to PUT /config,
-/// then restarts once — doing them as separate restart-on-write calls raced (a later write hit the
-/// agent mid-restart and was dropped).
+/// A sparse settings diff for `updateSettings`. `auth` sets provider credentials (Claude or
+/// OpenRouter); every other field is a preference. All optional — send only what changes.
+export interface AgentSettings {
+  auth?:
+    | { credentials: string }
+    | { openrouter_key: string; openrouter_model: string };
+  agent_model?: string;
+  max_context_tokens?: number;
+  agent_personality?: string;
+  timezone?: string;
+}
+
+/// The single settings writer: PUT a sparse settings diff to the agent's `/config`. Credentials and
+/// preferences travel together so a fresh agent is provisioned in one call; vestad restarts once.
+export async function updateSettings(
+  name: string,
+  settings: AgentSettings,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+}
+
+/// Provision/attach a provider: map the chosen `ProviderResult` to the `auth` sub-object and send it
+/// with any preferences in one settings write. OpenRouter's model rides its auth body, so only Claude
+/// carries an explicit agent_model. Re-provisioning an existing agent omits timezone/personality to
+/// keep the agent's own.
 export async function setProvider(
   name: string,
   result: ProviderResult,
   personality?: string,
   timezone?: string,
 ): Promise<void> {
-  const provider: Record<string, unknown> =
-    result.kind === "claude"
-      ? { credentials: result.credentials }
-      : {
-          openrouter_key: result.config.key,
-          openrouter_model: result.config.model,
-        };
-  // Every preference rides one config surface. OpenRouter's model is part of its auth body above
-  // (openrouter_model), so only Claude carries an explicit agent_model here; context applies to both.
-  // Timezone is delivered at provision time (not via env at create) so the agent's store owns it;
-  // callers re-provisioning an existing agent omit timezone/personality to keep the agent's own.
-  const config: Record<string, unknown> = {};
+  const settings: AgentSettings = {
+    auth:
+      result.kind === "claude"
+        ? { credentials: result.credentials }
+        : {
+            openrouter_key: result.config.key,
+            openrouter_model: result.config.model,
+          },
+  };
   if (result.kind === "claude" && result.model)
-    config.agent_model = result.model;
+    settings.agent_model = result.model;
   if (result.maxContextTokens != null)
-    config.max_context_tokens = result.maxContextTokens;
-  if (personality) config.agent_personality = personality;
-  if (timezone) config.timezone = timezone;
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provision`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, config }),
-  });
-}
-
-/// Update preferences (model and/or context window) without touching auth, via PUT /config. Vestad
-/// restarts the agent to apply.
-export async function setConfig(
-  name: string,
-  prefs: { agent_model?: string; max_context_tokens?: number },
-): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(prefs),
-  });
+    settings.max_context_tokens = result.maxContextTokens;
+  if (personality) settings.agent_personality = personality;
+  if (timezone) settings.timezone = timezone;
+  await updateSettings(name, settings);
 }
 
 /// Sign out: clear the agent's provider credentials, leaving it not_authenticated until reconnected.
@@ -74,21 +79,28 @@ export async function signOutProvider(name: string): Promise<void> {
 }
 
 export interface ProviderInfo {
-  state: string;
   kind: "claude" | "openrouter" | "none";
   model: string | null;
   max_context_tokens: number | null;
-  setup_complete: boolean;
 }
 
-/// Read an agent's current provider (kind + model), proxied from the agent.
+/// Read an agent's current provider (kind + model), derived from its `GET /config`.
 export async function getProvider(name: string): Promise<ProviderInfo> {
-  return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
+  const config = await apiJson<{
+    kind: ProviderInfo["kind"];
+    agent_model: string | null;
+    max_context_tokens: number | null;
+  }>(`/agents/${encodeURIComponent(name)}/config`);
+  return {
+    kind: config.kind,
+    model: config.agent_model,
+    max_context_tokens: config.max_context_tokens,
+  };
 }
 
 /// Change only the model preference. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await setConfig(name, { agent_model: model });
+  await updateSettings(name, { agent_model: model });
 }
 
 /// Change only the context window. Vestad restarts the agent so it takes effect.
@@ -96,7 +108,7 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await setConfig(name, { max_context_tokens: maxContextTokens });
+  await updateSettings(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,

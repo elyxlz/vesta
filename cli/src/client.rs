@@ -145,21 +145,14 @@ fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String>
     value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
 }
 
-/// Build the sparse agent-preferences body for `PUT /config` (or the `config` part of `/provision`).
-/// Every preference lives on one config surface now, so model/context sit alongside timezone. Empty
-/// when nothing is set, which vestad treats as "skip the PUT /config".
-fn config_body(model: Option<&str>, max_context_tokens: Option<u64>, timezone: Option<&str>) -> serde_json::Value {
-    let mut config = serde_json::Map::new();
-    if let Some(model) = model {
-        config.insert("agent_model".to_string(), serde_json::json!(model));
-    }
-    if let Some(ctx) = max_context_tokens {
-        config.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
-    }
-    if let Some(tz) = timezone {
-        config.insert("timezone".to_string(), serde_json::json!(tz));
-    }
-    serde_json::Value::Object(config)
+/// The Claude auth sub-object for `update_settings`.
+pub fn claude_auth(credentials: &str) -> serde_json::Value {
+    serde_json::json!({ "credentials": credentials })
+}
+
+/// The OpenRouter auth sub-object for `update_settings`.
+pub fn openrouter_auth(args: &OpenRouterArgs) -> serde_json::Value {
+    serde_json::json!({ "openrouter_key": args.key, "openrouter_model": args.model })
 }
 
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
@@ -428,54 +421,41 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with Claude credentials (the OAuth JSON blob) and its preferences
-    /// (model/context/timezone) in one request, so vestad writes both and restarts once. Splitting
-    /// this into separate restart-on-write calls raced: a later call hit the agent mid-restart and
-    /// was dropped. Preferences ride the `config` field; only the credentials are provider auth.
-    pub fn set_provider_credentials(
+    /// The single settings writer: PUT a sparse settings diff to the agent's `/config`, vestad
+    /// restarts once. `auth` is the optional credentials sub-object (see `claude_auth`/`openrouter_auth`);
+    /// model/context/timezone are optional preferences. Auth and prefs land before one restart, so a
+    /// fresh agent gets its credentials and model in a single call without racing. No-op if all None.
+    pub fn update_settings(
         &self,
         name: &str,
-        credentials: &str,
+        auth: Option<serde_json::Value>,
         model: Option<&str>,
         max_context_tokens: Option<u64>,
         timezone: Option<&str>,
     ) -> Result<(), String> {
-        serde_json::from_str::<serde_json::Value>(credentials)
-            .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        self.post_json(
-            &format!("/agents/{name}/provision"),
-            &serde_json::json!({
-                "provider": {"credentials": credentials},
-                "config": config_body(model, max_context_tokens, timezone),
-            }),
-        )?;
-        Ok(())
-    }
-
-    /// Update preferences (model and/or context window) via PUT /config. A no-op when both are None.
-    /// Vestad restarts the agent so they take effect.
-    pub fn set_prefs(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        let config = config_body(model, max_context_tokens, None);
-        if config.as_object().is_none_or(serde_json::Map::is_empty) {
+        let mut body = serde_json::Map::new();
+        if let Some(model) = model {
+            body.insert("agent_model".to_string(), serde_json::json!(model));
+        }
+        if let Some(ctx) = max_context_tokens {
+            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+        }
+        if let Some(tz) = timezone {
+            body.insert("timezone".to_string(), serde_json::json!(tz));
+        }
+        if let Some(auth) = auth {
+            body.insert("auth".to_string(), auth);
+        }
+        if body.is_empty() {
             return Ok(());
         }
-        self.put_json(&format!("/agents/{name}/config"), &config)?;
+        self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(body))?;
         Ok(())
     }
 
-    /// Current provider status: `{state, kind, model, max_context_tokens}`.
-    pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/provider"))?)
-    }
-
-    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs, timezone: Option<&str>) -> Result<(), String> {
-        // Provision endpoint so the openrouter auth and the timezone preference land in one restart.
-        let body = serde_json::json!({
-            "provider": {"openrouter_key": args.key, "openrouter_model": args.model},
-            "config": config_body(None, None, timezone),
-        });
-        self.post_json(&format!("/agents/{name}/provision"), &body)?;
-        Ok(())
+    /// The agent's current config + derived `{authed, kind, ...}`, proxied from its `GET /config`.
+    pub fn get_config(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/config"))?)
     }
 
     /// Sign out: clear the agent's provider credentials (DELETE /provider). Vestad restarts the
@@ -531,7 +511,7 @@ impl Client {
 
     /// Poll until status is `alive` OR `not_authenticated`. Used right after
     /// `create_agent` to know the agent's HTTP server is up and ready to accept
-    /// `POST /agents/{name}/provider` — a brand-new empty agent will report
+    /// `PUT /agents/{name}/config` — a brand-new empty agent will report
     /// `not_authenticated` until the provider is provisioned.
     pub fn wait_until_running(&self, name: &str, timeout: Duration) -> Result<(), String> {
         self.wait_for_status(name, timeout, &["alive", "not_authenticated"], "HTTP server", |_| {})
@@ -594,7 +574,7 @@ impl Client {
 
     // Agent-less OAuth — runs the PKCE dance independent of any agent. Used by
     // `vesta setup` (pre-create) and `vesta auth <name>` (post-create reauth),
-    // followed by either POST /agents or POST /agents/{name}/provider.
+    // followed by either POST /agents or PUT /agents/{name}/config.
     pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
         read_json(self.post("/providers/claude/oauth/start")?)
     }

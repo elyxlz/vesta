@@ -1,6 +1,7 @@
 """Per-agent LLM-provider auth (Claude OAuth or OpenRouter key). The provider choice and OpenRouter
 key live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
-reads it). Each mutation persists the auth state to PersistedState so it survives a restart."""
+reads it). On-disk state is the single source of truth: status is re-derived from disk on every boot,
+and a runtime auth failure is an in-memory flip only (no separate persisted auth flag)."""
 
 import dataclasses as dc
 import enum
@@ -13,7 +14,6 @@ import aiohttp
 
 from . import logger
 from .config import PROVIDER_PREF_FIELDS, VestaConfig, update_config_store
-from .state_store import PersistedState, save_state
 
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
@@ -71,18 +71,17 @@ class ProviderStatus:
             self.model = None
 
 
-def derive_status(config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
-    """Re-derive provider status at boot from the config store (provider + key) and
-    `.credentials.json`. The model and context window come from the config store via VestaConfig."""
+def derive_status(config: VestaConfig) -> ProviderStatus:
+    """Re-derive provider status at boot, purely from disk: the config store (provider + key) and
+    `.credentials.json`. On-disk state is the single source of truth — a runtime auth failure is an
+    in-memory flip only (see observed_provider_failure), so boot is always an honest reading of what's
+    actually provisioned. Model and context come from the config store via VestaConfig."""
     kind, authed = _derive_kind_and_auth(config)
-    # A 401 recorded in a prior boot overrides the on-disk reading.
-    if persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value:
-        authed = False
     state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
     return ProviderStatus(state=state, kind=kind, model=config.agent_model, max_context_tokens=config.max_context_tokens)
 
 
-def set_claude(credentials_json: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+def set_claude(credentials_json: str, *, config: VestaConfig) -> ProviderStatus:
     """Write the Claude OAuth credentials, set the provider to claude in the config store, and clear
     any OpenRouter key, returning the authenticated status."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
@@ -91,52 +90,43 @@ def set_claude(credentials_json: str, *, config: VestaConfig, persisted: Persist
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
     update_config_store({"agent_provider": "claude", "openrouter_key": None})
-    status = ProviderStatus(
+    logger.startup("Provider set to claude")
+    return ProviderStatus(
         state=ProviderAuthState.AUTHENTICATED, kind="claude", model=config.agent_model, max_context_tokens=config.max_context_tokens
     )
-    _persist(status, config=config, persisted=persisted)
-    logger.startup("Provider set to claude")
-    return status
 
 
-def set_openrouter(key: str, model: str, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+def set_openrouter(key: str, model: str, *, config: VestaConfig) -> ProviderStatus:
     """Record the OpenRouter provider, key, and model in the config store (OpenRouter needs a valid
     model). Vestad restarts the agent to apply it."""
     update_config_store({"agent_provider": "openrouter", "openrouter_key": key, "agent_model": model})
-    status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
-    _persist(status, config=config, persisted=persisted)
     logger.startup(f"Provider set to openrouter model={model}")
-    return status
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
 
 
-def clear_provider(*, config: VestaConfig, persisted: PersistedState) -> ProviderStatus:
+def clear_provider(*, config: VestaConfig) -> ProviderStatus:
     """Sign out: clear everything provider-owned — the Claude OAuth blob, the OpenRouter key, and the
     provider preferences (model, context, thinking) — leaving the agent not_authenticated. Only
     general config (e.g. personality) survives; the provider choice is kept as the last-used hint.
     Vestad restarts the agent."""
     CREDENTIALS_PATH.unlink(missing_ok=True)
     update_config_store({"openrouter_key": None, **{field: None for field in PROVIDER_PREF_FIELDS}})
-    status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=config.agent_provider, model=None, max_context_tokens=None)
-    _persist(status, config=config, persisted=persisted)
     logger.startup("Provider cleared (signed out)")
-    return status
+    return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=config.agent_provider, model=None, max_context_tokens=None)
 
 
-def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig, persisted: PersistedState) -> ProviderStatus | None:
+def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig) -> ProviderStatus | None:
     """Called by the SDK response-stream handler on a terminal upstream auth/billing error (401
-    invalid auth, 402 insufficient credits). Returns the status flipped to NOT_AUTHENTICATED
-    (persisted so it survives a restart), or the input unchanged when there's nothing to flip."""
+    invalid auth, 402 insufficient credits). Returns the status flipped to NOT_AUTHENTICATED, or the
+    input unchanged when there's nothing to flip. The flip is in-memory only: on the next boot the
+    agent re-derives from disk (creds present => authenticated), so a transient 402 that the user
+    fixes by topping up credits recovers without a manual reconnect, and a genuinely dead credential
+    just re-flips on its first failed call."""
     if status is None or status.state == ProviderAuthState.NOT_AUTHENTICATED:
         return status
     new_status = dc.replace(status, state=ProviderAuthState.NOT_AUTHENTICATED)
-    _persist(new_status, config=config, persisted=persisted)
     logger.error(f"Provider {new_status.kind} flipped to not_authenticated (upstream auth/billing error)")
     return new_status
-
-
-def _persist(status: ProviderStatus, *, config: VestaConfig, persisted: PersistedState) -> None:
-    persisted.provider_auth_state = status.state.value
-    save_state(persisted, config)
 
 
 def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:

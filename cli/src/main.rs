@@ -639,7 +639,7 @@ fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
     // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
     client
-        .set_provider_credentials(name, &credentials, None, None, None)
+        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -977,7 +977,7 @@ fn run(cli: Cli) {
                 Err(e) => platform::die(&e),
             };
 
-            // 2. Wait for the agent's HTTP server to be up so it can receive POST /provider.
+            // 2. Wait for the agent's HTTP server to be up so it can receive PUT /config.
             eprintln!("waiting for agent to start...");
             c.wait_until_running(&created_name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
@@ -987,19 +987,19 @@ fn run(cli: Cli) {
             //    dance first.
             match plan {
                 ProvisionPlan::OpenRouter(or) => {
-                    c.set_provider_openrouter(&created_name, &or, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref())
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
                 ProvisionPlan::ClaudeCredentials { credentials, opts } => {
-                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated (claude)");
                 }
                 ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated!");
                 }
@@ -1046,7 +1046,7 @@ fn run(cli: Cli) {
                 eprintln!("waiting for agent to start...");
                 c.wait_until_running(&name, START_READY_TIMEOUT)
                     .unwrap_or_else(|e| platform::die(&e));
-                c.set_provider_openrouter(&name, or, timezone.as_deref())
+                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref())
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("created (running on OpenRouter)");
             } else {
@@ -1057,19 +1057,19 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() {
-                c.set_prefs(&name, model.as_deref(), context_window)
+                c.update_settings(&name, None, model.as_deref(), context_window, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
                 let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
-                if let Ok(provider) = c.get_provider(&name) {
-                    if let Some(m) = provider["model"].as_str() {
+                if let Ok(config) = c.get_config(&name) {
+                    if let Some(m) = config["agent_model"].as_str() {
                         eprintln!("model = {m}");
                     }
-                    match provider["max_context_tokens"].as_u64() {
+                    match config["max_context_tokens"].as_u64() {
                         Some(ctx) => eprintln!("context_window = {ctx}"),
-                        None if provider["kind"].as_str() == Some("openrouter") => {
+                        None if config["kind"].as_str() == Some("openrouter") => {
                             eprintln!("context_window = default (model window, capped at 200K)")
                         }
                         None => eprintln!("context_window = default (1M for Claude)"),
@@ -1174,7 +1174,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.set_provider_credentials(&name, &token_str, None, None, None)
+                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {

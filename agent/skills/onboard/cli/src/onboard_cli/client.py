@@ -208,19 +208,18 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """POST <tenant>/agents/{name}/provision — attach Claude creds and, in the same restart, the
-        agent's preferences (model, personality, freeform seed context). The agent wakes with
-        everything in place."""
-        config: dict[str, Any] = {}
+        """PUT <tenant>/agents/{name}/config — attach Claude creds (the `auth` sub-object) and the
+        agent's preferences (model, personality, freeform seed context) in one settings write. The
+        agent wakes with everything in place after a single restart."""
+        settings: dict[str, Any] = {"auth": {"credentials": credentials}}
         if model:
-            config["agent_model"] = model
+            settings["agent_model"] = model
         if personality:
-            config["agent_personality"] = personality
+            settings["agent_personality"] = personality
         if seed_context:
-            config["seed_context"] = seed_context
-        body = {"provider": {"credentials": credentials}, "config": config}
-        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provision"
-        return self._json(self._raw_post(url, json=body, token=server_token, timeout=120))
+            settings["seed_context"] = seed_context
+        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/config"
+        return self._json(self._raw_put(url, json=settings, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------
 
@@ -255,6 +254,16 @@ class Client:
         timeout: int = _TIMEOUT,
     ) -> requests.Response:
         return self._send("POST", url, json=json, headers=self._auth(token), timeout=timeout)
+
+    def _raw_put(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        token: str,
+        timeout: int = _TIMEOUT,
+    ) -> requests.Response:
+        return self._send("PUT", url, json=json, headers=self._auth(token), timeout=timeout)
 
     def _send(
         self,
