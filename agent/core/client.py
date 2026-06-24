@@ -121,7 +121,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     diagnostics.touch_activity(state, "query_sent")
 
     responses: list[str] = []
-    sub_agent_context: str | None = None
 
     def _emit(t: str) -> None:
         logger.assistant(t)
@@ -177,7 +176,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
-                        texts, thinking_blocks, _, _, _ = sdk_parsing.parse_sdk_message(leftover, sub_agent_context=sub_agent_context)
+                        texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
                         _render(texts, thinking_blocks)
                 except (TimeoutError, StopAsyncIteration):
                     pass
@@ -196,7 +195,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             # place the signal exists. See openrouter_cache._handle.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
-            texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
             if session_id and session_id != state.persisted.session_id:
                 if state.persisted.session_id:
                     logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
