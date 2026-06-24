@@ -18,12 +18,23 @@ Suites:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest
   integration    vestad integration tests (needs Docker)
-  live           live agent e2e tests (needs Docker + ~/.claude/.credentials.json; real Claude)
+  live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
+  upgrade        just the upgrade e2e: create an agent on the previous release, update in place
+                 to this build, assert migrations converge (needs Docker + credentials; real Claude)
+                   ./check.sh upgrade                       # previous release -> this build
+                   ./check.sh upgrade --from v0.1.155        # from a specific release
+                   ./check.sh upgrade --from v0.1.155 --to v0.1.159   # both released versions
+                 Note: a debug build syncs the agent from the CURRENT BRANCH ref, so when the
+                 target is this build, push your branch first (else the agent's migration sync
+                 can't fetch it). The release gate builds in release mode and uses the version
+                 tag, so it needs no push.
   all            agent + cli + vestad + web
 
 Environment:
   TARGET=<triple>  cross-compilation target for cargo suites, e.g.
                    TARGET=x86_64-pc-windows-msvc ./check.sh cli
+  VESTA_UPGRADE_FROM / VESTA_UPGRADE_TO  release tags for the upgrade suite
+                   (the `upgrade` subcommand's --from/--to set these)
 EOF
   exit 1
 }
@@ -96,13 +107,38 @@ check_live() {
     cd vestad
     # The live tests use a 2-agent pool (see tests/live/common.rs); run enough threads that
     # every test starts and self-organizes onto its pool's mutex, so the two agents run in
-    # parallel instead of serializing on one.
+    # parallel instead of serializing on one. The upgrade e2e (tests/live/upgrade.rs) is part of
+    # this suite, so the release gate covers it alongside the other live tests.
     cargo test -p vestad --test live -- --test-threads=8
+  )
+}
+
+check_upgrade() {
+  (
+    cd vestad
+    # Just the upgrade e2e from the live suite. --nocapture streams the agent's container log live.
+    # Skip the embedded web app build: this is a backend/daemon test that never serves the app, and
+    # building it would couple the run to apps/ npm deps being installed and current.
+    VESTAD_SKIP_APP_BUILD=1 cargo test -p vestad --test live upgrade -- --test-threads=8 --nocapture
   )
 }
 
 if [ $# -lt 1 ]; then
   usage
+fi
+
+# `upgrade` takes optional --from/--to flags, so handle it before the plain suite loop.
+if [ "${1:-}" = "upgrade" ]; then
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) export VESTA_UPGRADE_FROM="${2:?--from needs a release tag}"; shift 2 ;;
+      --to) export VESTA_UPGRADE_TO="${2:?--to needs a release tag}"; shift 2 ;;
+      *) echo "error: unknown upgrade flag '$1'" >&2; usage ;;
+    esac
+  done
+  check_upgrade
+  exit $?
 fi
 
 for suite in "$@"; do
