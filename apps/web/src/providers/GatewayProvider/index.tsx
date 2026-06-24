@@ -112,7 +112,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const checkForUpdate = async () => {
     try {
       const data = await apiJson<GatewayVersionInfo>("/version/check", {
-        method: "GET",
+        method: "POST",
         signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
       });
       applyUpdateInfo(data);

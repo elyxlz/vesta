@@ -115,7 +115,7 @@ def clear_provider(*, config: VestaConfig) -> ProviderStatus:
     return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=config.agent_provider, model=None, max_context_tokens=None)
 
 
-def observed_provider_failure(status: ProviderStatus | None, *, config: VestaConfig) -> ProviderStatus | None:
+def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus | None:
     """Called by the SDK response-stream handler on a terminal upstream auth/billing error (401
     invalid auth, 402 insufficient credits). Returns the status flipped to NOT_AUTHENTICATED, or the
     input unchanged when there's nothing to flip. The flip is in-memory only: on the next boot the

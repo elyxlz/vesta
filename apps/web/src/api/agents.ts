@@ -100,15 +100,17 @@ export interface ProviderInfo {
   max_context_tokens: number | null;
 }
 
-/// Read an agent's current provider (kind + model), derived from its `GET /config`.
+/// Read an agent's current provider (kind + model), derived from its `GET /config`. `kind` is
+/// optional in the response: an agent still on pre-unification core returns a plain config dump with
+/// no derived `kind`, so we default to "none" rather than letting `providerMeta(undefined)` throw.
 export async function getProvider(name: string): Promise<ProviderInfo> {
   const config = await apiJson<{
-    kind: ProviderInfo["kind"];
+    kind?: ProviderInfo["kind"];
     agent_model: string | null;
     max_context_tokens: number | null;
   }>(`/agents/${encodeURIComponent(name)}/config`);
   return {
-    kind: config.kind,
+    kind: config.kind ?? "none",
     model: config.agent_model,
     max_context_tokens: config.max_context_tokens,
   };

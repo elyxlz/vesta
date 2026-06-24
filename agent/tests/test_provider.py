@@ -160,7 +160,7 @@ def test_observed_provider_failure_flips_in_memory_only(prov):
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(creds_json)
     status = set_claude(creds_json, config=config)
-    flipped = observed_provider_failure(status, config=config)
+    flipped = observed_provider_failure(status)
     # The runtime flip is in-memory only.
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
     # It does NOT persist: a fresh boot re-derives optimistically from disk (creds still present), so a
@@ -216,7 +216,7 @@ def test_runtime_failure_clears_reported_model(prov):
     creds_json = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
     status = set_claude(creds_json, config=config)
     assert status.model is not None
-    flipped = observed_provider_failure(status, config=config)
+    flipped = observed_provider_failure(status)
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
     assert flipped.model is None
 

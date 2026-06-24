@@ -1077,7 +1077,11 @@ fn run(cli: Cli) {
                             None if config["kind"].as_str() == Some("openrouter") => {
                                 eprintln!("context_window = default (model window, capped at 200K)")
                             }
-                            None => eprintln!("context_window = default (1M for Claude)"),
+                            None if config["kind"].as_str() == Some("claude") => {
+                                eprintln!("context_window = default (1M for Claude)")
+                            }
+                            // kind absent (pre-unification core) — don't claim a provider-specific default.
+                            None => eprintln!("context_window = default"),
                         }
                     }
                 }

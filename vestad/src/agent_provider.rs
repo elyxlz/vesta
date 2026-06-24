@@ -21,12 +21,15 @@ const SET_TIMEOUT: Duration = Duration::from_secs(10);
 /// NotAuthenticated. The rest of the config is opaque to vestad (it just relays it to the app).
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
-    /// Defaults to `true` for back-compat: an agent still running pre-unification core serves a
-    /// GET /config with no `authed` key, and must not be mislabeled NotAuthenticated until it
-    /// restarts into new core. A new-core not-authenticated agent reports `authed: false` explicitly.
+    /// LEGACY(remove-when: no fleet agent runs pre-`/config/auth` core — i.e. every agent's GET /config
+    /// reports `authed`): defaults to `true` so an agent still on pre-unification core (whose GET /config
+    /// is a plain config dump with no `authed` key) isn't mislabeled NotAuthenticated mid-upgrade. A
+    /// new-core not-authenticated agent reports `authed: false` explicitly. The cost is the inverse case
+    /// (a genuinely signed-out old-core agent briefly shows Alive), accepted as the smaller, transient
+    /// wrong for the common authenticated agent. Drop the default once the fleet has converged.
     #[serde(default = "default_true")]
     pub authed: bool,
-    /// Same back-compat default so an older agent that doesn't report the field isn't stuck in `SettingUp`.
+    /// Same legacy back-compat default so an older agent that doesn't report the field isn't stuck in `SettingUp`.
     #[serde(default = "default_true")]
     pub setup_complete: bool,
 }

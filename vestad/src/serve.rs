@@ -2048,7 +2048,7 @@ pub fn build_router(state: SharedState) -> Router {
         // refresh token for an unauthenticated caller.
         .route("/auth/exchange", post(auth::exchange_session_handler))
         .route("/version", get(version))
-        .route("/version/check", get(version_check))
+        .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))

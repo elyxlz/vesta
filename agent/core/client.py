@@ -217,7 +217,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
                 # and restart-looping.
                 logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
-                state.provider_status = observed_provider_failure(state.provider_status, config=config)
+                state.provider_status = observed_provider_failure(state.provider_status)
                 await attempt_interrupt(state, config=config, reason="Provider auth lost")
                 break
             if not text:
