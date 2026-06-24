@@ -1,155 +1,215 @@
-import { forwardRef, useMemo, type RefObject } from "react";
-import { Virtuoso, type Components, type VirtuosoHandle } from "react-virtuoso";
+import {
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type RefObject,
+} from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
-import {
-  buildDecorated,
-  useStableFirstItemIndex,
-  type DecoratedRow,
-} from "./virtual";
+import { buildDecorated } from "./virtual";
 
-interface ChatListContext {
-  isTyping: boolean;
-  hasMore: boolean;
-  hasMessages: boolean;
-  fullscreen?: boolean;
-  navbarHeight: number;
-  connected: boolean;
-  agentName: string;
-  isMobile: boolean;
+// First-paint estimates per row kind (actual heights are measured). Tool-call rows are
+// much shorter than message bubbles; estimating them all at the message height made the
+// virtualizer over-correct on every tool row that scrolled into view, which read as jank.
+const ESTIMATED_MESSAGE_HEIGHT = 64;
+const ESTIMATED_TOOL_HEIGHT = 30;
+// How close to the bottom (px) still counts as "pinned" — drives follow-on-append + the
+// at-bottom signal that hides the "new message" pill.
+const AT_BOTTOM_THRESHOLD_PX = 80;
+// Scrolling within this many px of the top loads the previous page.
+const LOAD_OLDER_TOP_PX = 120;
+// Rows rendered beyond the visible window on each side — a measurement margin. Bigger =
+// rows are rendered and measured BEFORE they scroll into view, so they appear at their real
+// height instead of resizing in front of you (this is the "measure then show" that smooths
+// scroll-up and prepends). Small values make the mount/unmount visible for debugging.
+const OVERSCAN_ROWS = 12;
+
+export interface ChatScrollHandle {
+  scrollToBottom: () => void;
 }
 
 interface ChatMessageAreaProps {
-  virtuosoRef: RefObject<VirtuosoHandle | null>;
-  onStartReached: () => void;
-  onAtBottomStateChange: (atBottom: boolean) => void;
+  scrollRef: RefObject<ChatScrollHandle | null>;
+  onAtBottomChange: (atBottom: boolean) => void;
+  loadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  loadingMore: boolean;
-  hasMore: boolean;
   chatMessages: VestaEvent[];
   connected: boolean;
+  historyLoaded: boolean;
   agentName: string;
+  notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
 }
 
-const Scroller: Components<DecoratedRow, ChatListContext>["Scroller"] =
-  forwardRef(function Scroller({ context, style, ...props }, ref) {
-    const fullscreen = context?.fullscreen;
-    const navbarHeight = context?.navbarHeight ?? 0;
-    return (
-      <div
-        {...props}
-        ref={ref}
-        className="px-4"
-        style={{
-          ...style,
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
-        }}
-      />
-    );
-  });
+// Placeholder bubbles shown while the first page of history is in flight, so a slow
+// load reads as a conversation arriving rather than an empty/"needs to sign in" state.
+// Mirrors ChatBubble: bg-secondary on the left (agent), bg-primary on the right (you),
+// clustered into runs like a real chat. The column is bottom-anchored and overflows the
+// top, so it reads as a thread continuing above the fold.
+const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
+  { side: "agent", size: "h-9 w-40" },
+  { side: "agent", size: "h-14 w-56" },
+  { side: "user", size: "h-9 w-28" },
+  { side: "user", size: "h-9 w-44" },
+  { side: "user", size: "h-9 w-24" },
+  { side: "agent", size: "h-9 w-48" },
+  { side: "agent", size: "h-9 w-32" },
+  { side: "user", size: "h-14 w-52" },
+  { side: "agent", size: "h-9 w-44" },
+  { side: "user", size: "h-9 w-36" },
+  { side: "user", size: "h-9 w-28" },
+  { side: "agent", size: "h-14 w-60" },
+  { side: "agent", size: "h-9 w-36" },
+  { side: "user", size: "h-9 w-40" },
+];
 
-function Header({ context }: { context?: ChatListContext }) {
-  if (!context) return null;
-  const paddingTop = context.fullscreen
-    ? `calc(${context.navbarHeight}px + 1rem)`
-    : 32;
+function ChatSkeleton() {
   return (
-    <div style={{ paddingTop }}>
-      {!context.hasMore && context.hasMessages && (
-        <div className="flex justify-center py-3">
-          <span className="text-[11px] text-muted-foreground/40">
-            beginning of conversation
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Footer({ context }: { context?: ChatListContext }) {
-  return (
-    <div className="pb-4">
-      {context?.isTyping && (
-        <div className="flex justify-start mt-2">
-          <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-            <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
+      {SKELETON_ROWS.map((row, i) => {
+        const isUser = row.side === "user";
+        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1].side === row.side;
+        return (
+          <div
+            key={i}
+            className={cn(
+              "flex",
+              isUser ? "justify-end" : "justify-start",
+              i > 0 && (sameAsPrev ? "mt-1.5" : "mt-5"),
+            )}
+          >
+            <div
+              className={cn(
+                "animate-pulse rounded-squircle-sm [corner-shape:squircle]",
+                row.size,
+                isUser
+                  ? "bg-primary rounded-br-sm"
+                  : "bg-secondary rounded-bl-sm",
+              )}
+            />
           </div>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
-
-function EmptyPlaceholder({ context }: { context?: ChatListContext }) {
-  if (!context) return null;
-  return (
-    <div className="flex flex-col items-center gap-2 py-2">
-      <span className="text-xs text-muted-foreground">
-        {context.connected
-          ? `${context.agentName} is setting things up`
-          : "connecting..."}
-      </span>
-    </div>
-  );
-}
-
-const components: Components<DecoratedRow, ChatListContext> = {
-  Scroller,
-  Header,
-  Footer,
-  EmptyPlaceholder,
-};
 
 export function ChatMessageArea({
-  virtuosoRef,
-  onStartReached,
-  onAtBottomStateChange,
+  scrollRef,
+  onAtBottomChange,
+  loadMore,
+  hasMore,
+  loadingMore,
   fullscreen,
   navbarHeight,
-  loadingMore,
-  hasMore,
   chatMessages,
   connected,
+  historyLoaded,
   agentName,
+  notAuthenticated,
   isTyping,
   isMobile,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
-  const firstItemIndex = useStableFirstItemIndex(decorated);
+  const count = decorated.length;
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const context = useMemo<ChatListContext>(
-    () => ({
-      isTyping,
-      hasMore,
-      hasMessages: decorated.length > 0,
-      fullscreen,
-      navbarHeight,
-      connected,
-      agentName,
-      isMobile,
-    }),
-    [
-      isTyping,
-      hasMore,
-      decorated.length,
-      fullscreen,
-      navbarHeight,
-      connected,
-      agentName,
-      isMobile,
-    ],
+  const getItemKey = useCallback(
+    (index: number) => decorated[index].key,
+    [decorated],
   );
+
+  const estimateSize = useCallback(
+    (index: number) =>
+      decorated[index]?.event.type === "tool_start"
+        ? ESTIMATED_TOOL_HEIGHT
+        : ESTIMATED_MESSAGE_HEIGHT,
+    [decorated],
+  );
+
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => parentRef.current,
+    estimateSize,
+    getItemKey,
+    // End-anchored chat scrolling: TanStack captures the visible keyed row before a data
+    // change and re-pins it after — keeping scroll stable across prepends (load older),
+    // streaming growth, and the show-tools toggle's mid-list inserts/removes.
+    anchorTo: "end",
+    followOnAppend: "smooth",
+    scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
+    overscan: OVERSCAN_ROWS,
+    // Apply row positions straight to the DOM instead of through a React re-render on every
+    // scroll frame. Critical for smooth upward scrolling, where measuring newly-revealed rows
+    // constantly nudges offsets — going through React there is what stutters.
+    directDomUpdates: true,
+  });
+
+  useImperativeHandle(
+    scrollRef,
+    () => ({
+      scrollToBottom: () => virtualizer.scrollToEnd({ behavior: "smooth" }),
+    }),
+    [virtualizer],
+  );
+
+  // Jump to the latest message when the first page of history arrives, and again whenever
+  // the list resets to empty (agent switch / reconnect) and repopulates.
+  const hadRowsRef = useRef(false);
+  useLayoutEffect(() => {
+    const hasRows = count > 0;
+    if (hasRows && !hadRowsRef.current) virtualizer.scrollToEnd();
+    hadRowsRef.current = hasRows;
+  }, [count, virtualizer]);
+
+  const atBottomRef = useRef(true);
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const atBottom = virtualizer.isAtEnd(AT_BOTTOM_THRESHOLD_PX);
+    if (atBottom !== atBottomRef.current) {
+      atBottomRef.current = atBottom;
+      onAtBottomChange(atBottom);
+    }
+    if (
+      hasMore &&
+      !loadingMore &&
+      !atBottom &&
+      el.scrollTop < LOAD_OLDER_TOP_PX
+    ) {
+      loadMore();
+    }
+  }, [virtualizer, onAtBottomChange, hasMore, loadingMore, loadMore]);
+
+  const items = virtualizer.getVirtualItems();
+  const topPad = fullscreen ? navbarHeight + 16 : 32;
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+      {count === 0 &&
+        (connected && !historyLoaded ? (
+          <ChatSkeleton />
+        ) : (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-6">
+            <span className="text-xs text-muted-foreground">
+              {!connected
+                ? "connecting..."
+                : notAuthenticated
+                  ? `${agentName} needs to sign in`
+                  : `${agentName} is setting things up`}
+            </span>
+          </div>
+        ))}
       <AnimatePresence>
         {loadingMore && (
           <motion.div
@@ -168,41 +228,82 @@ export function ChatMessageArea({
           </motion.div>
         )}
       </AnimatePresence>
-      <Virtuoso<DecoratedRow, ChatListContext>
-        ref={virtuosoRef}
-        className="h-full"
-        data={decorated}
-        context={context}
-        components={components}
-        firstItemIndex={firstItemIndex}
-        computeItemKey={(_index, row) => row.key}
-        alignToBottom
-        followOutput={(atBottom) => (atBottom ? "smooth" : false)}
-        initialTopMostItemIndex={{ index: "LAST", align: "end" }}
-        startReached={onStartReached}
-        atBottomStateChange={onAtBottomStateChange}
-        atBottomThreshold={48}
-        increaseViewportBy={{ top: 600, bottom: 200 }}
-        itemContent={(_index, row, ctx) => (
-          <div className="flex flex-col">
-            {row.showDayStamp && row.dayLabel && (
+      <div
+        ref={parentRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto overflow-x-hidden"
+        style={{
+          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+        }}
+      >
+        <div
+          ref={virtualizer.containerRef}
+          style={{ position: "relative", width: "100%" }}
+        >
+          {items.map((item) => {
+            const row = decorated[item.index];
+            const isLast = item.index === count - 1;
+            return (
               <div
-                className={cn("flex justify-center", !row.isFirst && "mt-5")}
+                key={item.key}
+                ref={virtualizer.measureElement}
+                data-index={item.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                }}
               >
-                <span className="text-[11px] text-muted-foreground/60 select-none">
-                  {row.dayLabel}
-                </span>
+                {row.isFirst && (
+                  <div style={{ paddingTop: topPad }}>
+                    {!hasMore && (
+                      <div className="flex justify-center py-3">
+                        <span className="text-[11px] text-muted-foreground/40">
+                          beginning of conversation
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-col px-4">
+                  {row.showDayStamp && row.dayLabel && (
+                    <div
+                      className={cn(
+                        "flex justify-center",
+                        !row.isFirst && "mt-5",
+                      )}
+                    >
+                      <span className="text-[11px] text-muted-foreground/60 select-none">
+                        {row.dayLabel}
+                      </span>
+                    </div>
+                  )}
+                  <ChatBubble
+                    event={row.event}
+                    className={row.gap}
+                    fullscreen={fullscreen}
+                    isMobile={isMobile}
+                  />
+                </div>
+                {isLast && (
+                  <div className="px-4 pb-4">
+                    {isTyping && (
+                      <div className="flex justify-start mt-2">
+                        <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-            <ChatBubble
-              event={row.event}
-              className={row.gap}
-              fullscreen={ctx.fullscreen}
-              isMobile={ctx.isMobile}
-            />
-          </div>
-        )}
-      />
+            );
+          })}
+        </div>
+      </div>
     </CardContent>
   );
 }

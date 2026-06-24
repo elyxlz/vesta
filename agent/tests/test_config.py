@@ -258,3 +258,40 @@ def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_pa
     assert store["agent_provider"] == "claude"
     assert "openrouter_key" not in store
     assert not legacy.exists()
+
+
+# --- Provider/general config ownership split (PUT /config vs PUT /provider/config) ---
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("agent_model", "opus"),
+        ("max_context_tokens", 500_000),
+        ("thinking", "enabled"),
+        ("openrouter_key", "sk-or-v1-x"),
+        ("agent_provider", "openrouter"),
+    ],
+)
+def test_validate_config_rejects_provider_owned_keys(config, key, value):
+    from core.config import validate_config_updates
+
+    with pytest.raises(ValueError, match="provider-owned"):
+        validate_config_updates(config, {key: value})
+
+
+def test_validate_config_accepts_general_keys(config):
+    from core.config import validate_config_updates
+
+    assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
+
+
+def test_validate_provider_prefs_accepts_only_prefs(config):
+    from core.config import validate_provider_prefs
+
+    assert validate_provider_prefs(config, {"agent_model": "opus", "max_context_tokens": 500_000}) == {
+        "agent_model": "opus",
+        "max_context_tokens": 500_000,
+    }
+    with pytest.raises(ValueError, match="not provider preferences"):
+        validate_provider_prefs(config, {"agent_personality": "playful"})

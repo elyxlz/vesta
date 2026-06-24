@@ -18,36 +18,57 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Set an agent's provider credentials (Claude OAuth blob or OpenRouter key + model), then apply
-/// the chosen preferences (personality, Claude model, context window) to the config store. Vestad
-/// restarts the agent to apply both.
+/// Provision an agent: set provider auth, provider-owned prefs (model, context window), and the
+/// general personality pref in one request. Vestad writes each to its owner and restarts the agent
+/// once — doing them as separate restart-on-write calls raced (a later write hit the agent
+/// mid-restart and was dropped). The caller splits the parts; vestad just forwards each.
 export async function setProvider(
   name: string,
   result: ProviderResult,
   personality?: string,
 ): Promise<void> {
-  const body: Record<string, unknown> =
+  const provider: Record<string, unknown> =
     result.kind === "claude"
       ? { credentials: result.credentials }
       : {
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  // OpenRouter's model rides along in openrouter_model above; everything else is a config-store
-  // preference applied here in one PUT.
+  // Provider-owned prefs. OpenRouter's model rides in the auth body above (openrouter_model), so
+  // only Claude carries an explicit agent_model here; context applies to both.
+  const providerConfig: Record<string, unknown> = {};
+  if (result.kind === "claude" && result.model)
+    providerConfig.agent_model = result.model;
+  if (result.maxContextTokens != null)
+    providerConfig.max_context_tokens = result.maxContextTokens;
+  // General prefs.
   const config: Record<string, unknown> = {};
   if (personality) config.agent_personality = personality;
-  if (result.kind === "claude" && result.model)
-    config.agent_model = result.model;
-  if (result.maxContextTokens != null) {
-    config.max_context_tokens = result.maxContextTokens;
-  }
-  if (Object.keys(config).length > 0) await setConfig(name, config);
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, provider_config: providerConfig, config }),
+  });
+}
+
+/// Update provider-owned preferences (model and/or context window) without touching auth. Vestad
+/// restarts the agent to apply.
+export async function setProviderConfig(
+  name: string,
+  prefs: { agent_model?: string; max_context_tokens?: number },
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_config: prefs }),
+  });
+}
+
+/// Sign out: clear the agent's provider credentials, leaving it not_authenticated until reconnected.
+export async function signOutProvider(name: string): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "DELETE",
+  });
 }
 
 export interface ProviderInfo {
@@ -72,35 +93,22 @@ export interface AgentConfig {
   thinking: string;
 }
 
-/// Update any agent config field via its config store (PUT /config), keyed by VestaConfig field name.
-/// An omitted field is left unchanged, a null clears it; vestad restarts the agent to apply.
-export async function setConfig(
-  name: string,
-  config: Record<string, unknown>,
-): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-}
-
 /// Read an agent's current config, proxied from the agent.
 export async function getConfig(name: string): Promise<AgentConfig> {
   return apiJson<AgentConfig>(`/agents/${encodeURIComponent(name)}/config`);
 }
 
-/// Change only the model preference. Vestad restarts the agent so it takes effect.
+/// Change only the model preference (provider-owned). Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await setConfig(name, { agent_model: model });
+  await setProviderConfig(name, { agent_model: model });
 }
 
-/// Change only the context window (tokens). Vestad restarts the agent so it takes effect.
+/// Change only the context window (provider-owned). Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await setConfig(name, { max_context_tokens: maxContextTokens });
+  await setProviderConfig(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
@@ -265,27 +273,25 @@ export async function deleteBackup(
   );
 }
 
-export interface RateLimit {
-  utilization: number | null;
+/// Normalized, provider-agnostic plan usage (agent's GET /provider/usage). `meters` are
+/// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
+/// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
+export interface UsageMeter {
+  label: string;
+  used_pct: number | null;
   resets_at: string | null;
 }
 
-export interface ExtraUsage {
-  is_enabled: boolean;
-  monthly_limit: number | null;
-  used_credits: number | null;
-  utilization: number | null;
+export interface UsageCredits {
+  used: number | null;
+  limit: number | null;
 }
 
-export interface Utilization {
-  five_hour?: RateLimit | null;
-  seven_day?: RateLimit | null;
-  seven_day_oauth_apps?: RateLimit | null;
-  seven_day_opus?: RateLimit | null;
-  seven_day_sonnet?: RateLimit | null;
-  extra_usage?: ExtraUsage | null;
+export interface Usage {
+  meters: UsageMeter[];
+  credits: UsageCredits | null;
 }
 
-export async function fetchUsage(name: string): Promise<Utilization> {
-  return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
+export async function fetchUsage(name: string): Promise<Usage> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/provider/usage`);
 }

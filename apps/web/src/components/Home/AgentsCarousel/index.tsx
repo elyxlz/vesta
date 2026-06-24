@@ -1,7 +1,8 @@
 import { motion, useMotionValueEvent, useTransform } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Carousel } from "@/lib/Carousel/index.mjs";
 import { useCarousel } from "@/lib/Carousel/context.mjs";
+import { useTicker } from "@/lib/Ticker/context.mjs";
 import { useTickerItem } from "@/lib/Ticker/use-ticker-item.mjs";
 import { AgentCard } from "@/components/AgentCard";
 import type { AgentInfo } from "@/lib/types";
@@ -37,6 +38,24 @@ function Pagination() {
   );
 }
 
+// Centers the given item index with no animation, once the carousel has
+// measured its items. On first mount the rendered offset is still "attached" to
+// targetOffset, so setting targetOffset jumps instantly instead of springing.
+// Runs a single time; horizontal axis means sign is 1.
+function CenterOnMount({ index }: { index: number }) {
+  const { targetOffset } = useCarousel();
+  const { itemPositions, clampOffset } = useTicker();
+  const centered = useRef(false);
+
+  useEffect(() => {
+    if (centered.current || index <= 0 || itemPositions.length <= index) return;
+    centered.current = true;
+    targetOffset.set(clampOffset(-itemPositions[index].start));
+  }, [targetOffset, clampOffset, itemPositions, index]);
+
+  return null;
+}
+
 function CarouselCard({ agent }: { agent: AgentInfo }) {
   const { offset } = useTickerItem();
   const [isCentered, setIsCentered] = useState(
@@ -66,7 +85,13 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
   );
 }
 
-export function AgentsCarousel({ agents }: { agents: AgentInfo[] }) {
+export function AgentsCarousel({
+  agents,
+  initialIndex = -1,
+}: {
+  agents: AgentInfo[];
+  initialIndex?: number;
+}) {
   const items = agents.map((agent) => (
     <CarouselCard key={agent.name} agent={agent} />
   ));
@@ -88,6 +113,7 @@ export function AgentsCarousel({ agents }: { agents: AgentInfo[] }) {
         overscrollBehaviorX: "none",
       }}
     >
+      <CenterOnMount index={initialIndex} />
       <Pagination />
     </Carousel>
   );

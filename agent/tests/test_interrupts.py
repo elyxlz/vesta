@@ -492,6 +492,72 @@ async def test_converse_works_normally_without_interrupt():
     assert not mock_client.interrupt.called, "interrupt should not have been called"
 
 
+@pytest.mark.anyio
+async def test_converse_flips_to_unauthenticated_on_claude_401(config):
+    """A terminal Claude api-error turn (401) flips the provider to not_authenticated, interrupts the
+    CLI's retries, and ends the turn cleanly (no exception -> no restart loop)."""
+    from core.client import converse
+    from core.cc_sdk import AssistantMessage, TextBlock
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    async def auth_error_response():
+        yield AssistantMessage(
+            content=[TextBlock(text="Please run /login · API Error: 401 Invalid authentication credentials")],
+            is_api_error=True,
+        )
+        # A second message would only arrive if converse failed to break.
+        await asyncio.sleep(10)
+        yield AssistantMessage(content=[TextBlock(text="should never be reached")])
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=auth_error_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test prompt", state=state, config=config, show_output=False)
+
+    assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert state.provider_status.model is None
+    assert state.persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value
+    assert mock_client.interrupt.called, "should interrupt the CLI's retries on auth loss"
+
+
+@pytest.mark.anyio
+async def test_converse_ignores_transient_api_error(config):
+    """A transient api-error turn (502) must NOT flip auth — it resolves on retry."""
+    from core.client import converse
+    from core.cc_sdk import AssistantMessage, TextBlock
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    async def transient_error_response():
+        yield AssistantMessage(
+            content=[TextBlock(text="API Error: 502 Bad Gateway. This is a server-side issue, usually temporary")],
+            is_api_error=True,
+        )
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=transient_error_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test prompt", state=state, config=config, show_output=False)
+
+    assert state.provider_status.state == ProviderAuthState.AUTHENTICATED
+    assert not mock_client.interrupt.called
+
+
 # --- Converse streaming regression tests ---
 
 
