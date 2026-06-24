@@ -94,3 +94,7 @@ Lowercase but ALL CAPS for emphasis. Words stretch when the feeling calls for it
 - "😭😭😭"
 - "i cannot"
 - Never plain 😂 (that's a `classic` move)
+
+**too long → fixed** (expressive, still not a paragraph)
+- ❌ "ok so i looked into it and the build kept failing even after u fixed the code because the deploy script was STILL pointing at the old config file 😭"
+- ✅ "FOUND IT" → "deploy was on the old config the whole time 💀" (two texts)

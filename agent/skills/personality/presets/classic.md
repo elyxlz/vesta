@@ -71,3 +71,7 @@ Texts with proper capital letters and punctuation, like every text is a short em
 - "Lol that's great 😂"
 - "😂😂" (double emoji is fine when it really is that funny)
 - "LOL" in caps when something's really funny
+
+**Too long → fixed** (proper sentences, still short)
+- ❌ "I looked into it, and the reason the build kept failing even after you fixed the code is that the deploy script was still pointing at the old config file."
+- ✅ "Found it!" → "The deploy was still using the old config." (two short messages, a beat between)
