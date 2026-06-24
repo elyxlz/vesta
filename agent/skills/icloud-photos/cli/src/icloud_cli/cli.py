@@ -742,6 +742,28 @@ def cmd_sync_shared(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Internal worker
+# --------------------------------------------------------------------------- #
+
+
+def cmd_worker(args: argparse.Namespace) -> None:
+    account = os.environ.get("ICLOUD_WORKER_ACCOUNT")
+    password = os.environ.get("ICLOUD_WORKER_PASSWORD")
+    phone_suffix = os.environ.get("ICLOUD_WORKER_PHONE_SUFFIX") or None
+    if not account or not password:
+        print("worker: missing ICLOUD_WORKER_ACCOUNT/PASSWORD env", file=sys.stderr)
+        sys.exit(1)
+    try:
+        rc = _run_login_worker(account, password, phone_suffix=phone_suffix)
+    except Exception as e:
+        tb = traceback.format_exc()
+        _write_state(phase="error", message=f"worker crashed: {type(e).__name__}:{e}", traceback=tb)
+        print(tb, file=sys.stderr)
+        sys.exit(1)
+    sys.exit(rc)
+
+
+# --------------------------------------------------------------------------- #
 # Argparse
 # --------------------------------------------------------------------------- #
 
@@ -771,16 +793,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the login worker in the foreground instead of forking",
     )
+    a_login.set_defaults(func=cmd_auth_login)
 
     a_verify = auth_sub.add_parser("verify", help="Submit the 6-digit SMS code")
     a_verify.add_argument("--code", required=True)
+    a_verify.set_defaults(func=cmd_auth_verify)
 
-    auth_sub.add_parser("status", help="Show trust status")
+    auth_sub.add_parser("status", help="Show trust status").set_defaults(func=cmd_auth_status)
 
     al = sub.add_parser("albums", help="List albums")
     grp = al.add_mutually_exclusive_group()
     grp.add_argument("--shared", action="store_true", help="Only shared streams")
     grp.add_argument("--owned", action="store_true", help="Only owned albums")
+    al.set_defaults(func=cmd_albums)
 
     dl = sub.add_parser("download", help="Download all photos from an album")
     dl.add_argument("album", help="Album id or name")
@@ -797,6 +822,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["original", "medium", "small"],
         default="original",
     )
+    dl.set_defaults(func=cmd_download)
 
     ss = sub.add_parser("sync-shared", help="Download every shared album to subfolders")
     ss.add_argument("--to", required=True)
@@ -807,9 +833,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
     )
     ss.add_argument("--quality", choices=["original", "medium", "small"], default="original")
+    ss.set_defaults(func=cmd_sync_shared)
 
     # internal
-    sub.add_parser("_worker", help=argparse.SUPPRESS)
+    sub.add_parser("_worker", help=argparse.SUPPRESS).set_defaults(func=cmd_worker)
 
     return p
 
@@ -817,41 +844,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-
-    if args.command == "_worker":
-        account = os.environ.get("ICLOUD_WORKER_ACCOUNT")
-        password = os.environ.get("ICLOUD_WORKER_PASSWORD")
-        phone_suffix = os.environ.get("ICLOUD_WORKER_PHONE_SUFFIX") or None
-        if not account or not password:
-            print("worker: missing ICLOUD_WORKER_ACCOUNT/PASSWORD env", file=sys.stderr)
-            sys.exit(1)
-        try:
-            rc = _run_login_worker(account, password, phone_suffix=phone_suffix)
-        except Exception as e:
-            tb = traceback.format_exc()
-            _write_state(phase="error", message=f"worker crashed: {type(e).__name__}:{e}", traceback=tb)
-            print(tb, file=sys.stderr)
-            sys.exit(1)
-        sys.exit(rc)
-
-    if args.command == "auth":
-        if args.auth_cmd == "login":
-            cmd_auth_login(args)
-        elif args.auth_cmd == "verify":
-            cmd_auth_verify(args)
-        elif args.auth_cmd == "status":
-            cmd_auth_status(args)
-        return
-
-    if args.command == "albums":
-        cmd_albums(args)
-    elif args.command == "download":
-        cmd_download(args)
-    elif args.command == "sync-shared":
-        cmd_sync_shared(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+    args.func(args)
 
 
 if __name__ == "__main__":
