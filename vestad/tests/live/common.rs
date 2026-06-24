@@ -72,7 +72,7 @@ fn exec_ok(container: &str, script: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn host_credentials_path() -> Option<PathBuf> {
+pub fn host_credentials_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let path = PathBuf::from(home).join(".claude/.credentials.json");
     path.exists().then_some(path)
@@ -114,7 +114,7 @@ pub fn wait_for_file_contains(container: &str, path: &str, needle: &str, timeout
     Err(format!("timed out waiting for {path} to contain {needle}"))
 }
 
-fn wait_for_container_running(container: &str, timeout: Duration) -> Result<(), String> {
+pub fn wait_for_container_running(container: &str, timeout: Duration) -> Result<(), String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if let Ok(state) = docker_cmd(&["inspect", container, "--format", "{{.State.Running}}"]) {
@@ -157,14 +157,72 @@ fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
     wait_for_file_contains(container, READY_MARKER, "READY", FIRST_START_SETTLE_TIMEOUT).map(|_| ())
 }
 
-fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
-    let Some(credentials_path) = host_credentials_path() else {
-        eprintln!("skipping live e2e: ~/.claude/.credentials.json not found");
-        return None;
-    };
+/// Block until the agent reports `alive`, failing fast with diagnostics on an auth error.
+///
+/// `wait_until_alive` would block for the full timeout if the injected credentials are
+/// rejected. Poll the agent's own log alongside its status and bail the moment an auth
+/// error appears (a dead/expired CLAUDE_CREDENTIALS is the usual cause).
+pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str, container: &str) {
+    let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
+    loop {
+        if std::time::Instant::now() >= alive_deadline {
+            dump_agent_diagnostics(name);
+            panic!("timeout waiting for agent to go alive");
+        }
+        if client.agent_status(name).map(|s| s.status).unwrap_or_default() == "alive" {
+            return;
+        }
+        let agent_log = exec_in_container(container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
+        if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
+            dump_agent_diagnostics(name);
+            panic!("agent hit an auth error — CLAUDE_CREDENTIALS is invalid/expired; re-seed the secret (agent diagnostics above)");
+        }
+        thread::sleep(FIRST_START_ALIVE_POLL);
+    }
+}
 
+/// Provision a freshly-created agent for live e2e (sonnet model, test memory, real
+/// credentials) and block until it has fully settled after first-start. Shared by the live
+/// agent pool and the upgrade e2e test, both of which need a real, idle agent. Panics with
+/// diagnostics on failure, matching the pool's fail-fast behavior. Callers must have already
+/// confirmed credentials exist (via `host_credentials_path`).
+pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str) {
+    let credentials_path = host_credentials_path().expect("credentials present (caller checked)");
     let credentials = fs::read_to_string(&credentials_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", credentials_path.display()));
+
+    wait_for_container_running(container, Duration::from_secs(60)).expect("container running");
+
+    // Use sonnet for e2e tests — cheaper and faster than the default opus
+    exec_in_container(container, "echo 'export AGENT_MODEL=sonnet' >> ~/.bashrc")
+        .expect("set AGENT_MODEL=sonnet");
+
+    exec_in_container(container, &format!("mkdir -p {E2E_FILES_DIR}")).expect("create e2e dir");
+    exec_in_container(container, &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"))
+        .expect("write test memory");
+
+    client.inject_token(name, &credentials).expect("inject real credentials");
+    // Always restart after injection so the agent boots with BOTH the credentials and
+    // the AGENT_MODEL=sonnet override from ~/.bashrc. Without the restart, the
+    // already-running agent picks up the credentials but keeps the default (opus)
+    // model for the whole first-start conversation.
+    client.restart_agent(name).expect("restart agent to apply model + credentials");
+
+    wait_until_alive_or_die(client, name, container);
+
+    // First-start keeps going after the agent reports alive; wait (via the agent's own idle
+    // signal) until it has fully settled before any test sends notifications.
+    if let Err(e) = wait_for_first_start_settled(container) {
+        dump_agent_diagnostics(name);
+        panic!("agent did not settle after first-start: {e}");
+    }
+}
+
+fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
+    if host_credentials_path().is_none() {
+        eprintln!("skipping live e2e: ~/.claude/.credentials.json not found");
+        return None;
+    }
 
     // Follow the real user creation path: build the image, then discover
     // the container via the API (not by hardcoding the naming convention).
@@ -189,51 +247,6 @@ fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
 
-    wait_for_container_running(&container, Duration::from_secs(60)).expect("container running");
-
-    // Use sonnet for e2e tests — cheaper and faster than the default opus
-    exec_in_container(&container, "echo 'export AGENT_MODEL=sonnet' >> ~/.bashrc")
-        .expect("set AGENT_MODEL=sonnet");
-
-    exec_in_container(&container, &format!("mkdir -p {E2E_FILES_DIR}")).expect("create e2e dir");
-    exec_in_container(
-        &container,
-        &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"),
-    )
-    .expect("write test memory");
-
-    client.inject_token(&agent.name, &credentials).expect("inject real credentials");
-    // Always restart after injection so the agent boots with BOTH the credentials and
-    // the AGENT_MODEL=sonnet override from ~/.bashrc. Without the restart, the
-    // already-running agent picks up the credentials but keeps the default (opus)
-    // model for the whole first-start conversation.
-    client.restart_agent(&agent.name).expect("restart agent to apply model + credentials");
-
-    // wait_until_alive would block for the full timeout if the injected credentials are rejected.
-    // Poll the agent's own log alongside its status and fail fast with diagnostics the moment an
-    // auth error appears (a dead/expired CLAUDE_CREDENTIALS is the usual cause).
-    let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
-    loop {
-        if std::time::Instant::now() >= alive_deadline {
-            dump_agent_diagnostics(&agent.name);
-            panic!("timeout waiting for first-start to go alive");
-        }
-        if client.agent_status(&agent.name).map(|s| s.status).unwrap_or_default() == "alive" {
-            break;
-        }
-        let agent_log = exec_in_container(&container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
-        if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
-            dump_agent_diagnostics(&agent.name);
-            panic!("first-start hit an auth error — CLAUDE_CREDENTIALS is invalid/expired; re-seed the secret (agent diagnostics above)");
-        }
-        thread::sleep(FIRST_START_ALIVE_POLL);
-    }
-
-    // First-start keeps going after the agent reports alive; wait (via the agent's own idle
-    // signal) until it has fully settled before any test sends notifications.
-    if let Err(e) = wait_for_first_start_settled(&container) {
-        dump_agent_diagnostics(&agent.name);
-        panic!("agent did not settle after first-start: {e}");
-    }
+    provision_and_settle(client, &agent.name, &container);
     Some((agent, container))
 }
