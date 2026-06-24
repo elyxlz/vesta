@@ -45,7 +45,7 @@ jobs:
 
       # Full history: the production push is a force-push of the tag's commit, and a
       # shallow checkout can be rejected with "shallow update not allowed".
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
           token: ${{ secrets.RELEASE_PAT }}
@@ -111,7 +111,7 @@ jobs:
             echo "SKIP_IOS_SUBMIT=true" >> "$GITHUB_ENV"
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: env.SKIP_IOS_SUBMIT != 'true'
         with:
           ref: ${{ inputs.tag }}
