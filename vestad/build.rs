@@ -136,20 +136,37 @@ fn run_npm(cwd: &Path, args: &[&str], env: &[(&str, &str)]) {
     }
 }
 
+/// Resolve the vendoring arch suffix (`amd64`/`arm64`) for linux targets, or `None` to skip
+/// vendoring (the skip env var is set, a non-linux target, or an unsupported arch).
+fn vendor_arch(skip_env: &str) -> Option<&'static str> {
+    if std::env::var_os(skip_env).is_some() {
+        return None;
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "linux" {
+        return None;
+    }
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "x86_64" => Some("amd64"),
+        "aarch64" => Some("arm64"),
+        _ => None,
+    }
+}
+
+/// Download `url` to `dest` with curl, retrying transient GitHub CDN 502s. Returns whether the
+/// download succeeded; panics only if curl itself cannot be spawned.
+fn curl_fetch(url: &str, dest: &Path, artifact: &str) -> bool {
+    Command::new("curl")
+        .args(["-fsSL", "--retry", "5", "--retry-all-errors", "--retry-delay", "2", "-o", dest.to_str().unwrap(), url])
+        .status()
+        .unwrap_or_else(|e| {
+            panic!("failed to spawn curl while vendoring {artifact}: {e} (set VESTAD_SKIP_{}=1 to skip)", artifact.to_uppercase())
+        })
+        .success()
+}
+
 fn vendor_cloudflared(manifest_dir: &Path) {
-    if std::env::var_os("VESTAD_SKIP_CLOUDFLARED").is_some() {
+    let Some(arch) = vendor_arch("VESTAD_SKIP_CLOUDFLARED") else {
         return;
-    }
-
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os != "linux" {
-        return;
-    }
-
-    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => return,
     };
 
     let vendored_dir = manifest_dir.join("vendored");
@@ -160,19 +177,7 @@ fn vendor_cloudflared(manifest_dir: &Path) {
         std::fs::create_dir_all(&vendored_dir)
             .expect("failed to create vendored dir");
         let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
-        // GitHub release CDN occasionally 502s; retry on any transient error.
-        let status = Command::new("curl")
-            .args([
-                "-fsSL",
-                "--retry", "5",
-                "--retry-all-errors",
-                "--retry-delay", "2",
-                "-o", dest.to_str().unwrap(),
-                &url,
-            ])
-            .status()
-            .expect("failed to spawn curl while vendoring cloudflared (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
-        if !status.success() {
+        if !curl_fetch(&url, &dest, "cloudflared") {
             panic!("failed to download cloudflared from {url} (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
         }
     }
@@ -181,19 +186,8 @@ fn vendor_cloudflared(manifest_dir: &Path) {
 }
 
 fn vendor_restic(manifest_dir: &Path) {
-    if std::env::var_os("VESTAD_SKIP_RESTIC").is_some() {
+    let Some(arch) = vendor_arch("VESTAD_SKIP_RESTIC") else {
         return;
-    }
-
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os != "linux" {
-        return;
-    }
-
-    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => return,
     };
 
     let vendored_dir = manifest_dir.join("vendored");
@@ -208,19 +202,7 @@ fn vendor_restic(manifest_dir: &Path) {
         // default /bin/sh on Debian/Ubuntu, lacks `set -o pipefail`).
         let url = format!("{RESTIC_DOWNLOAD_BASE}/v{RESTIC_VERSION}/restic_{RESTIC_VERSION}_linux_{arch}.bz2");
         let bz2 = vendored_dir.join("restic.bz2");
-        // GitHub release CDN occasionally 502s; retry on any transient error.
-        let status = Command::new("curl")
-            .args([
-                "-fsSL",
-                "--retry", "5",
-                "--retry-all-errors",
-                "--retry-delay", "2",
-                "-o", bz2.to_str().unwrap(),
-                &url,
-            ])
-            .status()
-            .expect("failed to spawn curl while vendoring restic (set VESTAD_SKIP_RESTIC=1 to skip)");
-        if !status.success() {
+        if !curl_fetch(&url, &bz2, "restic") {
             std::fs::remove_file(&bz2).ok();
             panic!("failed to download restic from {url} (set VESTAD_SKIP_RESTIC=1 to skip)");
         }

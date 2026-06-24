@@ -44,6 +44,7 @@ import {
   type UsageMeter,
 } from "@/api/agents";
 import { formatTokens } from "@/lib/format";
+import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { useAgentDefaults } from "@/hooks/use-agent-defaults";
@@ -125,55 +126,37 @@ export function ProviderCard() {
   const meters = usage?.meters ?? [];
   const credits = usage?.credits ?? null;
 
-  const applyModel = async (model: string) => {
+  const runAction = async (action: () => Promise<void>, fallback: string) => {
     if (!name) return;
     setApplying(true);
     setError(null);
     try {
+      await action();
+      refresh();
+    } catch (e) {
+      setError(errorMessage(e, fallback));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const applyModel = (model: string) =>
+    runAction(async () => {
       await setModel(name, model);
       setModelOpen(false);
-      refresh();
-    } catch (e: unknown) {
-      setError(
-        (e as { message?: string })?.message || "failed to change model",
-      );
-    } finally {
-      setApplying(false);
-    }
-  };
+    }, "failed to change model");
 
-  const applyContext = async (tokens: number) => {
-    if (!name) return;
-    setApplying(true);
-    setError(null);
-    try {
+  const applyContext = (tokens: number) =>
+    runAction(async () => {
       await setContextWindow(name, tokens);
       setContextOpen(false);
-      refresh();
-    } catch (e: unknown) {
-      setError(
-        (e as { message?: string })?.message ||
-          "failed to change context window",
-      );
-    } finally {
-      setApplying(false);
-    }
-  };
+    }, "failed to change context window");
 
-  const handleSignOut = async () => {
-    if (!name) return;
-    setApplying(true);
-    setError(null);
-    try {
+  const handleSignOut = () =>
+    runAction(async () => {
       await signOutProvider(name);
       setSignOutOpen(false);
-      refresh();
-    } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "failed to sign out");
-    } finally {
-      setApplying(false);
-    }
-  };
+    }, "failed to sign out");
 
   return (
     <Card size="sm">

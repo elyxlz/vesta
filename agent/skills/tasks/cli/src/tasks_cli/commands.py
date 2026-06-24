@@ -151,6 +151,13 @@ def _delete_metadata(data_dir: Path, task_id: str):
     _get_metadata_path(data_dir, task_id).unlink(missing_ok=True)
 
 
+def _require_task_row(conn, task_id: str):
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+    return row
+
+
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:
     task = dict(row)
     task_id = task["id"]
@@ -238,10 +245,7 @@ def update_task(
         due_date_changed = True
 
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        result = cursor.fetchone()
-        if not result:
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        result = _require_task_row(conn, task_id)
 
         updates = []
         params = []
@@ -293,10 +297,7 @@ def update_task(
 
 def get_task(config: Config, *, task_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        result = cursor.fetchone()
-        if not result:
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        result = _require_task_row(conn, task_id)
         return _task_with_metadata(config.data_dir, dict(result), include_content=True)
 
 
@@ -325,10 +326,7 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
     out: dict[str, Any] = {}
     if want_db or "metadata_path" in fields:
         with closing(db.get_db(config.data_dir)) as conn:
-            cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-            if not row:
-                raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+            row = _require_task_row(conn, task_id)
             for f in want_db:
                 out[f] = row[f]
             if "metadata_path" in fields:
@@ -342,9 +340,7 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
 
 def delete_task(config: Config, *, task_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        if not cursor.fetchone():
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        _require_task_row(conn, task_id)
         # FK CASCADE handles linked reminders automatically
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         conn.commit()

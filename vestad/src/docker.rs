@@ -465,21 +465,26 @@ pub fn is_agent_ready(port: u16) -> bool {
     .is_ok()
 }
 
-pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    match container_status(docker, cname).await {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
-        _ => Ok(()),
+/// Reject the two terminal container states (`NotFound`, `Dead`) with their standard
+/// errors, passing a live (`Running`/`Stopped`) status through. The single owner of the
+/// "agent not found / broken state" wording and the shared precondition guard every
+/// name-addressed lifecycle op repeats; `name` is the agent name used in the error text.
+fn guard_alive(status: ContainerStatus, name: &str) -> Result<ContainerStatus, DockerError> {
+    match status {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        live => Ok(live),
     }
 }
 
+pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    guard_alive(container_status(docker, cname).await, &name_from_cname(cname)).map(|_| ())
+}
+
 pub async fn ensure_running(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    let cs = container_status(docker, cname).await;
-    match cs {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+    match guard_alive(container_status(docker, cname).await, &name_from_cname(cname))? {
         ContainerStatus::Running => Ok(()),
-        ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
+        _ => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
     }
 }
 
@@ -861,7 +866,6 @@ pub fn detect_upstream_ref() -> Option<String> {
 /// no stale entries (e.g. directories where files should be). Fails fast with a
 /// clear error instead of producing cryptic permission errors later.
 pub fn validate_config_dir(env_config: &AgentEnvConfig) -> Result<(), DockerError> {
-    // Ensure dirs exist
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!(
             "cannot create agents directory {}: {e} — check ownership (try: sudo chown -R $(whoami) {})",
@@ -1432,22 +1436,8 @@ pub(crate) fn percent_encode(s: &str) -> String {
 }
 
 fn base64url_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
-        out.push(CHARS[b0 >> 2] as char);
-        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[b2 & 0x3f] as char);
-        }
-    }
-    out
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
 use ring::rand::SecureRandom;
@@ -1682,12 +1672,8 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => return Ok(()),
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        return Ok(());
     }
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(format!("failed to start '{}'", name)));
@@ -1717,12 +1703,8 @@ pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
 pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Stopped => return Ok(()),
-        ContainerStatus::Running => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
+        return Ok(());
     }
     docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
@@ -1893,12 +1875,8 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
 pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => { docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok(); }
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
@@ -1931,7 +1909,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check cmd
     let cmd = info.config.as_ref()
         .and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
@@ -1946,7 +1923,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check network mode
     let network = info.host_config.as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
@@ -1966,7 +1942,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check /dev/fuse device
     let devices = info.host_config.as_ref()
         .and_then(|h| h.devices.as_deref())
         .unwrap_or(&[]);
@@ -1978,7 +1953,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check SYS_ADMIN capability
     let caps = info.host_config.as_ref()
         .and_then(|h| h.cap_add.as_deref())
         .unwrap_or(&[]);
@@ -1988,6 +1962,19 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
     }
 
     false
+}
+
+/// Resolve an existing agent's WS port for a snapshot-and-recreate: prefer the env-file
+/// port, fall back to the container's baked-in WS_PORT, then allocate a fresh one.
+async fn resolve_existing_port(docker: &Docker, cname: &str, info: &ContainerInfo, name: &str, agents_dir: &std::path::Path) -> Result<u16, DockerError> {
+    let baked = read_container_env(docker, cname, "WS_PORT").await.and_then(|v| v.parse::<u16>().ok());
+    match info.port.or(baked) {
+        Some(port) => Ok(port),
+        None => {
+            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
+            allocate_port(agents_dir)
+        }
+    }
 }
 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
@@ -2000,24 +1987,11 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     let cname = container_name(name);
     let raw = docker.inspect_container(&cname, None).await.map_err(DockerError::from)?;
     let info = container_info_from(&cname, &raw, Some(&env_config.agents_dir));
-    match info.status {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        _ => {}
-    }
+    guard_alive(info.status, name)?;
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    // Get port: try env file first, then container's baked-in env vars, then allocate new
-    let container_port = read_container_env(docker, &cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
@@ -2079,15 +2053,7 @@ pub async fn rename_agent(
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    let container_port = read_container_env(docker, &old_cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %old_name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &old_cname, &info, old_name, &env_config.agents_dir).await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2161,6 +2127,22 @@ mod tests {
         let tmux_at = script.find("command -v tmux").expect("tmux step present");
         let main_at = script.find("python -m core.main").expect("main step present");
         assert!(tmux_at < main_at, "tmux install must precede launching core.main");
+    }
+
+    #[test]
+    fn guard_alive_rejects_terminal_states_and_passes_live_through() {
+        // The two terminal states map to their standard errors with the exact agent-facing
+        // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
+        let not_found = guard_alive(ContainerStatus::NotFound, "bot").expect_err("not found errors");
+        assert!(matches!(not_found, DockerError::NotFound(_)));
+        assert_eq!(not_found.to_string(), "agent 'bot' not found");
+
+        let dead = guard_alive(ContainerStatus::Dead, "bot").expect_err("dead errors");
+        assert!(matches!(dead, DockerError::BrokenState(_)));
+        assert_eq!(dead.to_string(), "agent 'bot' is in a broken state");
+
+        assert_eq!(guard_alive(ContainerStatus::Running, "bot").expect("running ok"), ContainerStatus::Running);
+        assert_eq!(guard_alive(ContainerStatus::Stopped, "bot").expect("stopped ok"), ContainerStatus::Stopped);
     }
 
     #[test]
@@ -2252,11 +2234,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_simple() {
-        assert_eq!(normalize_name("MyAgent"), "myagent");
-    }
-
-    #[test]
     fn retry_import_pipeline_recovers_after_transient_failure() {
         let tries = std::cell::Cell::new(0u32);
         let result = retry_import_pipeline("test", || {
@@ -2283,38 +2260,20 @@ mod tests {
     }
 
     #[test]
-    fn normalize_spaces_and_underscores() {
-        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
-    }
-
-    #[test]
-    fn normalize_special_chars() {
-        assert_eq!(normalize_name("hello!@#world"), "helloworld");
-    }
-
-    #[test]
-    fn normalize_leading_trailing_hyphens() {
-        assert_eq!(normalize_name("--test--"), "test");
-    }
-
-    #[test]
-    fn normalize_multiple_hyphens() {
-        assert_eq!(normalize_name("a---b"), "a-b");
-    }
-
-    #[test]
-    fn normalize_whitespace() {
-        assert_eq!(normalize_name("  hello  "), "hello");
-    }
-
-    #[test]
-    fn normalize_empty() {
-        assert_eq!(normalize_name(""), "");
-    }
-
-    #[test]
-    fn normalize_all_special() {
-        assert_eq!(normalize_name("!!!"), "");
+    fn normalize_name_lowercases_and_sanitizes() {
+        let cases = [
+            ("MyAgent", "myagent"),
+            ("My Agent_Name", "my-agent-name"),
+            ("hello!@#world", "helloworld"),
+            ("--test--", "test"),
+            ("a---b", "a-b"),
+            ("  hello  ", "hello"),
+            ("", ""),
+            ("!!!", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(normalize_name(input), expected, "input: {input:?}");
+        }
     }
 
     #[test]
@@ -2333,51 +2292,32 @@ mod tests {
     }
 
     #[test]
-    fn validate_ok() {
-        assert!(validate_name("hello").is_ok());
-        assert!(validate_name("a").is_ok());
-        assert!(validate_name("test-agent").is_ok());
-        assert!(validate_name("a1").is_ok());
-        assert!(validate_name("123").is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_empty() {
-        assert!(validate_name("").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_uppercase() {
-        assert!(validate_name("Hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_leading_hyphen() {
-        assert!(validate_name("-hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_trailing_hyphen() {
-        assert!(validate_name("hello-").is_err());
+    fn validate_name_accepts_dns_labels_rejects_the_rest() {
+        let cases = [
+            ("hello", true),
+            ("a", true),
+            ("test-agent", true),
+            ("a1", true),
+            ("123", true),
+            ("vesta", true),
+            ("my-vesta", true),
+            ("vesta-agent", true),
+            ("", false),
+            ("Hello", false),
+            ("-hello", false),
+            ("hello-", false),
+            ("hello world", false),
+            ("hello_world", false),
+        ];
+        for (name, ok) in cases {
+            assert_eq!(validate_name(name).is_ok(), ok, "name: {name:?}");
+        }
     }
 
     #[test]
     fn validate_rejects_too_long() {
         let long = "a".repeat(33);
         assert!(validate_name(&long).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_special_chars() {
-        assert!(validate_name("hello world").is_err());
-        assert!(validate_name("hello_world").is_err());
-    }
-
-    #[test]
-    fn validate_allows_vesta_in_name() {
-        assert!(validate_name("vesta").is_ok());
-        assert!(validate_name("my-vesta").is_ok());
-        assert!(validate_name("vesta-agent").is_ok());
     }
 
     #[test]
@@ -2448,75 +2388,40 @@ mod tests {
 
     // --- Dockerignore pattern matching ---
 
-    fn patterns(pats: &[&str]) -> Vec<String> {
-        pats.iter().map(|s| s.to_string()).collect()
-    }
-
     #[test]
-    fn dockerignore_exact_match() {
-        let pats = patterns(&["target"]);
-        assert!(is_dockerignored("target", &pats));
-        assert!(is_dockerignored("target/debug/foo", &pats));
-        assert!(!is_dockerignored("targets", &pats));
-        assert!(!is_dockerignored("some/nested/target", &pats));
-        assert!(!is_dockerignored("some/nested/target/file.txt", &pats));
-    }
-
-    #[test]
-    fn dockerignore_trailing_slash() {
-        let pats = patterns(&["app/"]);
-        // Matches root-level app/ directory
-        assert!(is_dockerignored("app", &pats));
-        assert!(is_dockerignored("app/package.json", &pats));
-        // Must NOT match nested directories with the same name
-        assert!(!is_dockerignored("agent/skills/dashboard/app", &pats));
-        assert!(!is_dockerignored("agent/skills/dashboard/app/src/App.tsx", &pats));
-    }
-
-    #[test]
-    fn dockerignore_wildcard_extension() {
-        let pats = patterns(&["*.pyc"]);
-        assert!(is_dockerignored("foo.pyc", &pats));
-        assert!(is_dockerignored("dir/bar.pyc", &pats));
-        assert!(!is_dockerignored("foo.py", &pats));
-    }
-
-    #[test]
-    fn dockerignore_question_mark() {
-        let pats = patterns(&["?.txt"]);
-        assert!(is_dockerignored("a.txt", &pats));
-        assert!(!is_dockerignored("ab.txt", &pats));
-    }
-
-    #[test]
-    fn dockerignore_doublestar() {
-        let pats = patterns(&["**/logs"]);
-        assert!(is_dockerignored("logs", &pats));
-        assert!(is_dockerignored("a/logs", &pats));
-        assert!(is_dockerignored("a/b/logs", &pats));
-        assert!(is_dockerignored("a/b/logs/debug.log", &pats));
-    }
-
-    #[test]
-    fn dockerignore_negation() {
-        let pats = patterns(&["*.md", "!README.md"]);
-        assert!(!is_dockerignored("README.md", &pats));
-        assert!(is_dockerignored("CHANGELOG.md", &pats));
-    }
-
-    #[test]
-    fn dockerignore_path_with_slash() {
-        let pats = patterns(&["agent/tests"]);
-        assert!(is_dockerignored("agent/tests", &pats));
-        assert!(is_dockerignored("agent/tests/test_unit.py", &pats));
-        assert!(!is_dockerignored("other/agent/tests", &pats));
-    }
-
-    #[test]
-    fn dockerignore_no_false_prefix() {
-        let pats = patterns(&["app"]);
-        assert!(!is_dockerignored("application", &pats));
-        assert!(is_dockerignored("app/foo", &pats));
+    fn dockerignore_matches_paths_against_patterns() {
+        // (label, patterns, path, expected)
+        let cases: &[(&str, &[&str], &str, bool)] = &[
+            ("exact dir name", &["target"], "target", true),
+            ("exact dir prefix matches contents", &["target"], "target/debug/foo", true),
+            ("exact must not match plural", &["target"], "targets", false),
+            ("exact must not match nested dir", &["target"], "some/nested/target", false),
+            ("exact must not match nested file", &["target"], "some/nested/target/file.txt", false),
+            ("trailing slash matches root dir", &["app/"], "app", true),
+            ("trailing slash matches root contents", &["app/"], "app/package.json", true),
+            ("trailing slash skips nested dir", &["app/"], "agent/skills/dashboard/app", false),
+            ("trailing slash skips nested contents", &["app/"], "agent/skills/dashboard/app/src/App.tsx", false),
+            ("extension wildcard matches root", &["*.pyc"], "foo.pyc", true),
+            ("extension wildcard matches nested", &["*.pyc"], "dir/bar.pyc", true),
+            ("extension wildcard rejects other ext", &["*.pyc"], "foo.py", false),
+            ("question mark single char", &["?.txt"], "a.txt", true),
+            ("question mark rejects two chars", &["?.txt"], "ab.txt", false),
+            ("doublestar matches root", &["**/logs"], "logs", true),
+            ("doublestar matches one level", &["**/logs"], "a/logs", true),
+            ("doublestar matches two levels", &["**/logs"], "a/b/logs", true),
+            ("doublestar matches contents", &["**/logs"], "a/b/logs/debug.log", true),
+            ("negation re-includes file", &["*.md", "!README.md"], "README.md", false),
+            ("negation leaves others ignored", &["*.md", "!README.md"], "CHANGELOG.md", true),
+            ("slash pattern exact", &["agent/tests"], "agent/tests", true),
+            ("slash pattern contents", &["agent/tests"], "agent/tests/test_unit.py", true),
+            ("slash pattern not nested", &["agent/tests"], "other/agent/tests", false),
+            ("no false prefix match", &["app"], "application", false),
+            ("prefix dir matches contents", &["app"], "app/foo", true),
+        ];
+        for (label, pats, path, expected) in cases {
+            let pats: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
+            assert_eq!(is_dockerignored(path, &pats), *expected, "{label}");
+        }
     }
 
     #[test]

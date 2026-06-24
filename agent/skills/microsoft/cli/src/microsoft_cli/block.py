@@ -13,7 +13,6 @@ import httpx
 
 from . import graph, auth
 from .config import Config
-from .settings import MicrosoftSettings
 
 BLOCK_RULE_PREFIX = "Block "
 MAILBOX_SETTINGS_SCOPE_ERROR = (
@@ -21,10 +20,6 @@ MAILBOX_SETTINGS_SCOPE_ERROR = (
     "Run `microsoft auth add --account {account}` to re-authorize with the required permissions "
     "(MailboxSettings.ReadWrite)."
 )
-
-
-def _get_settings() -> MicrosoftSettings:
-    return MicrosoftSettings()
 
 
 def _rule_display_name(sender: str) -> str:
@@ -41,12 +36,11 @@ def _get_inbox_rules(
     config: Config,
     client: httpx.Client,
     account_id: str,
-    settings: MicrosoftSettings,
     account_email: str = "<your-account>",
 ) -> list[dict[str, Any]]:
     """Fetch all inbox message rules for the account."""
     try:
-        result = graph.request_cfg(config, client, settings, "GET", "/me/mailFolders/inbox/messageRules", account_id)
+        result = graph.request_cfg(config, client, "GET", "/me/mailFolders/inbox/messageRules", account_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc
@@ -64,9 +58,8 @@ def list_block_rules(
     account_email: str,
 ) -> list[dict[str, Any]]:
     """List all block rules created by this tool."""
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
-    rules = _get_inbox_rules(config, client, account_id, settings, account_email=account_email)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    rules = _get_inbox_rules(config, client, account_id, account_email=account_email)
     block_rules = [r for r in rules if _is_block_rule(r)]
 
     output = []
@@ -93,11 +86,10 @@ def block_sender(
     sender: str,
 ) -> dict[str, Any]:
     """Create an inbox rule that moves emails from sender to junk and stops processing."""
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     # Check if a block rule for this sender already exists
-    rules = _get_inbox_rules(config, client, account_id, settings, account_email=account_email)
+    rules = _get_inbox_rules(config, client, account_id, account_email=account_email)
     for rule in rules:
         conditions = rule.get("conditions", {})
         if sender.lower() in [s.lower() for s in conditions.get("senderContains", [])]:
@@ -122,7 +114,7 @@ def block_sender(
     }
 
     try:
-        result = graph.request_cfg(config, client, settings, "POST", "/me/mailFolders/inbox/messageRules", account_id, json=rule_body)
+        result = graph.request_cfg(config, client, "POST", "/me/mailFolders/inbox/messageRules", account_id, json=rule_body)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc
@@ -148,10 +140,9 @@ def unblock_sender(
     sender: str,
 ) -> dict[str, Any]:
     """Remove inbox rule(s) that block the given sender."""
-    settings = _get_settings()
-    account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    rules = _get_inbox_rules(config, client, account_id, settings, account_email=account_email)
+    rules = _get_inbox_rules(config, client, account_id, account_email=account_email)
 
     matching_rules = [r for r in rules if sender.lower() in [s.lower() for s in r.get("conditions", {}).get("senderContains", [])]]
 
@@ -162,7 +153,7 @@ def unblock_sender(
     for rule in matching_rules:
         rule_id = rule["id"]
         try:
-            graph.request_cfg(config, client, settings, "DELETE", f"/me/mailFolders/inbox/messageRules/{rule_id}", account_id)
+            graph.request_cfg(config, client, "DELETE", f"/me/mailFolders/inbox/messageRules/{rule_id}", account_id)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (401, 403):
                 raise PermissionError(MAILBOX_SETTINGS_SCOPE_ERROR.format(account=account_email)) from exc

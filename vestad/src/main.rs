@@ -316,10 +316,6 @@ async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time
     }
 }
 
-/// Build the one-click connect link: the app reads the key from the URL
-/// fragment (`#k=...`), which browsers never send to the server, so the key
-/// stays out of vestad's and Cloudflare's request logs. Opening the link
-/// connects automatically, no copy-pasting the key.
 /// Best-effort primary LAN IPv4 — the source address the kernel uses to reach
 /// off-box via the default route, i.e. the address other LAN devices can reach.
 /// `ip route get` is used first so Docker/VPN bridge addresses (172.17.x and the

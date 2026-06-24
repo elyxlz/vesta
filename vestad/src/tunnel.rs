@@ -37,18 +37,23 @@ pub fn has_cf_creds(config_dir: &Path) -> bool {
             && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
 }
 
-fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    let path = cf_creds_path(config_dir);
-    std::fs::write(&path, serde_json::to_string_pretty(creds).unwrap())
-        .map_err(|e| format!("failed to write cloudflare creds: {}", e))?;
+/// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
+/// "persist a secret config file" pattern; `what` names the file in write errors.
+fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+    }
+    std::fs::write(path, contents).map_err(|e| format!("failed to write {what}: {}", e))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).ok();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
     }
     Ok(())
+}
+
+fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
+    write_secret_file(&cf_creds_path(config_dir), &serde_json::to_string_pretty(creds).unwrap(), "cloudflare creds")
 }
 
 /// Resolve Cloudflare credentials for self-hosted tunnel management.
@@ -431,17 +436,7 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         dns_record_id,
     };
 
-    let config_path = tunnel_config_path(config_dir);
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| format!("failed to write tunnel config: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).ok();
-    }
+    write_secret_file(&tunnel_config_path(config_dir), &serde_json::to_string_pretty(&config).unwrap(), "tunnel config")?;
 
     tracing::info!(hostname = %hostname, "tunnel ready");
     Ok(config)

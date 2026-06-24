@@ -1,4 +1,4 @@
-import { apiJson } from "../client";
+import { apiJson, jsonInit } from "../client";
 
 export interface OAuthStartResult {
   auth_url: string;
@@ -18,11 +18,7 @@ export async function completeOAuth(
 ): Promise<string> {
   const resp = await apiJson<{ credentials: string }>(
     "/providers/claude/oauth/complete",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, code }),
-    },
+    jsonInit("POST", { session_id: sessionId, code }),
   );
   return resp.credentials;
 }

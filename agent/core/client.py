@@ -126,19 +126,28 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     diagnostics.touch_activity(state, "query_sent")
 
     responses: list[str] = []
-    assistant_texts: list[str] = []
-    sub_agent_context: str | None = None
 
     def _emit(t: str) -> None:
         logger.assistant(t)
         state.event_bus.emit({"type": "assistant", "text": t})
-        assistant_texts.append(t)
 
     def _emit_thinking(block: ThinkingBlock) -> None:
         if not block.thinking.strip():
             return
         logger.thinking(block.thinking)
         state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
+
+    def _render(texts: list[str], thinking_blocks: list[ThinkingBlock]) -> str | None:
+        """Emit thinking + filtered assistant text (when shown); return the joined text so the caller can record it."""
+        if show_output:
+            for block in thinking_blocks:
+                _emit_thinking(block)
+        text = "\n".join(texts) if texts else None
+        if text and show_output:
+            filtered = sdk_parsing.filter_tool_lines(text)
+            if filtered:
+                _emit(filtered)
+        return text
 
     response_iter = client.receive_response().__aiter__()
 
@@ -172,15 +181,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
-                        texts, thinking_blocks, _, _, _ = sdk_parsing.parse_sdk_message(leftover, sub_agent_context=sub_agent_context)
-                        if show_output:
-                            for block in thinking_blocks:
-                                _emit_thinking(block)
-                        text = "\n".join(texts) if texts else None
-                        if text and show_output:
-                            filtered = sdk_parsing.filter_tool_lines(text)
-                            if filtered:
-                                _emit(filtered)
+                        texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
+                        _render(texts, thinking_blocks)
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 break
@@ -197,7 +199,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             # is_terminal_auth_error just below.
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
-            texts, thinking_blocks, sub_agent_context, session_id, _ = sdk_parsing.parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
             if session_id and session_id != state.persisted.session_id:
                 if state.persisted.session_id:
                     logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
@@ -344,6 +346,9 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
 
+    # Context-usage % is reported by the official client's get_context_usage(), which measures
+    # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
+    # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,

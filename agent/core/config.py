@@ -29,10 +29,6 @@ def config_store_path() -> pl.Path:
     return _resolve_agent_dir() / "data" / "config.json"
 
 
-def _shipped_defaults() -> dict[str, tp.Any]:
-    return json.loads(CONFIG_DEFAULTS_PATH.read_text())
-
-
 def read_config_store() -> dict[str, tp.Any]:
     """The store's sparse overrides, or {} when absent/corrupt (never raises: it's on the boot path)."""
     path = config_store_path()
@@ -158,11 +154,10 @@ def migrate_legacy_config_to_store() -> None:
 # when the user hasn't explicitly chosen a context window.
 DEFAULT_CONTEXT_WINDOW = 200_000
 
-# The 1M-context beta and the window it unlocks. These are Anthropic-API facts the agent
-# owns: build_client_options decides whether to enable the beta and passes both windows to
-# cc_sdk for usage reporting, so the transport keeps no model-specific constants of its own.
+# The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k
+# default; the official client's get_context_usage() then reports usage against the CLI's enforced
+# window, so no model-specific window constant is passed across the SDK seam.
 CONTEXT_1M_BETA = "context-1m-2025-08-07"
-EXPANDED_CONTEXT_WINDOW = 1_000_000
 
 
 class VestaConfig(pyd_settings.BaseSettings):
@@ -340,4 +335,4 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 # No env var to drop (bad store value or invalid field default). Fall back to defaults
                 # rather than crash-loop; seed the shipped floor so the init=False fields are populated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                return VestaConfig.model_construct(**_shipped_defaults()), issues
+                return VestaConfig.model_construct(**json.loads(CONFIG_DEFAULTS_PATH.read_text())), issues

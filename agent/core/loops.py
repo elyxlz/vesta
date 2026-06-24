@@ -88,19 +88,14 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
 
 
-def _reply_hint(notif: vm.Notification) -> str:
-    """Point the model at the originating channel's reply skill instead of copying its CLI syntax."""
-    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
-        return ""
-    return f"\n→ Reply using the `{notif.source}` skill."
-
-
 def _format_one(notif: vm.Notification) -> str:
-    """Embed the reply hint inside the <notification> element so the model sees them as one unit."""
+    """Embed a reply hint inside the <notification> element so the model sees them as one unit.
+
+    The hint points the model at the originating channel's reply skill instead of copying its CLI syntax."""
     body = notif.format_for_display()
-    hint = _reply_hint(notif)
-    if not hint:
+    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return body
+    hint = f"\n→ Reply using the `{notif.source}` skill."
     return body.replace("</notification>", f"{hint}\n</notification>")
 
 
@@ -210,10 +205,9 @@ async def _run_messages_with_interrupts(
         except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
-                # cc_sdk exposes session_id as a client attribute; the official
-                # claude_agent_sdk emits it only via the message stream (sdk_parsing
-                # captures it there). Fall back to None on the official SDK so this
-                # early-failure path doesn't AttributeError before the id is seen.
+                # Belt-and-suspenders: sdk_parsing already persists the session_id from the init
+                # message. The official claude_agent_sdk client has no session_id attribute, so this
+                # very-early-crash fallback degrades to None rather than AttributeError-ing here.
                 try:
                     sid = state.client.session_id  # ty: ignore[unresolved-attribute]
                 except AttributeError:
@@ -277,9 +271,8 @@ async def _run_messages_with_interrupts(
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
-        if process_task and not process_task.done():
-            process_task.cancel()
-            await asyncio.gather(process_task, return_exceptions=True)
+        if process_task:
+            await _cancel_task(process_task)
         raise
 
 
@@ -488,8 +481,4 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
                 await process_batch(pending_passive, queue=queue, state=state, config=config)
                 pending_passive = []
     finally:
-        watcher_task.cancel()
-        try:
-            await watcher_task
-        except asyncio.CancelledError:
-            pass
+        await _cancel_task(watcher_task)

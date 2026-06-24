@@ -144,7 +144,7 @@ fn ensure_password() -> Result<PathBuf, DockerError> {
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut bytes))
         .map_err(|e| DockerError::Failed(format!("failed to read /dev/urandom: {e}")))?;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hex::encode(bytes);
 
     std::fs::write(&path, &hex)
         .map_err(|e| DockerError::Failed(format!("failed to write restic password: {e}")))?;
@@ -177,6 +177,41 @@ fn run_restic_capture(name: &str, label: &str, args: &[&str]) -> Result<Vec<u8>,
         return Err(DockerError::Failed(format!("restic {label} failed: {stderr}")));
     }
     Ok(output.stdout)
+}
+
+/// Pipe `producer`'s stdout into `consumer`'s stdin, run both to completion, and
+/// return the consumer's captured stdout. A nonzero exit on either side maps to
+/// `Failed`, named by its label.
+fn pipe_through(
+    mut producer: std::process::Command,
+    producer_label: &str,
+    mut consumer: std::process::Command,
+    consumer_label: &str,
+) -> Result<Vec<u8>, DockerError> {
+    let mut producer_child = producer
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to start {producer_label}: {e}")))?;
+    let producer_stdout = producer_child.stdout.take()
+        .ok_or_else(|| DockerError::Failed(format!("{producer_label} stdout not available")))?;
+
+    let consumer_output = consumer
+        .stdin(producer_stdout)
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run {consumer_label}: {e}")))?;
+
+    let producer_output = producer_child.wait_with_output()
+        .map_err(|e| DockerError::Failed(format!("{producer_label} wait failed: {e}")))?;
+    if !producer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&producer_output.stderr);
+        return Err(DockerError::Failed(format!("{producer_label} failed: {stderr}")));
+    }
+    if !consumer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&consumer_output.stderr);
+        return Err(DockerError::Failed(format!("{consumer_label} failed: {stderr}")));
+    }
+    Ok(consumer_output.stdout)
 }
 
 /// Initialize the agent's repository if it does not already exist. Idempotent.
@@ -236,42 +271,20 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
     let summary = tokio::time::timeout(
         std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || -> Result<ResticSummaryMsg, DockerError> {
-            let mut export_child = std::process::Command::new("docker")
-                .args(["export", &cname])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
-
-            let export_stdout = export_child.stdout.take()
-                .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
-
-            let backup_output = restic_command(&repo_name)?
-                .args([
-                    "backup", "--stdin",
-                    "--stdin-filename", &tar_name,
-                    "--tag", &agent_tag,
-                    "--tag", &type_tag,
-                    "--json",
-                ])
-                .stdin(export_stdout)
-                .stderr(std::process::Stdio::piped())
-                .output()
-                .map_err(|e| DockerError::Failed(format!("failed to run restic backup: {e}")))?;
-
-            let export_output = export_child.wait_with_output()
-                .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
-            if !export_output.status.success() {
-                let stderr = String::from_utf8_lossy(&export_output.stderr);
-                return Err(DockerError::Failed(format!("docker export failed: {stderr}")));
-            }
-            if !backup_output.status.success() {
-                let stderr = String::from_utf8_lossy(&backup_output.stderr);
-                return Err(DockerError::Failed(format!("restic backup failed: {stderr}")));
-            }
+            let mut export = std::process::Command::new("docker");
+            export.args(["export", &cname]);
+            let mut backup = restic_command(&repo_name)?;
+            backup.args([
+                "backup", "--stdin",
+                "--stdin-filename", &tar_name,
+                "--tag", &agent_tag,
+                "--tag", &type_tag,
+                "--json",
+            ]);
+            let backup_stdout = pipe_through(export, "docker export", backup, "restic backup")?;
 
             // The final JSON line is the summary, carrying the new snapshot_id.
-            let stdout = String::from_utf8_lossy(&backup_output.stdout);
+            let stdout = String::from_utf8_lossy(&backup_stdout);
             let summary = stdout
                 .lines()
                 .filter_map(|line| serde_json::from_str::<ResticSummaryMsg>(line).ok())
@@ -410,32 +423,11 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
                     .status()
                     .ok();
 
-                let mut dump_child = restic_command(&repo_name)?
-                    .args(["dump", &backup_id, &tar_path])
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .map_err(|e| DockerError::Failed(format!("failed to start restic dump: {e}")))?;
-
-                let dump_stdout = dump_child.stdout.take()
-                    .ok_or_else(|| DockerError::Failed("restic dump stdout not available".into()))?;
-
-                let import_output = std::process::Command::new("docker")
-                    .args(["import", "-", &image_for_task])
-                    .stdin(dump_stdout)
-                    .output()
-                    .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
-
-                let dump_output = dump_child.wait_with_output()
-                    .map_err(|e| DockerError::Failed(format!("restic dump wait failed: {e}")))?;
-                if !dump_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&dump_output.stderr);
-                    return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
-                }
-                if !import_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&import_output.stderr);
-                    return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
-                }
+                let mut dump = restic_command(&repo_name)?;
+                dump.args(["dump", &backup_id, &tar_path]);
+                let mut import = std::process::Command::new("docker");
+                import.args(["import", "-", &image_for_task]);
+                pipe_through(dump, "restic dump", import, "docker import")?;
                 Ok(())
             })
         }),

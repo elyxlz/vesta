@@ -28,7 +28,7 @@ func extractFlag(name string) string {
 	return ""
 }
 
-func extractInstance() string        { return extractFlag("instance") }
+func extractInstance() string         { return extractFlag("instance") }
 func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
 func isReadOnly() bool {
@@ -244,6 +244,9 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 	if tc.readOnly {
 		writeCommands := map[string]bool{
 			"send-message": true, "send-file": true, "send-reaction": true,
+			"send-voice": true, "edit-message": true, "delete-message": true,
+			"answer-callback": true, "send-chat-action": true,
+			"pin-message": true, "unpin-message": true,
 		}
 		if writeCommands[command] {
 			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
@@ -373,15 +376,33 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 		return map[string]interface{}{"chats": chats}, nil
 
 	case "send-message":
-		var to, message string
+		var to, message, messageFile, buttons, replyToStr string
 		fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient (name, username, or chat ID)")
 		fs.StringVar(&message, "message", "", "Message text")
+		fs.StringVar(&messageFile, "message-file", "", "Read message body from this file (avoids shell-escaping long text)")
+		fs.StringVar(&buttons, "buttons", "", "Inline keyboard: rows by ';', buttons by ',', each 'Label=callback_data' (or 'Label=url:https://...')")
+		fs.StringVar(&replyToStr, "reply-to", "", "Quote/reply to this message ID")
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
+		if messageFile != "" {
+			b, err := os.ReadFile(messageFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read --message-file: %v", err)
+			}
+			message = string(b)
+		}
 		if to == "" || message == "" {
-			return nil, fmt.Errorf("--to and --message are required")
+			return nil, fmt.Errorf("--to and --message (or --message-file) are required")
+		}
+		var replyTo int64
+		if replyToStr != "" {
+			v, err := strconv.ParseInt(replyToStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --reply-to: %s", replyToStr)
+			}
+			replyTo = v
 		}
 
 		chatID, err := tc.store.ResolveRecipient(to)
@@ -389,11 +410,168 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 			return nil, err
 		}
 
-		msgID, err := tc.SendMessage(chatID, message)
+		msgID, err := tc.SendMessageWithOptions(chatID, message, buttons, replyTo)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{"success": true, "message_id": msgID, "message": "Message sent successfully"}, nil
+
+	case "edit-message":
+		var to, messageIDStr, message, messageFile, buttons string
+		fs := flag.NewFlagSet("edit-message", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat (name, username, or chat ID)")
+		fs.StringVar(&messageIDStr, "message-id", "", "ID of the message to edit")
+		fs.StringVar(&message, "message", "", "New message text")
+		fs.StringVar(&messageFile, "message-file", "", "Read new text from this file")
+		fs.StringVar(&buttons, "buttons", "", "Replacement inline keyboard (same format as send-message; omit to clear/keep none)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if messageFile != "" {
+			b, err := os.ReadFile(messageFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read --message-file: %v", err)
+			}
+			message = string(b)
+		}
+		if to == "" || messageIDStr == "" || message == "" {
+			return nil, fmt.Errorf("--to, --message-id, and --message (or --message-file) are required")
+		}
+		messageID, err := strconv.ParseInt(messageIDStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid message ID: %s", messageIDStr)
+		}
+		chatID, err := tc.store.ResolveRecipient(to)
+		if err != nil {
+			return nil, err
+		}
+		if err := tc.EditMessage(chatID, messageID, message, buttons); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message": "Message edited"}, nil
+
+	case "delete-message":
+		var to, messageIDStr string
+		fs := flag.NewFlagSet("delete-message", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat")
+		fs.StringVar(&messageIDStr, "message-id", "", "ID of the message to delete")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" || messageIDStr == "" {
+			return nil, fmt.Errorf("--to and --message-id are required")
+		}
+		messageID, err := strconv.ParseInt(messageIDStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid message ID: %s", messageIDStr)
+		}
+		chatID, err := tc.store.ResolveRecipient(to)
+		if err != nil {
+			return nil, err
+		}
+		if err := tc.DeleteMessage(chatID, messageID); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message": "Message deleted"}, nil
+
+	case "answer-callback":
+		var callbackID, text string
+		var alert bool
+		fs := flag.NewFlagSet("answer-callback", flag.ContinueOnError)
+		fs.StringVar(&callbackID, "callback-id", "", "callback_id from the callback_query notification")
+		fs.StringVar(&text, "text", "", "Optional toast/alert text shown to the user")
+		fs.BoolVar(&alert, "alert", false, "Show as a modal alert instead of a transient toast")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if callbackID == "" {
+			return nil, fmt.Errorf("--callback-id is required")
+		}
+		if err := tc.AnswerCallback(callbackID, text, alert); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message": "Callback answered"}, nil
+
+	case "send-voice":
+		var to, filePath, caption string
+		fs := flag.NewFlagSet("send-voice", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Recipient")
+		fs.StringVar(&filePath, "file-path", "", "Path to voice file (.ogg/opus ideal)")
+		fs.StringVar(&caption, "caption", "", "Optional caption")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" || filePath == "" {
+			return nil, fmt.Errorf("--to and --file-path are required")
+		}
+		chatID, err := tc.store.ResolveRecipient(to)
+		if err != nil {
+			return nil, err
+		}
+		msgID, err := tc.SendVoice(chatID, filePath, caption)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message_id": msgID, "message": "Voice note sent"}, nil
+
+	case "send-chat-action":
+		var to, action string
+		fs := flag.NewFlagSet("send-chat-action", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat")
+		fs.StringVar(&action, "action", "typing", "typing | upload_photo | upload_document | record_voice | etc")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" {
+			return nil, fmt.Errorf("--to is required")
+		}
+		chatID, err := tc.store.ResolveRecipient(to)
+		if err != nil {
+			return nil, err
+		}
+		if err := tc.SendChatAction(chatID, action); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message": "Chat action sent"}, nil
+
+	case "pin-message", "unpin-message":
+		var to, messageIDStr string
+		var silent bool
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat")
+		fs.StringVar(&messageIDStr, "message-id", "", "Message ID (for unpin, 0/omitted unpins the latest)")
+		fs.BoolVar(&silent, "silent", false, "Pin without notifying (pin-message only)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" {
+			return nil, fmt.Errorf("--to is required")
+		}
+		var messageID int64
+		if messageIDStr != "" {
+			v, err := strconv.ParseInt(messageIDStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid message ID: %s", messageIDStr)
+			}
+			messageID = v
+		}
+		chatID, err := tc.store.ResolveRecipient(to)
+		if err != nil {
+			return nil, err
+		}
+		if command == "pin-message" {
+			if messageID == 0 {
+				return nil, fmt.Errorf("--message-id is required for pin-message")
+			}
+			if err := tc.PinMessage(chatID, messageID, silent); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "message": "Message pinned"}, nil
+		}
+		if err := tc.UnpinMessage(chatID, messageID); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true, "message": "Message unpinned"}, nil
 
 	case "send-file":
 		var to, filePath, caption string

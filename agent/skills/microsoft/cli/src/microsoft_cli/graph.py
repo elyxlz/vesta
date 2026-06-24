@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections.abc import Iterator
 from .auth import get_token
 from .config import Config
-from .settings import MicrosoftSettings
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,6 @@ def request(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
-    settings: MicrosoftSettings,
     base_url: str,
     method: str,
     path: str,
@@ -129,7 +127,7 @@ def request(
     extra_prefer: list[str] | None = None,
 ) -> dict[str, Any] | None:
     headers = {
-        "Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}",
+        "Authorization": f"Bearer {get_token(cache_file, scopes, account_id=account_id)}",
     }
 
     prefer_values: list[str] = []
@@ -179,7 +177,6 @@ def request_paginated(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
-    settings: MicrosoftSettings,
     base_url: str,
     path: str,
     account_id: str | None = None,
@@ -201,7 +198,6 @@ def request_paginated(
                 client,
                 cache_file,
                 scopes,
-                settings,
                 base_url,
                 "GET",
                 next_link.replace(base_url, ""),
@@ -214,7 +210,6 @@ def request_paginated(
                 client,
                 cache_file,
                 scopes,
-                settings,
                 base_url,
                 "GET",
                 path,
@@ -249,24 +244,6 @@ def request_paginated(
         page_num += 1
 
 
-def download_raw(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    path: str,
-    account_id: str | None = None,
-    max_retries: int = 3,
-) -> bytes:
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
-
-    response = _retry_http_call(lambda: client.get(f"{base_url}{path}", headers=headers), max_retries)
-    if not response:
-        raise ValueError("Failed to download file after all retries")
-    return response.content
-
-
 def _do_chunked_upload(
     client: httpx.Client,
     upload_url: str,
@@ -295,57 +272,10 @@ def _do_chunked_upload(
     raise ValueError("Upload completed but no final response received")
 
 
-def create_upload_session(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    path: str,
-    account_id: str | None = None,
-    item_properties: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Create an upload session for large files"""
-    payload = {"item": item_properties or {}}
-    result = request(client, cache_file, scopes, settings, base_url, "POST", f"{path}/createUploadSession", account_id, json=payload)
-    if not result:
-        raise ValueError("Failed to create upload session")
-    return result
-
-
-def upload_large_file(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    base_url: str,
-    upload_chunk_size: int,
-    path: str,
-    data: bytes,
-    account_id: str | None = None,
-    item_properties: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Upload a large file using upload sessions"""
-    file_size = len(data)
-
-    if file_size <= upload_chunk_size:
-        result = request(client, cache_file, scopes, settings, base_url, "PUT", f"{path}/content", account_id, data=data)
-        if not result:
-            raise ValueError("Failed to upload file")
-        return result
-
-    session = create_upload_session(client, cache_file, scopes, settings, base_url, path, account_id, item_properties)
-    upload_url = session["uploadUrl"]
-
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
-    return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
-
-
 def create_mail_upload_session(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
-    settings: MicrosoftSettings,
     base_url: str,
     message_id: str,
     attachment_item: dict[str, Any],
@@ -356,7 +286,6 @@ def create_mail_upload_session(
         client,
         cache_file,
         scopes,
-        settings,
         base_url,
         "POST",
         f"/me/messages/{message_id}/attachments/createUploadSession",
@@ -372,7 +301,6 @@ def upload_large_mail_attachment(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
-    settings: MicrosoftSettings,
     base_url: str,
     upload_chunk_size: int,
     message_id: str,
@@ -391,10 +319,10 @@ def upload_large_mail_attachment(
         "contentType": content_type,
     }
 
-    session = create_mail_upload_session(client, cache_file, scopes, settings, base_url, message_id, attachment_item, account_id)
+    session = create_mail_upload_session(client, cache_file, scopes, base_url, message_id, attachment_item, account_id)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id=account_id)}"}
     return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
@@ -405,30 +333,27 @@ def upload_large_mail_attachment(
 def request_cfg(
     config: Config,
     client: httpx.Client,
-    settings: MicrosoftSettings,
     method: str,
     path: str,
     account_id: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any] | None:
-    return request(client, config.cache_file, config.scopes, settings, config.base_url, method, path, account_id, **kwargs)
+    return request(client, config.cache_file, config.scopes, config.base_url, method, path, account_id, **kwargs)
 
 
 def paginate_cfg(
     config: Config,
     client: httpx.Client,
-    settings: MicrosoftSettings,
     path: str,
     account_id: str | None = None,
     **kwargs: Any,
 ) -> Iterator[dict[str, Any]]:
-    return request_paginated(client, config.cache_file, config.scopes, settings, config.base_url, path, account_id, **kwargs)
+    return request_paginated(client, config.cache_file, config.scopes, config.base_url, path, account_id, **kwargs)
 
 
 def upload_mail_attachment_cfg(
     config: Config,
     client: httpx.Client,
-    settings: MicrosoftSettings,
     message_id: str,
     name: str,
     data: bytes,
@@ -439,7 +364,6 @@ def upload_mail_attachment_cfg(
         client,
         config.cache_file,
         config.scopes,
-        settings,
         config.base_url,
         config.upload_chunk_size,
         message_id,

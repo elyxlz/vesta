@@ -81,12 +81,10 @@ else
   (
     cd agent
     cp uv.lock uv.lock.before
-    if uv lock >/dev/null 2>&1 && diff -q uv.lock.before uv.lock >/dev/null; then
-      mv uv.lock.before uv.lock
-      exit 0
-    fi
+    uv lock >/dev/null 2>&1 && diff -q uv.lock.before uv.lock >/dev/null
+    status=$?
     mv uv.lock.before uv.lock
-    exit 1
+    exit $status
   ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock' and commit"
 fi
 

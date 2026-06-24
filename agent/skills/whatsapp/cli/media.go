@@ -306,46 +306,35 @@ func extractVCardPhone(vcard string) string {
 	return ""
 }
 
-func isMessageForwarded(msg *waProto.Message) bool {
+// messageContextInfo returns the ContextInfo of whichever message variant
+// carries one. The protobuf getters are nil-safe, so callers can chain further
+// Get* accessors on the result without a nil check.
+func messageContextInfo(msg *waProto.Message) *waProto.ContextInfo {
 	if msg == nil {
-		return false
+		return nil
 	}
-	if msg.GetExtendedTextMessage() != nil {
-		return msg.GetExtendedTextMessage().GetContextInfo().GetIsForwarded()
+	switch {
+	case msg.GetExtendedTextMessage() != nil:
+		return msg.GetExtendedTextMessage().GetContextInfo()
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage().GetContextInfo()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetContextInfo()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetContextInfo()
 	}
-	if msg.GetImageMessage() != nil {
-		return msg.GetImageMessage().GetContextInfo().GetIsForwarded()
-	}
-	if msg.GetVideoMessage() != nil {
-		return msg.GetVideoMessage().GetContextInfo().GetIsForwarded()
-	}
-	if msg.GetDocumentMessage() != nil {
-		return msg.GetDocumentMessage().GetContextInfo().GetIsForwarded()
-	}
-	return false
+	return nil
+}
+
+func isMessageForwarded(msg *waProto.Message) bool {
+	return messageContextInfo(msg).GetIsForwarded()
 }
 
 func extractQuoteContext(msg *waProto.Message) (quotedMessageID, quotedText string) {
-	if msg == nil {
-		return "", ""
-	}
-
-	var ci *waProto.ContextInfo
-	switch {
-	case msg.GetExtendedTextMessage() != nil:
-		ci = msg.GetExtendedTextMessage().GetContextInfo()
-	case msg.GetImageMessage() != nil:
-		ci = msg.GetImageMessage().GetContextInfo()
-	case msg.GetVideoMessage() != nil:
-		ci = msg.GetVideoMessage().GetContextInfo()
-	case msg.GetDocumentMessage() != nil:
-		ci = msg.GetDocumentMessage().GetContextInfo()
-	}
-
+	ci := messageContextInfo(msg)
 	if ci == nil {
 		return "", ""
 	}
-
 	quotedMessageID = ci.GetStanzaID()
 	if qm := ci.GetQuotedMessage(); qm != nil {
 		quotedText = extractTextContent(qm)

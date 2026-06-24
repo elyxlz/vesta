@@ -28,20 +28,13 @@ fn format_size(bytes: u64) -> String {
 
 fn try_open_browser(url: &str) {
     #[cfg(target_os = "linux")]
-    let _child = process::Command::new("xdg-open")
-        .arg(url)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn();
+    let (program, args): (&str, &[&str]) = ("xdg-open", &[url]);
     #[cfg(target_os = "macos")]
-    let _child = process::Command::new("open")
-        .arg(url)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn();
+    let (program, args): (&str, &[&str]) = ("open", &[url]);
     #[cfg(target_os = "windows")]
-    let _child = process::Command::new("cmd")
-        .args(["/c", "start", "", url])
+    let (program, args): (&str, &[&str]) = ("cmd", &["/c", "start", "", url]);
+    let _child = process::Command::new(program)
+        .args(args)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .spawn();
@@ -341,12 +334,19 @@ fn retention_map(daily: Option<usize>, weekly: Option<usize>, monthly: Option<us
     ret
 }
 
-fn print_retention(ret: &serde_json::Value) {
-    eprintln!("retention: daily={}, weekly={}, monthly={}",
+/// Pull the `(daily, weekly, monthly)` counts out of a retention object,
+/// defaulting any missing field to 0.
+fn retention_fields(ret: &serde_json::Value) -> (u64, u64, u64) {
+    (
         ret["daily"].as_u64().unwrap_or(0),
         ret["weekly"].as_u64().unwrap_or(0),
         ret["monthly"].as_u64().unwrap_or(0),
-    );
+    )
+}
+
+fn print_retention(ret: &serde_json::Value) {
+    let (daily, weekly, monthly) = retention_fields(ret);
+    eprintln!("retention: daily={daily}, weekly={weekly}, monthly={monthly}");
 }
 
 fn print_agent_backup_settings(result: &serde_json::Value) {
@@ -354,11 +354,8 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
     let has_override = result["has_override"].as_bool().unwrap_or(false);
     eprintln!("  enabled: {} {}", if enabled { "yes" } else { "no" },
         if has_override { "(override)" } else { "(global)" });
-    eprintln!("  retention: daily={}, weekly={}, monthly={}",
-        result["retention"]["daily"].as_u64().unwrap_or(0),
-        result["retention"]["weekly"].as_u64().unwrap_or(0),
-        result["retention"]["monthly"].as_u64().unwrap_or(0),
-    );
+    let (daily, weekly, monthly) = retention_fields(&result["retention"]);
+    eprintln!("  retention: daily={daily}, weekly={weekly}, monthly={monthly}");
 }
 
 fn read_file_or_stdin(path: &std::path::Path) -> String {
@@ -833,9 +830,9 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
     Some(tmp_dir)
 }
 
-// Resolve the platform target/archive and run the self-update. `target_version`
-// pins a specific version (the gateway's) or is `None` for the latest release.
-fn run_cli_self_update(target_version: Option<&str>) {
+// The release artifact for this platform: (rust target triple, is_zip, binary
+// path inside the archive). The arch→triple match dies on an unsupported CPU.
+fn update_target() -> (&'static str, bool, &'static str) {
     #[cfg(target_os = "linux")]
     {
         let target = match std::env::consts::ARCH {
@@ -843,9 +840,7 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-unknown-linux-gnu",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "macos")]
     {
@@ -854,17 +849,20 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-apple-darwin",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "windows")]
     {
-        if let Some(tmp_dir) =
-            cli_self_update(target_version, "x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
-        {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        ("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
+    }
+}
+
+// Resolve the platform target/archive and run the self-update. `target_version`
+// pins a specific version (the gateway's) or is `None` for the latest release.
+fn run_cli_self_update(target_version: Option<&str>) {
+    let (target, is_zip, binary_subpath) = update_target();
+    if let Some(tmp_dir) = cli_self_update(target_version, target, is_zip, binary_subpath) {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }
 
@@ -881,11 +879,7 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
                         if version_less_than(latest, env!("CARGO_PKG_VERSION")) {
                             let _ = std::fs::remove_file(&cache_file);
                         } else {
-                            eprintln!(
-                                "\nUpdate available: v{} → v{} (run 'vesta update')",
-                                env!("CARGO_PKG_VERSION"),
-                                latest
-                            );
+                            print_update_available(latest);
                         }
                     }
                     return None;
@@ -925,6 +919,10 @@ fn detect_timezone() -> Option<String> {
         }
     }
     None
+}
+
+fn print_update_available(latest: &str) {
+    eprintln!("\nUpdate available: v{} → v{} (run 'vesta update')", env!("CARGO_PKG_VERSION"), latest);
 }
 
 fn print_welcome() {
@@ -1286,15 +1284,11 @@ fn run(cli: Cli) {
                     eprintln!("backup deleted: {backup_id}");
                 }
                 BackupAction::AutoBackup { toggle } => match toggle {
-                    Some(Toggle::On) => {
-                        c.set_auto_backup_settings(&serde_json::json!({"enabled": true}))
+                    Some(toggle) => {
+                        let enabled = matches!(toggle, Toggle::On);
+                        c.set_auto_backup_settings(&serde_json::json!({"enabled": enabled}))
                             .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("auto-backup: enabled");
-                    }
-                    Some(Toggle::Off) => {
-                        c.set_auto_backup_settings(&serde_json::json!({"enabled": false}))
-                            .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("auto-backup: disabled");
+                        eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
                     }
                     None => {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
@@ -1463,11 +1457,7 @@ fn run(cli: Cli) {
         }
         if handle.is_finished() {
             if let Ok(Some(latest)) = handle.join() {
-                eprintln!(
-                    "\nUpdate available: v{} → v{} (run 'vesta update')",
-                    env!("CARGO_PKG_VERSION"),
-                    latest
-                );
+                print_update_available(&latest);
             }
         }
     }

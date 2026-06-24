@@ -217,10 +217,7 @@ class ClaudeSDKClient:
     async def query(self, prompt: str) -> None:
         if self._transcript_path is None:
             self._transcript_path = self._find_transcript()
-        if self._transcript_path is not None and self._transcript_path.exists():
-            self._offset = self._transcript_path.stat().st_size
-        else:
-            self._offset = 0
+        self._offset = self._transcript_path.stat().st_size if self._transcript_path is not None and self._transcript_path.exists() else 0
         self._turn_index += 1
         # Clamp stops_received so it cannot pre-satisfy the new turn's threshold.
         # interrupt() credits stops_received = turn_index, but a late Stop hook can
@@ -275,20 +272,8 @@ class ClaudeSDKClient:
         usage = self._last_usage or {}
         keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
         total = sum(usage[k] for k in keys if k in usage and isinstance(usage[k], int))
-        configured = self._options.max_context_tokens
-        if configured:
-            # The user pinned a window; report usage against exactly that.
-            max_tokens = configured
-        else:
-            # The caller supplies both windows (no model constants here). Stay on the conservative
-            # `context_window` until usage actually exceeds it — which can only happen if the larger
-            # `expanded_context_window` is really active (the 1M beta is silently ignored on some
-            # auth modes) — so the overflow warning in diagnostics.log_context_usage still fires
-            # near the real limit instead of never.
-            max_tokens = self._options.context_window or 0
-            expanded = self._options.expanded_context_window
-            if expanded and max_tokens and total > max_tokens:
-                max_tokens = expanded
+        # The caller supplies the one window to report against (no model constants here).
+        max_tokens = self._options.context_window or 0
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
 
@@ -361,9 +346,7 @@ class ClaudeSDKClient:
         self._bridge.on("PreCompact", on_precompact)
 
     def _hook_events(self) -> list[str]:
-        events = {str(e) for e in self._options.hooks}
-        events.update(_ALWAYS_EVENTS)
-        return sorted(events)
+        return sorted({str(e) for e in self._options.hooks}.union(_ALWAYS_EVENTS))
 
     def _write_config_files(self) -> None:
         sysprompt = self._options.system_prompt or ""

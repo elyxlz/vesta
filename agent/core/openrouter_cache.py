@@ -45,7 +45,7 @@ _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 _MAX_PROBE_CANDIDATES = 4
 _MIN_CACHE_FRACTION = 0.5  # warm call must read back at least half the prefix to count as caching
 _CACHE_TTL = "1h"  # survive the idle gaps typical of a personal assistant (default is 5 min)
-_SHUTDOWN_TIMEOUT = 5.0  # bound proxy drain on shutdown (matches the WS server's start_runner)
+_SHUTDOWN_TIMEOUT = 5.0  # bound proxy drain on shutdown (matches the WS server's shutdown timeout)
 _HOP_BY_HOP = ("content-length", "content-encoding", "transfer-encoding", "connection")
 _PROBE_SYSTEM = ("You are a helpful assistant who answers concisely. " * 40 + "\n") * 20
 _CACHE_LOG_EVERY = 50  # summarize the hit rate once per this many model requests

@@ -16,7 +16,6 @@ from claude_agent_sdk import (
     SystemMessage,
     TextBlock,
     ThinkingBlock,
-    ToolUseBlock,
 )
 from claude_agent_sdk.types import (
     HookCallback,
@@ -35,7 +34,7 @@ from claude_agent_sdk.types import (
 from . import diagnostics
 from . import logger
 from . import models as vm
-from .events import StreamEvent, SubagentStartEvent, SubagentStopEvent
+from .events import StreamEvent
 
 _AGENT_TOOLS = ("Task", "Agent")
 
@@ -72,18 +71,10 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
-    input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-
-    if name in _AGENT_TOOLS:
-        agent_type, description = _parse_agent_input(input_data)
-        return f"[TASK] [{agent_type}]: {description or input_str}", agent_type
-
-    prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
-    return f"[TOOL] {prefix}{name}: {input_str}", sub_agent_context
-
-
-def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], list[ThinkingBlock], str | None, str | None, bool]:
+def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None]:
+    """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
+    message. Tool-use blocks carry no output here: tool/subagent activity is surfaced via the native
+    hooks in make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -109,13 +100,13 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
             pass
-        return ([], [], sub_agent_context, session_id, False)
+        return [], [], session_id
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
         log_fn = logger.debug if info.status == "allowed" else logger.warning
         log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
-        return ([], [], sub_agent_context, None, False)
+        return [], [], None
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
@@ -125,31 +116,23 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
             init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
             if init_sid:
                 logger.debug(f"[init] session_id={init_sid[:16]}")
-            return ([], [], sub_agent_context, init_sid, False)
+            return [], [], init_sid
         raw = json.dumps(msg.data, default=str)
         logger.system(f"[{msg.subtype}] {raw[:500]}")
-        return ([], [], sub_agent_context, None, False)
+        return [], [], None
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
+        return ([msg] if isinstance(msg, str) else []), [], None
 
     texts = []
     thinking_blocks = []
-    has_tool_use = False
-    current_context = sub_agent_context
-
     for block in msg.content:
         if isinstance(block, TextBlock):
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
-        elif isinstance(block, ToolUseBlock):
-            has_tool_use = True
-            _, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
-            if new_context:
-                current_context = new_context
 
-    return texts, thinking_blocks, current_context, None, has_tool_use
+    return texts, thinking_blocks, None
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
@@ -167,12 +150,7 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
         agent_id = input_data["agent_id"] if "agent_id" in input_data else "?"
         agent_type = input_data["agent_type"] if "agent_type" in input_data else "unknown"
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
-        event: StreamEvent
-        if event_type == "subagent_start":
-            event = SubagentStartEvent(type="subagent_start", agent_id=agent_id, agent_type=agent_type)
-        else:
-            event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
-        state.event_bus.emit(event)
+        state.event_bus.emit(tp.cast(StreamEvent, {"type": event_type, "agent_id": agent_id, "agent_type": agent_type}))
         return tp.cast(HookJSONOutput, {})
 
     return tp.cast(HookCallback, hook)

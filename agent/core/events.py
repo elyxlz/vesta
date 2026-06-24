@@ -193,7 +193,10 @@ class EventBus:
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
             self._db_path = data_dir / "events.db"
-            self._conn = sqlite3.connect(str(self._db_path))
+            # timeout sets SQLite's busy handler: a write waits up to N seconds for a
+            # held lock (e.g. a long-running VACUUM/maintenance op) instead of raising
+            # "database is locked" immediately. Pairs with the guard in emit() below.
+            self._conn = sqlite3.connect(str(self._db_path), timeout=30)
             self._conn.execute("PRAGMA journal_mode=WAL")
             _migrate(self._conn)
 
@@ -208,11 +211,19 @@ class EventBus:
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
         if event["type"] != "status" and self._conn:
-            self._conn.execute(
-                "INSERT INTO events (ts, data) VALUES (?, ?)",
-                (event["ts"], json.dumps(event)),
-            )
-            self._conn.commit()
+            # Event-logging is best-effort: a failed history write must NEVER crash the
+            # agent loop. Without this guard, a transient "database is locked" (the db
+            # held by a long maintenance op past the busy timeout) propagated out of emit
+            # and took down the whole loop on every event, turning one stuck write into a
+            # crash-restart storm. Drop the row with a warning and keep the agent alive.
+            try:
+                self._conn.execute(
+                    "INSERT INTO events (ts, data) VALUES (?, ?)",
+                    (event["ts"], json.dumps(event)),
+                )
+                self._conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
         for q in self._subscribers:
             self._offer(q, event)
 
@@ -253,7 +264,7 @@ class EventBus:
         # event loop thread): this lets callers run the query off the loop via
         # asyncio.to_thread, so a slow scan on a large db never freezes the agent. WAL lets
         # this reader run concurrently with the writer connection.
-        conn = sqlite3.connect(str(self._db_path))
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
         try:
             rows = conn.execute(
                 f"SELECT id, data FROM events {where}ORDER BY id DESC LIMIT ?",
@@ -282,7 +293,7 @@ class EventBus:
         conv_ph = ",".join("?" for _ in APP_CHAT_TYPES)
         visible = (*APP_CHAT_TYPES, *APP_CHAT_OVERLAY_TYPES)
         vis_ph = ",".join("?" for _ in visible)
-        conn = sqlite3.connect(str(self._db_path))
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
         try:
             conv_rows = conn.execute(
                 f"SELECT id FROM events WHERE json_extract(data, '$.type') IN ({conv_ph}) {upper}ORDER BY id DESC LIMIT ?",

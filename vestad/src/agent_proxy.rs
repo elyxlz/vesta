@@ -84,14 +84,14 @@ pub async fn agent_proxy_handler(
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
-    let (target_port, stripped_path, service) = if !first_segment.is_empty() {
-        if let Some(entry) = resolve_service(&state, &name, first_segment).await {
-            (entry.port, service_subpath.to_string(), Some(entry))
-        } else {
-            (agent_port, format!("/{}", path), None)
-        }
+    let resolved = if first_segment.is_empty() {
+        None
     } else {
-        (agent_port, format!("/{}", path), None)
+        resolve_service(&state, &name, first_segment).await
+    };
+    let (target_port, stripped_path, service) = match resolved {
+        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
+        None => (agent_port, format!("/{}", path), None),
     };
 
     // Public services are fully open; everything else requires auth.
@@ -100,7 +100,6 @@ pub async fn agent_proxy_handler(
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
-    // Append query string.
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
         target_path.push('?');
@@ -283,34 +282,18 @@ mod tests {
     use tokio::time::Instant;
 
     #[test]
-    fn forwards_nested_asset_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/assets/index-abc.js"),
-            ("dashboard", "/assets/index-abc.js"),
-        );
-    }
-
-    #[test]
-    fn forwards_deeply_nested_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/a/b/c/d.png"),
-            ("dashboard", "/a/b/c/d.png"),
-        );
-    }
-
-    #[test]
-    fn forwards_root_with_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard/"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn forwards_root_without_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn empty_path_yields_empty_segment() {
-        assert_eq!(split_service_subpath(""), ("", "/"));
+    fn splits_service_name_from_forwarded_subpath() {
+        // (path, expected service, expected subpath)
+        let cases = [
+            ("dashboard/assets/index-abc.js", ("dashboard", "/assets/index-abc.js")),
+            ("dashboard/a/b/c/d.png", ("dashboard", "/a/b/c/d.png")),
+            ("dashboard/", ("dashboard", "/")),
+            ("dashboard", ("dashboard", "/")),
+            ("", ("", "/")),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(split_service_subpath(path), expected, "split_service_subpath({path:?})");
+        }
     }
 
     #[tokio::test]

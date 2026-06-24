@@ -1,7 +1,7 @@
 import msal
 import pathlib as pl
 from typing import NamedTuple
-from .settings import MicrosoftSettings
+from .settings import get_settings
 
 
 class Account(NamedTuple):
@@ -45,7 +45,8 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicClientApplication:
+def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
+    settings = get_settings()
     if not settings.microsoft_mcp_client_id:
         raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
 
@@ -61,8 +62,8 @@ def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicC
     return app
 
 
-def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings, *, account_id: str | None = None) -> str:
-    app = get_app(cache_file, settings=settings)
+def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
+    app = get_app(cache_file)
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
@@ -75,8 +76,8 @@ def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSetting
     return result["access_token"]
 
 
-def list_accounts(cache_file: pl.Path, *, settings: MicrosoftSettings) -> list[Account]:
-    app = get_app(cache_file, settings=settings)
+def list_accounts(cache_file: pl.Path) -> list[Account]:
+    app = get_app(cache_file)
     seen_usernames = set()
     accounts = []
     for a in app.get_accounts():
@@ -87,9 +88,9 @@ def list_accounts(cache_file: pl.Path, *, settings: MicrosoftSettings) -> list[A
     return accounts
 
 
-def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: MicrosoftSettings) -> str:
+def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
     """Map email address to account_id. Raises ValueError if email not found."""
-    accounts = list_accounts(cache_file, settings=settings)
+    accounts = list_accounts(cache_file)
     email_lower = email.lower()
     for account in accounts:
         if account.username.lower() == email_lower:
@@ -102,9 +103,9 @@ def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: Micros
         raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
-def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings: MicrosoftSettings) -> Account | None:
+def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:
     """Authenticate a new account interactively"""
-    app = get_app(cache_file, settings=settings)
+    app = get_app(cache_file)
     result = _run_device_flow(app, scopes, cache_file)
 
     # Get the newly added account

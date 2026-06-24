@@ -3083,6 +3083,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "hex",
  "jsonwebtoken",
  "libc",
  "mime_guess",
