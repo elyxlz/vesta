@@ -18,10 +18,10 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Provision an agent: set provider auth, provider-owned prefs (model, context window), and the
-/// general personality pref in one request. Vestad writes each to its owner and restarts the agent
-/// once — doing them as separate restart-on-write calls raced (a later write hit the agent
-/// mid-restart and was dropped). The caller splits the parts; vestad just forwards each.
+/// Provision an agent: set provider auth and the agent's preferences (model, context, personality,
+/// timezone) in one request. Vestad forwards auth to POST /provider and the config to PUT /config,
+/// then restarts once — doing them as separate restart-on-write calls raced (a later write hit the
+/// agent mid-restart and was dropped).
 export async function setProvider(
   name: string,
   result: ProviderResult,
@@ -35,35 +35,34 @@ export async function setProvider(
           openrouter_key: result.config.key,
           openrouter_model: result.config.model,
         };
-  // Provider-owned prefs. OpenRouter's model rides in the auth body above (openrouter_model), so
-  // only Claude carries an explicit agent_model here; context applies to both.
-  const providerConfig: Record<string, unknown> = {};
-  if (result.kind === "claude" && result.model)
-    providerConfig.agent_model = result.model;
-  if (result.maxContextTokens != null)
-    providerConfig.max_context_tokens = result.maxContextTokens;
-  // General prefs. Timezone is delivered here at provision time (not via env at create), so the
-  // agent's config store owns it; callers re-provisioning an existing agent omit it to keep its tz.
+  // Every preference rides one config surface. OpenRouter's model is part of its auth body above
+  // (openrouter_model), so only Claude carries an explicit agent_model here; context applies to both.
+  // Timezone is delivered at provision time (not via env at create) so the agent's store owns it;
+  // callers re-provisioning an existing agent omit timezone/personality to keep the agent's own.
   const config: Record<string, unknown> = {};
+  if (result.kind === "claude" && result.model)
+    config.agent_model = result.model;
+  if (result.maxContextTokens != null)
+    config.max_context_tokens = result.maxContextTokens;
   if (personality) config.agent_personality = personality;
   if (timezone) config.timezone = timezone;
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provision`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, provider_config: providerConfig, config }),
+    body: JSON.stringify({ provider, config }),
   });
 }
 
-/// Update provider-owned preferences (model and/or context window) without touching auth. Vestad
+/// Update preferences (model and/or context window) without touching auth, via PUT /config. Vestad
 /// restarts the agent to apply.
-export async function setProviderConfig(
+export async function setConfig(
   name: string,
   prefs: { agent_model?: string; max_context_tokens?: number },
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider/config`, {
-    method: "POST",
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_config: prefs }),
+    body: JSON.stringify(prefs),
   });
 }
 
@@ -87,17 +86,17 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
   return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
 }
 
-/// Change only the model preference (provider-owned). Vestad restarts the agent so it takes effect.
+/// Change only the model preference. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await setProviderConfig(name, { agent_model: model });
+  await setConfig(name, { agent_model: model });
 }
 
-/// Change only the context window (provider-owned). Vestad restarts the agent so it takes effect.
+/// Change only the context window. Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await setProviderConfig(name, { max_context_tokens: maxContextTokens });
+  await setConfig(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,

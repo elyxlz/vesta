@@ -252,7 +252,17 @@ def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_pa
     assert not legacy.exists()
 
 
-# --- Provider/general config ownership split (PUT /config vs PUT /provider/config) ---
+# --- PUT /config accepts every preference; only auth fields are rejected ---
+
+
+@pytest.mark.parametrize("key,value", [("openrouter_key", "sk-or-v1-x"), ("agent_provider", "openrouter")])
+def test_validate_config_rejects_auth_fields(config, key, value):
+    # Auth fields carry credential-file + provider-status side effects, so they go through POST
+    # /provider, never the generic config write.
+    from core.config import validate_config_updates
+
+    with pytest.raises(ValueError, match="auth-owned"):
+        validate_config_updates(config, {key: value})
 
 
 @pytest.mark.parametrize(
@@ -261,29 +271,17 @@ def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_pa
         ("agent_model", "opus"),
         ("max_context_tokens", 500_000),
         ("thinking", "enabled"),
-        ("openrouter_key", "sk-or-v1-x"),
-        ("agent_provider", "openrouter"),
+        ("agent_personality", "playful"),
+        ("timezone", "Europe/London"),
+        ("seed_context", "they like terse replies"),
     ],
 )
-def test_validate_config_rejects_provider_owned_keys(config, key, value):
+def test_validate_config_accepts_every_preference(config, key, value):
+    # Model/context/thinking used to route through a separate /provider/config; now every preference
+    # is settable on the one config surface.
     from core.config import validate_config_updates
 
-    with pytest.raises(ValueError, match="provider-owned"):
-        validate_config_updates(config, {key: value})
-
-
-def test_validate_config_accepts_general_keys(config):
-    from core.config import validate_config_updates
-
-    assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
-
-
-def test_validate_config_accepts_timezone_and_seed_context(config):
-    # Both are general (agent-owned) config delivered via PUT /config, not provider-owned.
-    from core.config import validate_config_updates
-
-    update = {"timezone": "Europe/London", "seed_context": "they like terse replies"}
-    assert validate_config_updates(config, update) == update
+    assert validate_config_updates(config, {key: value}) == {key: value}
 
 
 def test_config_applies_timezone_to_process_env(monkeypatch):
@@ -293,14 +291,3 @@ def test_config_applies_timezone_to_process_env(monkeypatch):
     config = vm.VestaConfig()
     assert config.timezone == "Asia/Tokyo"
     assert os.environ["TZ"] == "Asia/Tokyo"
-
-
-def test_validate_provider_prefs_accepts_only_prefs(config):
-    from core.config import validate_provider_prefs
-
-    assert validate_provider_prefs(config, {"agent_model": "opus", "max_context_tokens": 500_000}) == {
-        "agent_model": "opus",
-        "max_context_tokens": 500_000,
-    }
-    with pytest.raises(ValueError, match="not provider preferences"):
-        validate_provider_prefs(config, {"agent_personality": "playful"})

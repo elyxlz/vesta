@@ -805,10 +805,10 @@ async fn get_provider_handler(
 enum AgentWrite {
     /// The agent's `POST /provider` (auth), forwarded verbatim.
     Provider(serde_json::Value),
-    /// The agent's `PUT /config` (general prefs), forwarded verbatim.
+    /// The agent's `PUT /config` (any preference), forwarded verbatim.
     Config(serde_json::Value),
-    /// Any of provider auth / provider prefs / general prefs, each to its own agent endpoint.
-    ProviderConfig(ProviderConfigRequest),
+    /// Provisioning: auth and/or preferences, each to its own agent endpoint, one restart.
+    Provision(ProvisionRequest),
     /// The agent's `DELETE /provider` — sign out.
     Clear,
 }
@@ -816,7 +816,7 @@ enum AgentWrite {
 /// Run a write against a (possibly stopped) agent's own HTTP API, then restart the container so the
 /// change applies on next boot. Ensures the agent exists, takes the per-agent write lock, and
 /// auto-starts a stopped agent so it can receive the proxied call — the shared skeleton behind every
-/// provider/config setter. The agent owns the file writes, format, and validation; any forward
+/// auth/config/provision setter. The agent owns the file writes, format, and validation; any forward
 /// failure surfaces as BAD_GATEWAY.
 async fn write_to_agent_and_restart(
     state: &SharedState,
@@ -839,15 +839,12 @@ async fn write_to_agent_and_restart(
         AgentWrite::Provider(body) => provider.set(&body).await,
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Clear => provider.clear().await,
-        AgentWrite::ProviderConfig(req) => {
+        AgentWrite::Provision(req) => {
             // Each present part is written before the single restart below, so a later write can't
             // hit the agent mid-restart and 502, dropping the change.
             async {
                 if has_entries(&req.provider) {
                     provider.set(&req.provider).await?;
-                }
-                if has_entries(&req.provider_config) {
-                    provider.put_provider_config(&req.provider_config).await?;
                 }
                 if has_entries(&req.config) {
                     provider.put_config(&req.config).await?;
@@ -900,31 +897,28 @@ fn has_entries(value: &serde_json::Value) -> bool {
 }
 
 #[derive(Deserialize)]
-struct ProviderConfigRequest {
+struct ProvisionRequest {
     /// Provider auth body for the agent's `POST /provider` (`{credentials}` for Claude or
     /// `{openrouter_key, openrouter_model}`). Omitted when only preferences change.
     #[serde(default)]
     provider: serde_json::Value,
-    /// Sparse provider-owned preferences for the agent's `PUT /provider/config`
-    /// (model, context, thinking).
-    #[serde(default)]
-    provider_config: serde_json::Value,
-    /// Sparse general preferences for the agent's `PUT /config` (personality).
+    /// Sparse preferences for the agent's `PUT /config` (model, context, thinking, personality,
+    /// timezone, seed_context). Omitted when only auth changes.
     #[serde(default)]
     config: serde_json::Value,
 }
 
-/// Apply any of provider auth / provider preferences / general preferences, then restart the
-/// container ONCE. Each named part is forwarded to its own agent endpoint, so vestad carries no
-/// field taxonomy. Doing these as separate restart-on-write calls raced — a later write hit the
-/// agent mid-restart and 502'd, dropping the change. Writing everything before a single restart
-/// designs that race out of existence.
-async fn set_provider_config_handler(
+/// Provision an agent: apply provider auth and/or preferences, then restart the container ONCE. Each
+/// named part is forwarded to its own agent endpoint, so vestad carries no field taxonomy. Doing
+/// these as separate restart-on-write calls raced — a later write hit the agent mid-restart and
+/// 502'd, dropping the change. Writing everything before a single restart designs that race out of
+/// existence.
+async fn provision_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(req): Json<ProviderConfigRequest>,
+    Json(req): Json<ProvisionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::ProviderConfig(req)).await
+    write_to_agent_and_restart(&state, &name, AgentWrite::Provision(req)).await
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
@@ -2135,7 +2129,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rename", post(rename_agent_handler))
         .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler).delete(clear_provider_handler))
-        .route("/agents/{name}/provider/config", post(set_provider_config_handler))
+        .route("/agents/{name}/provision", post(provision_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))

@@ -208,19 +208,18 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """POST <tenant>/agents/{name}/provider/config — attach Claude creds and, in the same restart,
-        the model (provider pref) plus personality and the freeform seed context (general config). The
-        agent wakes with everything in place."""
-        provider_config: dict[str, Any] = {}
-        if model:
-            provider_config["agent_model"] = model
+        """POST <tenant>/agents/{name}/provision — attach Claude creds and, in the same restart, the
+        agent's preferences (model, personality, freeform seed context). The agent wakes with
+        everything in place."""
         config: dict[str, Any] = {}
+        if model:
+            config["agent_model"] = model
         if personality:
             config["agent_personality"] = personality
         if seed_context:
             config["seed_context"] = seed_context
-        body = {"provider": {"credentials": credentials}, "provider_config": provider_config, "config": config}
-        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provider/config"
+        body = {"provider": {"credentials": credentials}, "config": config}
+        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provision"
         return self._json(self._raw_post(url, json=body, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------

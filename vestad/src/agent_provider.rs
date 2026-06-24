@@ -125,26 +125,6 @@ impl<'a> AgentProvider<'a> {
         Err(format!("agent /config returned HTTP {status}: {body_text}"))
     }
 
-    /// PUT a sparse provider-preferences body (model/context/thinking) to the agent's
-    /// /provider/config. Applies on next restart.
-    pub async fn put_provider_config(&self, body: &serde_json::Value) -> Result<(), String> {
-        let (port, token) = self.port_and_token()?;
-        let resp = self.http_client
-            .put(format!("http://127.0.0.1:{port}/provider/config"))
-            .header("X-Agent-Token", token)
-            .json(body)
-            .timeout(SET_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| format!("agent /provider/config request failed: {e}"))?;
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        let body_text = resp.text().await.unwrap_or_default();
-        Err(format!("agent /provider/config returned HTTP {status}: {body_text}"))
-    }
-
     /// DELETE the agent's /provider — sign out, clearing its credentials. Applies on next restart.
     pub async fn clear(&self) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;

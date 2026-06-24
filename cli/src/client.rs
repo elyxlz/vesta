@@ -145,22 +145,17 @@ fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String>
     value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
 }
 
-/// Build the sparse provider-owned preferences body (model + context window) for /provider/config.
-fn provider_prefs(model: Option<&str>, max_context_tokens: Option<u64>) -> serde_json::Map<String, serde_json::Value> {
-    let mut prefs = serde_json::Map::new();
+/// Build the sparse agent-preferences body for `PUT /config` (or the `config` part of `/provision`).
+/// Every preference lives on one config surface now, so model/context sit alongside timezone. Empty
+/// when nothing is set, which vestad treats as "skip the PUT /config".
+fn config_body(model: Option<&str>, max_context_tokens: Option<u64>, timezone: Option<&str>) -> serde_json::Value {
+    let mut config = serde_json::Map::new();
     if let Some(model) = model {
-        prefs.insert("agent_model".to_string(), serde_json::json!(model));
+        config.insert("agent_model".to_string(), serde_json::json!(model));
     }
     if let Some(ctx) = max_context_tokens {
-        prefs.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+        config.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
     }
-    prefs
-}
-
-/// General (non-provider) preferences carried in the combined `/provider/config` call's `config`
-/// field. Empty when nothing to set, which vestad treats as "skip the PUT /config".
-fn general_config(timezone: Option<&str>) -> serde_json::Value {
-    let mut config = serde_json::Map::new();
     if let Some(tz) = timezone {
         config.insert("timezone".to_string(), serde_json::json!(tz));
     }
@@ -433,10 +428,10 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with Claude credentials (the OAuth JSON blob) and the
-    /// model/context preferences in one request, so vestad writes both and restarts once.
-    /// Splitting this into separate restart-on-write calls raced: a later call hit the agent
-    /// mid-restart and was dropped. Model/context are provider-owned, sent under `provider_config`.
+    /// Provision an existing agent with Claude credentials (the OAuth JSON blob) and its preferences
+    /// (model/context/timezone) in one request, so vestad writes both and restarts once. Splitting
+    /// this into separate restart-on-write calls raced: a later call hit the agent mid-restart and
+    /// was dropped. Preferences ride the `config` field; only the credentials are provider auth.
     pub fn set_provider_credentials(
         &self,
         name: &str,
@@ -448,27 +443,23 @@ impl Client {
         serde_json::from_str::<serde_json::Value>(credentials)
             .map_err(|e| format!("invalid credentials JSON: {e}"))?;
         self.post_json(
-            &format!("/agents/{name}/provider/config"),
+            &format!("/agents/{name}/provision"),
             &serde_json::json!({
                 "provider": {"credentials": credentials},
-                "provider_config": serde_json::Value::Object(provider_prefs(model, max_context_tokens)),
-                "config": general_config(timezone),
+                "config": config_body(model, max_context_tokens, timezone),
             }),
         )?;
         Ok(())
     }
 
-    /// Update provider-owned preferences (model and/or context window) via POST /provider/config.
-    /// A no-op when both are None. Vestad restarts the agent so they take effect.
-    pub fn set_provider_prefs(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        let prefs = provider_prefs(model, max_context_tokens);
-        if prefs.is_empty() {
+    /// Update preferences (model and/or context window) via PUT /config. A no-op when both are None.
+    /// Vestad restarts the agent so they take effect.
+    pub fn set_prefs(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
+        let config = config_body(model, max_context_tokens, None);
+        if config.as_object().is_none_or(serde_json::Map::is_empty) {
             return Ok(());
         }
-        self.post_json(
-            &format!("/agents/{name}/provider/config"),
-            &serde_json::json!({"provider_config": serde_json::Value::Object(prefs)}),
-        )?;
+        self.put_json(&format!("/agents/{name}/config"), &config)?;
         Ok(())
     }
 
@@ -478,12 +469,12 @@ impl Client {
     }
 
     pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs, timezone: Option<&str>) -> Result<(), String> {
-        // Combined endpoint so the openrouter auth and the timezone preference land in one restart.
+        // Provision endpoint so the openrouter auth and the timezone preference land in one restart.
         let body = serde_json::json!({
             "provider": {"openrouter_key": args.key, "openrouter_model": args.model},
-            "config": general_config(timezone),
+            "config": config_body(None, None, timezone),
         });
-        self.post_json(&format!("/agents/{name}/provider/config"), &body)?;
+        self.post_json(&format!("/agents/{name}/provision"), &body)?;
         Ok(())
     }
 
