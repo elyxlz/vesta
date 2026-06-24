@@ -465,21 +465,26 @@ pub fn is_agent_ready(port: u16) -> bool {
     .is_ok()
 }
 
-pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    match container_status(docker, cname).await {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
-        _ => Ok(()),
+/// Reject the two terminal container states (`NotFound`, `Dead`) with their standard
+/// errors, passing a live (`Running`/`Stopped`) status through. The single owner of the
+/// "agent not found / broken state" wording and the shared precondition guard every
+/// name-addressed lifecycle op repeats; `name` is the agent name used in the error text.
+fn guard_alive(status: ContainerStatus, name: &str) -> Result<ContainerStatus, DockerError> {
+    match status {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        live => Ok(live),
     }
 }
 
+pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    guard_alive(container_status(docker, cname).await, &name_from_cname(cname)).map(|_| ())
+}
+
 pub async fn ensure_running(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    let cs = container_status(docker, cname).await;
-    match cs {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+    match guard_alive(container_status(docker, cname).await, &name_from_cname(cname))? {
         ContainerStatus::Running => Ok(()),
-        ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
+        _ => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
     }
 }
 
@@ -1667,12 +1672,8 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => return Ok(()),
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        return Ok(());
     }
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(format!("failed to start '{}'", name)));
@@ -1702,12 +1703,8 @@ pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
 pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Stopped => return Ok(()),
-        ContainerStatus::Running => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
+        return Ok(());
     }
     docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
@@ -1878,12 +1875,8 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
 pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => { docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok(); }
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
@@ -1994,11 +1987,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     let cname = container_name(name);
     let raw = docker.inspect_container(&cname, None).await.map_err(DockerError::from)?;
     let info = container_info_from(&cname, &raw, Some(&env_config.agents_dir));
-    match info.status {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        _ => {}
-    }
+    guard_alive(info.status, name)?;
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
@@ -2138,6 +2127,22 @@ mod tests {
         let tmux_at = script.find("command -v tmux").expect("tmux step present");
         let main_at = script.find("python -m core.main").expect("main step present");
         assert!(tmux_at < main_at, "tmux install must precede launching core.main");
+    }
+
+    #[test]
+    fn guard_alive_rejects_terminal_states_and_passes_live_through() {
+        // The two terminal states map to their standard errors with the exact agent-facing
+        // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
+        let not_found = guard_alive(ContainerStatus::NotFound, "bot").expect_err("not found errors");
+        assert!(matches!(not_found, DockerError::NotFound(_)));
+        assert_eq!(not_found.to_string(), "agent 'bot' not found");
+
+        let dead = guard_alive(ContainerStatus::Dead, "bot").expect_err("dead errors");
+        assert!(matches!(dead, DockerError::BrokenState(_)));
+        assert_eq!(dead.to_string(), "agent 'bot' is in a broken state");
+
+        assert_eq!(guard_alive(ContainerStatus::Running, "bot").expect("running ok"), ContainerStatus::Running);
+        assert_eq!(guard_alive(ContainerStatus::Stopped, "bot").expect("stopped ok"), ContainerStatus::Stopped);
     }
 
     #[test]
