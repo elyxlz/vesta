@@ -3,6 +3,8 @@ use rust_embed::RustEmbed;
 #[derive(RustEmbed)]
 #[folder = "../agent"]
 #[include = "core/**/*"]
+// the personality preset frontmatter is the catalog vestad merges into GET /manifest
+#[include = "skills/personality/presets/*.md"]
 #[include = "pyproject.toml"]
 #[include = "uv.lock"]
 #[exclude = "**/__pycache__/*"]

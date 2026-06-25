@@ -13,11 +13,7 @@ export function PersonalityStep({
   // or a hardcoded copy. Until the user picks, fall through to the manifest default once it loads.
   const manifest = useManifest();
   const [picked, setPicked] = useState<string | null>(null);
-  const defaultName =
-    typeof manifest?.prefs.agent_personality === "string"
-      ? manifest.prefs.agent_personality
-      : "";
-  const selected = picked ?? defaultName;
+  const selected = picked ?? manifest?.default_personality ?? "";
   const personalities = manifest?.personalities ?? null;
 
   return (

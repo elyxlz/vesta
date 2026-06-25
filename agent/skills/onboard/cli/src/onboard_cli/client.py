@@ -93,7 +93,7 @@ class Client:
         manifest = self.fetch_manifest()
         default_kind = manifest.get("default_provider", "claude")
         provider = manifest.get("providers", {}).get(default_kind, {})
-        return {"model": provider.get("default_model") or "opus", "personality": manifest.get("prefs", {}).get("agent_personality", "")}
+        return {"model": provider.get("default_model") or "opus", "personality": manifest.get("default_personality", "")}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
         # Folded into the manifest (no separate /personalities endpoint).

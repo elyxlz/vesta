@@ -12,7 +12,6 @@ export interface ProviderContext {
 }
 
 export interface ProviderEntry {
-  kind: string;
   display: string;
   // Explicit model slugs (Claude) or the "live" sentinel (OpenRouter, fetched from its own endpoint).
   models: string[] | "live";
@@ -30,12 +29,12 @@ export interface Personality {
   order: number;
 }
 
-// The whole new-agent setup description, generated from the agent's models + shipped skills and served
-// at GET /manifest: every settable pref's default (`prefs`), the per-provider catalog (`providers`),
-// and the personality presets (`personalities`). The wizard/settings read it all from here.
+// The new-agent setup description served at GET /manifest: the per-provider catalog (`providers`),
+// the new-agent defaults (`default_provider`, `default_personality`), and the personality presets
+// (`personalities`, merged from the skill by vestad). The wizard/settings read it all from here.
 export interface Manifest {
   default_provider: string;
-  prefs: Record<string, string | number | boolean | null>;
+  default_personality: string;
   providers: Record<string, ProviderEntry>;
   personalities: Personality[];
 }

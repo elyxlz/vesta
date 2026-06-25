@@ -1,55 +1,22 @@
 {
   "default_provider": "claude",
-  "prefs": {
-    "agent_personality": "dry",
-    "ephemeral": false,
-    "log_level": "INFO",
-    "monitor_tick_interval": 2,
-    "proactive_check_interval": 60,
-    "query_timeout": 120,
-    "response_timeout": 600,
-    "nightly_memory_hour": 3,
-    "interrupt_timeout": 5.0,
-    "ws_port": 0,
-    "agent_token": null,
-    "agent_name": "vesta",
-    "timezone": "UTC",
-    "seed_context": ""
-  },
+  "default_personality": "dry",
   "providers": {
     "claude": {
-      "kind": "claude",
       "display": "Claude account",
-      "models": [
-        "opus",
-        "sonnet",
-        "haiku"
-      ],
+      "models": ["opus", "sonnet", "haiku"],
       "default_model": "opus",
       "thinking_supported": true,
       "context": {
         "default": 1000000,
         "presets": [
-          {
-            "tokens": 1000000,
-            "label": "1M",
-            "note": "most context"
-          },
-          {
-            "tokens": 500000,
-            "label": "500K",
-            "note": "balanced"
-          },
-          {
-            "tokens": 200000,
-            "label": "200K",
-            "note": "cheapest prompt-cache reads, compacts soonest"
-          }
+          { "tokens": 1000000, "label": "1M", "note": "most context" },
+          { "tokens": 500000, "label": "500K", "note": "balanced" },
+          { "tokens": 200000, "label": "200K", "note": "cheapest prompt-cache reads, compacts soonest" }
         ]
       }
     },
     "openrouter": {
-      "kind": "openrouter",
       "display": "OpenRouter",
       "models": "live",
       "default_model": null,
@@ -57,73 +24,11 @@
       "context": {
         "default": 200000,
         "presets": [
-          {
-            "tokens": 200000,
-            "label": "200K",
-            "note": "full window"
-          },
-          {
-            "tokens": 128000,
-            "label": "128K",
-            "note": "balanced"
-          },
-          {
-            "tokens": 64000,
-            "label": "64K",
-            "note": "cheapest prompt-cache reads"
-          }
+          { "tokens": 200000, "label": "200K", "note": "full window" },
+          { "tokens": 128000, "label": "128K", "note": "balanced" },
+          { "tokens": 64000, "label": "64K", "note": "cheapest prompt-cache reads" }
         ]
       }
     }
-  },
-  "personalities": [
-    {
-      "name": "dry",
-      "emoji": "😏",
-      "title": "dry",
-      "description": "lowercase, minimal, dry humor. the safe default.",
-      "sample": "nah. why though",
-      "order": 1
-    },
-    {
-      "name": "classic",
-      "emoji": "😂",
-      "title": "classic",
-      "description": "capital letters, full punctuation, 😂 reserved for genuinely funny moments.",
-      "sample": "Oh no, want me to help?",
-      "order": 2
-    },
-    {
-      "name": "polished",
-      "emoji": "🎩",
-      "title": "polished",
-      "description": "sentence case, precise, no slang. an aide, not a friend.",
-      "sample": "Understood. Shall I draft a note?",
-      "order": 3
-    },
-    {
-      "name": "terse",
-      "emoji": "⚪",
-      "title": "terse",
-      "description": "ultra-minimal. no humor, no emoji, pure utility.",
-      "sample": "who to",
-      "order": 4
-    },
-    {
-      "name": "chill",
-      "emoji": "🤙",
-      "title": "chill",
-      "description": "lowercase, slangy, relaxed. casual and loyal.",
-      "sample": "bet, lemme handle it",
-      "order": 5
-    },
-    {
-      "name": "extra",
-      "emoji": "💅",
-      "title": "extra",
-      "description": "lowercase with CAPS for emphasis, stretched words, emoji-rich. maximally expressive.",
-      "sample": "OMGGG GIRL 💅",
-      "order": 6
-    }
-  ]
+  }
 }

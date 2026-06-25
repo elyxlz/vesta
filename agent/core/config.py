@@ -2,7 +2,6 @@ import copy
 import json
 import os
 import pathlib as pl
-import re
 import time
 import typing as tp
 
@@ -20,9 +19,43 @@ _THINKING_ENABLED_BUDGET_TOKENS = 10000
 # provider.py re-exports it.
 CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 
-# The generated provider/defaults manifest (catalog + defaults). It is the model's projection for the
-# non-Python layers (vestad serves it, web/cli read it); regenerate with agent/generate-manifest.py.
+# The hand-authored provider/setup catalog + new-agent defaults. It is the single source of that
+# reference data: the Python model reads it for its field defaults (below), vestad embeds + serves it at
+# GET /manifest (merging in the personality presets), and web/cli read it. No generation step.
 MANIFEST_PATH = pl.Path(__file__).parent / "manifest.json"
+
+# A tiny floor so a corrupt/missing manifest can never crash-loop the boot path (it never happens in
+# practice; the file ships with the agent).
+_MANIFEST_FALLBACK: dict[str, pyd.JsonValue] = {
+    "default_provider": "claude",
+    "default_personality": "dry",
+    "providers": {"claude": {"default_model": "opus"}},
+}
+
+
+def read_manifest() -> dict[str, pyd.JsonValue]:
+    """The shipped manifest as a dict (catalog + defaults). Never raises (it's read at import + boot)."""
+    try:
+        data = json.loads(MANIFEST_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return _MANIFEST_FALLBACK
+    return data if isinstance(data, dict) else _MANIFEST_FALLBACK
+
+
+_MANIFEST = read_manifest()
+
+
+def _manifest_default(*keys: str, fallback: str) -> str:
+    node: pyd.JsonValue = _MANIFEST
+    for key in keys:
+        node = node[key] if isinstance(node, dict) and key in node else None
+    return node if isinstance(node, str) else fallback
+
+
+# New-agent defaults, read from the manifest (the one source) so they aren't restated in code.
+DEFAULT_PROVIDER = _manifest_default("default_provider", fallback="claude")
+_DEFAULT_PERSONALITY = _manifest_default("default_personality", fallback="dry")
+_DEFAULT_CLAUDE_MODEL = _manifest_default("providers", "claude", "default_model", fallback="opus")
 
 # claude-code's assumed window without the 1M beta, and the OpenRouter cap fallback when the user
 # hasn't explicitly chosen a context window.
@@ -31,19 +64,12 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 # The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k default.
 CONTEXT_1M_BETA = "context-1m-2025-08-07"
 
-# Per-provider context bounds: one constant each, reused by the Field constraints (the single source;
-# the manifest generator reads them back off the fields, never restating them).
+# Per-provider context bounds enforced by the Field constraints (the catalog's presets live in the manifest).
 _CTX_MIN = 1_000
 _CLAUDE_CTX_MAX = 1_000_000
 _OPENROUTER_CTX_MAX = 200_000
 
-DEFAULT_PROVIDER = "claude"
 ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized")
-
-# Shipped personality skill presets (frontmatter catalog folded into the manifest). Relative to this
-# module, agent/core/ -> agent/skills/...; the same path resolves in the container (~/agent/skills).
-_PRESETS_DIR = pl.Path(__file__).parent.parent / "skills" / "personality" / "presets"
-_PRESET_ORDER_LAST = 2**31
 
 
 def _resolve_agent_dir() -> pl.Path:
@@ -96,14 +122,6 @@ def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
     _write_config_store(current)
 
 
-class ContextPreset(pyd.BaseModel):
-    """A curated context-window suggestion shown in the picker. The first preset is the UI default."""
-
-    tokens: int
-    label: str
-    note: str
-
-
 class ClaudeOAuth(pyd.BaseModel):
     """Mirrors the `claudeAiOauth` blob in the SDK credentials file. Tolerates extra keys: the `claude`
     CLI owns the file and adds fields we don't model. Loaded at boot, never persisted to the store."""
@@ -131,22 +149,17 @@ def _read_claude_oauth() -> "ClaudeOAuth | None":
     return None
 
 
+# The provider config is a discriminated union by `kind` — it carries the SHAPE invariants (openrouter
+# requires a key, claude carries thinking + its OAuth blob), while the catalog of model/context options
+# lives in the manifest (reference data). `model` is a free-form slug on both (the picker offers the
+# manifest's list; claude-code resolves it), so a typo fails at the SDK, same as openrouter.
 class ClaudeConfig(pyd.BaseModel):
     kind: tp.Literal["claude"] = "claude"
-    model: tp.Literal["opus", "sonnet", "haiku"] = "opus"
+    model: str = _DEFAULT_CLAUDE_MODEL
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_CLAUDE_CTX_MAX)
     thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ADAPTIVE_THINKING
     # Loaded from CREDENTIALS_PATH at construction (see VestaConfig._hydrate_claude_oauth); never persisted.
     oauth: ClaudeOAuth | None = None
-
-    # The only two presentation bits the type system can't express, as plain ClassVars (the manifest's
-    # one source; everything else the manifest needs is derived from the fields above).
-    display: tp.ClassVar[str] = "Claude account"
-    context_presets: tp.ClassVar[list[ContextPreset]] = [
-        ContextPreset(tokens=1_000_000, label="1M", note="most context"),
-        ContextPreset(tokens=500_000, label="500K", note="balanced"),
-        ContextPreset(tokens=200_000, label="200K", note="cheapest prompt-cache reads, compacts soonest"),
-    ]
 
     @pyd.field_validator("thinking", mode="before")
     @classmethod
@@ -159,56 +172,11 @@ class OpenRouterConfig(pyd.BaseModel):
     model: str
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_OPENROUTER_CTX_MAX)
     # SecretStr redacts it in GET /config; client.py injects the real value into the SDK env. Required:
-    # an openrouter provider structurally cannot exist without a key.
+    # an openrouter provider structurally cannot exist without a key. No thinking field (forced disabled).
     key: pyd.SecretStr
-    # No thinking field: openrouter can't set it (runtime forces disabled). The manifest derives
-    # thinking_supported from the absence of this field.
-
-    display: tp.ClassVar[str] = "OpenRouter"
-    context_presets: tp.ClassVar[list[ContextPreset]] = [
-        ContextPreset(tokens=200_000, label="200K", note="full window"),
-        ContextPreset(tokens=128_000, label="128K", note="balanced"),
-        ContextPreset(tokens=64_000, label="64K", note="cheapest prompt-cache reads"),
-    ]
 
 
 Provider = tp.Annotated[ClaudeConfig | OpenRouterConfig, pyd.Field(discriminator="kind")]
-_ProviderClass = type[ClaudeConfig] | type[OpenRouterConfig]
-_PROVIDER_CLASSES: tuple[_ProviderClass, ...] = (ClaudeConfig, OpenRouterConfig)
-
-
-class ContextSpec(pyd.BaseModel):
-    default: int
-    presets: list[ContextPreset]
-
-
-class ProviderEntry(pyd.BaseModel):
-    kind: str
-    display: str
-    models: list[str] | tp.Literal["live"]  # explicit slugs (claude) or "live" (openrouter, fetched)
-    default_model: str | None
-    thinking_supported: bool
-    context: ContextSpec
-
-
-class PersonalityPreset(pyd.BaseModel):
-    name: str
-    emoji: str = ""
-    title: str = ""
-    description: str = ""
-    sample: str = ""
-    order: int = _PRESET_ORDER_LAST
-
-
-class Manifest(pyd.BaseModel):
-    """The whole new-agent setup description, generated from the agent's models + shipped skills: every
-    settable pref's default (generic over the fields), the per-provider catalog, and the personality
-    presets. One document the wizard/settings read, so nothing is hand-picked or kept on a side endpoint."""
-
-    default_provider: str
-    prefs: dict[str, pyd.JsonValue]
-    providers: dict[str, ProviderEntry]
-    personalities: list[PersonalityPreset]
 
 
 def _coerce_thinking(value: object) -> object:
@@ -236,68 +204,6 @@ def _coerce_thinking(value: object) -> object:
     return value
 
 
-def _provider_manifest_entry(cls: _ProviderClass) -> ProviderEntry:
-    """One manifest entry, derived entirely from a provider class: catalog ClassVars + field metadata.
-    Nothing is restated (bounds, default model, thinking support all come from the fields)."""
-    args = tp.get_args(cls.model_fields["model"].annotation)
-    models: list[str] | tp.Literal["live"] = [str(arg) for arg in args] if args else "live"
-    default = cls.model_fields["model"].default
-    presets = cls.context_presets
-    return ProviderEntry(
-        kind=str(cls.model_fields["kind"].default),
-        display=cls.display,
-        models=models,
-        default_model=default if isinstance(default, str) else None,
-        thinking_supported="thinking" in cls.model_fields,
-        context=ContextSpec(default=presets[0].tokens, presets=presets),
-    )
-
-
-def _frontmatter_field(fields: dict[str, str], key: str) -> str:
-    return fields[key].strip().strip('"') if key in fields else ""
-
-
-def read_personalities() -> list[PersonalityPreset]:
-    """Parse the shipped personality skill presets (frontmatter) into catalog entries, sorted by their
-    declared order. Folded into the manifest so the setup wizard reads one document, not a side endpoint."""
-    presets: list[PersonalityPreset] = []
-    if not _PRESETS_DIR.is_dir():
-        return presets
-    for md in sorted(_PRESETS_DIR.glob("*.md")):
-        match = re.match(r"^---\n(.*?)\n---", md.read_text(), re.DOTALL)
-        fields = dict(re.findall(r"^(\w+)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        order = _frontmatter_field(fields, "order")
-        presets.append(
-            PersonalityPreset(
-                name=md.stem,
-                emoji=_frontmatter_field(fields, "emoji"),
-                title=_frontmatter_field(fields, "title"),
-                description=_frontmatter_field(fields, "description"),
-                sample=_frontmatter_field(fields, "sample"),
-                order=int(order) if order.isdigit() else _PRESET_ORDER_LAST,
-            )
-        )
-    return sorted(presets, key=lambda preset: preset.order)
-
-
-def build_manifest() -> Manifest:
-    """The whole-config manifest, generated from the models + shipped skills. `prefs` is every settable
-    scalar field's default, derived generically (no hand-picked subset); `providers` is the per-provider
-    catalog; `personalities` is the shipped preset catalog. generate-manifest.py writes it; CI checks it."""
-    prefs: dict[str, pyd.JsonValue] = {
-        name: field.default
-        for name, field in VestaConfig.model_fields.items()
-        if isinstance(field.default, (str, int, float)) or field.default is None
-    }
-    entries = [_provider_manifest_entry(cls) for cls in _PROVIDER_CLASSES]
-    return Manifest(
-        default_provider=DEFAULT_PROVIDER,
-        prefs=prefs,
-        providers={entry.kind: entry for entry in entries},
-        personalities=read_personalities(),
-    )
-
-
 class VestaConfig(pyd_settings.BaseSettings):
     """Vesta agent configuration: one central config.json (nested), per-agent.
 
@@ -315,7 +221,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     model_config = pyd_settings.SettingsConfigDict(extra="ignore", populate_by_name=True)
 
     provider: Provider = pyd.Field(default_factory=ClaudeConfig)
-    agent_personality: str = "dry"
+    agent_personality: str = _DEFAULT_PERSONALITY
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
