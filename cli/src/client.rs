@@ -419,6 +419,14 @@ impl Client {
         require_bool(&value, "auto_update")
     }
 
+    pub fn get_gateway_settings(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/settings")?)
+    }
+
+    pub fn get_gateway_info(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/info")?)
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         read_json(self.get("/agents")?)
     }
