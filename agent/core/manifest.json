@@ -1,0 +1,68 @@
+{
+  "default_provider": "claude",
+  "agent_personality": "dry",
+  "providers": {
+    "claude": {
+      "kind": "claude",
+      "display": "Claude account",
+      "models": [
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default_model": "opus",
+      "thinking_supported": true,
+      "context": {
+        "min": 1000,
+        "max": 1000000,
+        "default": 1000000,
+        "presets": [
+          {
+            "tokens": 1000000,
+            "label": "1M",
+            "note": "most context"
+          },
+          {
+            "tokens": 500000,
+            "label": "500K",
+            "note": "balanced"
+          },
+          {
+            "tokens": 200000,
+            "label": "200K",
+            "note": "cheapest prompt-cache reads, compacts soonest"
+          }
+        ]
+      }
+    },
+    "openrouter": {
+      "kind": "openrouter",
+      "display": "OpenRouter",
+      "models": "live",
+      "default_model": null,
+      "thinking_supported": false,
+      "context": {
+        "min": 1000,
+        "max": 200000,
+        "default": 200000,
+        "presets": [
+          {
+            "tokens": 200000,
+            "label": "200K",
+            "note": "full window"
+          },
+          {
+            "tokens": 128000,
+            "label": "128K",
+            "note": "balanced"
+          },
+          {
+            "tokens": 64000,
+            "label": "64K",
+            "note": "cheapest prompt-cache reads"
+          }
+        ]
+      }
+    }
+  }
+}

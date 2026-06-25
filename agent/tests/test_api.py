@@ -217,49 +217,57 @@ def test_config_update_rejects_bad_values(config):
             validate_config_updates(config, bad)
 
 
-def test_config_update_rejects_bad_pref_values(config):
+def test_config_update_rejects_bad_provider_values(config):
     from core.config import validate_config_updates
 
-    # Model/context/thinking are now plain config keys; they keep their field constraints on PUT /config.
-    for bad in [{"max_context_tokens": 0}, {"thinking": "x"}]:
+    # A provider partial keeps the field constraints (ge on context, the thinking union).
+    for bad in [{"provider": {"max_context_tokens": 0}}, {"provider": {"thinking": "x"}}]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)
 
 
-def test_provider_update_accepts_each_provider():
-    from core.api import _ProviderUpdate
+def test_sign_in_body_parses_each_provider():
+    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _OpenRouterSignIn
 
-    assert _ProviderUpdate.model_validate({"credentials": "{}"}).credentials == "{}"
-    parsed = _ProviderUpdate.model_validate({"openrouter_key": "k", "openrouter_model": "m"})
-    assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
+    claude = _SIGN_IN_ADAPTER.validate_python({"kind": "claude", "model": "opus", "credentials": "{}"})
+    assert isinstance(claude, _ClaudeSignIn) and claude.credentials == "{}"
+    openrouter = _SIGN_IN_ADAPTER.validate_python({"kind": "openrouter", "model": "m", "key": "k"})
+    assert isinstance(openrouter, _OpenRouterSignIn) and (openrouter.key, openrouter.model) == ("k", "m")
+
+
+def test_sign_in_body_rejects_invalid():
+    from core.api import _SIGN_IN_ADAPTER
+
+    for bad in [{}, {"kind": "claude"}, {"kind": "openrouter", "model": "m"}, {"kind": "vllm"}]:
+        with pytest.raises(pyd.ValidationError):
+            _SIGN_IN_ADAPTER.validate_python(bad)
 
 
 @pytest.mark.anyio
-async def test_config_put_rejects_an_auth_key(config):
-    # Auth is its own endpoint (PUT /config/auth); a stray `auth` in a prefs body is not a config field.
+async def test_config_put_rejects_a_provider_key(config):
+    # The provider is set via /provider; a `provider` key in a /config (prefs) body is rejected.
     from core.api import _config_put_handler
 
     class _Req:
         app = {"config": config}
 
         async def json(self):
-            return {"auth": {"credentials": "{}"}}
+            return {"provider": {"model": "opus"}}
 
     resp = await _config_put_handler(typing.cast("web.Request", _Req()))
     assert resp.status == 400
 
 
 @pytest.mark.anyio
-async def test_config_auth_put_signs_in_then_delete_signs_out(config, monkeypatch):
-    # PUT /config/auth applies credentials; DELETE /config/auth clears them. Each is write-only (the
-    # caller restarts to apply), so the handlers just return ok.
+async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
+    # PUT /provider applies credentials; DELETE /provider clears them. Each is write-only (the caller
+    # restarts to apply), so the handlers just return ok.
     import core.api as api_mod
-    from core.api import _config_auth_delete_handler, _config_auth_put_handler
     from core.provider import ProviderAuthState, ProviderStatus
 
     signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
-    monkeypatch.setattr(api_mod, "set_claude", lambda creds, *, config: signed_in)
+    monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, *, config: signed_in)
     monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
 
     state = vm.State()
@@ -269,24 +277,15 @@ async def test_config_auth_put_signs_in_then_delete_signs_out(config, monkeypatc
         app = {"state": state, "config": config}
 
         async def json(self):
-            return {"credentials": "{}"}
+            return {"kind": "claude", "model": "opus", "credentials": "{}"}
 
-    put_resp = await _config_auth_put_handler(typing.cast("web.Request", _PutReq()))
+    put_resp = await api_mod._provider_put_handler(typing.cast("web.Request", _PutReq()))
     assert put_resp.status == 200
     assert state.provider_status is signed_in
 
     class _DelReq:
         app = {"state": state, "config": config}
 
-    del_resp = await _config_auth_delete_handler(typing.cast("web.Request", _DelReq()))
+    del_resp = await api_mod._provider_delete_handler(typing.cast("web.Request", _DelReq()))
     assert del_resp.status == 200
     assert state.provider_status is signed_out
-
-
-def test_provider_update_requires_exactly_one_provider():
-
-    from core.api import _ProviderUpdate
-
-    for bad in [{}, {"credentials": "c", "openrouter_key": "k"}, {"openrouter_key": "k"}, {"bogus": 1}]:
-        with pytest.raises(pyd.ValidationError):
-            _ProviderUpdate.model_validate(bad)

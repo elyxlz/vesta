@@ -34,16 +34,16 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     """Look up the OpenRouter model's real context window. claude-code assumes a
     200k window for non-Anthropic models (claude-code#46416), so the value passed
     via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
-    The caller caps this at config.max_context_tokens before passing it to the SDK
+    The caller caps this at config.provider.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default, same behavior as before."""
-    if config.agent_provider != "openrouter" or config.openrouter_key is None:
+    if not isinstance(config.provider, vm.OpenRouterConfig):
         return None
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 OPENROUTER_MODELS_URL,
-                headers={"Authorization": f"Bearer {config.openrouter_key.get_secret_value()}"},
+                headers={"Authorization": f"Bearer {config.provider.key.get_secret_value()}"},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
@@ -54,7 +54,7 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
         return None
     models = body["data"] if isinstance(body, dict) and "data" in body else []
     for entry in models:
-        if "id" in entry and entry["id"] == config.agent_model and "context_length" in entry:
+        if "id" in entry and entry["id"] == config.provider.model and "context_length" in entry:
             ctx = entry["context_length"]
             if isinstance(ctx, int) and ctx > 0:
                 return ctx
@@ -316,24 +316,22 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
-    # 1M-context beta and thinking are Anthropic-only; drop them on OpenRouter.
-    is_openrouter = config.agent_provider == "openrouter"
-
     # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
     # os.environ here would leak the OpenRouter URL into every other subprocess
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
     sdk_env: dict[str, str] = {}
     betas: list[str] = []
-    if is_openrouter:
+    # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
+    thinking_config = ThinkingConfigDisabled(type="disabled")
+    if isinstance(config.provider, vm.OpenRouterConfig):
         # The SDK always routes through the local caching proxy, never OpenRouter
         # directly. start_cache_proxy runs first in message_processor, so the URL is set.
         if not state.openrouter_proxy_url:
             raise RuntimeError("OpenRouter cache proxy not started before building client options")
         sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
         # The OpenRouter key + background model the subprocess talks to OpenRouter with, injected
-        # from the config store (no shell env inheritance).
-        if config.openrouter_key is not None:
-            sdk_env["ANTHROPIC_AUTH_TOKEN"] = config.openrouter_key.get_secret_value()
+        # from the config store (no shell env inheritance). The union guarantees the key.
+        sdk_env["ANTHROPIC_AUTH_TOKEN"] = config.provider.key.get_secret_value()
         sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
         # Tell claude-code the model's real window so autocompact uses the right
         # threshold instead of its 200k default for non-Anthropic models.
@@ -341,21 +339,21 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
     else:
         # Claude. The 1M-context beta unlocks windows above claude-code's 200k default.
-        # Honor a user-chosen window (MAX_CONTEXT_TOKENS): cap the autocompact threshold
-        # to it, and request the 1M beta only when the choice needs the larger window.
-        # Unset (existing agents) keeps the historical default: 1M beta on, no explicit cap.
-        chosen = config.max_context_tokens
+        # Honor a user-chosen window: cap the autocompact threshold to it, and request the 1M
+        # beta only when the choice needs the larger window. Unset keeps 1M beta on, no cap.
+        chosen = config.provider.max_context_tokens
         if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
             betas = [CONTEXT_1M_BETA]
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
+        thinking_config = config.provider.thinking
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
-        model=config.agent_model,
+        model=config.provider.model,
         betas=betas,  # ty: ignore[invalid-argument-type]
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
@@ -368,7 +366,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         setting_sources=["user", "project"],
         skills="all",
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
-        thinking=ThinkingConfigDisabled(type="disabled") if is_openrouter else config.thinking,
+        thinking=thinking_config,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},

@@ -7,12 +7,13 @@ import pytest
 
 import core.models as vm
 from core.config import (
-    VestaConfig,
+    ClaudeConfig,
     config_store_path,
     load_config,
     migrate_legacy_config_to_store,
     read_config_store,
     update_config_store,
+    validate_config_updates,
 )
 from core.helpers import get_memory_path
 
@@ -35,21 +36,27 @@ def test_memory_paths(config):
     assert config.skills_dir == config.agent_dir / "skills"
 
 
-# Both the plain-string form (THINKING=adaptive) and the legacy JSON-dict form written before
-# adaptive.display was required (THINKING='{"type":"adaptive"}') must coerce to the SDK config.
+def test_default_provider_is_claude_opus():
+    provider = vm.VestaConfig().provider
+    assert isinstance(provider, ClaudeConfig)
+    assert provider.kind == "claude"
+    assert provider.model == "opus"
+
+
+# Both the plain-string form (thinking="adaptive") and the legacy JSON-dict form written before
+# adaptive.display was required must coerce to the SDK config. thinking lives on the claude provider.
 @pytest.mark.parametrize(
     "value,expected",
     [
-        ('{"type":"adaptive"}', {"type": "adaptive", "display": "summarized"}),
-        ('{"type":"enabled"}', {"type": "enabled", "budget_tokens": 10000}),
-        ('{"type":"disabled"}', {"type": "disabled"}),
+        ({"type": "adaptive"}, {"type": "adaptive", "display": "summarized"}),
+        ({"type": "enabled"}, {"type": "enabled", "budget_tokens": 10000}),
+        ({"type": "disabled"}, {"type": "disabled"}),
         ("adaptive", {"type": "adaptive", "display": "summarized"}),
         ("disabled", {"type": "disabled"}),
     ],
 )
-def test_thinking_coerces(monkeypatch, value, expected):
-    monkeypatch.setenv("THINKING", value)
-    assert VestaConfig().thinking == expected
+def test_thinking_coerces(value, expected):
+    assert ClaudeConfig(thinking=value).thinking == expected
 
 
 def test_load_config_reverts_invalid_env_to_default(monkeypatch):
@@ -66,21 +73,21 @@ def test_load_config_reverts_invalid_env_to_default(monkeypatch):
 
 def test_load_config_keeps_other_valid_overrides(monkeypatch):
     """Only the offending var is reverted; valid overrides alongside it survive."""
-    monkeypatch.setenv("AGENT_MODEL", "sonnet")
+    monkeypatch.setenv("RESPONSE_TIMEOUT", "300")
     monkeypatch.setenv("NIGHTLY_MEMORY_HOUR", "99")
     config, issues = load_config()
 
-    assert config.agent_model == "sonnet"
+    assert config.response_timeout == 300
     assert config.nightly_memory_hour == 3
     assert len(issues) == 1
     assert "NIGHTLY_MEMORY_HOUR" in issues[0]
 
 
 def test_load_config_clean_env_has_no_issues(monkeypatch):
-    monkeypatch.setenv("AGENT_MODEL", "haiku")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     config, issues = load_config()
 
-    assert config.agent_model == "haiku"
+    assert config.log_level == "DEBUG"
     assert issues == []
 
 
@@ -105,7 +112,7 @@ def test_report_config_issues_noop_without_issues(config):
     assert not config.notifications_dir.exists() or list(config.notifications_dir.glob("*.json")) == []
 
 
-# --- Config store + layered sources (writable store > env > shipped defaults floor) ---
+# --- Config store (nested provider + scalar prefs) ---
 
 
 @pytest.fixture
@@ -116,107 +123,87 @@ def agentdir(tmp_path, monkeypatch):
 
 
 def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch):
-    # The crash class: none of model/provider/personality in env, no store -> defaults, no raise.
-    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY", "AGENT_SEED_PERSONALITY"):
-        monkeypatch.delenv(key, raising=False)
+    # The crash class: nothing in env, no store -> field defaults, no raise.
     config, issues = load_config()
-    assert (config.agent_model, config.agent_provider, config.agent_personality) == ("opus", "claude", "dry")
+    assert (config.provider.model, config.provider.kind, config.agent_personality) == ("opus", "claude", "dry")
     assert issues == []
     assert isinstance(config, vm.VestaConfig)
 
 
-def test_store_overrides_env(agentdir, monkeypatch):
-    monkeypatch.setenv("AGENT_MODEL", "haiku")  # legacy env value
-    update_config_store({"agent_model": "sonnet"})  # a PUT /config write
-    assert vm.VestaConfig().agent_model == "sonnet"
+def test_store_sets_nested_provider(agentdir):
+    update_config_store({"provider": {"kind": "claude", "model": "sonnet"}})
+    assert vm.VestaConfig().provider.model == "sonnet"
 
 
-def test_update_merges_and_clear_reverts(agentdir, monkeypatch):
-    monkeypatch.delenv("AGENT_MODEL", raising=False)
-    update_config_store({"agent_model": "sonnet", "max_context_tokens": 500_000})
-    assert read_config_store() == {"agent_model": "sonnet", "max_context_tokens": 500_000}
-    # A None clears just that key; the other override stays.
-    update_config_store({"max_context_tokens": None})
-    assert read_config_store() == {"agent_model": "sonnet"}
-    assert vm.VestaConfig().max_context_tokens is None
+def test_update_merges_and_clear_reverts(agentdir):
+    update_config_store({"provider": {"kind": "claude", "model": "sonnet"}, "agent_personality": "warm"})
+    assert read_config_store() == {"provider": {"kind": "claude", "model": "sonnet"}, "agent_personality": "warm"}
+    # A None clears just that key; the provider override stays.
+    update_config_store({"agent_personality": None})
+    assert read_config_store() == {"provider": {"kind": "claude", "model": "sonnet"}}
+    assert vm.VestaConfig().agent_personality == "dry"
 
 
 def test_update_rejects_keys_that_are_not_config_fields(agentdir):
-    # Any real VestaConfig field is writable; a key that isn't a field is a typo and is rejected
-    # so it can't write a dead entry the loader would silently ignore.
     with pytest.raises(ValueError):
         update_config_store({"not_a_field": "x"})
 
 
-def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch):
+def test_corrupt_store_does_not_crash_load(agentdir):
     config_store_path().write_text("{ not json")
     assert read_config_store() == {}
-    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "AGENT_PERSONALITY"):
-        monkeypatch.delenv(key, raising=False)
     config, _ = load_config()
-    assert config.agent_model == "opus"
+    assert config.provider.model == "opus"
 
 
-# --- Legacy fleet convergence onto the config store ---
+# --- Legacy fleet convergence: flat -> nested provider ---
 
 
-def test_migrate_drains_genuine_env_values_into_store(agentdir, monkeypatch):
+def test_migrate_drains_flat_env_into_nested_provider(agentdir, monkeypatch):
     monkeypatch.setenv("AGENT_MODEL", "sonnet")
     monkeypatch.setenv("AGENT_PERSONALITY", "warm")
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "500000")
     monkeypatch.delenv("TZ", raising=False)
     migrate_legacy_config_to_store()
-    assert read_config_store() == {"agent_model": "sonnet", "agent_personality": "warm", "max_context_tokens": 500000}
+    assert read_config_store() == {
+        "provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500000},
+        "agent_personality": "warm",
+    }
 
 
 def test_migrate_drains_legacy_tz_into_store(agentdir, monkeypatch):
-    # A legacy agent carries its real timezone in the TZ env var (old /run/vestad-env or ~/.bashrc);
-    # converge it into the store so the store owns it.
     monkeypatch.setenv("TZ", "America/New_York")
     migrate_legacy_config_to_store()
     assert read_config_store()["timezone"] == "America/New_York"
 
 
 def test_migrate_skips_utc_default_tz(agentdir, monkeypatch):
-    # UTC is the default floor, so there's nothing to converge — keep a fresh agent's store clean.
     monkeypatch.setenv("TZ", "UTC")
     migrate_legacy_config_to_store()
     assert "timezone" not in read_config_store()
 
 
-def test_migrate_skips_keys_absent_from_env_no_default_lock_in(agentdir, monkeypatch):
-    # Only the legacy AGENT_SEED_PERSONALITY is set (pre-rename); the alias is gone, so personality
-    # must NOT be converged (else the default would be locked into the store).
-    monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
-    monkeypatch.setenv("AGENT_SEED_PERSONALITY", "warm")
-    monkeypatch.setenv("AGENT_MODEL", "opus")
-    migrate_legacy_config_to_store()
-    store = read_config_store()
-    assert "agent_personality" not in store
-    assert store["agent_model"] == "opus"
-
-
 def test_migrate_does_not_overwrite_existing_store_and_is_idempotent(agentdir, monkeypatch):
-    update_config_store({"agent_model": "haiku"})  # a prior PUT /config choice
+    update_config_store({"provider": {"kind": "claude", "model": "haiku"}})  # a prior choice
     monkeypatch.setenv("AGENT_MODEL", "sonnet")  # legacy env says otherwise
     migrate_legacy_config_to_store()
-    assert read_config_store()["agent_model"] == "haiku"  # PUT choice preserved
+    assert read_config_store()["provider"] == {"kind": "claude", "model": "haiku"}  # choice preserved
     migrate_legacy_config_to_store()  # second run is a no-op
-    assert read_config_store()["agent_model"] == "haiku"
+    assert read_config_store()["provider"] == {"kind": "claude", "model": "haiku"}
 
 
 def test_migrate_ignores_nonnumeric_context(agentdir, monkeypatch):
-    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    monkeypatch.setenv("AGENT_MODEL", "opus")
     monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "lots")
     migrate_legacy_config_to_store()
-    assert "max_context_tokens" not in read_config_store()
+    assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
 
 
-def test_migrate_drains_legacy_provider_file_and_deletes_it(agentdir, monkeypatch, tmp_path):
+def test_migrate_drains_legacy_provider_file_into_nested(agentdir, monkeypatch, tmp_path):
     from core import config as config_mod
 
-    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS"):
+    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS", "AGENT_PROVIDER"):
         monkeypatch.delenv(key, raising=False)
     legacy = tmp_path / "vesta-provider.env"
     legacy.write_text(
@@ -228,60 +215,61 @@ def test_migrate_drains_legacy_provider_file_and_deletes_it(agentdir, monkeypatc
     monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
 
     config_mod.migrate_legacy_config_to_store()
-    store = config_mod.read_config_store()
-    assert store["agent_provider"] == "openrouter"
-    assert store["agent_model"] == "deepseek/deepseek-v4-flash"
-    assert store["openrouter_key"] == "sk-or-v1-secret"
-    assert store["max_context_tokens"] == 200000
+    provider = config_mod.read_config_store()["provider"]
+    assert provider == {
+        "kind": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "key": "sk-or-v1-secret",
+        "max_context_tokens": 200000,
+    }
     assert not legacy.exists()  # the legacy file is retired after draining
 
 
 def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_path):
     from core import config as config_mod
 
-    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS"):
+    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS", "AGENT_PROVIDER"):
         monkeypatch.delenv(key, raising=False)
     legacy = tmp_path / "vesta-provider.env"
     legacy.write_text("export AGENT_PROVIDER=claude\nexport ANTHROPIC_AUTH_TOKEN=\n")
     monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
 
     config_mod.migrate_legacy_config_to_store()
-    store = config_mod.read_config_store()
-    assert store["agent_provider"] == "claude"
-    assert "openrouter_key" not in store
+    assert config_mod.read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
     assert not legacy.exists()
 
 
-# --- PUT /config accepts every preference; only auth fields are rejected ---
+# --- PUT /config (prefs) + PATCH /provider validation ---
 
 
-@pytest.mark.parametrize("key,value", [("openrouter_key", "sk-or-v1-x"), ("agent_provider", "openrouter")])
-def test_validate_config_rejects_auth_fields(config, key, value):
-    # Auth fields carry credential-file + provider-status side effects, so they go through POST
-    # /provider, never the generic config write.
-    from core.config import validate_config_updates
-
-    with pytest.raises(ValueError, match="auth-owned"):
-        validate_config_updates(config, {key: value})
+@pytest.mark.parametrize("key", ["openrouter_key", "agent_provider", "agent_model", "max_context_tokens", "thinking"])
+def test_validate_config_rejects_non_pref_keys(config, key):
+    # Flat provider keys are not config fields anymore; the provider is set via /provider.
+    with pytest.raises(ValueError, match="not config fields"):
+        validate_config_updates(config, {key: "x"})
 
 
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("agent_model", "opus"),
-        ("max_context_tokens", 500_000),
-        ("thinking", "enabled"),
         ("agent_personality", "playful"),
         ("timezone", "Europe/London"),
         ("seed_context", "they like terse replies"),
     ],
 )
 def test_validate_config_accepts_every_preference(config, key, value):
-    # Model/context/thinking used to route through a separate /provider/config; now every preference
-    # is settable on the one config surface.
-    from core.config import validate_config_updates
-
     assert validate_config_updates(config, {key: value}) == {key: value}
+
+
+def test_validate_provider_partial_deep_merges(config):
+    # A provider partial (PATCH /provider) merges onto the current provider and revalidates.
+    updates = validate_config_updates(config, {"provider": {"model": "sonnet"}})
+    assert updates["provider"] == {
+        "kind": "claude",
+        "model": "sonnet",
+        "max_context_tokens": None,
+        "thinking": {"type": "adaptive", "display": "summarized"},
+    }
 
 
 def test_config_applies_timezone_to_process_env(monkeypatch):

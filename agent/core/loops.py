@@ -27,7 +27,7 @@ from .client import (
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
-from .provider import CREDENTIALS_PATH, ProviderAuthState
+from .provider import ProviderAuthState
 
 from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
 
@@ -138,7 +138,7 @@ async def process_batch(
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if config.agent_provider == "claude" and not CREDENTIALS_PATH.exists():
+    if isinstance(config.provider, vm.ClaudeConfig) and config.provider.oauth is None:
         logger.startup("No credentials yet, waiting for auth before starting")
         return False
 
@@ -301,14 +301,14 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
-    if config.agent_provider == "openrouter":
+    if isinstance(config.provider, vm.OpenRouterConfig):
         if state.openrouter_max_tokens is None:
             real_window = await resolve_openrouter_max_tokens(config)
             if real_window:
-                # Cap at MAX_CONTEXT_TOKENS: cache-read cost scales with how large the
+                # Cap at max_context_tokens: cache-read cost scales with how large the
                 # cached prefix grows before autocompact, so big-window models default
                 # to a 200k working window unless the user raises the cap.
-                cap = config.max_context_tokens or DEFAULT_CONTEXT_WINDOW
+                cap = config.provider.max_context_tokens or DEFAULT_CONTEXT_WINDOW
                 state.openrouter_max_tokens = min(real_window, cap)
                 capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
                 logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
