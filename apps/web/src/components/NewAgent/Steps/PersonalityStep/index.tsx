@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchPersonalities, type Personality } from "@/api/personalities";
-import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { useManifest } from "@/hooks/use-manifest";
 
 export function PersonalityStep({
   onPicked,
@@ -14,11 +14,11 @@ export function PersonalityStep({
     null,
   );
   const [loadError, setLoadError] = useState<string | null>(null);
-  // The default preset comes from vestad (GET /agent-defaults), not a hardcoded copy.
-  // Until the user picks, fall through to vestad's default once it loads.
-  const defaults = useAgentDefaults();
+  // The default personality comes from the manifest (GET /manifest), not a hardcoded copy.
+  // Until the user picks, fall through to the manifest default once it loads.
+  const manifest = useManifest();
   const [picked, setPicked] = useState<string | null>(null);
-  const selected = picked ?? defaults?.agent_personality ?? "";
+  const selected = picked ?? manifest?.agent_personality ?? "";
 
   useEffect(() => {
     fetchPersonalities()
