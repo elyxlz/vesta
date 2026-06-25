@@ -1470,18 +1470,42 @@ jobs:
   # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
   # test-live) leaves a published-but-asset-less release. Updaters that follow
   # prereleases then pick it up and 404 on the missing binary. Delete the
-  # release and its tag so the version vanishes cleanly; re-run ./release.sh
-  # after fixing to retry the same version.
+  # release and its tag, AND revert the "Bump version to X" commit release.yml
+  # pushed to master — otherwise the version is stranded (master sits at the
+  # bumped version with no release, and the next ./release.sh skips to the next
+  # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
     needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
     if: ${{ failure() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Delete the failed release and its tag
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Delete the failed release and revert the bump
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           TAG="${{ github.event.release.tag_name }}"
           echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          # Undo the bump with a revert commit, not a force-push: branch protection
+          # forbids force-pushes to master (allow_force_pushes: false). Only revert
+          # when the bump is still the tip, so a commit that landed after it is safe.
+          git fetch origin master
+          if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
+            git reset --hard origin/master
+            git revert --no-edit HEAD
+            git push origin master
+          else
+            echo "::warning::master tip is not a 'Bump version to' commit — leaving it for manual cleanup."
+          fi
