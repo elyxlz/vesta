@@ -1717,18 +1717,39 @@ async fn delete_backup_handler(
 
 // --- Auto-backup settings ---
 
-/// The `{enabled, hour, retention}` body the global auto-backup GET/PUT both return.
-fn auto_backup_json(backup: &BackupGlobalSettings) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "enabled": backup.enabled, "hour": backup.hour, "retention": backup.retention }))
+/// The unified settings view returned by GET/PUT /gateway/settings. Single owner of
+/// the daemon-settings wire shape, shared by both handlers.
+fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Value {
+    serde_json::json!({
+        "auto_update": settings.auto_update,
+        "channel": channel,
+        "auto_backup": {
+            "enabled": settings.backup.enabled,
+            "hour": settings.backup.hour,
+            "retention": settings.backup.retention,
+        },
+    })
+}
+
+/// Apply a sparse backup update in place. Validation (retention floor, hour range)
+/// runs in the handler before this is called.
+fn apply_backup_update(backup: &mut BackupGlobalSettings, body: &SetBackupSettingsBody) {
+    if let Some(enabled) = body.enabled {
+        backup.enabled = enabled;
+    }
+    if let Some(hour) = body.hour {
+        backup.hour = hour;
+    }
+    if let Some(ref ret) = body.retention {
+        if let Some(d) = ret.daily { backup.retention.daily = d; }
+        if let Some(w) = ret.weekly { backup.retention.weekly = w; }
+        if let Some(m) = ret.monthly { backup.retention.monthly = m; }
+    }
 }
 
 /// The `{enabled, retention, has_override}` body the per-agent backup GET/PUT/DELETE all return.
 fn agent_backup_json(enabled: bool, retention: crate::types::RetentionPolicy, has_override: bool) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "enabled": enabled, "retention": retention, "has_override": has_override }))
-}
-
-async fn get_auto_backup_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    auto_backup_json(&state.settings.read().await.backup)
 }
 
 #[derive(Deserialize)]
@@ -1758,104 +1779,73 @@ fn validate_retention(update: &RetentionUpdate) -> Result<(), (StatusCode, Json<
     Ok(())
 }
 
-async fn set_auto_backup_handler(
+// --- Unified gateway settings ---
+
+#[derive(Deserialize)]
+struct UpdateSettingsBody {
+    auto_update: Option<bool>,
+    channel: Option<String>,
+    auto_backup: Option<SetBackupSettingsBody>,
+}
+
+async fn get_gateway_settings_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let settings = state.settings.read().await;
+    let channel = crate::channel::Channel::resolve(&settings.channel);
+    Json(gateway_settings_json(&settings, channel.as_str()))
+}
+
+async fn put_gateway_settings_handler(
     State(state): State<SharedState>,
-    Json(body): Json<SetBackupSettingsBody>,
+    Json(body): Json<UpdateSettingsBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if let Some(ref ret) = body.retention {
-        validate_retention(ret)?;
+    if let Some(ref backup) = body.auto_backup {
+        if let Some(ref ret) = backup.retention {
+            validate_retention(ret)?;
+        }
+        if let Some(hour) = backup.hour {
+            if hour > 23 {
+                return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+            }
+        }
+    }
+    let parsed_channel = match body.channel {
+        Some(ref c) => Some(
+            crate::channel::Channel::parse(c)
+                .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "channel must be 'stable' or 'beta'"))?,
+        ),
+        None => None,
+    };
+
+    {
+        let mut settings = state.settings.write().await;
+        if let Some(auto_update) = body.auto_update {
+            settings.auto_update = auto_update;
+            tracing::info!(auto_update, "auto-update setting updated");
+        }
+        if let Some(channel) = parsed_channel {
+            settings.channel = channel.as_str().to_string();
+            tracing::info!(channel = channel.as_str(), "release channel updated");
+        }
+        if let Some(ref backup) = body.auto_backup {
+            apply_backup_update(&mut settings.backup, backup);
+            tracing::info!("auto-backup settings updated");
+        }
+        save_settings(&settings);
     }
 
-    if let Some(hour) = body.hour {
-        if hour > 23 {
-            return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+    // A channel switch must refresh the cached update info so /version reflects the new
+    // channel without waiting for the next periodic poll (mirrors the old channel handler).
+    if let Some(channel) = parsed_channel {
+        match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+            Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+            Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
+            Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
         }
     }
 
-    let mut settings = state.settings.write().await;
-
-    if let Some(enabled) = body.enabled {
-        settings.backup.enabled = enabled;
-        tracing::info!(enabled, "auto-backup toggled");
-    }
-
-    if let Some(hour) = body.hour {
-        settings.backup.hour = hour;
-        tracing::info!(hour, "auto-backup hour updated");
-    }
-
-    if let Some(ret) = body.retention {
-        if let Some(d) = ret.daily { settings.backup.retention.daily = d; }
-        if let Some(w) = ret.weekly { settings.backup.retention.weekly = w; }
-        if let Some(m) = ret.monthly { settings.backup.retention.monthly = m; }
-        tracing::info!(
-            daily = settings.backup.retention.daily,
-            weekly = settings.backup.retention.weekly,
-            monthly = settings.backup.retention.monthly,
-            "backup retention updated"
-        );
-    }
-
-    save_settings(&settings);
-
-    Ok(auto_backup_json(&settings.backup))
-}
-
-// --- Release channel ---
-
-async fn get_channel_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() }))
-}
-
-#[derive(Deserialize)]
-struct SetChannelBody {
-    channel: String,
-}
-
-async fn set_channel_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<SetChannelBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let channel = crate::channel::Channel::parse(&body.channel)
-        .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "channel must be 'stable' or 'beta'"))?;
-    {
-        let mut settings = state.settings.write().await;
-        settings.channel = channel.as_str().to_string();
-        save_settings(&settings);
-    }
-    tracing::info!(channel = channel.as_str(), "release channel updated");
-    // Refresh the cached update info against the new channel so /version reflects it
-    // without waiting for the next periodic poll.
-    match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
-        Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
-        Ok(Err(e)) => tracing::warn!("update check after channel switch failed: {}", e),
-        Err(e) => tracing::error!("update check task after channel switch failed: {}", e),
-    }
-    Ok(Json(serde_json::json!({ "channel": effective_channel(&state).await.as_str() })))
-}
-
-// --- Auto-update ---
-
-async fn get_auto_update_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "auto_update": state.settings.read().await.auto_update }))
-}
-
-#[derive(Deserialize)]
-struct SetAutoUpdateBody {
-    auto_update: bool,
-}
-
-async fn set_auto_update_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<SetAutoUpdateBody>,
-) -> Json<serde_json::Value> {
-    {
-        let mut settings = state.settings.write().await;
-        settings.auto_update = body.auto_update;
-        save_settings(&settings);
-    }
-    tracing::info!(auto_update = body.auto_update, "auto-update setting updated");
-    Json(serde_json::json!({ "auto_update": body.auto_update }))
+    let settings = state.settings.read().await;
+    let channel = crate::channel::Channel::resolve(&settings.channel);
+    Ok(Json(gateway_settings_json(&settings, channel.as_str())))
 }
 
 // --- Per-agent settings ---
@@ -2085,12 +2075,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
-        .route("/settings/auto-backup", get(get_auto_backup_handler))
-        .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
-        .route("/settings/channel", get(get_channel_handler))
-        .route("/settings/channel", axum::routing::put(set_channel_handler))
-        .route("/settings/auto-update", get(get_auto_update_handler))
-        .route("/settings/auto-update", axum::routing::put(set_auto_update_handler))
+        .route("/gateway/settings", get(get_gateway_settings_handler).put(put_gateway_settings_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2782,5 +2767,37 @@ mod tests {
             "\n\nAPI contract fixtures are stale.\nRegenerate with:\n  cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\nthen commit {}\n",
             path.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod gateway_settings_tests {
+    use super::*;
+
+    #[test]
+    fn settings_json_has_unified_shape() {
+        let settings = Settings::default();
+        let value = gateway_settings_json(&settings, "beta");
+        assert_eq!(value["auto_update"], serde_json::json!(true));
+        assert_eq!(value["channel"], serde_json::json!("beta"));
+        assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
+        assert_eq!(value["auto_backup"]["hour"], serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR));
+        assert_eq!(value["auto_backup"]["retention"]["daily"], serde_json::json!(backup::DEFAULT_RETENTION_DAILY));
+    }
+
+    #[test]
+    fn backup_update_applies_only_present_fields() {
+        let mut backup = BackupGlobalSettings::default();
+        let original_hour = backup.hour;
+        let body = SetBackupSettingsBody {
+            enabled: Some(false),
+            hour: None,
+            retention: Some(RetentionUpdate { daily: Some(9), weekly: None, monthly: None }),
+        };
+        apply_backup_update(&mut backup, &body);
+        assert!(!backup.enabled, "enabled should be updated");
+        assert_eq!(backup.hour, original_hour, "hour absent in body must be unchanged");
+        assert_eq!(backup.retention.daily, 9, "daily should be updated");
+        assert_eq!(backup.retention.weekly, default_retention().weekly, "weekly absent must be unchanged");
     }
 }
