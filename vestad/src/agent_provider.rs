@@ -17,8 +17,8 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for config writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The slice of the agent's `GET /provider` that vestad needs to gate Alive vs SettingUp vs
-/// NotAuthenticated. The rest of the response is opaque to vestad (it just relays it to the app).
+/// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs SettingUp vs
+/// NotAuthenticated. Distinct from the provider config it relays to the app via `GET /provider`.
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
     /// Defaults to `true` so a response missing the field isn't mislabeled NotAuthenticated; a
@@ -49,10 +49,10 @@ impl<'a> AgentProvider<'a> {
         }
     }
 
-    /// GET the readiness slice of the agent's /provider to gate its Alive status. Returns Err on
-    /// network failure, missing env file (agent not yet provisioned), non-2xx, or timeout.
+    /// GET the agent's /status readiness slice to gate its Alive status. Returns Err on network
+    /// failure, missing env file (agent not yet provisioned), non-2xx, or timeout.
     pub async fn status(&self) -> Result<AgentStatusView, String> {
-        self.get_json("/provider", STATUS_TIMEOUT, "status").await
+        self.get_json("/status", STATUS_TIMEOUT, "status").await
     }
 
     /// GET the agent's /config (prefs; vestad relays it to the app).
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn parses_authed_and_setup_complete_ignoring_rest_of_provider() {
-        // GET /provider carries the provider fields; vestad reads only the two gating fields.
+        // GET /status carries the two gating fields; vestad parses them and ignores any extras.
         let s: AgentStatusView =
             serde_json::from_str(r#"{"authed":true,"kind":"openrouter","setup_complete":false,"model":"deepseek/v4"}"#).unwrap();
         assert!(s.authed && !s.setup_complete);

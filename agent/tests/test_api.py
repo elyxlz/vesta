@@ -289,3 +289,56 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
     del_resp = await api_mod._provider_delete_handler(typing.cast("web.Request", _DelReq()))
     assert del_resp.status == 200
     assert state.provider_status is signed_out
+
+
+@pytest.mark.anyio
+async def test_status_reports_readiness_separate_from_provider(config):
+    # /status carries the readiness gate (authed + setup_complete); /provider carries the config + authed
+    # but NOT setup_complete (that's agent lifecycle, not the provider resource).
+    import core.api as api_mod
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    state.persisted.first_start_done = True
+
+    class _Req:
+        app = {"state": state, "config": config}
+
+    status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
+    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "setup_complete": True}
+
+    provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    provider_body = json.loads(typing.cast("str", provider_resp.text))
+    assert provider_body["authed"] is True
+    assert "setup_complete" not in provider_body  # readiness moved to /status
+    assert provider_body["kind"] == "claude"
+
+
+@pytest.mark.anyio
+async def test_history_q_returns_matching_events_in_history_shape(event_bus):
+    # Search is folded into /history?q= and returns matching events in the same {events, cursor} shape
+    # as recency (cursor null), replacing the old /search endpoint.
+    from core.api import _history_handler
+
+    event_bus.emit(UserEvent(type="user", text="what about paris"))
+    event_bus.emit(ChatEvent(type="chat", text="paris is lovely"))
+    event_bus.emit(ChatEvent(type="chat", text="london is grey"))
+
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app.router.add_get("/history", _history_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    try:
+        async with ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
+                assert resp.status == 200
+                data = await resp.json()
+        assert data["cursor"] is None
+        texts = [e["text"] for e in data["events"]]
+        assert "paris is lovely" in texts and "london is grey" not in texts
+    finally:
+        await runner.cleanup()

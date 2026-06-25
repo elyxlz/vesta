@@ -2,12 +2,12 @@
 
 Routes:
   - WS   /ws                   bidirectional event bus
-  - GET  /history              paginated event history (cursor optional)
-  - GET  /search               full-text search over events
+  - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
   - GET  /usage                normalized, provider-agnostic plan usage
+  - GET  /status               operational readiness: {authed, setup_complete} (vestad polls this)
   - GET  /config               prefs only (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs (provider is set via /provider)
-  - GET  /provider             active provider (configured fields) + derived {authed, setup_complete}
+  - GET  /provider             active provider (configured fields) + derived {authed}
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
@@ -119,12 +119,14 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
 
 
 async def _history_handler(request: web.Request) -> web.Response:
-    """Paginated event history.
+    """Paginated event history, or full-text search when `q` is given (both return matching events in
+    the same shape; search has no cursor).
 
     Query params:
-      cursor  (int, optional): fetch events before this id. Omit for most recent.
-      limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE).
-      channel (str, optional): "app-chat" filters to the conversation event types.
+      q       (str, optional): FTS5 search; returns events ranked by relevance (cursor is null).
+      cursor  (int, optional): fetch events before this id. Omit for most recent. Ignored with `q`.
+      limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE; 20 for search).
+      channel (str, optional): "app-chat" filters to the conversation event types. Ignored with `q`.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -133,6 +135,20 @@ async def _history_handler(request: web.Request) -> web.Response:
         limit = int(limit_raw) if limit_raw else None
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
+
+    query = request.query.get("q", "").strip()
+    if query:
+        try:
+            events = event_bus.search(query, limit=limit if limit is not None else 20)
+        except sqlite3.OperationalError as e:
+            # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
+            logger.warning(f"search query rejected: {e}")
+            return web.json_response({"error": "invalid search query"}, status=400)
+        except sqlite3.Error as e:
+            # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
+            logger.error(f"search failed for query={query!r}: {e}")
+            return web.json_response({"error": "search failed"}, status=500)
+        return web.json_response({"events": events, "cursor": None})
 
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
@@ -148,35 +164,6 @@ async def _history_handler(request: web.Request) -> web.Response:
         events, next_cursor = await asyncio.to_thread(event_bus.recent, channel=channel, **kwargs)
 
     return web.json_response({"events": events, "cursor": next_cursor})
-
-
-async def _search_handler(request: web.Request) -> web.Response:
-    """Full-text search over events.
-
-    Query params:
-      q     (str, required): FTS5 search query.
-      limit (int, optional): max results (default: 20).
-    """
-    event_bus: EventBus = request.app["event_bus"]
-    query = request.query.get("q", "").strip()
-    if not query:
-        return web.json_response({"error": "missing 'q' param"}, status=400)
-    limit_raw = request.query.get("limit", "")
-    try:
-        limit = int(limit_raw) if limit_raw else 20
-    except ValueError:
-        return web.json_response({"error": "invalid limit"}, status=400)
-    try:
-        results = event_bus.search(query, limit=limit)
-    except sqlite3.OperationalError as e:
-        # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
-        logger.warning(f"search query rejected: {e}")
-        return web.json_response({"error": "invalid search query"}, status=400)
-    except sqlite3.Error as e:
-        # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
-        logger.error(f"search failed for query={query!r}: {e}")
-        return web.json_response({"error": "search failed"}, status=500)
-    return web.json_response({"results": results})
 
 
 async def _usage_handler(request: web.Request) -> web.Response:
@@ -254,17 +241,29 @@ class _ProviderPrefs(pyd.BaseModel):
 
 
 async def _provider_get_handler(request: web.Request) -> web.Response:
-    """The active provider: its configured fields (key redacted, oauth excluded) plus derived
-    `authed` and `setup_complete`. vestad gates readiness on these."""
+    """The active provider: its configured fields (key redacted, oauth excluded) plus the derived
+    `authed` flag (whether its credentials are currently valid). Readiness lives at GET /status."""
     config: VestaConfig = request.app["config"]
     state: State = request.app["state"]
     status = state.provider_status
     provider = stored_config(config)["provider"]
     body = dict(provider) if isinstance(provider, dict) else {}
     body["authed"] = status is not None and status.state == ProviderAuthState.AUTHENTICATED
-    # vestad gates "alive" on this: an authenticated agent that hasn't finished first-start is not ready.
-    body["setup_complete"] = state.persisted.first_start_done
     return web.json_response(body)
+
+
+async def _status_handler(request: web.Request) -> web.Response:
+    """The agent's operational readiness: whether the active provider is authenticated and whether
+    first-start has finished. vestad polls this to gate Alive vs SettingUp vs NotAuthenticated (an
+    authenticated agent that hasn't finished first-start is not yet ready)."""
+    state: State = request.app["state"]
+    status = state.provider_status
+    return web.json_response(
+        {
+            "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
+            "setup_complete": state.persisted.first_start_done,
+        }
+    )
 
 
 async def _provider_put_handler(request: web.Request) -> web.Response:
@@ -389,8 +388,8 @@ async def start_ws_server(
     app.on_shutdown.append(_close_all_websockets)
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
-    app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/status", _status_handler)
     app.router.add_get("/config", _config_get_handler)
     app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/provider", _provider_get_handler)
