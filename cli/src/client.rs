@@ -145,14 +145,14 @@ fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String>
     value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
 }
 
-/// The Claude auth sub-object for `update_settings`.
+/// The Claude sign-in body for `update_settings` (PUT /provider); `update_settings` folds in the model.
 pub fn claude_auth(credentials: &str) -> serde_json::Value {
-    serde_json::json!({ "credentials": credentials })
+    serde_json::json!({ "kind": "claude", "credentials": credentials })
 }
 
-/// The OpenRouter auth sub-object for `update_settings`.
+/// The OpenRouter sign-in body for `update_settings` (PUT /provider): a full provider with the key.
 pub fn openrouter_auth(args: &OpenRouterArgs) -> serde_json::Value {
-    serde_json::json!({ "openrouter_key": args.key, "openrouter_model": args.model })
+    serde_json::json!({ "kind": "openrouter", "model": args.model, "key": args.key })
 }
 
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
@@ -254,15 +254,6 @@ pub struct OpenRouterModel {
     pub cache_read_price: Option<f64>,
 }
 
-/// A Claude model offered by the picker in `vesta setup` (from `GET /providers/claude/models`).
-#[derive(serde::Deserialize)]
-pub struct ClaudeModel {
-    /// The alias stored in AGENT_MODEL, e.g. "opus".
-    pub id: String,
-    pub label: String,
-    pub note: String,
-}
-
 #[derive(serde::Deserialize)]
 pub struct ContextPreset {
     pub tokens: u64,
@@ -270,12 +261,32 @@ pub struct ContextPreset {
     pub note: String,
 }
 
-/// Creation-time defaults vestad owns (vestad/src/defaults.rs), fetched so the CLI keeps
-/// no copy of the context-window presets or default.
 #[derive(serde::Deserialize)]
-pub struct AgentDefaults {
-    pub context_tokens: u64,
-    pub context_presets: Vec<ContextPreset>,
+pub struct ProviderContext {
+    pub default: u64,
+    pub presets: Vec<ContextPreset>,
+}
+
+/// A provider's model catalog: explicit slugs (claude) or "live" (openrouter, fetched separately).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum ModelCatalog {
+    Static(Vec<String>),
+    /// The "live" sentinel (openrouter); the CLI fetches that catalog from its own endpoint instead.
+    Live(#[allow(dead_code)] String),
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProviderEntry {
+    pub models: ModelCatalog,
+    pub context: ProviderContext,
+}
+
+/// The provider manifest (`GET /manifest`): per-provider catalog + new-agent defaults, generated from
+/// the agent's models. The CLI reads model/context choices from here so it keeps no hardcoded copy.
+#[derive(serde::Deserialize)]
+pub struct Manifest {
+    pub providers: std::collections::HashMap<String, ProviderEntry>,
 }
 
 impl Client {
@@ -344,6 +355,10 @@ impl Client {
 
     fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
         self.finish(self.authorized(self.agent.put(self.url(path))).send_json(body))
+    }
+
+    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        self.finish(self.authorized(self.agent.patch(self.url(path))).send_json(body))
     }
 
     pub fn health(&self) -> Result<(), String> {
@@ -421,10 +436,11 @@ impl Client {
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Apply a settings change in one go: write the preferences (`PUT /config`) and/or credentials
-    /// (`PUT /config/auth`, see `claude_auth`/`openrouter_auth`), then restart the agent once to apply.
-    /// The writes don't restart on their own, so a fresh agent gets its model + credentials in a single
-    /// race-free restart. No-op (no restart) if nothing is set.
+    /// Apply a settings change in one go, then restart once to apply. A sign-in body (`auth`, from
+    /// `claude_auth`/`openrouter_auth`) goes to `PUT /provider` with the model/context folded in; a
+    /// bare model/context change goes to `PATCH /provider`; timezone goes to `PUT /config`. The writes
+    /// don't restart on their own, so a fresh agent gets its provider in a single race-free restart.
+    /// No-op (no restart) if nothing is set.
     pub fn update_settings(
         &self,
         name: &str,
@@ -433,42 +449,50 @@ impl Client {
         max_context_tokens: Option<u64>,
         timezone: Option<&str>,
     ) -> Result<(), String> {
-        let mut prefs = serde_json::Map::new();
-        if let Some(model) = model {
-            prefs.insert("agent_model".to_string(), serde_json::json!(model));
-        }
-        if let Some(ctx) = max_context_tokens {
-            prefs.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
-        }
-        if let Some(tz) = timezone {
-            prefs.insert("timezone".to_string(), serde_json::json!(tz));
-        }
-        if prefs.is_empty() && auth.is_none() {
-            return Ok(());
-        }
-        if !prefs.is_empty() {
-            self.put_json(&format!("/agents/{name}/config"), &serde_json::Value::Object(prefs))?;
-        }
-        if let Some(auth) = auth {
+        let mut changed = false;
+        if let Some(mut signin) = auth {
             // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
             // round-trip + agent restart that surfaces as an opaque BAD_GATEWAY.
-            if let Some(creds) = auth.get("credentials").and_then(|c| c.as_str()) {
+            if let Some(creds) = signin.get("credentials").and_then(|c| c.as_str()) {
                 serde_json::from_str::<serde_json::Value>(creds).map_err(|e| format!("invalid credentials JSON: {e}"))?;
             }
-            self.put_json(&format!("/agents/{name}/config/auth"), &auth)?;
+            if let Some(model) = model {
+                signin["model"] = serde_json::json!(model);
+            }
+            if let Some(ctx) = max_context_tokens {
+                signin["max_context_tokens"] = serde_json::json!(ctx);
+            }
+            self.put_json(&format!("/agents/{name}/provider"), &signin)?;
+            changed = true;
+        } else {
+            let mut patch = serde_json::Map::new();
+            if let Some(model) = model {
+                patch.insert("model".to_string(), serde_json::json!(model));
+            }
+            if let Some(ctx) = max_context_tokens {
+                patch.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+            }
+            if !patch.is_empty() {
+                self.patch_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(patch))?;
+                changed = true;
+            }
         }
-        self.restart_agent(name)
+        if let Some(tz) = timezone {
+            self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "timezone": tz }))?;
+            changed = true;
+        }
+        if changed { self.restart_agent(name) } else { Ok(()) }
     }
 
-    /// The agent's current config + derived `{authed, kind, ...}`, proxied from its `GET /config`.
-    pub fn get_config(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/config"))?)
+    /// The agent's active provider + derived `{authed, kind, ...}`, proxied from its `GET /provider`.
+    pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/provider"))?)
     }
 
-    /// Sign out: clear the agent's provider credentials (`DELETE /config/auth`), then restart so it
+    /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it
     /// boots not_authenticated.
     pub fn logout(&self, name: &str) -> Result<(), String> {
-        self.delete_req(&format!("/agents/{name}/config/auth"))?;
+        self.delete_req(&format!("/agents/{name}/provider"))?;
         self.restart_agent(name)
     }
 
@@ -602,12 +626,8 @@ impl Client {
         read_json(self.get("/providers/openrouter/models/top")?)
     }
 
-    pub fn fetch_claude_models(&self) -> Result<Vec<ClaudeModel>, String> {
-        read_json(self.get("/providers/claude/models")?)
-    }
-
-    pub fn fetch_agent_defaults(&self) -> Result<AgentDefaults, String> {
-        read_json(self.get("/agent-defaults")?)
+    pub fn fetch_manifest(&self) -> Result<Manifest, String> {
+        read_json(self.get("/manifest")?)
     }
 
 

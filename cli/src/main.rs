@@ -500,31 +500,30 @@ fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
 /// Prompt for a Claude model from the curated list (default = first entry, Opus).
 /// Falls back to "opus" if the list can't be fetched.
 fn prompt_claude_model(c: &client::Client) -> String {
-    let models = match c.fetch_claude_models() {
-        Ok(models) if !models.is_empty() => models,
-        _ => return "opus".to_string(),
+    let models = match c.fetch_manifest() {
+        Ok(manifest) => match manifest.providers.get("claude").map(|p| &p.models) {
+            Some(client::ModelCatalog::Static(slugs)) if !slugs.is_empty() => slugs.clone(),
+            _ => return "opus".to_string(),
+        },
+        Err(_) => return "opus".to_string(),
     };
     eprintln!("which Claude model?");
-    let labels: Vec<String> = models.iter().map(|m| format!("{} — {}", m.label, m.note)).collect();
-    models[prompt_indexed_choice(&labels, 0)].id.clone()
+    models[prompt_indexed_choice(&models, 0)].clone()
 }
 
-/// Prompt for a context-window preset. The presets and the default come from vestad
-/// (GET /agent-defaults), so the CLI keeps no copy. Returns None if they can't be
-/// fetched, letting the server apply its own default.
+/// Prompt for a context-window preset. The presets and the default come from the manifest
+/// (GET /manifest), so the CLI keeps no copy. Returns None if they can't be fetched, letting
+/// the server apply its own default.
 fn prompt_context_window(c: &client::Client) -> Option<u64> {
-    let defaults = c.fetch_agent_defaults().ok()?;
-    if defaults.context_presets.is_empty() {
+    let manifest = c.fetch_manifest().ok()?;
+    let context = &manifest.providers.get("claude")?.context;
+    if context.presets.is_empty() {
         return None;
     }
     eprintln!("context window?");
-    let labels: Vec<String> = defaults.context_presets.iter().map(|p| format!("{} — {}", p.label, p.note)).collect();
-    let default_idx = defaults
-        .context_presets
-        .iter()
-        .position(|p| p.tokens == defaults.context_tokens)
-        .unwrap_or(0);
-    Some(defaults.context_presets[prompt_indexed_choice(&labels, default_idx)].tokens)
+    let labels: Vec<String> = context.presets.iter().map(|p| format!("{} — {}", p.label, p.note)).collect();
+    let default_idx = context.presets.iter().position(|p| p.tokens == context.default).unwrap_or(0);
+    Some(context.presets[prompt_indexed_choice(&labels, default_idx)].tokens)
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
@@ -1065,22 +1064,21 @@ fn run(cli: Cli) {
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
                 // Only report model/context when a provider is actually configured; a signed-out
                 // agent (kind "none") has a stored default model but no active provider.
-                if let Ok(config) = c.get_config(&name) {
-                    if config["kind"].as_str() == Some("none") {
+                if let Ok(provider) = c.get_provider(&name) {
+                    if provider["authed"].as_bool() != Some(true) {
                         eprintln!("provider = not configured (run 'vesta auth {name}')");
                     } else {
-                        if let Some(m) = config["agent_model"].as_str() {
+                        if let Some(m) = provider["model"].as_str() {
                             eprintln!("model = {m}");
                         }
-                        match config["max_context_tokens"].as_u64() {
+                        match provider["max_context_tokens"].as_u64() {
                             Some(ctx) => eprintln!("context_window = {ctx}"),
-                            None if config["kind"].as_str() == Some("openrouter") => {
+                            None if provider["kind"].as_str() == Some("openrouter") => {
                                 eprintln!("context_window = default (model window, capped at 200K)")
                             }
-                            None if config["kind"].as_str() == Some("claude") => {
+                            None if provider["kind"].as_str() == Some("claude") => {
                                 eprintln!("context_window = default (1M for Claude)")
                             }
-                            // kind absent (pre-unification core) — don't claim a provider-specific default.
                             None => eprintln!("context_window = default"),
                         }
                     }
