@@ -63,7 +63,7 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
   }, [agent, pathsKey]);
 
   return (
-    <div className="h-full overflow-auto bg-gradient-to-b from-background via-card to-muted/20">
+    <div className="h-full overflow-auto bg-gradient-to-b from-card to-muted/20">
       <div className="mx-auto max-w-2xl px-6 py-8">
         <header className="mb-8 flex items-center justify-center gap-2 text-muted-foreground">
           <Moon className="size-4" />
