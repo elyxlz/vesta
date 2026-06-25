@@ -1186,14 +1186,14 @@ fn run(cli: Cli) {
 
                 let lan = &info["lan"];
                 let lan_line = if lan["exposed"].as_bool().unwrap_or(false) {
-                    format!("exposed at {}", lan["url"].as_str().unwrap_or("unknown"))
+                    format!("enabled at {}", lan["url"].as_str().unwrap_or("unknown"))
                 } else {
-                    "off".to_string()
+                    "disabled".to_string()
                 };
                 eprintln!("lan:          {lan_line}");
                 eprintln!("tunnel:       {}", info["tunnel_url"].as_str().unwrap_or("—"));
                 eprintln!("port:         {}", info["port"].as_u64().unwrap_or(0));
-                eprintln!("auto-update:  {}", if settings["auto_update"].as_bool().unwrap_or(false) { "on" } else { "off" });
+                eprintln!("auto-update:  {}", if settings["auto_update"].as_bool().unwrap_or(false) { "enabled" } else { "disabled" });
                 eprintln!("channel:      {}", settings["channel"].as_str().unwrap_or("stable"));
 
                 let backup = &settings["auto_backup"];
@@ -1202,7 +1202,7 @@ fn run(cli: Cli) {
                     eprintln!("backups:      daily at {hour:02}:00");
                     print_retention(&backup["retention"]);
                 } else {
-                    eprintln!("backups:      off");
+                    eprintln!("backups:      disabled");
                 }
             }
         },

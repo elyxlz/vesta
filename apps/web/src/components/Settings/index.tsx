@@ -187,8 +187,8 @@ export function AppSettings() {
                   </FieldContent>
                   <span className="shrink-0 text-sm text-muted-foreground">
                     {gatewaySetup.info.lan.exposed
-                      ? (gatewaySetup.info.lan.url ?? "exposed")
-                      : "off"}
+                      ? (gatewaySetup.info.lan.url ?? "enabled")
+                      : "disabled"}
                   </span>
                 </Field>
                 <Field
@@ -219,7 +219,7 @@ export function AppSettings() {
                   <span className="shrink-0 text-sm text-muted-foreground">
                     {gatewaySetup.settings.auto_backup.enabled
                       ? `daily at ${String(gatewaySetup.settings.auto_backup.hour).padStart(2, "0")}:00`
-                      : "off"}
+                      : "disabled"}
                   </span>
                 </Field>
               </div>
