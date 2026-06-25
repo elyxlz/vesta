@@ -199,11 +199,6 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
-async def _config_schema_handler(request: web.Request) -> web.Response:
-    """The config's JSON schema, so the client renders/filters the settings UI off the one model."""
-    return web.json_response(VestaConfig.model_json_schema())
-
-
 async def _config_put_handler(request: web.Request) -> web.Response:
     """Update prefs (personality, timezone, seed_context). The provider is set via /provider, not here.
     Applied by the next restart (callers write, then restart once)."""
@@ -397,7 +392,6 @@ async def start_ws_server(
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
     app.router.add_get("/config", _config_get_handler)
-    app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)
     app.router.add_get("/provider", _provider_get_handler)
     app.router.add_put("/provider", _provider_put_handler)
