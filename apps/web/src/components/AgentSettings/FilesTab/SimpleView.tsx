@@ -5,13 +5,19 @@ import {
   ChevronRight,
   FileText,
   Moon,
+  ScrollText,
   Sparkles,
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FileTreeEntry } from "@/api/files";
-import { collectDreamPaths, MEMORY_PATH, SKILLS_PREFIX } from "./paths";
+import {
+  collectDreamPaths,
+  CONSTITUTION_PATH,
+  MEMORY_PATH,
+  SKILLS_PREFIX,
+} from "./paths";
 
 interface SimpleViewProps {
   entries: FileTreeEntry[];
@@ -70,9 +76,11 @@ export function SimpleView({
     <div className="flex h-full min-h-0 flex-col gap-4 p-1">
       <MindCard
         memorySelected={selected === MEMORY_PATH && !dreamsActive}
+        constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
         dreamsActive={dreamsActive}
         dreamCount={dreamCount}
         onSelectMemory={() => onSelect(MEMORY_PATH)}
+        onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
         onShowDreams={onShowDreams}
       />
       <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
@@ -82,15 +90,19 @@ export function SimpleView({
 
 function MindCard({
   memorySelected,
+  constitutionSelected,
   dreamsActive,
   dreamCount,
   onSelectMemory,
+  onSelectConstitution,
   onShowDreams,
 }: {
   memorySelected: boolean;
+  constitutionSelected: boolean;
   dreamsActive: boolean;
   dreamCount: number;
   onSelectMemory: () => void;
+  onSelectConstitution: () => void;
   onShowDreams: () => void;
 }) {
   return (
@@ -107,6 +119,20 @@ function MindCard({
       >
         <BookOpen className="size-4 text-muted-foreground" />
         <span className="font-medium">memory</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onSelectConstitution}
+        className={cn(
+          "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
+          constitutionSelected
+            ? "bg-muted text-foreground"
+            : "hover:bg-muted/60 active:bg-muted",
+        )}
+      >
+        <ScrollText className="size-4 text-muted-foreground" />
+        <span className="font-medium">constitution</span>
       </button>
 
       <button

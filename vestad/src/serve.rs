@@ -1113,6 +1113,24 @@ async fn read_file_handler(
     docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
 
+    // The constitution is bind-mounted read-only inside the container (the agent reads but
+    // cannot edit it), so the file API serves it from the host file and reports it editable —
+    // user writes route to the host (see write_file_handler), keeping the agent unable to edit.
+    if q.path == docker::CONSTITUTION_MOUNT_DEST {
+        let content = docker::read_constitution(&state.env_config.agents_dir, &name)
+            .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        let size = content.len() as u64;
+        return Ok(Json(serde_json::json!({
+            "path": q.path,
+            "content": content,
+            "encoding": "utf-8",
+            "readonly": false,
+            "mode": 0o644,
+            "size": size,
+            "is_dir": false,
+        })));
+    }
+
     // Refuse symlinks anywhere in the path. Without this, an agent-controlled
     // symlink under /root/agent (e.g. /root/agent/data/leak -> /etc/shadow)
     // would slip past validate_file_path's string checks and expose the target.
@@ -1195,13 +1213,23 @@ async fn write_file_handler(
     docker::validate_name(&name).map_err(map_docker_err)?;
     validate_file_path(&body.path)?;
 
-    if is_readonly_path(&body.path) {
-        return Err(err_response(StatusCode::FORBIDDEN, "file is read-only"));
-    }
-
     let cname = docker::container_name(&name);
     docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
+
+    // The constitution is bind-mounted read-only (the agent cannot edit it), so a user edit
+    // from the file API writes the host file in place — the same single writer the dedicated
+    // constitution endpoint uses. This keeps the agent unable to edit while the user can.
+    if body.path == docker::CONSTITUTION_MOUNT_DEST {
+        let _guard = agent_write_guard(&state, &name).await;
+        docker::write_constitution(&state.env_config.agents_dir, &name, &body.content)
+            .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        return Ok(ok_json());
+    }
+
+    if is_readonly_path(&body.path) {
+        return Err(err_response(StatusCode::FORBIDDEN, "file is read-only"));
+    }
 
     // Same anti-symlink guard as read_file_handler: realpath must equal the
     // requested path. New-file writes (path does not yet exist) are rejected
