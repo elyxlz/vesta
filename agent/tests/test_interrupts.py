@@ -292,7 +292,6 @@ async def test_run_vesta_force_exits_on_hung_cleanup(config, state):
 
     with (
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
-        patch("core.main.input_handler", hanging_on_cancel),
         patch("core.main.message_processor", hanging_on_cancel),
         patch("core.main.monitor_loop", hanging_on_cancel),
         patch("core.main.drop_greeting_notification", return_value=False),
@@ -303,9 +302,9 @@ async def test_run_vesta_force_exits_on_hung_cleanup(config, state):
         mock_ws.return_value.cleanup = AsyncMock()
 
         async def trigger_shutdown():
-            # All three patched workers (input_handler, message_processor, monitor_loop) running
+            # Both patched workers (message_processor, monitor_loop) running
             # means run_vesta is fully started and waiting on graceful_shutdown.
-            await wait_for_condition(lambda: len(started_tasks) >= 3, message="run_vesta worker tasks never started")
+            await wait_for_condition(lambda: len(started_tasks) >= 2, message="run_vesta worker tasks never started")
             assert state.graceful_shutdown is not None
             state.graceful_shutdown.set()
             await exit_event.wait()

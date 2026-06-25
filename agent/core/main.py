@@ -1,14 +1,12 @@
 """Vesta main entry point and orchestration."""
 
 import asyncio
-import errno
 import os
 import signal
 import tomllib
 import types
 import typing as tp
 
-import aioconsole
 from rich import print_json
 
 from . import models as vm
@@ -24,38 +22,6 @@ from .loops import (
 )
 from .default_skills import reconcile_default_skills
 from .migrations import drop_pending_migrations
-
-
-async def input_handler(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State) -> None:
-    while not state.shutdown_event.is_set():
-        try:
-            user_msg = await aioconsole.ainput("")
-            if state.shutdown_event.is_set():
-                break
-            if not user_msg.strip():
-                continue
-
-            logger.user(user_msg.strip())
-            await queue.put((user_msg.strip(), True, []))
-        except KeyboardInterrupt:
-            logger.shutdown("stdin: KeyboardInterrupt, shutting down")
-            state.shutdown_event.set()
-            break
-        except EOFError:
-            logger.shutdown("stdin: EOF (no TTY?), shutting down")
-            state.shutdown_event.set()
-            break
-        except asyncio.CancelledError:
-            break
-        except BlockingIOError:
-            await asyncio.sleep(0.1)
-            continue
-        except OSError as e:
-            if e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK:
-                await asyncio.sleep(0.1)
-                continue
-            else:
-                raise
 
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
@@ -120,7 +86,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state, config=config))
 
     tasks = [
-        asyncio.create_task(input_handler(message_queue, state=state)),
         processor_task,
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
