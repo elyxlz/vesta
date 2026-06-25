@@ -85,14 +85,24 @@ class Client:
         except ValueError:
             raise OnboardError(f"vestad {path} returned non-JSON ({resp.status_code})") from None
 
+    def fetch_manifest(self) -> dict[str, Any]:
+        return self._vestad_get("/manifest")
+
     def fetch_agent_defaults(self) -> dict[str, Any]:
-        return self._vestad_get("/agent-defaults")
+        # Derived from the manifest: the default provider's default model + the default personality.
+        manifest = self.fetch_manifest()
+        default_kind = manifest.get("default_provider", "claude")
+        provider = manifest.get("providers", {}).get(default_kind, {})
+        return {"model": provider.get("default_model") or "opus", "personality": manifest.get("agent_personality", "")}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
         return self._vestad_get("/personalities")
 
     def fetch_claude_models(self) -> list[dict[str, Any]]:
-        return self._vestad_get("/providers/claude/models")
+        # Claude's model catalog now lives in the manifest (slugs); shape them as {id} for the picker.
+        manifest = self.fetch_manifest()
+        models = manifest.get("providers", {}).get("claude", {}).get("models", [])
+        return [{"id": slug} for slug in models] if isinstance(models, list) else []
 
     # --- control plane: account pre-create (authed as THIS vesta) ------------
 
@@ -208,20 +218,21 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """Provision the agent: write its preferences (PUT /config) and Claude credentials
-        (PUT /config/auth), then restart once so it wakes with everything in place. Writes don't
-        restart on their own, so this is several writes + a single restart."""
+        """Provision the agent: sign in the Claude provider (PUT /provider, model folded in) and write
+        its preferences (PUT /config), then restart once so it wakes with everything in place. Writes
+        don't restart on their own, so this is several writes + a single restart."""
         base = self._cfg.tenant_base(subdomain)
-        prefs: dict[str, Any] = {}
+        provider: dict[str, Any] = {"kind": "claude", "credentials": credentials}
         if model:
-            prefs["agent_model"] = model
+            provider["model"] = model
+        self._json(self._raw_put(f"{base}/agents/{name}/provider", json=provider, token=server_token, timeout=120))
+        prefs: dict[str, Any] = {}
         if personality:
             prefs["agent_personality"] = personality
         if seed_context:
             prefs["seed_context"] = seed_context
         if prefs:
             self._json(self._raw_put(f"{base}/agents/{name}/config", json=prefs, token=server_token, timeout=120))
-        self._json(self._raw_put(f"{base}/agents/{name}/config/auth", json={"credentials": credentials}, token=server_token, timeout=120))
         return self._json(self._raw_post(f"{base}/agents/{name}/restart", json={}, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------

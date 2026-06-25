@@ -63,7 +63,7 @@ class State:
     provider_status: ProviderStatus | None = None
     # Effective context window passed via CLAUDE_CODE_MAX_CONTEXT_TOKENS: the OpenRouter
     # model's real window (claude-code wrongly assumes 200k for non-Anthropic models,
-    # claude-code#46416) capped at config.max_context_tokens to bound prompt-cache read
+    # claude-code#46416) capped at config.provider.max_context_tokens to bound prompt-cache read
     # cost. Resolved once at boot. None = unresolved.
     openrouter_max_tokens: int | None = None
     # Local OpenRouter caching proxy: the SDK subprocess routes ANTHROPIC_BASE_URL here
