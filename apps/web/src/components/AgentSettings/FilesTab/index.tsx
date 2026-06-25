@@ -90,6 +90,9 @@ function SimpleSkeleton() {
       <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
         <SkeletonRow widthPct={32} />
         <div className="border-t border-border/60">
+          <SkeletonRow widthPct={40} />
+        </div>
+        <div className="border-t border-border/60">
           <SkeletonRow widthPct={28} />
         </div>
       </Card>
