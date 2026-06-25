@@ -110,9 +110,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     drop_greeting_notification(config=config, state=state, reason=greeting_reason)
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
-    # /provider and /provider/status over this port to read auth state and deliver
-    # credentials, so a fresh unauthenticated agent must be reachable before the
-    # first_start_setup conversation (which itself needs a provider) can run.
+    # GET/PUT /config over this port to read auth state and deliver credentials, so a
+    # fresh unauthenticated agent must be reachable before the first_start_setup
+    # conversation (which itself needs a provider) can run.
     state.ws_runner = await start_ws_server(state.event_bus, config, state)
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
@@ -185,7 +185,7 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     from .provider import derive_status
 
     event_bus = EventBus(data_dir=config.data_dir)
-    provider_status = derive_status(config, persisted)
+    provider_status = derive_status(config)
     logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")
     return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 

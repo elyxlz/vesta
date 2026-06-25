@@ -4,6 +4,7 @@ import asyncio
 import json
 import socket
 import time
+import typing
 import weakref
 
 import pydantic as pyd
@@ -177,7 +178,7 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING)
 
 
-# --- Request-body validation models (PUT /config, POST /provider) ---
+# --- Request-body validation for PUT /config (prefs + the auth sub-object) ---
 
 
 def test_config_update_accepts_general_fields_and_returns_sparse(config):
@@ -231,6 +232,55 @@ def test_provider_update_accepts_each_provider():
     assert _ProviderUpdate.model_validate({"credentials": "{}"}).credentials == "{}"
     parsed = _ProviderUpdate.model_validate({"openrouter_key": "k", "openrouter_model": "m"})
     assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
+
+
+@pytest.mark.anyio
+async def test_config_put_rejects_an_auth_key(config):
+    # Auth is its own endpoint (PUT /config/auth); a stray `auth` in a prefs body is not a config field.
+    from core.api import _config_put_handler
+
+    class _Req:
+        app = {"config": config}
+
+        async def json(self):
+            return {"auth": {"credentials": "{}"}}
+
+    resp = await _config_put_handler(typing.cast("web.Request", _Req()))
+    assert resp.status == 400
+
+
+@pytest.mark.anyio
+async def test_config_auth_put_signs_in_then_delete_signs_out(config, monkeypatch):
+    # PUT /config/auth applies credentials; DELETE /config/auth clears them. Each is write-only (the
+    # caller restarts to apply), so the handlers just return ok.
+    import core.api as api_mod
+    from core.api import _config_auth_delete_handler, _config_auth_put_handler
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
+    monkeypatch.setattr(api_mod, "set_claude", lambda creds, *, config: signed_in)
+    monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
+
+    state = vm.State()
+    state.provider_status = signed_out
+
+    class _PutReq:
+        app = {"state": state, "config": config}
+
+        async def json(self):
+            return {"credentials": "{}"}
+
+    put_resp = await _config_auth_put_handler(typing.cast("web.Request", _PutReq()))
+    assert put_resp.status == 200
+    assert state.provider_status is signed_in
+
+    class _DelReq:
+        app = {"state": state, "config": config}
+
+    del_resp = await _config_auth_delete_handler(typing.cast("web.Request", _DelReq()))
+    assert del_resp.status == 200
+    assert state.provider_status is signed_out
 
 
 def test_provider_update_requires_exactly_one_provider():

@@ -131,6 +131,27 @@ impl Client {
         check_response(resp)
     }
 
+    fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.put(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
+    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.patch(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
+    fn delete(&self, path: &str) -> Result<Response<Body>, String> {
+        let resp = self.agent.delete(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call().map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
         check_response(resp)?;
@@ -191,7 +212,7 @@ impl Client {
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/destroy", name))?;
+        self.delete(&format!("/agents/{}", name))?;
         Ok(())
     }
 
@@ -202,7 +223,7 @@ impl Client {
 
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
-        let resp = self.post_json(&format!("/agents/{}/rename", name), &body)?;
+        let resp = self.patch_json(&format!("/agents/{}", name), &body)?;
         let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(new_name).to_string())
     }
@@ -283,13 +304,13 @@ impl Client {
         v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
     }
 
-    /// Provision an agent with Claude credentials via the new provider endpoint.
-    /// `token` is the credentials JSON string. The agent must be running (its WS
-    /// port bound) to receive the call, so this waits for it first.
+    /// Sign an agent in with Claude credentials via `PUT /config/auth`. `token` is the credentials
+    /// JSON string. The write doesn't restart — callers (e.g. provision_and_settle) restart afterwards.
+    /// The agent must be running (its WS port bound) to receive the call, so this waits first.
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
         let body = serde_json::json!({"credentials": token});
-        self.post_json(&format!("/agents/{}/provider", name), &body)?;
+        self.put_json(&format!("/agents/{}/config/auth", name), &body)?;
         Ok(())
     }
 

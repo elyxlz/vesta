@@ -86,16 +86,17 @@ def _merge_validate(config: "VestaConfig", data: dict[str, tp.Any]) -> dict[str,
 
 def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, tp.Any]:
     """Validate a sparse PUT /config body. Every agent preference is settable here — model, context,
-    thinking, personality, timezone, seed_context — since they all live in one config store. Only the
-    auth fields (provider choice + OpenRouter key) are rejected: those flow through POST /provider,
-    which owns the credential files and the derived provider status. PROVIDER_PREF_FIELDS still names
-    the model/context/thinking subset, but only for clear_provider's sign-out wipe, not for routing."""
+    thinking, personality, timezone, seed_context — since they all live in one config store. The
+    derived auth fields (provider choice + OpenRouter key) are rejected: provider credentials are set
+    via PUT /config/auth and cleared via DELETE /config/auth, which own the credential files and the
+    derived status. PROVIDER_PREF_FIELDS still names the model/context/thinking subset, but only for
+    clear_provider's sign-out wipe, not for routing."""
     if not isinstance(data, dict):
         raise ValueError("config body must be a JSON object")
     data = tp.cast("dict[str, tp.Any]", data)
     auth_owned = sorted(set(data) & _PROVIDER_AUTH_FIELDS)
     if auth_owned:
-        raise ValueError(f"auth-owned, set via POST /provider: {', '.join(auth_owned)}")
+        raise ValueError(f"auth-owned, set via PUT /config/auth or DELETE /config/auth: {', '.join(auth_owned)}")
     return _merge_validate(config, data)
 
 

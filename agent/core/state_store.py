@@ -24,11 +24,6 @@ class PersistedState(pyd.BaseModel):
     show_dreamer_summary: bool = False
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
-    # Last-known provider-auth state. Survives container restart so a runtime
-    # 401 (e.g., revoked token) stays visible after dreamer-restart rather than
-    # the agent quietly booting back into "authenticated" until the next 401.
-    # Source of truth: Provider re-derives on boot from disk if this is None.
-    provider_auth_state: str | None = None
 
 
 def state_path(config: cfg.VestaConfig) -> pl.Path:

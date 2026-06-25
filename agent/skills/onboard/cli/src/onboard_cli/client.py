@@ -208,19 +208,21 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """POST <tenant>/agents/{name}/provision — attach Claude creds and, in the same restart, the
-        agent's preferences (model, personality, freeform seed context). The agent wakes with
-        everything in place."""
-        config: dict[str, Any] = {}
+        """Provision the agent: write its preferences (PUT /config) and Claude credentials
+        (PUT /config/auth), then restart once so it wakes with everything in place. Writes don't
+        restart on their own, so this is several writes + a single restart."""
+        base = self._cfg.tenant_base(subdomain)
+        prefs: dict[str, Any] = {}
         if model:
-            config["agent_model"] = model
+            prefs["agent_model"] = model
         if personality:
-            config["agent_personality"] = personality
+            prefs["agent_personality"] = personality
         if seed_context:
-            config["seed_context"] = seed_context
-        body = {"provider": {"credentials": credentials}, "config": config}
-        url = f"{self._cfg.tenant_base(subdomain)}/agents/{name}/provision"
-        return self._json(self._raw_post(url, json=body, token=server_token, timeout=120))
+            prefs["seed_context"] = seed_context
+        if prefs:
+            self._json(self._raw_put(f"{base}/agents/{name}/config", json=prefs, token=server_token, timeout=120))
+        self._json(self._raw_put(f"{base}/agents/{name}/config/auth", json={"credentials": credentials}, token=server_token, timeout=120))
+        return self._json(self._raw_post(f"{base}/agents/{name}/restart", json={}, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------
 
@@ -255,6 +257,16 @@ class Client:
         timeout: int = _TIMEOUT,
     ) -> requests.Response:
         return self._send("POST", url, json=json, headers=self._auth(token), timeout=timeout)
+
+    def _raw_put(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        token: str,
+        timeout: int = _TIMEOUT,
+    ) -> requests.Response:
+        return self._send("PUT", url, json=json, headers=self._auth(token), timeout=timeout)
 
     def _send(
         self,

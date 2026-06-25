@@ -493,9 +493,9 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
 
     await converse("test prompt", state=state, config=config, show_output=False)
 
+    # The flip is in-memory only (no persisted auth flag); the live status reflects it this session.
     assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert state.provider_status.model is None
-    assert state.persisted.provider_auth_state == ProviderAuthState.NOT_AUTHENTICATED.value
     assert mock_client.interrupt.called, "should interrupt the CLI's retries on auth loss"
 
 

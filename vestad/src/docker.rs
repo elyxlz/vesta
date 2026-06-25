@@ -392,14 +392,14 @@ pub async fn combined_status(
             if !info.port.is_some_and(is_agent_ready) {
                 return AgentStatus::Starting;
             }
-            // Agent's own /provider/status is the source of truth for provider auth.
-            // If the WS server is up but /provider isn't responding yet (transient
+            // Agent's own GET /config is the source of truth for provider auth.
+            // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
             let agent_name = name_from_cname(cname);
             let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
             match provider.status().await {
-                Ok(s) if s.state == "authenticated" && s.setup_complete => AgentStatus::Alive,
-                Ok(s) if s.state == "authenticated" => AgentStatus::SettingUp,
+                Ok(s) if s.authed && s.setup_complete => AgentStatus::Alive,
+                Ok(s) if s.authed => AgentStatus::SettingUp,
                 Ok(_) => AgentStatus::NotAuthenticated,
                 Err(_) => AgentStatus::Starting,
             }

@@ -1,5 +1,5 @@
 //! Claude OAuth handlers. Standalone PKCE dance: the caller gets credentials
-//! back and POSTs them into /agents (new) or /agents/{name}/provider (existing).
+//! back and sends them to `PUT /agents/{name}/config/auth` (then restarts the agent to apply).
 
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};

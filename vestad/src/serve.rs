@@ -536,11 +536,11 @@ async fn create_agent_handler(
         save_settings(&settings);
     }
 
-    // Create + start an empty agent. Provider config arrives via a separate
-    // POST /agents/{name}/provider once the agent is up — the agent owns its
-    // own credential files now, vestad only orchestrates. `create_agent` reports
-    // coarse phases into shared state so GET /agents/{name}/build-phase can drive
-    // honest onboarding status while this synchronous call is in flight.
+    // Create + start an empty agent. Credentials and preferences arrive via a separate
+    // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
+    // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
+    // state so GET /agents/{name}/build-phase can drive honest onboarding status while this
+    // synchronous call is in flight.
     let phases = state.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
@@ -784,41 +784,23 @@ pub(crate) async fn drop_rename_notification(
     Ok(file_name)
 }
 
-/// GET an existing agent's provider status (state/kind/model/setup_complete),
-/// proxied from the agent's `/provider/status`. Lets the web show the current
-/// provider and model (e.g. to offer a model switch) without owning that state.
-async fn get_provider_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<agent_provider::ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
-    provider
-        .status()
-        .await
-        .map(Json)
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
-}
-
-/// Which write(s) to forward to the agent's own HTTP API. Dispatched inside
-/// `write_to_agent_and_restart` so the borrowing `AgentProvider` never crosses a closure boundary.
+/// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
+/// borrowing `AgentProvider` never crosses a closure boundary.
 enum AgentWrite {
-    /// The agent's `POST /provider` (auth), forwarded verbatim.
-    Provider(serde_json::Value),
-    /// The agent's `PUT /config` (any preference), forwarded verbatim.
+    /// The agent's `PUT /config` — a sparse preferences diff.
     Config(serde_json::Value),
-    /// Provisioning: auth and/or preferences, each to its own agent endpoint, one restart.
-    Provision(ProvisionRequest),
-    /// The agent's `DELETE /provider` — sign out.
-    Clear,
+    /// The agent's `PUT /config/auth` — set provider credentials (sign in).
+    Auth(serde_json::Value),
+    /// The agent's `DELETE /config/auth` — clear credentials (sign out).
+    ClearAuth,
 }
 
-/// Run a write against a (possibly stopped) agent's own HTTP API, then restart the container so the
-/// change applies on next boot. Ensures the agent exists, takes the per-agent write lock, and
-/// auto-starts a stopped agent so it can receive the proxied call — the shared skeleton behind every
-/// auth/config/provision setter. The agent owns the file writes, format, and validation; any forward
-/// failure surfaces as BAD_GATEWAY.
-async fn write_to_agent_and_restart(
+/// Forward a write to the agent's own HTTP API. Writes only set desired state — they do NOT restart;
+/// the caller applies them with one `POST /agents/{name}/restart` after its writes (so provisioning
+/// is several writes + a single restart, with nothing racing a restarting agent). Ensures the agent
+/// exists, takes the per-agent write lock, and auto-starts a stopped agent so it can receive the
+/// proxied call. The agent owns the file writes, format, and validation; a forward failure is BAD_GATEWAY.
+async fn write_to_agent(
     state: &SharedState,
     name: &str,
     write: AgentWrite,
@@ -836,40 +818,16 @@ async fn write_to_agent_and_restart(
 
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
-        AgentWrite::Provider(body) => provider.set(&body).await,
         AgentWrite::Config(body) => provider.put_config(&body).await,
-        AgentWrite::Clear => provider.clear().await,
-        AgentWrite::Provision(req) => {
-            // Each present part is written before the single restart below, so a later write can't
-            // hit the agent mid-restart and 502, dropping the change.
-            async {
-                if has_entries(&req.provider) {
-                    provider.set(&req.provider).await?;
-                }
-                if has_entries(&req.config) {
-                    provider.put_config(&req.config).await?;
-                }
-                Ok(())
-            }
-            .await
-        }
+        AgentWrite::Auth(body) => provider.put_auth(&body).await,
+        AgentWrite::ClearAuth => provider.delete_auth().await,
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-
-    docker::restart_agent(&state.docker, name).await.map_err(map_docker_err)?;
-    Ok(ok_json())
+    Ok(Json(serde_json::json!({"ok": true, "restart_required": true})))
 }
 
-/// Set or refresh an existing agent's provider config, forwarded verbatim to the agent's `POST /provider`.
-async fn set_provider_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Provider(body)).await
-}
-
-/// Relay the agent's `GET /config` (the agent owns its config; vestad just proxies it to the app).
+/// Relay the agent's `GET /config` (config plus derived auth state; the agent owns it, vestad proxies
+/// it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -883,51 +841,30 @@ async fn get_config_handler(
         .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
 }
 
-/// Forward a body verbatim to the agent's `PUT /config` (it owns validation), then restart.
+/// Forward a preferences diff to the agent's `PUT /config`. Write only — caller restarts to apply.
 async fn set_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Config(body)).await
+    write_to_agent(&state, &name, AgentWrite::Config(body)).await
 }
 
-fn has_entries(value: &serde_json::Value) -> bool {
-    value.as_object().is_some_and(|fields| !fields.is_empty())
-}
-
-#[derive(Deserialize)]
-struct ProvisionRequest {
-    /// Provider auth body for the agent's `POST /provider` (`{credentials}` for Claude or
-    /// `{openrouter_key, openrouter_model}`). Omitted when only preferences change.
-    #[serde(default)]
-    provider: serde_json::Value,
-    /// Sparse preferences for the agent's `PUT /config` (model, context, thinking, personality,
-    /// timezone, seed_context). Omitted when only auth changes.
-    #[serde(default)]
-    config: serde_json::Value,
-}
-
-/// Provision an agent: apply provider auth and/or preferences, then restart the container ONCE. Each
-/// named part is forwarded to its own agent endpoint, so vestad carries no field taxonomy. Doing
-/// these as separate restart-on-write calls raced — a later write hit the agent mid-restart and
-/// 502'd, dropping the change. Writing everything before a single restart designs that race out of
-/// existence.
-async fn provision_handler(
+/// Sign in: forward credentials to the agent's `PUT /config/auth`. Write only — caller restarts to apply.
+async fn set_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(req): Json<ProvisionRequest>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Provision(req)).await
+    write_to_agent(&state, &name, AgentWrite::Auth(body)).await
 }
 
-/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart once so it
-/// boots not_authenticated.
-async fn clear_provider_handler(
+/// Sign out: forward to the agent's `DELETE /config/auth`. Write only — caller restarts to apply.
+async fn clear_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent_and_restart(&state, &name, AgentWrite::Clear).await
+    write_to_agent(&state, &name, AgentWrite::ClearAuth).await
 }
 
 // --- SSE Logs ---
@@ -2121,16 +2058,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents/start", post(start_all_handler))
-        .route("/agents/{name}", get(agent_status_handler))
+        .route(
+            "/agents/{name}",
+            get(agent_status_handler).delete(destroy_agent_handler).patch(rename_agent_handler),
+        )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
-        .route("/agents/{name}/destroy", post(destroy_agent_handler))
-        .route("/agents/{name}/rename", post(rename_agent_handler))
-        .route("/agents/{name}/provider", post(set_provider_handler).get(get_provider_handler).delete(clear_provider_handler))
-        .route("/agents/{name}/provision", post(provision_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
+        .route("/agents/{name}/config/auth", put(set_auth_handler).delete(clear_auth_handler))
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
