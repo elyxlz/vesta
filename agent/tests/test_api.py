@@ -267,7 +267,7 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
 
     signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
-    monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, *, config: signed_in)
+    monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, ctx, *, config: signed_in)
     monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
 
     state = vm.State()

@@ -84,7 +84,7 @@ def prov(tmp_path, monkeypatch, config):
 def test_set_claude_writes_creds_and_store(prov):
     from core import provider as provider_mod
 
-    status = set_claude(_CREDS, "opus", config=prov)
+    status = set_claude(_CREDS, "opus", None, config=prov)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
     assert provider_mod.CREDENTIALS_PATH.read_text() == _CREDS
@@ -93,7 +93,7 @@ def test_set_claude_writes_creds_and_store(prov):
 
 
 def test_set_openrouter_writes_nested_provider_to_store(prov):
-    status = set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=prov)
+    status = set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "openrouter"
     assert status.model == "deepseek/deepseek-v4-flash"
@@ -119,8 +119,8 @@ def test_model_context_prefs_persist_to_store_and_reload(prov):
 def test_clear_provider_removes_creds_and_resets_state(prov):
     from core import provider as provider_mod
 
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=prov)
-    set_claude(_CREDS, "opus", config=prov)
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    set_claude(_CREDS, "opus", None, config=prov)
     assert provider_mod.CREDENTIALS_PATH.exists()
 
     status = clear_provider(config=prov)
@@ -134,9 +134,40 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
 
 
 def test_set_claude_replaces_openrouter_provider(prov):
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=prov)
-    set_claude(_CREDS, "opus", config=prov)
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    set_claude(_CREDS, "opus", None, config=prov)
     assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}  # no stale openrouter key leaks
+
+
+def test_reauth_preserves_model_and_context(prov):
+    # `vesta auth` re-auth sends no model/context; they must be preserved, not reset to defaults.
+    update_config_store({"provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}})
+    set_claude(_CREDS, None, None, config=prov)
+    assert read_config_store()["provider"] == {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}
+
+
+def test_set_openrouter_applies_context_chosen_at_signin(prov):
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", 128_000, config=prov)
+    assert read_config_store()["provider"] == {
+        "kind": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "key": "sk-or-v1-secret",
+        "max_context_tokens": 128_000,
+    }
+
+
+def test_patch_provider_preserves_openrouter_key(prov):
+    # Regression: a model-only PATCH must keep the real key, not the redacted '**********' from the dump.
+    from core.config import validate_config_updates
+
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    updates = validate_config_updates(vm.VestaConfig(), {"provider": {"model": "anthropic/claude-3"}})
+    assert updates["provider"] == {
+        "kind": "openrouter",
+        "model": "anthropic/claude-3",
+        "max_context_tokens": None,
+        "key": "sk-or-v1-secret",
+    }
 
 
 def test_observed_provider_failure_flips_in_memory_only(prov):
@@ -144,7 +175,7 @@ def test_observed_provider_failure_flips_in_memory_only(prov):
 
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(_CREDS)
-    status = set_claude(_CREDS, "opus", config=prov)
+    status = set_claude(_CREDS, "opus", None, config=prov)
     flipped = observed_provider_failure(status)
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
     # It does NOT persist: a fresh boot re-derives optimistically from disk (creds still present).
@@ -171,7 +202,7 @@ def test_boot_with_no_credentials_at_all_is_not_authenticated(prov):
 
 
 def test_authenticated_provider_reports_model(prov):
-    status = set_claude(_CREDS, "opus", config=prov)
+    status = set_claude(_CREDS, "opus", None, config=prov)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.model == "opus"
 
@@ -189,7 +220,7 @@ def test_boot_derives_no_model_when_credentials_are_invalid(prov):
 
 
 def test_runtime_failure_clears_reported_model(prov):
-    status = set_claude(_CREDS, "opus", config=prov)
+    status = set_claude(_CREDS, "opus", None, config=prov)
     assert status.model is not None
     flipped = observed_provider_failure(status)
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
@@ -236,7 +267,7 @@ async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch
 async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
     from core import provider as provider_mod
 
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", config=prov)
+    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
 
     async def fake_fetch(url, *, headers):
         assert url == provider_mod.OPENROUTER_KEY_URL

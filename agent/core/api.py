@@ -238,13 +238,16 @@ async def _manifest_get_handler(request: web.Request) -> web.Response:
 
 class _ClaudeSignIn(pyd.BaseModel):
     kind: tp.Literal["claude"]
-    model: tp.Literal["opus", "sonnet", "haiku"] = "opus"
+    # None on re-auth: preserve the agent's existing model rather than reset it.
+    model: tp.Literal["opus", "sonnet", "haiku"] | None = None
+    max_context_tokens: int | None = None
     credentials: str
 
 
 class _OpenRouterSignIn(pyd.BaseModel):
     kind: tp.Literal["openrouter"]
     model: str
+    max_context_tokens: int | None = None
     key: str
 
 
@@ -291,9 +294,9 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
     try:
         if isinstance(signin, _ClaudeSignIn):
-            state.provider_status = set_claude(signin.credentials, signin.model, config=config)
+            state.provider_status = set_claude(signin.credentials, signin.model, signin.max_context_tokens, config=config)
         else:
-            state.provider_status = set_openrouter(signin.key, signin.model, config=config)
+            state.provider_status = set_openrouter(signin.key, signin.model, signin.max_context_tokens, config=config)
     except (json.JSONDecodeError, TypeError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:

@@ -369,47 +369,39 @@ class VestaConfig(pyd_settings.BaseSettings):
         return tuple(sources)
 
 
-def flat_provider_for_loc(loc: tuple[object, ...]) -> str | None:
-    """Map a validation-error loc inside the provider union back to the env var a legacy agent might
-    set it from, so load_config can revert just that var. None when the loc isn't a provider field."""
-    leaf_to_env = {"model": "AGENT_MODEL", "max_context_tokens": "MAX_CONTEXT_TOKENS"}
-    if loc and str(loc[0]) == "provider":
-        for part in reversed(loc):
-            if str(part) in leaf_to_env:
-                return leaf_to_env[str(part)]
-    return None
-
-
 def _provider_patch(current: dict[str, pyd.JsonValue], patch: dict[str, pyd.JsonValue]) -> dict[str, pyd.JsonValue]:
-    """Deep-merge a partial provider onto the current stored provider, so "set just the model" keeps
-    the server-side key (redacted on the wire) and the rest. Changing `kind` replaces wholesale."""
-    if "kind" in patch and "kind" in current and patch["kind"] != current["kind"]:
-        return dict(patch)
+    """Deep-merge a partial provider (model / context / thinking) onto the current stored provider, so
+    a PATCH that omits the key keeps the stored key and the rest."""
     merged = dict(current)
     merged.update(patch)
     return merged
 
 
-def stored_config(config: "VestaConfig") -> dict[str, pyd.JsonValue]:
-    """The current config as the store persists it: nested provider (no oauth) + scalar prefs. The
-    base for a deep-merge during PUT, and what GET returns (key redacted by SecretStr)."""
+def stored_config(config: "VestaConfig", *, redact: bool = True) -> dict[str, pyd.JsonValue]:
+    """The current config as the store persists it: nested provider (no oauth) + scalar prefs. With
+    redact=True (the wire default) the openrouter key shows as SecretStr's '**********'; with
+    redact=False the real key is restored, for use as a deep-merge base that must round-trip it."""
     data = config.model_dump(mode="json")
-    if isinstance(data["provider"], dict):
-        data["provider"].pop("oauth", None)
+    provider = data["provider"]
+    if isinstance(provider, dict):
+        provider.pop("oauth", None)
+        if not redact and isinstance(config.provider, OpenRouterConfig):
+            provider["key"] = config.provider.key.get_secret_value()
     return data
 
 
 def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, pyd.JsonValue]:
-    """Validate a PUT /config partial against the nested model and return the to-write top-level dict.
-    `provider` is deep-merged onto the current provider then the whole config is re-validated, so every
-    constraint (context bounds, model literal, required key) holds. `oauth` is never accepted here."""
+    """Validate a PUT /config (prefs) or PATCH /provider partial against the nested model and return
+    the to-write top-level dict. A `provider` partial is deep-merged onto the current provider (with
+    the real key, not the redacted dump) then the whole config is re-validated, so every constraint
+    holds and a key-omitting patch round-trips the stored key. `oauth` is never accepted here."""
     if not isinstance(data, dict):
         raise ValueError("config body must be a JSON object")
     data = tp.cast("dict[str, pyd.JsonValue]", data)  # narrowed by the isinstance above
     unknown = [key for key in data if key not in VestaConfig.model_fields]
     if unknown:
         raise ValueError(f"not config fields: {', '.join(sorted(unknown))}")
-    candidate = stored_config(config)
+    candidate = stored_config(config, redact=False)
     updates: dict[str, pyd.JsonValue] = {}
     for key, value in data.items():
         if key == "provider" and isinstance(value, dict):
@@ -443,7 +435,9 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 loc = error["loc"]
                 if not loc:
                     continue
-                env_name = flat_provider_for_loc(loc) or str(loc[0]).upper()
+                # Only operational scalars come from env (provider lives in the store, not env), so the
+                # offending var is the top-level field name uppercased.
+                env_name = str(loc[0]).upper()
                 if env_name in os.environ and env_name not in dropped:
                     issues.append(f"{env_name}={os.environ[env_name]!r} is invalid ({error['msg']}); reverted to default")
                     del os.environ[env_name]
@@ -451,9 +445,17 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     progressed = True
             if not progressed:
                 # Bad store value or invalid field default: fall back to a default claude provider
-                # rather than crash-loop. model_construct skips validators, so build provider by hand.
+                # rather than crash-loop. model_construct skips validators, so build provider by hand
+                # and preserve the agent token from env so the HTTP/WS API stays authenticated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                return VestaConfig.model_construct(provider=ClaudeConfig(oauth=_read_claude_oauth())), issues
+                token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"] else None
+                return (
+                    VestaConfig.model_construct(
+                        provider=ClaudeConfig(oauth=_read_claude_oauth()),
+                        agent_token=pyd.SecretStr(token) if token is not None else None,
+                    ),
+                    issues,
+                )
 
 
 _LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"

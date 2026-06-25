@@ -11,9 +11,10 @@ import time
 import typing as tp
 
 import aiohttp
+import pydantic as pyd
 
 from . import logger
-from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, update_config_store
+from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, read_config_store, update_config_store
 
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
@@ -80,23 +81,55 @@ def derive_status(config: VestaConfig) -> ProviderStatus:
     return ProviderStatus(state=state, kind=kind, model=config.provider.model, max_context_tokens=config.provider.max_context_tokens)
 
 
-def set_claude(credentials_json: str, model: str, *, config: VestaConfig) -> ProviderStatus:
-    """Write the Claude OAuth credentials to the SDK path and set the nested claude provider (model
-    only; the OAuth blob lives in the credentials file, never the store)."""
+def _merged_provider(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None = None) -> dict[str, pyd.JsonValue]:
+    """The provider dict to store, preserving prefs from the existing same-kind provider so a re-auth
+    that omits model/context keeps them (rather than resetting to defaults), while a value supplied at
+    sign-in (e.g. the context window chosen at setup) is applied."""
+    store = read_config_store()
+    prev = store["provider"] if "provider" in store and isinstance(store["provider"], dict) else {}
+    same_kind = "kind" in prev and prev["kind"] == kind
+    provider: dict[str, pyd.JsonValue] = {"kind": kind}
+    if model is not None:
+        provider["model"] = model
+    elif same_kind and "model" in prev:
+        provider["model"] = prev["model"]
+    elif kind == "claude":
+        provider["model"] = "opus"
+    ctx = max_context_tokens
+    if ctx is None and same_kind and "max_context_tokens" in prev:
+        prev_ctx = prev["max_context_tokens"]
+        if isinstance(prev_ctx, int):
+            ctx = prev_ctx
+    if ctx is not None:
+        provider["max_context_tokens"] = ctx
+    if same_kind and "thinking" in prev:
+        provider["thinking"] = prev["thinking"]
+    if key is not None:
+        provider["key"] = key
+    return provider
+
+
+def set_claude(credentials_json: str, model: str | None, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Write the Claude OAuth credentials to the SDK path and set the nested claude provider. The OAuth
+    blob lives in the credentials file, never the store. model/context unspecified on re-auth are
+    preserved from the existing provider."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    update_config_store({"provider": {"kind": "claude", "model": model}})
+    provider = _merged_provider("claude", model=model, max_context_tokens=max_context_tokens)
+    update_config_store({"provider": provider})
     logger.startup("Provider set to claude")
-    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=model)
+    reported = provider["model"]
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=reported if isinstance(reported, str) else None)
 
 
-def set_openrouter(key: str, model: str, *, config: VestaConfig) -> ProviderStatus:
-    """Record the nested OpenRouter provider (key + model) in the config store. Vestad restarts the
-    agent to apply it."""
-    update_config_store({"provider": {"kind": "openrouter", "model": model, "key": key}})
+def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Record the nested OpenRouter provider (key + model, plus any context chosen at sign-in) in the
+    config store. Vestad restarts the agent to apply it."""
+    provider = _merged_provider("openrouter", model=model, max_context_tokens=max_context_tokens, key=key)
+    update_config_store({"provider": provider})
     logger.startup(f"Provider set to openrouter model={model}")
     return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model)
 
