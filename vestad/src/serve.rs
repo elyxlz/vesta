@@ -789,10 +789,12 @@ pub(crate) async fn drop_rename_notification(
 enum AgentWrite {
     /// The agent's `PUT /config` — a sparse preferences diff.
     Config(serde_json::Value),
-    /// The agent's `PUT /config/auth` — set provider credentials (sign in).
-    Auth(serde_json::Value),
-    /// The agent's `DELETE /config/auth` — clear credentials (sign out).
-    ClearAuth,
+    /// The agent's `PUT /provider` — sign in / switch provider.
+    Provider(serde_json::Value),
+    /// The agent's `PATCH /provider` — change model / context / thinking.
+    PatchProvider(serde_json::Value),
+    /// The agent's `DELETE /provider` — clear credentials (sign out).
+    ClearProvider,
 }
 
 /// Forward a write to the agent's own HTTP API. Writes only set desired state — they do NOT restart;
@@ -819,15 +821,15 @@ async fn write_to_agent(
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
-        AgentWrite::Auth(body) => provider.put_auth(&body).await,
-        AgentWrite::ClearAuth => provider.delete_auth().await,
+        AgentWrite::Provider(body) => provider.put_provider(&body).await,
+        AgentWrite::PatchProvider(body) => provider.patch_provider(&body).await,
+        AgentWrite::ClearProvider => provider.delete_provider().await,
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(serde_json::json!({"ok": true, "restart_required": true})))
 }
 
-/// Relay the agent's `GET /config` (config plus derived auth state; the agent owns it, vestad proxies
-/// it to the app).
+/// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -850,21 +852,44 @@ async fn set_config_handler(
     write_to_agent(&state, &name, AgentWrite::Config(body)).await
 }
 
-/// Sign in: forward credentials to the agent's `PUT /config/auth`. Write only — caller restarts to apply.
-async fn set_auth_handler(
+/// Relay the agent's `GET /provider` (active provider + derived auth state; vestad proxies it).
+async fn get_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .get_provider()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
+/// Sign in / switch: forward the provider body to the agent's `PUT /provider`. Write only — caller restarts.
+async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent(&state, &name, AgentWrite::Auth(body)).await
+    write_to_agent(&state, &name, AgentWrite::Provider(body)).await
 }
 
-/// Sign out: forward to the agent's `DELETE /config/auth`. Write only — caller restarts to apply.
-async fn clear_auth_handler(
+/// Change model / context / thinking: forward to the agent's `PATCH /provider`. Write only — caller restarts.
+async fn patch_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    write_to_agent(&state, &name, AgentWrite::PatchProvider(body)).await
+}
+
+/// Sign out: forward to the agent's `DELETE /provider`. Write only — caller restarts to apply.
+async fn clear_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent(&state, &name, AgentWrite::ClearAuth).await
+    write_to_agent(&state, &name, AgentWrite::ClearProvider).await
 }
 
 // --- SSE Logs ---
@@ -2036,8 +2061,7 @@ pub fn build_router(state: SharedState) -> Router {
         // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
         // over the loopback), none of which then need to keep a hardcoded copy.
         .route("/personalities", get(list_personalities_handler))
-        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
-        .route("/agent-defaults", get(crate::defaults::agent_defaults_handler));
+        .route("/manifest", get(crate::manifest::manifest_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
@@ -2067,7 +2091,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
-        .route("/agents/{name}/config/auth", put(set_auth_handler).delete(clear_auth_handler))
+        .route(
+            "/agents/{name}/provider",
+            get(get_provider_handler)
+                .put(set_provider_handler)
+                .patch(patch_provider_handler)
+                .delete(clear_provider_handler),
+        )
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))

@@ -17,19 +17,15 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for config writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The slice of the agent's `GET /config` that vestad needs to gate Alive vs SettingUp vs
-/// NotAuthenticated. The rest of the config is opaque to vestad (it just relays it to the app).
+/// The slice of the agent's `GET /provider` that vestad needs to gate Alive vs SettingUp vs
+/// NotAuthenticated. The rest of the response is opaque to vestad (it just relays it to the app).
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
-    /// LEGACY(remove-when: no fleet agent runs pre-`/config/auth` core — i.e. every agent's GET /config
-    /// reports `authed`): defaults to `true` so an agent still on pre-unification core (whose GET /config
-    /// is a plain config dump with no `authed` key) isn't mislabeled NotAuthenticated mid-upgrade. A
-    /// new-core not-authenticated agent reports `authed: false` explicitly. The cost is the inverse case
-    /// (a genuinely signed-out old-core agent briefly shows Alive), accepted as the smaller, transient
-    /// wrong for the common authenticated agent. Drop the default once the fleet has converged.
+    /// Defaults to `true` so a response missing the field isn't mislabeled NotAuthenticated; a
+    /// not-authenticated agent reports `authed: false` explicitly.
     #[serde(default = "default_true")]
     pub authed: bool,
-    /// Same legacy back-compat default so an older agent that doesn't report the field isn't stuck in `SettingUp`.
+    /// Same back-compat default so a response without the field isn't stuck in `SettingUp`.
     #[serde(default = "default_true")]
     pub setup_complete: bool,
 }
@@ -53,52 +49,57 @@ impl<'a> AgentProvider<'a> {
         }
     }
 
-    /// GET the auth/readiness slice of the agent's /config to gate its Alive status. Returns Err on
+    /// GET the readiness slice of the agent's /provider to gate its Alive status. Returns Err on
     /// network failure, missing env file (agent not yet provisioned), non-2xx, or timeout.
     pub async fn status(&self) -> Result<AgentStatusView, String> {
-        let (port, token) = self.port_and_token()?;
-        let resp = self.http_client
-            .get(format!("http://127.0.0.1:{port}/config"))
-            .header("X-Agent-Token", token)
-            .timeout(STATUS_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| format!("agent status request failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("agent status returned HTTP {}", resp.status()));
-        }
-        resp.json().await.map_err(|e| format!("agent status parse failed: {e}"))
+        self.get_json("/provider", STATUS_TIMEOUT, "status").await
     }
 
-    /// GET the agent's /config (its current config; vestad relays it to the app).
+    /// GET the agent's /config (prefs; vestad relays it to the app).
     pub async fn get_config(&self) -> Result<serde_json::Value, String> {
-        let (port, token) = self.port_and_token()?;
-        let resp = self.http_client
-            .get(format!("http://127.0.0.1:{port}/config"))
-            .header("X-Agent-Token", token)
-            .timeout(STATUS_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| format!("agent /config request failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("agent /config returned HTTP {}", resp.status()));
-        }
-        resp.json().await.map_err(|e| format!("agent /config parse failed: {e}"))
+        self.get_json("/config", STATUS_TIMEOUT, "/config").await
     }
 
-    /// PUT a sparse preferences body to the agent's /config. Write only — caller restarts to apply.
+    /// GET the agent's /provider (active provider; vestad relays it to the app).
+    pub async fn get_provider(&self) -> Result<serde_json::Value, String> {
+        self.get_json("/provider", STATUS_TIMEOUT, "/provider").await
+    }
+
+    /// PUT a prefs body to the agent's /config. Write only — caller restarts to apply.
     pub async fn put_config(&self, body: &serde_json::Value) -> Result<(), String> {
         self.write("PUT", "/config", Some(body)).await
     }
 
-    /// PUT credentials to the agent's /config/auth (sign in). Write only — caller restarts to apply.
-    pub async fn put_auth(&self, body: &serde_json::Value) -> Result<(), String> {
-        self.write("PUT", "/config/auth", Some(body)).await
+    /// PUT a provider body to /provider (sign in / switch). Write only — caller restarts to apply.
+    pub async fn put_provider(&self, body: &serde_json::Value) -> Result<(), String> {
+        self.write("PUT", "/provider", Some(body)).await
     }
 
-    /// DELETE the agent's /config/auth (sign out, clearing credentials). Write only — caller restarts.
-    pub async fn delete_auth(&self) -> Result<(), String> {
-        self.write("DELETE", "/config/auth", None).await
+    /// PATCH /provider (change model / context / thinking). Write only — caller restarts.
+    pub async fn patch_provider(&self, body: &serde_json::Value) -> Result<(), String> {
+        self.write("PATCH", "/provider", Some(body)).await
+    }
+
+    /// DELETE /provider (sign out, clearing credentials). Write only — caller restarts.
+    pub async fn delete_provider(&self) -> Result<(), String> {
+        self.write("DELETE", "/provider", None).await
+    }
+
+    /// Shared GET-and-parse helper for the relayed read endpoints.
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str, timeout: Duration, label: &str) -> Result<T, String> {
+        let (port, token) = self.port_and_token()?;
+        let resp = self
+            .http_client
+            .get(format!("http://127.0.0.1:{port}{path}"))
+            .header("X-Agent-Token", token)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| format!("agent {label} request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("agent {label} returned HTTP {}", resp.status()));
+        }
+        resp.json().await.map_err(|e| format!("agent {label} parse failed: {e}"))
     }
 
     /// Shared body for the write endpoints: send `method path` with the agent token and an optional
@@ -108,6 +109,7 @@ impl<'a> AgentProvider<'a> {
         let url = format!("http://127.0.0.1:{port}{path}");
         let mut req = match method {
             "PUT" => self.http_client.put(url),
+            "PATCH" => self.http_client.patch(url),
             "DELETE" => self.http_client.delete(url),
             other => return Err(format!("unsupported agent write method {other}")),
         }
@@ -146,18 +148,17 @@ mod tests {
     }
 
     #[test]
-    fn authed_defaults_true_for_pre_unification_core() {
-        // A pre-unification agent's GET /config is just the config dump with no `authed` key; it must
-        // not be mislabeled NotAuthenticated mid-upgrade (it defaults Alive until it restarts).
-        let s: AgentStatusView = serde_json::from_str(r#"{"agent_model":"opus"}"#).unwrap();
+    fn authed_defaults_true_when_field_absent() {
+        // A response without the `authed` key must not be mislabeled NotAuthenticated.
+        let s: AgentStatusView = serde_json::from_str(r#"{"model":"opus"}"#).unwrap();
         assert!(s.authed && s.setup_complete);
     }
 
     #[test]
-    fn parses_authed_and_setup_complete_ignoring_rest_of_config() {
-        // GET /config carries the whole config; vestad reads only the two gating fields.
+    fn parses_authed_and_setup_complete_ignoring_rest_of_provider() {
+        // GET /provider carries the provider fields; vestad reads only the two gating fields.
         let s: AgentStatusView =
-            serde_json::from_str(r#"{"authed":true,"kind":"openrouter","setup_complete":false,"agent_model":"opus"}"#).unwrap();
+            serde_json::from_str(r#"{"authed":true,"kind":"openrouter","setup_complete":false,"model":"deepseek/v4"}"#).unwrap();
         assert!(s.authed && !s.setup_complete);
     }
 }
