@@ -31,6 +31,12 @@ const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
+// Server-originated WebSocket ping cadence for the control (`/ws`) and agent-proxy
+// (`/agents/{name}/ws`) sockets. Idle connections through the Cloudflare tunnel are reaped
+// by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
+// survives an idle client. Must stay comfortably under that window.
+pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
+
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "rebuild",
     "auth", "logs", "tree", "file", "backups", "settings", "services",
