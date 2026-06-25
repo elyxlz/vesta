@@ -24,7 +24,12 @@ import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
 import { FileEditor } from "./FileEditor";
 import { SimpleView } from "./SimpleView";
-import { collectDreamPaths, friendlyLabel, isSimpleAllowed } from "./paths";
+import {
+  collectDreamPaths,
+  CONSTITUTION_PATH,
+  friendlyLabel,
+  isSimpleAllowed,
+} from "./paths";
 import { buildTree } from "./tree";
 
 type SaveStatus =
@@ -315,11 +320,15 @@ export function FilesTab() {
           ) : (
             <FileEditor
               key={loadedFile.path}
-              path={loadedFile.path}
               initialContent={loadedFile.content}
               readonly={loadedFile.readonly}
               encoding={loadedFile.encoding}
               onChange={setEditorContent}
+              placeholder={
+                loadedFile.path === CONSTITUTION_PATH
+                  ? "empty — set principles, boundaries, or facts the agent must always honor"
+                  : undefined
+              }
             />
           )}
         </CardContent>
