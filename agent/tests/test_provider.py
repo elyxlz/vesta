@@ -162,12 +162,7 @@ def test_patch_provider_preserves_openrouter_key(prov):
 
     set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     updates = validate_config_updates(vm.VestaConfig(), {"provider": {"model": "anthropic/claude-3"}})
-    assert updates["provider"] == {
-        "kind": "openrouter",
-        "model": "anthropic/claude-3",
-        "max_context_tokens": None,
-        "key": "sk-or-v1-secret",
-    }
+    assert updates["provider"] == {"kind": "openrouter", "model": "anthropic/claude-3", "key": "sk-or-v1-secret"}
 
 
 def test_observed_provider_failure_flips_in_memory_only(prov):

@@ -7,8 +7,6 @@ export interface ContextPreset {
 }
 
 export interface ProviderContext {
-  min: number;
-  max: number;
   default: number;
   presets: ContextPreset[];
 }

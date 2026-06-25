@@ -34,11 +34,11 @@ def test_manifest_entry_is_derived_from_the_model():
     assert claude.models == ["opus", "sonnet", "haiku"]  # from the Literal
     assert claude.default_model == "opus"  # from the field default
     assert claude.thinking_supported is True  # claude has a thinking field
-    assert claude.context.max == 1_000_000  # from the Field le bound
+    assert claude.context.default == 1_000_000  # first preset
     openrouter = manifest.providers["openrouter"]
     assert openrouter.models == "live"  # free-form str -> fetched live
     assert openrouter.thinking_supported is False  # openrouter has no thinking field
-    assert openrouter.context.max == 200_000
+    assert openrouter.context.default == 200_000
 
 
 def test_manifest_covers_whole_config_generically_and_folds_personalities():

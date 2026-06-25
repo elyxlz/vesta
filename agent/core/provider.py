@@ -14,7 +14,7 @@ import aiohttp
 import pydantic as pyd
 
 from . import logger
-from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, read_config_store, update_config_store
+from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, update_config_store
 
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
@@ -61,7 +61,6 @@ class ProviderStatus:
     state: ProviderAuthState
     kind: ProviderKind
     model: str | None
-    max_context_tokens: int | None = None
 
     def __post_init__(self) -> None:
         # The model is only meaningful for an authenticated provider; an agent whose credentials are
@@ -75,63 +74,47 @@ def derive_status(config: VestaConfig) -> ProviderStatus:
     """Re-derive provider status at boot, purely from disk: the config store (provider + key) and
     `.credentials.json`. On-disk state is the single source of truth — a runtime auth failure is an
     in-memory flip only (see observed_provider_failure), so boot is always an honest reading of what's
-    actually provisioned. Model and context come from the config store via VestaConfig."""
+    actually provisioned. Model comes from the config store via VestaConfig."""
     kind, authed = _derive_kind_and_auth(config)
     state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
-    return ProviderStatus(state=state, kind=kind, model=config.provider.model, max_context_tokens=config.provider.max_context_tokens)
+    return ProviderStatus(state=state, kind=kind, model=config.provider.model)
 
 
-def _merged_provider(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None = None) -> dict[str, pyd.JsonValue]:
-    """The provider dict to store, preserving prefs from the existing same-kind provider so a re-auth
-    that omits model/context keeps them (rather than resetting to defaults), while a value supplied at
-    sign-in (e.g. the context window chosen at setup) is applied."""
-    store = read_config_store()
-    prev = store["provider"] if "provider" in store and isinstance(store["provider"], dict) else {}
-    same_kind = "kind" in prev and prev["kind"] == kind
-    provider: dict[str, pyd.JsonValue] = {"kind": kind}
+def _sign_in(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None, config: VestaConfig) -> str | None:
+    """Build a provider patch, merge it into the store (shared merge: same-kind keeps the rest, a kind
+    switch replaces), persist it, and return the resulting model for the status."""
+    patch: dict[str, pyd.JsonValue] = {"kind": kind}
     if model is not None:
-        provider["model"] = model
-    elif same_kind and "model" in prev:
-        provider["model"] = prev["model"]
-    elif kind == "claude":
-        provider["model"] = "opus"
-    ctx = max_context_tokens
-    if ctx is None and same_kind and "max_context_tokens" in prev:
-        prev_ctx = prev["max_context_tokens"]
-        if isinstance(prev_ctx, int):
-            ctx = prev_ctx
-    if ctx is not None:
-        provider["max_context_tokens"] = ctx
-    if same_kind and "thinking" in prev:
-        provider["thinking"] = prev["thinking"]
+        patch["model"] = model
+    if max_context_tokens is not None:
+        patch["max_context_tokens"] = max_context_tokens
     if key is not None:
-        provider["key"] = key
-    return provider
+        patch["key"] = key
+    merged = merge_provider(config, patch)
+    update_config_store({"provider": merged})
+    return merged["model"] if "model" in merged and isinstance(merged["model"], str) else None
 
 
 def set_claude(credentials_json: str, model: str | None, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
-    """Write the Claude OAuth credentials to the SDK path and set the nested claude provider. The OAuth
-    blob lives in the credentials file, never the store. model/context unspecified on re-auth are
-    preserved from the existing provider."""
+    """Write the Claude OAuth credentials to the SDK path and merge a claude provider patch into the
+    store (model/context unspecified on re-auth are preserved). The OAuth blob lives in the credentials
+    file, never the store."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    provider = _merged_provider("claude", model=model, max_context_tokens=max_context_tokens)
-    update_config_store({"provider": provider})
+    reported = _sign_in("claude", model=model, max_context_tokens=max_context_tokens, key=None, config=config)
     logger.startup("Provider set to claude")
-    reported = provider["model"]
-    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=reported if isinstance(reported, str) else None)
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=reported)
 
 
 def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
-    """Record the nested OpenRouter provider (key + model, plus any context chosen at sign-in) in the
-    config store. Vestad restarts the agent to apply it."""
-    provider = _merged_provider("openrouter", model=model, max_context_tokens=max_context_tokens, key=key)
-    update_config_store({"provider": provider})
+    """Merge the nested OpenRouter provider (key + model, plus any context chosen at sign-in) into the
+    store. Vestad restarts the agent to apply it."""
+    reported = _sign_in("openrouter", model=model, max_context_tokens=max_context_tokens, key=key, config=config)
     logger.startup(f"Provider set to openrouter model={model}")
-    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model)
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=reported)
 
 
 def clear_provider(*, config: VestaConfig) -> ProviderStatus:

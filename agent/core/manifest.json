@@ -28,8 +28,6 @@
       "default_model": "opus",
       "thinking_supported": true,
       "context": {
-        "min": 1000,
-        "max": 1000000,
         "default": 1000000,
         "presets": [
           {
@@ -57,8 +55,6 @@
       "default_model": null,
       "thinking_supported": false,
       "context": {
-        "min": 1000,
-        "max": 200000,
         "default": 200000,
         "presets": [
           {

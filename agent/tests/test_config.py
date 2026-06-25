@@ -264,12 +264,7 @@ def test_validate_config_accepts_every_preference(config, key, value):
 def test_validate_provider_partial_deep_merges(config):
     # A provider partial (PATCH /provider) merges onto the current provider and revalidates.
     updates = validate_config_updates(config, {"provider": {"model": "sonnet"}})
-    assert updates["provider"] == {
-        "kind": "claude",
-        "model": "sonnet",
-        "max_context_tokens": None,
-        "thinking": {"type": "adaptive", "display": "summarized"},
-    }
+    assert updates["provider"] == {"kind": "claude", "model": "sonnet"}
 
 
 def test_config_applies_timezone_to_process_env(monkeypatch):

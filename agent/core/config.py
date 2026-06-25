@@ -6,7 +6,6 @@ import re
 import time
 import typing as tp
 
-import annotated_types as at
 import pydantic as pyd
 import pydantic_settings as pyd_settings
 from core import logger
@@ -179,8 +178,6 @@ _PROVIDER_CLASSES: tuple[_ProviderClass, ...] = (ClaudeConfig, OpenRouterConfig)
 
 
 class ContextSpec(pyd.BaseModel):
-    min: int
-    max: int
     default: int
     presets: list[ContextPreset]
 
@@ -239,17 +236,6 @@ def _coerce_thinking(value: object) -> object:
     return value
 
 
-def _ctx_bound(cls: _ProviderClass, *, want_min: bool) -> int:
-    """Read a context-window bound (annotated_types.Ge / Le) off the field metadata, so the manifest
-    never restates a bound the Field already owns."""
-    for meta in cls.model_fields["max_context_tokens"].metadata:
-        if want_min and isinstance(meta, at.Ge):
-            return int(meta.ge)
-        if not want_min and isinstance(meta, at.Le):
-            return int(meta.le)
-    return _CTX_MIN if want_min else _CLAUDE_CTX_MAX
-
-
 def _provider_manifest_entry(cls: _ProviderClass) -> ProviderEntry:
     """One manifest entry, derived entirely from a provider class: catalog ClassVars + field metadata.
     Nothing is restated (bounds, default model, thinking support all come from the fields)."""
@@ -263,9 +249,7 @@ def _provider_manifest_entry(cls: _ProviderClass) -> ProviderEntry:
         models=models,
         default_model=default if isinstance(default, str) else None,
         thinking_supported="thinking" in cls.model_fields,
-        context=ContextSpec(
-            min=_ctx_bound(cls, want_min=True), max=_ctx_bound(cls, want_min=False), default=presets[0].tokens, presets=presets
-        ),
+        context=ContextSpec(default=presets[0].tokens, presets=presets),
     )
 
 
@@ -423,45 +407,45 @@ class VestaConfig(pyd_settings.BaseSettings):
         return tuple(sources)
 
 
-def _provider_patch(current: dict[str, pyd.JsonValue], patch: dict[str, pyd.JsonValue]) -> dict[str, pyd.JsonValue]:
-    """Deep-merge a partial provider (model / context / thinking) onto the current stored provider, so
-    a PATCH that omits the key keeps the stored key and the rest."""
+def merge_provider(config: "VestaConfig", patch: dict[str, pyd.JsonValue]) -> dict[str, pyd.JsonValue]:
+    """Merge a partial provider onto the current stored provider (which holds the real key), so a
+    same-kind patch keeps the rest (a model-only change keeps the key; a re-auth keeps model/context/
+    thinking) while a kind switch replaces wholesale. The single merge for both PATCH and sign-in."""
+    store = read_config_store()
+    current = store["provider"] if "provider" in store and isinstance(store["provider"], dict) else {"kind": config.provider.kind}
+    current = tp.cast("dict[str, pyd.JsonValue]", current)
+    if "kind" in patch and ("kind" not in current or current["kind"] != patch["kind"]):
+        return dict(patch)
     merged = dict(current)
     merged.update(patch)
+    merged.pop("oauth", None)
     return merged
 
 
-def stored_config(config: "VestaConfig", *, redact: bool = True) -> dict[str, pyd.JsonValue]:
-    """The current config as the store persists it: nested provider (no oauth) + scalar prefs. With
-    redact=True (the wire default) the openrouter key shows as SecretStr's '**********'; with
-    redact=False the real key is restored, for use as a deep-merge base that must round-trip it."""
+def stored_config(config: "VestaConfig") -> dict[str, pyd.JsonValue]:
+    """The current config as the wire shows it: nested provider (no oauth, key redacted by SecretStr) +
+    scalar prefs. The base for GET /config and GET /provider."""
     data = config.model_dump(mode="json")
-    provider = data["provider"]
-    if isinstance(provider, dict):
-        provider.pop("oauth", None)
-        if not redact and isinstance(config.provider, OpenRouterConfig):
-            provider["key"] = config.provider.key.get_secret_value()
+    if isinstance(data["provider"], dict):
+        data["provider"].pop("oauth", None)
     return data
 
 
 def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, pyd.JsonValue]:
-    """Validate a PUT /config (prefs) or PATCH /provider partial against the nested model and return
-    the to-write top-level dict. A `provider` partial is deep-merged onto the current provider (with
-    the real key, not the redacted dump) then the whole config is re-validated, so every constraint
-    holds and a key-omitting patch round-trips the stored key. `oauth` is never accepted here."""
+    """Validate a PUT /config (prefs) or PATCH/sign-in `provider` partial and return the to-write
+    top-level dict. A `provider` partial is merged onto the current stored provider (see merge_provider)
+    then the whole config is re-validated, so every constraint holds. `oauth` is never accepted here."""
     if not isinstance(data, dict):
         raise ValueError("config body must be a JSON object")
     data = tp.cast("dict[str, pyd.JsonValue]", data)  # narrowed by the isinstance above
     unknown = [key for key in data if key not in VestaConfig.model_fields]
     if unknown:
         raise ValueError(f"not config fields: {', '.join(sorted(unknown))}")
-    candidate = stored_config(config, redact=False)
+    candidate = stored_config(config)
     updates: dict[str, pyd.JsonValue] = {}
     for key, value in data.items():
         if key == "provider" and isinstance(value, dict):
-            base = candidate["provider"] if isinstance(candidate["provider"], dict) else {}
-            merged = _provider_patch(tp.cast("dict[str, pyd.JsonValue]", base), tp.cast("dict[str, pyd.JsonValue]", value))
-            merged.pop("oauth", None)
+            merged = merge_provider(config, tp.cast("dict[str, pyd.JsonValue]", value))
             candidate["provider"] = merged
             updates["provider"] = merged
         else:
