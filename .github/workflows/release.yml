@@ -113,8 +113,12 @@ jobs:
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          # Undo the bump with a revert commit, not a force-push: branch protection
+          # forbids force-pushes to master (allow_force_pushes: false). Only revert
+          # when the bump is still the tip, so a commit that landed after it is safe.
           git fetch origin master
           if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
-            git reset --hard HEAD~1
-            git push --force-with-lease origin master
+            git reset --hard origin/master
+            git revert --no-edit HEAD
+            git push origin master
           fi
