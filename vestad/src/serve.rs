@@ -174,6 +174,10 @@ pub struct AppState {
 }
 
 impl AppState {
+    // Private, single-call startup constructor: its params mirror the fields of
+    // ServerConfig (the caller), so grouping them into a param struct would just
+    // duplicate that type. Allow the arg count rather than add a redundant struct.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         api_key: String,
         env_config: docker::AgentEnvConfig,
