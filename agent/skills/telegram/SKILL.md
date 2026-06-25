@@ -13,6 +13,7 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 telegram send '<contact_name>' 'Hello!'
 telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # avoid shell-escaping
 telegram send '<contact_name>' 'reply' --reply-to '<message_id>'          # quote a message
+telegram send '<contact_name>' '<a brief or list they asked for>' --longform  # bypass short-bubble lint
 telegram chats
 telegram contacts
 telegram messages --to "<contact_name>" --limit 20
@@ -59,6 +60,7 @@ Notification types written for the agent: `message`, `callback_query` (button ta
 reactions via `react` works). Aliases: `send`/`edit`/`del`/`voice`/`action`/`pin`/`unpin`.
 
 ## Notes
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected so you re-send as several short calls, one thought each. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
 - Chat IDs are numeric (e.g., `123456789` for private, `-1001234567890` for groups)
 - Users must `/start` the bot before it can message them
 - Recipients can be resolved by: contact name, @username, or numeric chat ID

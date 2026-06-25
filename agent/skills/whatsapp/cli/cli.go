@@ -480,11 +480,13 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 
 func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	var to, message, messageFile, replyTo string
+	var longform bool
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
 	fs.StringVar(&message, "message", "", "Message text (use '-' to read from stdin)")
 	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
+	fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -509,6 +511,11 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	}
 	if message == "" {
 		return nil, fmt.Errorf("message body is empty")
+	}
+	if !longform {
+		if reason := bubbleLintReason(message); reason != "" {
+			return nil, fmt.Errorf("%s", reason)
+		}
 	}
 	success, msg := wac.SendMessageWithPresence(to, message, replyTo)
 	result := successResult(success, msg)
