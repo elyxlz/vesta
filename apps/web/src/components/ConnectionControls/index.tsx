@@ -55,7 +55,7 @@ export function ConnectionControls() {
   const onToggleBeta = async (enabled: boolean) => {
     setChannelSaving(true);
     try {
-      await apiJson("/settings/channel", {
+      await apiJson("/gateway/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel: enabled ? "beta" : "stable" }),
@@ -71,7 +71,7 @@ export function ConnectionControls() {
   const onToggleAutoUpdate = async (enabled: boolean) => {
     setAutoUpdateSaving(true);
     try {
-      await apiJson("/settings/auto-update", {
+      await apiJson("/gateway/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ auto_update: enabled }),
