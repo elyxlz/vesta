@@ -377,12 +377,14 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 
 	case "send-message":
 		var to, message, messageFile, buttons, replyToStr string
+		var longform bool
 		fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient (name, username, or chat ID)")
 		fs.StringVar(&message, "message", "", "Message text")
 		fs.StringVar(&messageFile, "message-file", "", "Read message body from this file (avoids shell-escaping long text)")
 		fs.StringVar(&buttons, "buttons", "", "Inline keyboard: rows by ';', buttons by ',', each 'Label=callback_data' (or 'Label=url:https://...')")
 		fs.StringVar(&replyToStr, "reply-to", "", "Quote/reply to this message ID")
+		fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
@@ -395,6 +397,11 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 		}
 		if to == "" || message == "" {
 			return nil, fmt.Errorf("--to and --message (or --message-file) are required")
+		}
+		if !longform {
+			if reason := bubbleLintReason(message); reason != "" {
+				return nil, fmt.Errorf("%s", reason)
+			}
 		}
 		var replyTo int64
 		if replyToStr != "" {
