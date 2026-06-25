@@ -6,7 +6,6 @@
       "display": "Claude account",
       "models": ["opus", "sonnet", "haiku"],
       "default_model": "opus",
-      "thinking_supported": true,
       "context": {
         "default": 1000000,
         "presets": [
@@ -20,7 +19,6 @@
       "display": "OpenRouter",
       "models": "live",
       "default_model": null,
-      "thinking_supported": false,
       "context": {
         "default": 200000,
         "presets": [

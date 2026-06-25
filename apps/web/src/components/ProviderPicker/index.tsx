@@ -157,7 +157,9 @@ export function ProviderPicker({
       )}
 
       <div className="w-full">
-        {step === "choice" && <ChoiceStep onPick={handleChoice} />}
+        {step === "choice" && (
+          <ChoiceStep onPick={handleChoice} manifest={manifest} />
+        )}
         {step === "auth" && (
           <AuthStep
             authStart={authStart}
@@ -176,7 +178,12 @@ export function ProviderPicker({
         )}
         {step === "model" && (
           <ModelStep
-            initialModel={model}
+            initialModel={
+              model ||
+              (provider
+                ? (manifest.providers[provider]?.default_model ?? "")
+                : "")
+            }
             onModelChange={setModel}
             onSubmit={(m) => {
               setModel(m);

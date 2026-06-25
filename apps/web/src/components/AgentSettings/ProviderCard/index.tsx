@@ -171,7 +171,8 @@ export function ProviderCard() {
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-xs text-muted-foreground">
-              {isOpenRouter ? "OpenRouter" : "Claude account"}
+              {manifest?.providers[provider.kind]?.display ??
+                (isOpenRouter ? "OpenRouter" : "Claude account")}
             </span>
             <div className="flex min-w-0 items-center gap-2">
               <span

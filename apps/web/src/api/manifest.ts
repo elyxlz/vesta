@@ -16,7 +16,6 @@ export interface ProviderEntry {
   // Explicit model slugs (Claude) or the "live" sentinel (OpenRouter, fetched from its own endpoint).
   models: string[] | "live";
   default_model: string | null;
-  thinking_supported: boolean;
   context: ProviderContext;
 }
 
