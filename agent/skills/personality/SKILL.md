@@ -53,3 +53,24 @@ Knowing someone well enough to tease them is part of the voice. Use what you act
 ## Drift / tweak
 
 The shared section plus the active preset are the source of truth. To bend the voice (fewer emoji, more capital letters, a new opener), `Edit` `presets/$AGENT_PERSONALITY.md` (or the shared section here for something true across all presets) in place. Surgical edits, not rewrites. Swaps between presets are the user's call.
+
+## Bubble lint (texting-brevity enforcement)
+
+The "short bubbles, one thought per send" rule is easy to state and easy to regress on: a rule in a preset is something the agent must remember to enact on every message, and the failure mode is sliding back into one multi-sentence block that reads like an assistant, not a person. `hooks/bubble_lint.py` enforces it at send time instead of relying on memory.
+
+It's a `PreToolUse` hook on `Bash`. When a `telegram`/`whatsapp send` carries an inline `--message` that's a wall (over ~220 chars, or 3+ sentences crammed into one bubble), it exits 2, which blocks the call and feeds the reason back so the agent re-sends as several short calls, one thought each. The agent still chooses where the breaks go, so this trains the behaviour rather than mechanically chunking. Genuine reference material (a daily brief, a code block, a requested list) bypasses with a trailing `# longform`. Loop/array sends and `--message-file` sends are already split or reference, so they pass untouched.
+
+Wire it into `~/.claude/settings.json` under `hooks` (merge with any existing `PreToolUse`, do not clobber other hooks):
+
+```json
+"PreToolUse": [
+  {
+    "matcher": "Bash",
+    "hooks": [
+      { "type": "command", "command": "python3 /root/agent/skills/personality/hooks/bubble_lint.py" }
+    ]
+  }
+]
+```
+
+Hook config is read at session start, so it goes live on the next restart.
