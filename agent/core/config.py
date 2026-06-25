@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import pathlib as pl
+import re
 import time
 import typing as tp
 
@@ -39,6 +40,11 @@ _OPENROUTER_CTX_MAX = 200_000
 
 DEFAULT_PROVIDER = "claude"
 ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized")
+
+# Shipped personality skill presets (frontmatter catalog folded into the manifest). Relative to this
+# module, agent/core/ -> agent/skills/...; the same path resolves in the container (~/agent/skills).
+_PRESETS_DIR = pl.Path(__file__).parent.parent / "skills" / "personality" / "presets"
+_PRESET_ORDER_LAST = 2**31
 
 
 def _resolve_agent_dir() -> pl.Path:
@@ -188,10 +194,24 @@ class ProviderEntry(pyd.BaseModel):
     context: ContextSpec
 
 
+class PersonalityPreset(pyd.BaseModel):
+    name: str
+    emoji: str = ""
+    title: str = ""
+    description: str = ""
+    sample: str = ""
+    order: int = _PRESET_ORDER_LAST
+
+
 class Manifest(pyd.BaseModel):
+    """The whole new-agent setup description, generated from the agent's models + shipped skills: every
+    settable pref's default (generic over the fields), the per-provider catalog, and the personality
+    presets. One document the wizard/settings read, so nothing is hand-picked or kept on a side endpoint."""
+
     default_provider: str
-    agent_personality: str
+    prefs: dict[str, pyd.JsonValue]
     providers: dict[str, ProviderEntry]
+    personalities: list[PersonalityPreset]
 
 
 def _coerce_thinking(value: object) -> object:
@@ -249,14 +269,48 @@ def _provider_manifest_entry(cls: _ProviderClass) -> ProviderEntry:
     )
 
 
+def _frontmatter_field(fields: dict[str, str], key: str) -> str:
+    return fields[key].strip().strip('"') if key in fields else ""
+
+
+def read_personalities() -> list[PersonalityPreset]:
+    """Parse the shipped personality skill presets (frontmatter) into catalog entries, sorted by their
+    declared order. Folded into the manifest so the setup wizard reads one document, not a side endpoint."""
+    presets: list[PersonalityPreset] = []
+    if not _PRESETS_DIR.is_dir():
+        return presets
+    for md in sorted(_PRESETS_DIR.glob("*.md")):
+        match = re.match(r"^---\n(.*?)\n---", md.read_text(), re.DOTALL)
+        fields = dict(re.findall(r"^(\w+)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
+        order = _frontmatter_field(fields, "order")
+        presets.append(
+            PersonalityPreset(
+                name=md.stem,
+                emoji=_frontmatter_field(fields, "emoji"),
+                title=_frontmatter_field(fields, "title"),
+                description=_frontmatter_field(fields, "description"),
+                sample=_frontmatter_field(fields, "sample"),
+                order=int(order) if order.isdigit() else _PRESET_ORDER_LAST,
+            )
+        )
+    return sorted(presets, key=lambda preset: preset.order)
+
+
 def build_manifest() -> Manifest:
-    """The manifest: per-provider catalog + new-agent defaults, derived from the models. The single
-    source is this module; generate-manifest.py writes the JSON projection and CI checks it's fresh."""
+    """The whole-config manifest, generated from the models + shipped skills. `prefs` is every settable
+    scalar field's default, derived generically (no hand-picked subset); `providers` is the per-provider
+    catalog; `personalities` is the shipped preset catalog. generate-manifest.py writes it; CI checks it."""
+    prefs: dict[str, pyd.JsonValue] = {
+        name: field.default
+        for name, field in VestaConfig.model_fields.items()
+        if isinstance(field.default, (str, int, float)) or field.default is None
+    }
     entries = [_provider_manifest_entry(cls) for cls in _PROVIDER_CLASSES]
     return Manifest(
         default_provider=DEFAULT_PROVIDER,
-        agent_personality=str(VestaConfig.model_fields["agent_personality"].default),
+        prefs=prefs,
         providers={entry.kind: entry for entry in entries},
+        personalities=read_personalities(),
     )
 
 

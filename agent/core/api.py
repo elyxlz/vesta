@@ -7,7 +7,6 @@ Routes:
   - GET  /usage                normalized, provider-agnostic plan usage
   - GET  /config               prefs only (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs (provider is set via /provider)
-  - GET  /manifest             provider catalog + new-agent defaults (derived from the models)
   - GET  /provider             active provider (configured fields) + derived {authed, setup_complete}
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
@@ -30,7 +29,7 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig, build_manifest, stored_config, update_config_store, validate_config_updates
+from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
@@ -230,12 +229,6 @@ async def _config_put_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _manifest_get_handler(request: web.Request) -> web.Response:
-    """The provider manifest: per-provider catalog + new-agent defaults, derived from the models. Same
-    shape vestad serves pre-agent; the app reads catalogs/capabilities from here."""
-    return web.json_response(build_manifest().model_dump())
-
-
 class _ClaudeSignIn(pyd.BaseModel):
     kind: tp.Literal["claude"]
     # None on re-auth: preserve the agent's existing model rather than reset it.
@@ -406,7 +399,6 @@ async def start_ws_server(
     app.router.add_get("/config", _config_get_handler)
     app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)
-    app.router.add_get("/manifest", _manifest_get_handler)
     app.router.add_get("/provider", _provider_get_handler)
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)

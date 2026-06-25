@@ -27,6 +27,8 @@ mod tests {
         assert!(providers.get("claude").is_some());
         assert!(providers.get("openrouter").is_some());
         assert_eq!(manifest.get("default_provider").and_then(Value::as_str), Some("claude"));
-        assert_eq!(manifest.get("agent_personality").and_then(Value::as_str), Some("dry"));
+        let prefs = manifest.get("prefs").expect("prefs key");
+        assert_eq!(prefs.get("agent_personality").and_then(Value::as_str), Some("dry"));
+        assert!(manifest.get("personalities").and_then(Value::as_array).is_some_and(|presets| !presets.is_empty()));
     }
 }

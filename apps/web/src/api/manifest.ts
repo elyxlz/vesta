@@ -23,13 +23,23 @@ export interface ProviderEntry {
   context: ProviderContext;
 }
 
-// The provider manifest: per-provider catalog + new-agent defaults, generated from the agent's
-// models and served at GET /manifest. The wizard/settings read catalogs + defaults here instead of
-// hardcoding their own copies.
+export interface Personality {
+  name: string;
+  emoji: string;
+  title: string;
+  description: string;
+  sample: string;
+  order: number;
+}
+
+// The whole new-agent setup description, generated from the agent's models + shipped skills and served
+// at GET /manifest: every settable pref's default (`prefs`), the per-provider catalog (`providers`),
+// and the personality presets (`personalities`). The wizard/settings read it all from here.
 export interface Manifest {
   default_provider: string;
-  agent_personality: string;
+  prefs: Record<string, string | number | boolean | null>;
   providers: Record<string, ProviderEntry>;
+  personalities: Personality[];
 }
 
 export async function fetchManifest(): Promise<Manifest> {

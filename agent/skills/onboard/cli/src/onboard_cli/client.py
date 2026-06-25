@@ -93,10 +93,12 @@ class Client:
         manifest = self.fetch_manifest()
         default_kind = manifest.get("default_provider", "claude")
         provider = manifest.get("providers", {}).get(default_kind, {})
-        return {"model": provider.get("default_model") or "opus", "personality": manifest.get("agent_personality", "")}
+        return {"model": provider.get("default_model") or "opus", "personality": manifest.get("prefs", {}).get("agent_personality", "")}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
-        return self._vestad_get("/personalities")
+        # Folded into the manifest (no separate /personalities endpoint).
+        presets = self.fetch_manifest().get("personalities", [])
+        return presets if isinstance(presets, list) else []
 
     def fetch_claude_models(self) -> list[dict[str, Any]]:
         # Claude's model catalog now lives in the manifest (slugs); shape them as {id} for the picker.

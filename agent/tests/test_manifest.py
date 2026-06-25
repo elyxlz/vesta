@@ -41,6 +41,16 @@ def test_manifest_entry_is_derived_from_the_model():
     assert openrouter.context.max == 200_000
 
 
+def test_manifest_covers_whole_config_generically_and_folds_personalities():
+    manifest = build_manifest()
+    # prefs are derived from every scalar field, not a hand-picked subset.
+    assert {"agent_personality", "timezone", "seed_context", "response_timeout"} <= set(manifest.prefs)
+    assert manifest.prefs["agent_personality"] == "dry"
+    # the personality catalog is folded in (no separate /personalities), sorted by declared order.
+    names = [p.name for p in manifest.personalities]
+    assert "dry" in names and names[0] == "dry"
+
+
 def test_committed_manifest_is_fresh():
     """The committed manifest.json must match what the models generate (CI enforces this too)."""
     on_disk = Manifest.model_validate(json.loads(MANIFEST_PATH.read_text()))

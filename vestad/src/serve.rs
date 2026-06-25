@@ -444,64 +444,6 @@ async fn tunnel_handler(
     }
 }
 
-#[derive(Deserialize)]
-struct PresetFrontmatter {
-    #[serde(default)]
-    emoji: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    sample: String,
-    #[serde(default = "default_preset_order")]
-    order: u32,
-}
-
-fn default_preset_order() -> u32 {
-    u32::MAX
-}
-
-#[derive(Serialize)]
-struct Personality {
-    name: String,
-    emoji: String,
-    title: String,
-    description: String,
-    sample: String,
-    order: u32,
-}
-
-async fn list_personalities_handler() -> Json<Vec<Personality>> {
-    const PREFIX: &str = "skills/personality/presets/";
-    let mut results: Vec<Personality> = Vec::new();
-
-    for path in crate::agent_embed::AgentSource::iter() {
-        let Some(rest) = path.strip_prefix(PREFIX) else { continue };
-        let Some(name) = rest.strip_suffix(".md") else { continue };
-        let Some(file) = crate::agent_embed::AgentSource::get(&path) else { continue };
-        let Ok(content) = std::str::from_utf8(&file.data) else { continue };
-
-        // Preset files open with a YAML frontmatter block delimited by `---`
-        let Some(rest) = content.strip_prefix("---\n") else { continue };
-        let Some((yaml, _body)) = rest.split_once("\n---") else { continue };
-        let Ok(meta) = serde_yaml::from_str::<PresetFrontmatter>(yaml) else { continue };
-
-        let title = if meta.title.is_empty() { name.replace('-', " ") } else { meta.title };
-
-        results.push(Personality {
-            name: name.to_string(),
-            emoji: meta.emoji,
-            title,
-            description: meta.description,
-            sample: meta.sample,
-            order: meta.order,
-        });
-    }
-
-    results.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
-    Json(results)
-}
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
@@ -2060,7 +2002,6 @@ pub fn build_router(state: SharedState) -> Router {
         // public onboarding UI). Unauthenticated so every frontend reads it the same way — the
         // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
         // over the loopback), none of which then need to keep a hardcoded copy.
-        .route("/personalities", get(list_personalities_handler))
         .route("/manifest", get(crate::manifest::manifest_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
@@ -2678,7 +2619,7 @@ mod tests {
     // those fixtures against its TypeScript types, so a wire format change on
     // either side fails CI instead of breaking clients at runtime.
 
-    use super::{Personality, ServiceEntry, TreeEntry};
+    use super::{ServiceEntry, TreeEntry};
     use crate::providers::claude::OAuthStartResponse;
     use crate::docker::{AgentStatus, ListEntry, StatusJson};
     use crate::types::{BackupInfo, BackupType};
@@ -2748,16 +2689,6 @@ mod tests {
         })
         .expect("serialize OAuthStartResponse");
 
-        let personality = serde_json::to_value(Personality {
-            name: "sage".into(),
-            emoji: "\u{1f989}".into(),
-            title: "The Sage".into(),
-            description: "Calm and wise".into(),
-            sample: "Let me think about that.".into(),
-            order: 1,
-        })
-        .expect("serialize Personality");
-
         let tree_entry = serde_json::to_value(TreeEntry {
             path: "notes/todo.md".into(),
             is_dir: false,
@@ -2783,7 +2714,6 @@ mod tests {
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,
-            "personality": personality,
             "tree_entry": tree_entry,
             "version": version,
         })
