@@ -179,7 +179,7 @@ export function AppSettings() {
                   className="items-center justify-between"
                 >
                   <FieldContent>
-                    <FieldLabel className="text-sm">LAN access</FieldLabel>
+                    <FieldLabel className="text-sm">lan access</FieldLabel>
                     <FieldDescription>
                       whether other devices on your network can reach this
                       gateway
