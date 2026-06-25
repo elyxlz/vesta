@@ -161,6 +161,11 @@ pub struct AppState {
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     pub(crate) https_port: u16,
+    /// LAN exposure facts captured at startup (read-only; surfaced by /gateway/info).
+    /// `expose_lan` mirrors the `--expose-lan` flag; `lan_url` is the advertised
+    /// `https://<lan-ip>:<port>` (only set when exposed and an IP was resolvable).
+    expose_lan: bool,
+    lan_url: Option<String>,
     /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
     /// by the create handler as `create_agent` progresses and read by the
     /// build-phase endpoint so onboarding shows honest status. Entries exist only
@@ -169,7 +174,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool, https_port: u16) -> Self {
+    fn new(
+        api_key: String,
+        env_config: docker::AgentEnvConfig,
+        docker: bollard::Docker,
+        tunnel_url: Option<String>,
+        dev_mode: bool,
+        https_port: u16,
+        expose_lan: bool,
+        lan_url: Option<String>,
+    ) -> Self {
         let settings = load_settings();
         // Restore the refresh-token registry from disk (dropping expired families)
         // so a restart/self-update doesn't log everyone out. Read before `env_config`
@@ -190,6 +204,8 @@ impl AppState {
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
             https_port,
+            expose_lan,
+            lan_url,
             build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -439,17 +455,6 @@ async fn gateway_update_handler(
         Err(e) => Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
     }
 }
-
-async fn tunnel_handler(
-    State(state): State<SharedState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let url = state.tunnel_url.lock().await;
-    match url.as_ref() {
-        Some(tunnel_url) => Ok(Json(serde_json::json!({"tunnel_url": tunnel_url}))),
-        None => Err(err_response(StatusCode::NOT_FOUND, "no tunnel configured")),
-    }
-}
-
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
@@ -1848,6 +1853,23 @@ async fn put_gateway_settings_handler(
     Ok(Json(gateway_settings_json(&settings, channel.as_str())))
 }
 
+// --- Read-only gateway info ---
+
+/// Read-only daemon reachability facts surfaced by GET /gateway/info. Pure so the
+/// wire shape is unit-testable without constructing AppState.
+fn gateway_info_json(expose_lan: bool, lan_url: &Option<String>, tunnel_url: &Option<String>, port: u16) -> serde_json::Value {
+    serde_json::json!({
+        "lan": { "exposed": expose_lan, "url": lan_url },
+        "tunnel_url": tunnel_url,
+        "port": port,
+    })
+}
+
+async fn gateway_info_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let tunnel_url = state.tunnel_url.lock().await.clone();
+    Json(gateway_info_json(state.expose_lan, &state.lan_url, &tunnel_url, state.https_port))
+}
+
 // --- Per-agent settings ---
 
 async fn get_agent_settings_handler(
@@ -2040,7 +2062,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/version/check", post(version_check))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
-        .route("/tunnel", get(tunnel_handler))
+        .route("/gateway/info", get(gateway_info_handler))
         .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
         .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
         .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
@@ -2354,6 +2376,7 @@ pub struct ServerConfig {
     pub docker: bollard::Docker,
     pub dev_mode: bool,
     pub expose_lan: bool,
+    pub lan_url: Option<String>,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2368,6 +2391,7 @@ pub async fn run_server(cfg: ServerConfig) {
         docker,
         dev_mode,
         expose_lan,
+        lan_url,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2389,7 +2413,7 @@ pub async fn run_server(cfg: ServerConfig) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
     let agent_settings = load_settings().agents.clone();
-    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
+    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port, expose_lan, lan_url));
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -2799,5 +2823,24 @@ mod gateway_settings_tests {
         assert_eq!(backup.hour, original_hour, "hour absent in body must be unchanged");
         assert_eq!(backup.retention.daily, 9, "daily should be updated");
         assert_eq!(backup.retention.weekly, default_retention().weekly, "weekly absent must be unchanged");
+    }
+
+    #[test]
+    fn info_json_reports_lan_tunnel_and_port() {
+        let exposed = gateway_info_json(
+            true,
+            &Some("https://192.168.1.4:7777".to_string()),
+            &Some("https://x.trycloudflare.com".to_string()),
+            7777,
+        );
+        assert_eq!(exposed["lan"]["exposed"], serde_json::json!(true));
+        assert_eq!(exposed["lan"]["url"], serde_json::json!("https://192.168.1.4:7777"));
+        assert_eq!(exposed["tunnel_url"], serde_json::json!("https://x.trycloudflare.com"));
+        assert_eq!(exposed["port"], serde_json::json!(7777));
+
+        let off = gateway_info_json(false, &None, &None, 7777);
+        assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
+        assert_eq!(off["lan"]["url"], serde_json::Value::Null);
+        assert_eq!(off["tunnel_url"], serde_json::Value::Null);
     }
 }

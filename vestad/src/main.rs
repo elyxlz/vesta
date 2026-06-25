@@ -518,7 +518,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 port,
                 dev_mode,
                 expose_lan,
-                lan_url,
+                lan_url.clone(),
                 tunnel_status,
             );
             status.persist(&config);
@@ -572,6 +572,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 docker: docker.clone(),
                 dev_mode,
                 expose_lan,
+                lan_url,
             }).await;
 
             if let Some(supervisor) = tunnel_supervisor {
