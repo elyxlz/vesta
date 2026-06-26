@@ -185,7 +185,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (!permissionRef.current) continue;
       try {
         const n = new Notification(`${agent.name} needs to sign in again`, {
-          body: "Vesta lost its Claude credentials. Tap to re-authenticate.",
+          body: "Vesta lost the Claude credentials. Tap to re-authenticate.",
           tag: `${agent.name}-not-authenticated`,
         });
         n.onclick = () => {
