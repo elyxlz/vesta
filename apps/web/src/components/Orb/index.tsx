@@ -12,14 +12,7 @@ interface OrbProps {
   label?: string;
 }
 
-const LIVE_STATES = new Set<OrbVisualState>([
-  "alive",
-  "thinking",
-  "booting",
-  "authenticating",
-  "starting",
-  "loading",
-]);
+const LIVE_STATES = new Set<OrbVisualState>(["alive", "thinking", "busy"]);
 
 const COLOR_LERP_SPEED = 3;
 const VALUE_LERP_SPEED = 4;

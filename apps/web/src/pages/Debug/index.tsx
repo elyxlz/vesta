@@ -7,13 +7,9 @@ import type { VestaEvent } from "@/lib/types";
 const states: OrbVisualState[] = [
   "alive",
   "thinking",
-  "booting",
-  "authenticating",
-  "starting",
-  "stopping",
+  "busy",
+  "off",
   "deleting",
-  "dead",
-  "loading",
 ];
 
 const ts = "2026-04-19T12:34:00Z";

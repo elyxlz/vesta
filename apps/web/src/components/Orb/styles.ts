@@ -1,16 +1,7 @@
 import type { AgentActivityState } from "@/lib/types";
 import type { AgentOperation } from "@/stores/use-agent-ops";
 
-export type OrbVisualState =
-  | "loading"
-  | "alive"
-  | "thinking"
-  | "booting"
-  | "authenticating"
-  | "stopping"
-  | "starting"
-  | "deleting"
-  | "dead";
+export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting";
 
 interface AgentLike {
   status: string;
@@ -33,22 +24,22 @@ function resolveStatus(
 ): { label: string; orbState: OrbVisualState } {
   switch (operation) {
     case "stopping":
-      return { label: "stopping...", orbState: "stopping" };
+      return { label: "stopping...", orbState: "busy" };
     case "starting":
-      return { label: "starting...", orbState: "starting" };
+      return { label: "starting...", orbState: "busy" };
     case "authenticating":
-      return { label: "signing in...", orbState: "authenticating" };
+      return { label: "signing in...", orbState: "busy" };
     case "deleting":
       return { label: "deleting...", orbState: "deleting" };
     case "rebuilding":
-      return { label: "rebuilding...", orbState: "starting" };
+      return { label: "rebuilding...", orbState: "busy" };
     case "backing-up":
       return { label: "backing up...", orbState: "alive" };
     case "restoring":
-      return { label: "restoring...", orbState: "starting" };
+      return { label: "restoring...", orbState: "busy" };
   }
 
-  if (!agent) return { label: "", orbState: "dead" };
+  if (!agent) return { label: "", orbState: "off" };
 
   switch (agent.status) {
     case "alive":
@@ -56,30 +47,26 @@ function resolveStatus(
         return { label: "thinking", orbState: "thinking" };
       return { label: "alive", orbState: "alive" };
     case "starting":
-      return { label: "waking up...", orbState: "booting" };
+      return { label: "waking up...", orbState: "busy" };
     case "setting_up":
-      return { label: "setting up...", orbState: "booting" };
+      return { label: "setting up...", orbState: "busy" };
     case "not_authenticated":
-      return { label: "not signed in", orbState: "authenticating" };
+      return { label: "not signed in", orbState: "busy" };
     case "restarting":
-      return { label: "restarting...", orbState: "starting" };
+      return { label: "restarting...", orbState: "busy" };
     case "stopped":
-      return { label: "stopped", orbState: "dead" };
+      return { label: "stopped", orbState: "off" };
     case "dead":
-      return { label: "broken — delete and recreate", orbState: "dead" };
+      return { label: "broken — delete and recreate", orbState: "off" };
     default:
-      return { label: agent.status, orbState: "dead" };
+      return { label: agent.status, orbState: "off" };
   }
 }
 
 export const orbColors: Record<OrbVisualState, [string, string, string]> = {
-  loading: ["#e8cc8a", "#d4a84a", "#9e7e34"],
   alive: ["#b8ceb0", "#7a9e70", "#5a7e50"],
   thinking: ["#e8d0a0", "#c4a060", "#a08040"],
-  booting: ["#c0d0e0", "#8a9eb0", "#6a8094"],
-  authenticating: ["#90a8c8", "#5870a0", "#3a5080"],
-  stopping: ["#c0d0e0", "#8a9eb0", "#6a8094"],
-  starting: ["#c0d0e0", "#8a9eb0", "#6a8094"],
+  busy: ["#c0d0e0", "#8a9eb0", "#6a8094"],
+  off: ["#c2c0ba", "#8e8c84", "#66645e"],
   deleting: ["#e0a0a0", "#c45050", "#a03030"],
-  dead: ["#c2c0ba", "#8e8c84", "#66645e"],
 };
