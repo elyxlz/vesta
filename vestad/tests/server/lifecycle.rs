@@ -96,12 +96,12 @@ fn creation_flow() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("flow")).unwrap();
 
-    // A fresh agent has no credentials, so it settles at not_authenticated. The
+    // A fresh agent has no provider chosen, so it settles at unprovisioned. The
     // authenticated -> alive path needs a real token that survives an upstream call
     // (a fake one is correctly rejected and flipped back), so it's covered by the
     // live tests, not here.
     let status = c.wait_until_running(&agent.name, 180).unwrap();
-    assert_eq!(status, "not_authenticated");
+    assert_eq!(status, "unprovisioned");
 }
 
 #[test]

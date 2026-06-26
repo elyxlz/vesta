@@ -20,12 +20,12 @@ fn agent_without_credentials_is_not_authenticated() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("no-creds")).unwrap();
 
-    // No credentials are injected, so the agent re-derives provider state on restart
-    // and settles at not_authenticated. A fake token can't reach `authenticated` (the
+    // No provider is configured, so the agent re-derives provider state on restart
+    // and settles at unprovisioned. A fake token can't reach `authenticated` (the
     // agent's first turn 401s upstream and flips it back), so the authenticated path
     // is covered by the live tests with real credentials, not here.
     mark_first_start_done(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
     let status = c.wait_until_running(&agent.name, 180).unwrap();
-    assert_eq!(status, "not_authenticated");
+    assert_eq!(status, "unprovisioned");
 }

@@ -35,8 +35,8 @@ fn stop_start_independent() {
 
     let alice_running = alice_client.wait_until_running(&name, 180).unwrap();
     let bob_running = bob_client.wait_until_running(&name, 180).unwrap();
-    assert_eq!(alice_running, "not_authenticated");
-    assert_eq!(bob_running, "not_authenticated");
+    assert_eq!(alice_running, "unprovisioned");
+    assert_eq!(bob_running, "unprovisioned");
 
     alice_client.stop_agent(&name).unwrap();
 
@@ -44,5 +44,5 @@ fn stop_start_independent() {
     assert_eq!(alice_stopped.status, "stopped", "alice's agent should be stopped");
 
     let bob_still_running = bob_client.agent_status(&name).unwrap();
-    assert_eq!(bob_still_running.status, "not_authenticated", "bob's agent should still be running");
+    assert_eq!(bob_still_running.status, "unprovisioned", "bob's agent should still be running");
 }

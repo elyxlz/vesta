@@ -461,7 +461,7 @@ fn cp_container_file(cname: &str, container_path: &str) -> Option<String> {
 
 /// Container is up (regardless of auth/readiness state).
 pub fn is_up(status: &str) -> bool {
-    matches!(status, "not_authenticated" | "starting" | "setting_up" | "alive" | "restarting")
+    matches!(status, "not_authenticated" | "unprovisioned" | "starting" | "setting_up" | "alive" | "restarting")
 }
 
 pub struct ReleasedVestad {
