@@ -339,7 +339,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
         # Caching is best-effort: a transient cache-service outage must not fail the
@@ -408,7 +408,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
         # Caching is best-effort: a transient cache-service outage must not fail the
@@ -495,7 +495,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
           components: clippy
@@ -569,7 +569,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
@@ -628,7 +628,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
@@ -697,7 +697,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: x86_64-pc-windows-msvc
           components: clippy
@@ -729,7 +729,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: x86_64-pc-windows-msvc
 
@@ -795,7 +795,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
@@ -874,7 +874,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
@@ -956,7 +956,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
         # Caching is best-effort: a transient cache-service outage must not fail the
@@ -1039,7 +1039,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
@@ -1191,7 +1191,7 @@ jobs:
 
       - name: Install Rust
         if: env.SKIP_IOS != 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: aarch64-apple-ios
 

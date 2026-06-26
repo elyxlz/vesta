@@ -1,0 +1,39 @@
+name: "Install Rust"
+description: "Install the stable Rust toolchain, retrying on transient rustup network failures"
+
+inputs:
+  targets:
+    description: "Comma- or space-separated target triples to add"
+    required: false
+    default: ""
+  components:
+    description: "Comma- or space-separated components to add (e.g. clippy)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # dtolnay/rust-toolchain has no retry, so a single transient rustup download
+    # blip fails the whole job. rustup is preinstalled on every GitHub runner, so
+    # we drive it directly and retry with backoff.
+    - shell: bash
+      env:
+        RUST_TARGETS: ${{ inputs.targets }}
+        RUST_COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        args=(stable --profile minimal --no-self-update)
+        for target in ${RUST_TARGETS//,/ }; do args+=(--target "$target"); done
+        for component in ${RUST_COMPONENTS//,/ }; do args+=(--component "$component"); done
+        for attempt in 1 2 3; do
+          if rustup toolchain install "${args[@]}"; then
+            rustup default stable
+            exit 0
+          fi
+          delay=$((attempt * 10))
+          echo "::warning::rustup install failed (attempt ${attempt}/3); retrying in ${delay}s"
+          sleep "${delay}"
+        done
+        echo "::error::rustup install failed after 3 attempts"
+        exit 1
