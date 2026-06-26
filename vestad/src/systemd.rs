@@ -165,29 +165,6 @@ pub fn exec_journal(lines: usize, follow: bool) -> ! {
     process::exit(1);
 }
 
-/// `stdbuf -oL journalctl <journal_args>`. journalctl block-buffers stdout when it
-/// isn't a TTY, so in --follow mode the backlog never flushes to our SSE reader and
-/// the gateway logs viewer shows nothing while the connection stays open. `stdbuf -oL`
-/// forces line-buffered output so each line streams immediately — the way `tail -f`
-/// does, which is why the agent logs path already flushes and this one did not.
-fn journal_stream_argv(lines: usize, follow: bool) -> Vec<String> {
-    let mut argv = vec!["stdbuf".into(), "-oL".into(), "journalctl".into()];
-    argv.extend(journal_args(lines, follow));
-    argv
-}
-
-pub fn spawn_journal_stream(lines: usize, follow: bool) -> Result<tokio::process::Child, String> {
-    let argv = journal_stream_argv(lines, follow);
-    let (program, args) = argv.split_first().expect("journal_stream_argv is never empty");
-    tokio::process::Command::new(program)
-        .args(args)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("failed to spawn journal stream: {}", e))
-}
-
 pub fn main_pid() -> Option<u32> {
     let output = Command::new("systemctl")
         .args(["--user", "show", SERVICE_NAME, "--property=MainPID", "--value"])
@@ -231,24 +208,18 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{journal_stream_argv, SERVICE_NAME};
+    use super::{journal_args, SERVICE_NAME};
 
     #[test]
-    fn stream_argv_forces_line_buffered_journalctl() {
-        // Regression guard: journalctl block-buffers a piped stdout, so the SSE
-        // follow stream only delivers lines when wrapped in `stdbuf -oL`. Drop the
-        // wrapper and the gateway logs viewer silently shows nothing.
-        let argv = journal_stream_argv(500, true);
-        assert_eq!(argv[0], "stdbuf");
-        assert_eq!(argv[1], "-oL");
-        assert_eq!(argv[2], "journalctl");
-        assert!(argv.iter().any(|arg| arg == "-f"), "follow flag must be forwarded");
-        assert!(argv.iter().any(|arg| arg == SERVICE_NAME), "must scope to the vestad unit");
+    fn journal_args_scope_the_vestad_unit_and_forward_follow() {
+        let args = journal_args(500, true);
+        assert!(args.iter().any(|arg| arg == SERVICE_NAME), "must scope to the vestad unit");
+        assert!(args.iter().any(|arg| arg == "-f"), "follow flag must be forwarded");
     }
 
     #[test]
-    fn stream_argv_omits_follow_when_not_following() {
-        let argv = journal_stream_argv(100, false);
-        assert!(!argv.iter().any(|arg| arg == "-f"), "no follow flag without follow");
+    fn journal_args_omit_follow_when_not_following() {
+        let args = journal_args(100, false);
+        assert!(!args.iter().any(|arg| arg == "-f"), "no follow flag without follow");
     }
 }

@@ -21,6 +21,7 @@ mod paths;
 mod providers;
 mod restic;
 mod restic_embed;
+mod self_log;
 mod time_utils;
 mod self_update;
 mod serve;
@@ -630,16 +631,44 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     eprintln!("  vestad stop       stop the service");
 }
 
+/// Log to stdout (captured by journald under systemd, shown in the terminal under
+/// `cargo run`) and to a rolling file under the config dir. The file is what the
+/// gateway logs viewer tails, so the viewer works regardless of how vestad is run.
+/// A failed appender (no HOME, unwritable dir) degrades to stdout-only rather than
+/// crashing the daemon.
+///
+/// ANSI is disabled on both sinks: the two fmt layers share one span-field cache
+/// (`FormattedFields<DefaultFields>`) in the span extensions, so a colored stdout
+/// layer would bleed escape codes into the plain file. Logs are plain text on every
+/// sink; the gateway logs viewer adds its own per-level color in the browser.
+fn init_tracing() {
+    use tracing_subscriber::prelude::*;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let log_dir = paths::config_dir_or_relative();
+    let file_layer = std::fs::create_dir_all(&log_dir)
+        .ok()
+        .and_then(|()| self_log::build_appender(&log_dir).ok())
+        .map(|appender| {
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_ansi(false)
+                .with_writer(appender)
+        });
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_target(false).with_ansi(false))
+        .with(file_layer)
+        .init();
+}
+
 fn main() {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_target(false)
-        .init();
+    init_tracing();
 
     rustls::crypto::ring::default_provider()
         .install_default()
