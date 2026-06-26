@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Settings as SettingsIcon,
@@ -7,6 +8,7 @@ import {
   LogOut,
   CreditCard,
   ExternalLink,
+  ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,6 +34,7 @@ import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { useGatewaySetup } from "@/components/Settings/use-gateway-setup";
+import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 
 // Hosted (managed) boxes are always under vesta.run; the account + billing page
 // lives on the control plane. Self-hosted boxes never reach this.
@@ -50,6 +53,7 @@ export function AppSettings() {
   const setAppMode = useAppMode((s) => s.setMode);
   const hostname = connectionHostname();
   const gatewaySetup = useGatewaySetup();
+  const [showLogs, setShowLogs] = useState(false);
 
   return (
     <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
@@ -162,6 +166,16 @@ export function AppSettings() {
                   </span>
                 </span>
               </div>
+              {reachable && (
+                <Button
+                  variant="outline"
+                  className="w-full shrink-0 whitespace-nowrap sm:w-auto"
+                  onClick={() => setShowLogs(true)}
+                >
+                  <ScrollText data-icon="inline-start" />
+                  View logs
+                </Button>
+              )}
               <Button
                 variant="destructive"
                 className="w-full shrink-0 whitespace-nowrap sm:w-auto"
@@ -227,6 +241,8 @@ export function AppSettings() {
           </MenuSection>
         </CardContent>
       </Card>
+
+      <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
 
       {reachable && managed && (
         <Card size="sm">

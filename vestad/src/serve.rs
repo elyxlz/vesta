@@ -385,11 +385,15 @@ async fn gateway_logs_handler(
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)> {
     let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
 
-    let mut child = systemd::spawn_journal_stream(tail, query.follow)
+    let log_dir = crate::paths::config_dir_or_relative();
+    let log_file = crate::self_log::latest_log_file(&log_dir)
+        .ok_or_else(|| err_response(StatusCode::NOT_FOUND, "no gateway logs available yet"))?;
+
+    let mut child = crate::self_log::spawn_log_tail(&log_file, tail, query.follow)
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     let stdout = child.stdout.take().ok_or_else(|| {
-        err_response(StatusCode::INTERNAL_SERVER_ERROR, "journalctl stdout not captured")
+        err_response(StatusCode::INTERNAL_SERVER_ERROR, "log tail stdout not captured")
     })?;
 
     let stream = async_stream::stream! {
