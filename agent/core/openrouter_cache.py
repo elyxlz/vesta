@@ -42,6 +42,11 @@ OPENROUTER_API = "https://openrouter.ai/api"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
 _MESSAGES_URL = "https://openrouter.ai/api/v1/messages"
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# The forwarding session must NOT cap a streamed LLM response by total time — a single agent
+# turn legitimately runs minutes. Bound the connect and the idle gap between chunks instead, so
+# only a genuinely stalled upstream (no bytes for this long) is cut. aiohttp's default would
+# otherwise impose a 300s total cap, which silently killed long/slow OpenRouter turns.
+_FORWARD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=180)
 _MAX_PROBE_CANDIDATES = 4
 _MIN_CACHE_FRACTION = 0.5  # warm call must read back at least half the prefix to count as caching
 _CACHE_TTL = "1h"  # survive the idle gaps typical of a personal assistant (default is 5 min)
@@ -205,41 +210,110 @@ async def _resolve_provider(session: aiohttp.ClientSession, model: str, key: str
 # --- the proxy ---
 
 
-async def _handle(request: web.Request) -> web.StreamResponse:
-    body = await request.read()
-    if request.path.endswith("/v1/messages") and body:
+class _PrestreamError(Exception):
+    """An upstream forward that failed BEFORE any downstream bytes were sent, so the
+    request can be safely retried (e.g. with the provider pin dropped)."""
+
+
+_FORWARD_ERRORS = (TimeoutError, aiohttp.ClientError)
+
+
+def _forward_bodies(parsed: dict[str, tp.Any] | None, raw: bytes) -> list[bytes]:
+    """The upstream bodies to try, in order. For a transformed /v1/messages request that
+    pinned a provider, append one retry with the pin removed: a pinned provider that stalls
+    sends no error, so OpenRouter's own `allow_fallbacks` never fires — dropping the pin
+    lets it route around the stalled upstream. Other requests forward `raw` unchanged."""
+    if parsed is None:
+        return [raw]
+    bodies = [json.dumps(parsed).encode()]
+    if "provider" in parsed:
+        unpinned = {k: v for k, v in parsed.items() if k != "provider"}
+        bodies.append(json.dumps(unpinned).encode())
+    return bodies
+
+
+def _gateway_error_response() -> web.Response:
+    """A clean 504 the SDK can back off on, instead of the opaque 500 an uncaught handler
+    exception produced when every upstream attempt failed."""
+    return web.json_response(
+        {"type": "error", "error": {"type": "api_error", "message": "openrouter upstream unavailable"}},
+        status=504,
+    )
+
+
+async def _forward_with_retry(bodies: list[bytes], attempt: tp.Callable[[bytes], tp.Awaitable[web.StreamResponse]]) -> web.StreamResponse:
+    """Try each body via `attempt`; return the first response that starts streaming. Every
+    attempt failing before streaming yields a 504. A mid-stream failure is NOT retried (the
+    response already started) — `attempt` returns the truncated response rather than raising."""
+    last_error: Exception | None = None
+    for body in bodies:
         try:
-            parsed: tp.Any = json.loads(body)
-            model = parsed["model"] if "model" in parsed else None
+            return await attempt(body)
+        except _PrestreamError as e:
+            last_error = e
+            logger.warning(f"OpenRouter forward failed before streaming; retrying if possible: {e}")
+    logger.error(f"OpenRouter forward failed on all {len(bodies)} attempt(s): {last_error}")
+    return _gateway_error_response()
+
+
+async def _stream_upstream(
+    request: web.Request, client: aiohttp.ClientSession, url: str, headers: dict[str, str], body: bytes, *, sniff: bool
+) -> web.StreamResponse:
+    """Forward one request upstream and stream the response back. Raises _PrestreamError if
+    the upstream fails before the downstream response is prepared (retryable: stalled connect
+    or no response headers within sock_read); a failure mid-stream ends the truncated response
+    so the SDK retries on the broken stream."""
+    response: web.StreamResponse | None = None
+    try:
+        async with client.request(request.method, url, data=body, headers=headers) as upstream:
+            if upstream.status in TERMINAL_PROVIDER_ERRORS:
+                state: State = request.app["state"]
+                state.provider_status = observed_provider_failure(state.provider_status)
+            # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the SDK
+            # keeps its backoff signals. aiohttp already decompressed the body and StreamResponse
+            # re-frames length/encoding, so drop those hop-by-hop headers.
+            resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
+            response = web.StreamResponse(status=upstream.status, headers=resp_headers)
+            await response.prepare(request)
+            sample: tuple[int, int] | None = None
+            async for chunk in upstream.content.iter_any():
+                if sniff and b"cache_read_input_tokens" in chunk:
+                    found = _sniff_usage(chunk)
+                    if found is not None:
+                        sample = found  # keep the last (final message_delta) usage
+                await response.write(chunk)
+            await response.write_eof()
+            if sample is not None:
+                _record_cache_usage(request.app, *sample)
+            return response
+    except _FORWARD_ERRORS as e:
+        if response is not None:
+            # Already streaming downstream — can't retry or rewrite the status; end the
+            # truncated response so the SDK sees a broken stream and retries upstream.
+            logger.warning(f"OpenRouter stream interrupted mid-response: {e}")
+            await response.write_eof()
+            return response
+        raise _PrestreamError(str(e)) from e
+
+
+async def _handle(request: web.Request) -> web.StreamResponse:
+    raw = await request.read()
+    is_messages = request.path.endswith("/v1/messages")
+    parsed: dict[str, tp.Any] | None = None
+    if is_messages and raw:
+        try:
+            body_json: tp.Any = json.loads(raw)
+            model = body_json["model"] if "model" in body_json else None
             providers = request.app["providers"]
             provider = providers[model] if model in providers else None
-            body = json.dumps(transform_request(parsed, provider=provider, session_id=request.app["session_id"])).encode()
+            parsed = transform_request(body_json, provider=provider, session_id=request.app["session_id"])
         except (json.JSONDecodeError, ValueError):
-            pass
+            parsed = None
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length", "transfer-encoding")}
-    sniff = request.path.endswith("/v1/messages")
     client: aiohttp.ClientSession = request.app["client"]
-    async with client.request(request.method, OPENROUTER_API + request.raw_path, data=body, headers=headers) as upstream:
-        # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the
-        # SDK keeps its backoff signals. aiohttp already decompressed the body and the
-        # StreamResponse re-frames length/encoding, so drop those hop-by-hop headers.
-        if upstream.status in TERMINAL_PROVIDER_ERRORS:
-            state: State = request.app["state"]
-            state.provider_status = observed_provider_failure(state.provider_status)
-        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
-        response = web.StreamResponse(status=upstream.status, headers=resp_headers)
-        await response.prepare(request)
-        sample: tuple[int, int] | None = None
-        async for chunk in upstream.content.iter_any():
-            if sniff and b"cache_read_input_tokens" in chunk:
-                found = _sniff_usage(chunk)
-                if found is not None:
-                    sample = found  # keep the last (final message_delta) usage
-            await response.write(chunk)
-        await response.write_eof()
-        if sample is not None:
-            _record_cache_usage(request.app, *sample)
-        return response
+    url = OPENROUTER_API + request.raw_path
+    bodies = _forward_bodies(parsed, raw)
+    return await _forward_with_retry(bodies, lambda body: _stream_upstream(request, client, url, headers, body, sniff=is_messages))
 
 
 def _sniff_usage(chunk: bytes) -> tuple[int, int] | None:
@@ -284,7 +358,9 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
     SDK's ANTHROPIC_BASE_URL points here, never at OpenRouter directly. Provider
     resolution is best-effort — a model with no verified caching provider (or no key
     to probe with) simply passes through uncached, but the proxy still runs."""
-    client = aiohttp.ClientSession()
+    # Default the session to the streaming-friendly forward timeout; the boot probes below
+    # pass their own short _HTTP_TIMEOUT explicitly, so only the forwarding path inherits it.
+    client = aiohttp.ClientSession(timeout=_FORWARD_TIMEOUT)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     started = False
     try:
