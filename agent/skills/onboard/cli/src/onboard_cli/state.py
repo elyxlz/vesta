@@ -45,15 +45,18 @@ def _write_all(data: dict[str, Any]) -> None:
 
 def load(email: str) -> dict[str, Any]:
     """Return the stored onboarding context for ``email`` (``{}`` if none)."""
-    return _read_all().get(_key(email), {})
+    data = _read_all()
+    key = _key(email)
+    return data[key] if key in data else {}
 
 
 def update(email: str, **fields: Any) -> dict[str, Any]:
     """Merge ``fields`` into ``email``'s stored context and persist it."""
     data = _read_all()
-    entry = data.get(_key(email), {})
+    key = _key(email)
+    entry = data[key] if key in data else {}
     entry.update({k: v for k, v in fields.items() if v is not None})
-    data[_key(email)] = entry
+    data[key] = entry
     _write_all(data)
     return entry
 
@@ -68,14 +71,16 @@ def clear(email: str) -> None:
 def forget(email: str, *keys: str) -> None:
     """Drop specific keys from ``email``'s context (e.g. a consumed OAuth nonce)."""
     data = _read_all()
-    entry = data.get(_key(email))
+    key = _key(email)
+    entry = data[key] if key in data else None
     if not entry:
         return
     if any(entry.pop(k, None) is not None for k in keys):
-        data[_key(email)] = entry
+        data[key] = entry
         _write_all(data)
 
 
 def token_for(email: str) -> str | None:
     """The buyer's session token, or None if they haven't verified yet."""
-    return load(email).get("token")
+    entry = load(email)
+    return entry["token"] if "token" in entry else None

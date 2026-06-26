@@ -62,10 +62,11 @@ class Client:
             raise OnboardError("missing AGENT_TOKEN — cannot authenticate to vestad")
         url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
         data = self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
-        token = data.get("token")
+        token = data["token"] if "token" in data else None
         if not token:
             # A non-cloud-managed box answers 404 {error}; surface it verbatim.
-            raise OnboardError(data.get("error") or "vestad did not return a server-identity token")
+            error = data["error"] if "error" in data else ""
+            raise OnboardError(error or "vestad did not return a server-identity token")
         return token
 
     # --- vestad: read-only reference data over the loopback ------------------
@@ -141,7 +142,8 @@ class Client:
         if 400 <= resp.status_code < 500:
             return None  # invalid/expired code — a normal, surfaced outcome
         data = self._json(resp)  # raises on 5xx (real transport/server failure)
-        return resp.headers.get("set-auth-token") or data.get("token")
+        body_token = data["token"] if "token" in data else None
+        return resp.headers.get("set-auth-token") or body_token
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 
@@ -178,7 +180,7 @@ class Client:
                 headers=self._auth(token),
             )
         )
-        access = data.get("access_token")
+        access = data["access_token"] if "access_token" in data else None
         if not access:
             raise OnboardError("control plane did not return a server token")
         return access
@@ -201,7 +203,7 @@ class Client:
         """POST <tenant>/providers/claude/oauth/complete -> the credentials blob."""
         url = f"{self._cfg.tenant_base(subdomain)}/providers/claude/oauth/complete"
         data = self._json(self._raw_post(url, json={"session_id": session_id, "code": code}, token=server_token))
-        creds = data.get("credentials")
+        creds = data["credentials"] if "credentials" in data else None
         if not creds:
             raise OnboardError("OAuth completion returned no credentials")
         return creds

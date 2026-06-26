@@ -69,7 +69,7 @@ def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> i
         {
             "sent": True,
             "email": email,
-            "account": "created" if created.get("created") else "existing",
+            "account": "created" if ("created" in created and created["created"]) else "existing",
         }
     )
     return 0
@@ -109,7 +109,8 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         # Stash the assigned subdomain + server id (both returned by checkout) so
         # later steps don't re-derive them; server_id is internal, so pop it out of
         # the agent-facing output.
-        state.update(email, subdomain=result.get("subdomain"), server_id=result.pop("server_id", None))
+        subdomain = result["subdomain"] if "subdomain" in result else None
+        state.update(email, subdomain=subdomain, server_id=result.pop("server_id", None))
     _print(result)
     return 0 if "url" in result else 2
 
@@ -117,12 +118,20 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 def _cmd_status(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
-    server = client.me(token).get("server")
+    me = client.me(token)
+    server = me["server"] if "server" in me else None
     if not server:
         _print({"status": "no_server", "hint": "run `onboard checkout` and have them pay"})
         return 0
-    state.update(email, subdomain=server.get("subdomain"), server_id=server.get("id"))
-    _print({"status": server.get("status"), "subdomain": server.get("subdomain"), "url": server.get("url")})
+    subdomain = server["subdomain"] if "subdomain" in server else None
+    state.update(email, subdomain=subdomain, server_id=server["id"] if "id" in server else None)
+    _print(
+        {
+            "status": server["status"] if "status" in server else None,
+            "subdomain": subdomain,
+            "url": server["url"] if "url" in server else None,
+        }
+    )
     return 0
 
 
@@ -131,8 +140,9 @@ def _cmd_status(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 
 def _active_server(client: Client, token: str) -> dict[str, Any] | None:
     """The buyer's server iff it is live (`active`), else None."""
-    server = client.me(token).get("server")
-    if server and server.get("status") == "active":
+    me = client.me(token)
+    server = me["server"] if "server" in me else None
+    if server and "status" in server and server["status"] == "active":
         return server
     return None
 
@@ -160,7 +170,7 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
     # so claude-finish addresses /agents/<name>/provider with a name that validates.
     # Personality + seed context are stashed here and delivered through claude-finish's
     # set_provider, since the agent owns its config store (no env/create-time delivery).
-    created_name = result.get("name", name)
+    created_name = result["name"] if "name" in result else name
     state.update(email, agent_name=created_name, personality=personality, seed_context=context)
     _print({"created": True, "name": created_name})
     return 0
@@ -184,10 +194,10 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
     email = _email(args)
     token = _require_token(email)
     st = state.load(email)
-    session_id = st.get("claude_session_id")
+    session_id = st["claude_session_id"] if "claude_session_id" in st else None
     if not session_id:
         raise _Invalid({"error": "no Claude auth in progress — run `onboard claude-start` first"})
-    name = args.name.strip() if args.name else st.get("agent_name")
+    name = args.name.strip() if args.name else (st["agent_name"] if "agent_name" in st else None)
     if not name:
         raise _Invalid({"error": "unknown agent name — pass --name (the one used in create-agent)"})
     server = _require_active_server(client, token)
@@ -209,8 +219,8 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         name=name,
         credentials=credentials,
         model=(args.model or client.fetch_agent_defaults()["model"]),
-        personality=st.get("personality"),
-        seed_context=st.get("seed_context"),
+        personality=st["personality"] if "personality" in st else None,
+        seed_context=st["seed_context"] if "seed_context" in st else None,
     )
     if "error" in result:
         raise _Invalid(
@@ -235,7 +245,7 @@ def _installable_skills() -> list[str]:
         try:
             if p.exists():
                 data = json.loads(p.read_text())
-                return sorted(s.get("name", "") for s in data if s.get("name"))
+                return sorted(s["name"] for s in data if "name" in s and s["name"])
         except (OSError, ValueError):
             continue
     return []
