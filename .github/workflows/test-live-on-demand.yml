@@ -1,0 +1,103 @@
+# On-demand live e2e runner. The `test-live` job in ci.yml only fires on the release
+# event (it gates the release), so there is no way to validate the live suite — or just
+# the upgrade e2e — against a branch before bumping versions. This workflow does exactly
+# that: dispatch it, point it at any pushed branch, optionally filter to one test.
+#
+# GitHub only lets you dispatch a workflow whose file lives on the default branch, so this
+# must be on master to be usable. It checks out the `branch` input explicitly (rather than
+# relying on the dispatch ref), so the workflow definition always comes from master while
+# the code under test comes from whatever branch you pick.
+name: test-live (on demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch/ref to test (must be pushed to origin)"
+        required: true
+        default: master
+      test_filter:
+        description: "cargo test name filter (empty = whole live suite; e.g. upgrade_from_previous_release)"
+        required: false
+        default: ""
+      upgrade_from:
+        description: "VESTA_UPGRADE_FROM tag, e.g. v0.1.160 (empty = highest release below the checkout version)"
+        required: false
+        default: ""
+      upgrade_to:
+        description: "VESTA_UPGRADE_TO tag (empty = the checked-out branch's own build)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  test-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Install Rust
+        uses: ./.github/actions/install-rust
+
+      - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+
+      # Build the agent image from THIS checkout so the live suite exercises the branch's
+      # agent code + Dockerfile, not the previously released :latest. Shares the GHA layer
+      # cache with ci.yml's image builds.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build agent image from checkout
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          load: true
+          tags: vesta:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Unlike the release gate (which lets a missing key skip the suite for fork releases),
+      # an on-demand run with no key is pointless — fail loudly instead of silently passing.
+      - name: Require OpenRouter key
+        env:
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_KEY" ]; then
+            echo "::error::OPENROUTER_KEY secret is not available — live e2e cannot run"
+            exit 1
+          fi
+          echo "OPENROUTER_KEY present — live e2e will run"
+
+      - name: Build vestad
+        working-directory: vestad
+        run: cargo build
+
+      - name: Run live e2e
+        uses: nick-fields/retry@v4
+        env:
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          # Passed via env (not interpolated into the command) so dispatch inputs can't inject shell.
+          TEST_FILTER: ${{ inputs.test_filter }}
+          VESTA_UPGRADE_FROM: ${{ inputs.upgrade_from }}
+          VESTA_UPGRADE_TO: ${{ inputs.upgrade_to }}
+        with:
+          timeout_minutes: 40
+          max_attempts: 2
+          retry_wait_seconds: 30
+          shell: bash
+          # An empty TEST_FILTER is a substring that matches every test name, so it runs the
+          # whole suite; a non-empty one narrows to matching tests (e.g. the upgrade e2e).
+          command: VESTAD_AGENT_IMAGE=vesta:local cargo test -p vestad --test live "$TEST_FILTER" -- --test-threads=8 --nocapture
