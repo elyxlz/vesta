@@ -21,7 +21,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // Connect once the agent's WS is up so chat history loads — including when the
   // agent isn't authenticated yet (the composer stays disabled until sign-in).
   const connectable =
-    agent?.status === "alive" || agent?.status === "not_authenticated";
+    agent?.status === "alive" ||
+    agent?.status === "not_authenticated" ||
+    agent?.status === "unprovisioned";
   const chat = useChat({
     name,
     active: connectable,

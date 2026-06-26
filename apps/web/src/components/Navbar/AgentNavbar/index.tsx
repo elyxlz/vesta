@@ -36,7 +36,10 @@ export function AgentNavbar({
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
-  const needsAuth = agent?.status === "not_authenticated" && reachable;
+  const needsAuth =
+    (agent?.status === "not_authenticated" ||
+      agent?.status === "unprovisioned") &&
+    reachable;
 
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });

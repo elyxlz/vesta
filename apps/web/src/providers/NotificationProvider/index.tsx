@@ -181,12 +181,23 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       const previous = prevStatusRef.current.get(agent.name);
       prevStatusRef.current.set(agent.name, agent.status);
       if (!previous || previous === agent.status) continue;
-      if (agent.status !== "not_authenticated") continue;
+      if (
+        agent.status !== "not_authenticated" &&
+        agent.status !== "unprovisioned"
+      )
+        continue;
       if (!permissionRef.current) continue;
+      const unprovisioned = agent.status === "unprovisioned";
+      const title = unprovisioned
+        ? `${agent.name} needs to be set up`
+        : `${agent.name} needs to sign in again`;
+      const body = unprovisioned
+        ? "Tap to choose a provider and sign in."
+        : "Vesta lost the provider credentials. Tap to re-authenticate.";
       try {
-        const n = new Notification(`${agent.name} needs to sign in again`, {
-          body: "Vesta lost the Claude credentials. Tap to re-authenticate.",
-          tag: `${agent.name}-not-authenticated`,
+        const n = new Notification(title, {
+          body,
+          tag: `${agent.name}-${agent.status}`,
         });
         n.onclick = () => {
           void focusAndNavigate(agent.name);

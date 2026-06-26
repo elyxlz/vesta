@@ -1,7 +1,9 @@
 export type AgentStatus =
   | "alive"
   | "starting"
+  | "setting_up"
   | "not_authenticated"
+  | "unprovisioned"
   | "restarting"
   | "stopped"
   | "dead"

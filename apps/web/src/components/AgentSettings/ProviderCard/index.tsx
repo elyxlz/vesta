@@ -4,6 +4,7 @@ import {
   MoreHorizontal,
   RefreshCw,
   LogOut,
+  Plug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -112,8 +113,54 @@ export function ProviderCard() {
     refresh: refreshUsage,
   } = useUsage(name);
 
-  if (!provider || provider.kind === "none") return null;
+  // The card always renders; its content reflects the provider state. While the first fetch is in
+  // flight, show a skeleton rather than collapsing the layout.
+  if (!provider) {
+    return (
+      <Card size="sm">
+        <CardContent className="flex items-center gap-3">
+          <Skeleton className="size-11 shrink-0 rounded-2xl" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
+  // Unprovisioned: no provider chosen yet (fresh agent, or signed out). Offer to connect one.
+  if (provider.kind === "none") {
+    return (
+      <Card size="sm">
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted [corner-shape:squircle]">
+              <Plug className="size-6 text-muted-foreground" />
+            </div>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-xs text-muted-foreground">provider</span>
+              <span className="truncate text-sm font-medium">
+                not connected
+              </span>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {name} needs a provider before it can respond. Connect Claude or
+            OpenRouter to get started.
+          </p>
+          <Button size="sm" onClick={() => void handleOpenAuth()}>
+            <Plug className="size-4" />
+            set up provider
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // From here a provider IS chosen. `ready` means its credential is valid; otherwise the card shows a
+  // re-authenticate state (credential expired/rejected) instead of model/usage controls.
+  const ready = provider.authed;
   const isOpenRouter = provider.kind === "openrouter";
   const { Logo } = providerMeta(provider.kind);
   const contextLabel =
@@ -182,79 +229,99 @@ export function ProviderCard() {
                 {provider.model ?? "unknown"}
               </span>
               <Badge variant="secondary" className="shrink-0">
-                {contextLabel}
+                {ready ? contextLabel : "signed out"}
               </Badge>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">
-              plan usage
-            </span>
-            <button
-              onClick={refreshUsage}
-              aria-label="refresh usage"
-              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              <RefreshCw
-                className={`size-3.5 ${usageLoading ? "animate-spin" : ""}`}
-              />
-            </button>
-          </div>
-          {usageLoading ? (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-3 w-8" />
-              </div>
-              <Skeleton className="h-1.5 w-full" />
+        {ready ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">
+                plan usage
+              </span>
+              <button
+                onClick={refreshUsage}
+                aria-label="refresh usage"
+                className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                <RefreshCw
+                  className={`size-3.5 ${usageLoading ? "animate-spin" : ""}`}
+                />
+              </button>
             </div>
-          ) : usageError ? (
-            <p className="text-xs text-muted-foreground">
-              failed to load usage data
-            </p>
-          ) : meters.length === 0 && !credits ? (
-            <p className="text-xs text-muted-foreground">
-              no usage data available
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {meters.map((m) => (
-                <UsageBar key={m.label} meter={m} />
-              ))}
-              {credits && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">credits</span>
-                  <span className="text-foreground tabular-nums">
-                    {credits.used != null
-                      ? `$${credits.used.toFixed(2)}${credits.limit != null ? ` / $${credits.limit.toFixed(2)}` : ""}`
-                      : "—"}
-                  </span>
+            {usageLoading ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-3 w-8" />
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+                <Skeleton className="h-1.5 w-full" />
+              </div>
+            ) : usageError ? (
+              <p className="text-xs text-muted-foreground">
+                failed to load usage data
+              </p>
+            ) : meters.length === 0 && !credits ? (
+              <p className="text-xs text-muted-foreground">
+                no usage data available
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {meters.map((m) => (
+                  <UsageBar key={m.label} meter={m} />
+                ))}
+                {credits && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">credits</span>
+                    <span className="text-foreground tabular-nums">
+                      {credits.used != null
+                        ? `$${credits.used.toFixed(2)}${credits.limit != null ? ` / $${credits.limit.toFixed(2)}` : ""}`
+                        : "—"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {name}&apos;s credentials expired or were rejected. Sign in again to
+            reconnect.
+          </p>
+        )}
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => setModelOpen(true)}
-          >
-            change model
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            onClick={() => setContextOpen(true)}
-          >
-            change context
-          </Button>
+          {ready ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => setModelOpen(true)}
+              >
+                change model
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => setContextOpen(true)}
+              >
+                change context
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              className="flex-1"
+              onClick={() => void handleOpenAuth()}
+            >
+              <RefreshCw className="size-4" />
+              sign in again
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

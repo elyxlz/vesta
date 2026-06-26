@@ -51,7 +51,9 @@ function resolveStatus(
     case "setting_up":
       return { label: "setting up...", orbState: "busy" };
     case "not_authenticated":
-      return { label: "not signed in", orbState: "busy" };
+      return { label: "needs to sign in again", orbState: "busy" };
+    case "unprovisioned":
+      return { label: "not set up", orbState: "busy" };
     case "restarting":
       return { label: "restarting...", orbState: "busy" };
     case "stopped":
