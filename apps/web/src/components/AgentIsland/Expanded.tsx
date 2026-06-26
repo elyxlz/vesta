@@ -33,7 +33,7 @@ export function AgentIslandExpanded({
           state={orbState}
           size={100}
           enableTracking
-          label={`${name}: ${orbState}`}
+          label={`${name}: ${statusLabel || orbState}`}
         />
       </motion.div>
       <div className="-mt-4 flex flex-col items-center justify-center gap-1 text-center will-change-transform">

@@ -54,7 +54,9 @@ export function AgentIsland() {
         role={expanded ? undefined : "button"}
         tabIndex={expanded ? -1 : 0}
         aria-expanded={expanded}
-        aria-label={expanded ? undefined : `${name}, ${orbState}`}
+        aria-label={
+          expanded ? undefined : `${name}, ${statusLabel || orbState}`
+        }
         onClick={expanded ? undefined : () => setExpanded(true)}
         onFocus={expanded ? undefined : () => setExpanded(true)}
         onKeyDown={

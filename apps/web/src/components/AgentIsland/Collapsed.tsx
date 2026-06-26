@@ -30,7 +30,7 @@ export function AgentIslandCollapsed({
           state={orbState}
           size={28}
           suppressMotion
-          label={`${name}: ${orbState}`}
+          label={`${name}: ${statusLabel || orbState}`}
         />
       </motion.div>
       <div className="relative -top-0.5 min-w-0 flex-1 flex items-baseline gap-1.5">

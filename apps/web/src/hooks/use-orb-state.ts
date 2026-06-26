@@ -10,12 +10,25 @@ interface AgentLike {
   status: string;
 }
 
+export function useOrbStatus(
+  agent: AgentLike | null,
+  activityState: AgentActivityState,
+): { orbState: OrbVisualState; label: string } {
+  const operation = useAgentOps((s) =>
+    agent ? s.getOp(agent.name).operation : "idle",
+  );
+  const { orbState, label } = getAgentVisualStatus(
+    agent,
+    operation,
+    "",
+    activityState,
+  );
+  return { orbState, label };
+}
+
 export function useOrbState(
   agent: AgentLike | null,
   activityState: AgentActivityState,
 ): OrbVisualState {
-  const operation = useAgentOps((s) =>
-    agent ? s.getOp(agent.name).operation : "idle",
-  );
-  return getAgentVisualStatus(agent, operation, "", activityState).orbState;
+  return useOrbStatus(agent, activityState).orbState;
 }
