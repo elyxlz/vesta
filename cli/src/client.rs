@@ -548,12 +548,12 @@ impl Client {
         Ok(())
     }
 
-    /// Poll until status is `alive` OR `not_authenticated`. Used right after
+    /// Poll until status is `alive`, `not_authenticated`, or `unprovisioned`. Used right after
     /// `create_agent` to know the agent's HTTP server is up and ready to accept
-    /// `PUT /agents/{name}/config` — a brand-new empty agent will report
-    /// `not_authenticated` until the provider is provisioned.
+    /// `PUT /agents/{name}/config` — a brand-new empty agent reports `unprovisioned`
+    /// (no provider chosen) until the provider is provisioned.
     pub fn wait_until_running(&self, name: &str, timeout: Duration) -> Result<(), String> {
-        self.wait_for_status(name, timeout, &["alive", "not_authenticated"], "HTTP server", |_| {})
+        self.wait_for_status(name, timeout, &["alive", "not_authenticated", "unprovisioned"], "HTTP server", |_| {})
     }
 
     /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
@@ -587,7 +587,7 @@ impl Client {
         wait_label: &str,
         mut on_change: impl FnMut(&str),
     ) -> Result<(), String> {
-        const TERMINAL_STATES: [&str; 4] = ["not_found", "dead", "stopped", "not_authenticated"];
+        const TERMINAL_STATES: [&str; 5] = ["not_found", "dead", "stopped", "not_authenticated", "unprovisioned"];
         let deadline = Instant::now() + timeout;
         let mut backoff = Duration::from_millis(200);
         let mut last = String::new();

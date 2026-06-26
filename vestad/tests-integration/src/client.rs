@@ -235,7 +235,7 @@ impl Client {
             let status = self.agent_status(name)?;
             match status.status.as_str() {
                 "alive" => return Ok(()),
-                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                "not_found" | "dead" | "stopped" | "not_authenticated" | "unprovisioned" =>
                     return Err(format!("{}: {}", name, status.status)),
                 _ => {}
             }
@@ -277,7 +277,7 @@ impl Client {
         loop {
             let status = self.agent_status(name)?.status;
             match status.as_str() {
-                "alive" | "setting_up" | "not_authenticated" => return Ok(status),
+                "alive" | "setting_up" | "not_authenticated" | "unprovisioned" => return Ok(status),
                 "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
                 _ => {}
             }
