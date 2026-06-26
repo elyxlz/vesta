@@ -485,7 +485,7 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
 /// Parse a `vX.Y.Z` (or `X.Y.Z`) release tag into numeric components for ordering.
 /// Returns `None` for tags that don't parse, so the upgrade test ignores any
 /// non-standard tag rather than mis-ordering it.
-fn parse_release_tag(tag: &str) -> Option<Vec<u64>> {
+pub fn parse_release_tag(tag: &str) -> Option<Vec<u64>> {
     let parts: Option<Vec<u64>> = tag.trim_start_matches('v').split('.').map(|s| s.parse().ok()).collect();
     parts.filter(|components| components.len() == 3)
 }

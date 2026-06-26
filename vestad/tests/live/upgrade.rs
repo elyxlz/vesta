@@ -28,7 +28,7 @@ use vesta_tests::{
 };
 
 use super::common::{
-    openrouter_key, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification,
+    openrouter_key, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification, ProviderApi,
 };
 
 const AGENT_NAME: &str = "upgrade";
@@ -131,7 +131,7 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     // Stream the agent's own log to the test output for the whole run; survives every restart.
     let _log_stream = AgentLogStream::start(&container);
 
-    provision_and_settle(&old_client, &agent_name, &container);
+    provision_and_settle(&old_client, &agent_name, &container, ProviderApi::for_daemon_tag(&previous_tag));
     let pre_applied = applied_migrations(&container);
     eprintln!("upgrade e2e: setup complete on {previous_tag}; {} migration(s) pre-applied", pre_applied.len());
 
