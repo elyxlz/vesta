@@ -25,6 +25,7 @@ vestad/vendored/
 .claude/*
 !.claude/skills/
 !.claude/workflows/
+!.claude/settings.json
 
 # Cursor / editor config
 .cursor/
