@@ -140,7 +140,9 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_
 
 def test_store_sets_nested_provider(agentdir):
     update_config_store({"provider": {"kind": "claude", "model": "sonnet"}})
-    assert vm.VestaConfig().provider.model == "sonnet"
+    provider = vm.VestaConfig().provider
+    assert isinstance(provider, ClaudeConfig)
+    assert provider.model == "sonnet"
 
 
 def test_update_merges_and_clear_reverts(agentdir):

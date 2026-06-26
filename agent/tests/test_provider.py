@@ -47,7 +47,8 @@ def test_derive_claude_authenticated_when_oauth_refreshable():
 
 
 def test_derive_openrouter_authenticated_with_key():
-    assert _derive_kind_and_auth(_cfg(OpenRouterConfig(model="m", key="sk-or-v1-x"))) == ("openrouter", True)
+    cfg = _cfg(OpenRouterConfig.model_validate({"model": "m", "key": "sk-or-v1-x"}))
+    assert _derive_kind_and_auth(cfg) == ("openrouter", True)
 
 
 _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
@@ -117,7 +118,7 @@ def test_set_claude_writes_creds_and_store(prov):
     assert status.kind == "claude"
     assert provider_mod.CREDENTIALS_PATH.read_text() == _CREDS
     assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
-    assert vm.VestaConfig().provider.kind == "claude"
+    assert isinstance(vm.VestaConfig().provider, ClaudeConfig)
 
 
 def test_set_openrouter_writes_nested_provider_to_store(prov):
@@ -139,9 +140,10 @@ def test_set_openrouter_writes_nested_provider_to_store(prov):
 
 def test_model_context_prefs_persist_to_store_and_reload(prov):
     update_config_store({"provider": {"kind": "claude", "model": "opus", "max_context_tokens": 500_000}})
-    fresh = vm.VestaConfig()
-    assert fresh.provider.model == "opus"
-    assert fresh.provider.max_context_tokens == 500_000
+    provider = vm.VestaConfig().provider
+    assert isinstance(provider, ClaudeConfig)
+    assert provider.model == "opus"
+    assert provider.max_context_tokens == 500_000
 
 
 def test_clear_provider_removes_creds_and_resets_state(prov):

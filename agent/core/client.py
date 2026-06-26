@@ -319,12 +319,12 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
     # os.environ here would leak the OpenRouter URL into every other subprocess
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
-    # The single guard at the real provider dereference: the work loop never queues while
-    # unprovisioned (the auth gate defers everything), so reaching here with no provider means the
-    # gate regressed — fail loudly instead of mis-building options.
+    # message_processor only reaches here once the provider is authenticated (it idles otherwise), so a
+    # provider is always present. Narrow the Optional for the type checker and fail loudly rather than
+    # mis-build options if that invariant ever regresses.
     provider = config.provider
     if provider is None:
-        raise RuntimeError("build_client_options reached with no provider configured (auth gate failed)")
+        raise RuntimeError("build_client_options reached with no authenticated provider")
 
     sdk_env: dict[str, str] = {}
     betas: list[str] = []
