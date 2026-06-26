@@ -157,6 +157,9 @@ pub enum AgentStatus {
     SettingUp,
     Starting,
     NotAuthenticated,
+    /// Reachable, but no provider is chosen yet (fresh agent, or signed out) — needs first sign-in,
+    /// distinct from `NotAuthenticated` (a chosen provider whose credential is invalid/expired).
+    Unprovisioned,
     Stopped,
     Dead,
     NotFound,
@@ -398,15 +401,25 @@ pub async fn combined_status(
             let agent_name = name_from_cname(cname);
             let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
             match provider.status().await {
-                Ok(s) if s.authed && s.setup_complete => AgentStatus::Alive,
-                Ok(s) if s.authed => AgentStatus::SettingUp,
-                Ok(_) => AgentStatus::NotAuthenticated,
+                Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => AgentStatus::Starting,
             }
         }
         ContainerStatus::Dead => AgentStatus::Dead,
         ContainerStatus::Stopped => AgentStatus::Stopped,
         ContainerStatus::NotFound => AgentStatus::NotFound,
+    }
+}
+
+/// Map the agent's `GET /status` readiness slice to its `AgentStatus`. An authenticated agent is
+/// `SettingUp` until first-start finishes, then `Alive`; a not-authenticated agent is `Unprovisioned`
+/// when it has no provider chosen at all, else `NotAuthenticated` (a chosen credential is invalid).
+fn status_from_readiness(authed: bool, setup_complete: bool, provider_configured: bool) -> AgentStatus {
+    match (authed, setup_complete, provider_configured) {
+        (true, true, _) => AgentStatus::Alive,
+        (true, false, _) => AgentStatus::SettingUp,
+        (false, _, true) => AgentStatus::NotAuthenticated,
+        (false, _, false) => AgentStatus::Unprovisioned,
     }
 }
 
@@ -2110,6 +2123,23 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
+        use AgentStatus::*;
+        // (authed, setup_complete, provider_configured) -> AgentStatus
+        assert_eq!(status_from_readiness(true, true, true), Alive);
+        assert_eq!(status_from_readiness(true, false, true), SettingUp);
+        assert_eq!(status_from_readiness(false, false, true), NotAuthenticated);
+        assert_eq!(status_from_readiness(false, false, false), Unprovisioned);
+    }
+
+    #[test]
+    fn agent_status_serializes_unprovisioned_to_snake_case() {
+        let to_str = |s: AgentStatus| serde_json::to_value(s).expect("serialize").as_str().expect("string").to_string();
+        assert_eq!(to_str(AgentStatus::Unprovisioned), "unprovisioned");
+        assert_eq!(to_str(AgentStatus::NotAuthenticated), "not_authenticated");
+    }
 
     #[test]
     fn build_phase_serializes_to_snake_case() {
