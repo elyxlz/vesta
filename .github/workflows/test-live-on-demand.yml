@@ -98,6 +98,8 @@ jobs:
           max_attempts: 2
           retry_wait_seconds: 30
           shell: bash
-          # An empty TEST_FILTER is a substring that matches every test name, so it runs the
-          # whole suite; a non-empty one narrows to matching tests (e.g. the upgrade e2e).
-          command: VESTAD_AGENT_IMAGE=vesta:local cargo test -p vestad --test live "$TEST_FILTER" -- --test-threads=8 --nocapture
+          # The crates are standalone (no workspace Cargo.toml at the repo root), so the test
+          # runs from vestad/ — same as check.sh's check_live. An empty TEST_FILTER is a substring
+          # that matches every test name, so it runs the whole suite; a non-empty one narrows to
+          # matching tests (e.g. the upgrade e2e).
+          command: cd vestad && VESTAD_AGENT_IMAGE=vesta:local cargo test -p vestad --test live "$TEST_FILTER" -- --test-threads=8 --nocapture
