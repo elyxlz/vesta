@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
-use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in_container};
+use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in_container, parse_release_tag};
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
@@ -192,12 +192,41 @@ pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str,
     }
 }
 
+/// First release whose provider sign-in is the current `PUT /provider` + `{kind,model,key}`
+/// contract; every earlier release serves `POST /provider` + `{openrouter_key, openrouter_model}`.
+/// LEGACY(remove-when: `previous_released_tag` >= 0.1.161 — i.e. once 0.1.160 is no longer an
+/// upgrade-from target, which holds after the 0.1.161 release): delete this, `LegacyPrePut`, and
+/// `for_daemon_tag`, leaving the upgrade test on `ProviderApi::Current`.
+const PROVIDER_PUT_CONTRACT_SINCE: [u64; 3] = [0, 1, 161];
+
+/// Which provider sign-in contract `provision_and_settle` uses. The live pool always talks to the
+/// current daemon; the upgrade e2e provisions against the previous released daemon, whose sign-in
+/// may predate the current contract — so it derives the variant from that daemon's version rather
+/// than hardcoding one, keeping the test correct for any upgrade-from version.
+#[derive(Clone, Copy)]
+pub enum ProviderApi {
+    Current,
+    /// LEGACY(remove-when: see `PROVIDER_PUT_CONTRACT_SINCE`): pre-0.1.161 sign-in shape.
+    LegacyPrePut,
+}
+
+impl ProviderApi {
+    /// The sign-in contract a daemon released as `tag` speaks. Unparseable/newer tags default to
+    /// the current contract.
+    pub fn for_daemon_tag(tag: &str) -> ProviderApi {
+        match parse_release_tag(tag) {
+            Some(parts) if parts.as_slice() < &PROVIDER_PUT_CONTRACT_SINCE[..] => ProviderApi::LegacyPrePut,
+            _ => ProviderApi::Current,
+        }
+    }
+}
+
 /// Provision a freshly-created agent for live e2e (OpenRouter provider on `live_model()`, test
 /// memory, real key) and block until it has fully settled after first-start. Shared by the live
 /// agent pool and the upgrade e2e test, both of which need a real, idle agent. Panics with
 /// diagnostics on failure, matching the pool's fail-fast behavior. Callers must have already
 /// confirmed the key exists (via `openrouter_key`).
-pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str) {
+pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str, api: ProviderApi) {
     let key = openrouter_key().expect("OPENROUTER_KEY present (caller checked)");
     let model = live_model();
 
@@ -207,7 +236,11 @@ pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, co
     exec_in_container(container, &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"))
         .expect("write test memory");
 
-    client.sign_in_openrouter(name, &key, &model).expect("sign in with OpenRouter");
+    match api {
+        ProviderApi::Current => client.sign_in_openrouter(name, &key, &model),
+        ProviderApi::LegacyPrePut => client.sign_in_openrouter_legacy_pre_put(name, &key, &model),
+    }
+    .expect("sign in with OpenRouter");
     // Restart after sign-in so the agent boots with the OpenRouter provider applied: vestad applies
     // a provider write only on the next boot, so first-start then runs entirely on the chosen model.
     client.restart_agent(name).expect("restart agent to apply provider");
@@ -251,6 +284,6 @@ fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
 
-    provision_and_settle(client, &agent.name, &container);
+    provision_and_settle(client, &agent.name, &container, ProviderApi::Current);
     Some((agent, container))
 }
