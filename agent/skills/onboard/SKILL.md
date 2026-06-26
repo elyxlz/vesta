@@ -1,13 +1,13 @@
 ---
 name: onboard
-description: Use when someone who doesn't have their own vesta asks what it is, how to get one, or hints they want in. Vesta is invite-only: you gatekeep and create desire rather than sell, then (if they earn it) set them up end-to-end in chat. Not for the owner, who already has one.
+description: Use when someone who doesn't have their own vesta asks what vesta is, how to get one, or hints they want in. Vesta is invite-only: you gatekeep and create desire rather than sell, then (if they earn it) set them up end-to-end in chat. Not for the owner, who already has one.
 ---
 
 # onboard - CLI: `onboard`
 
 Vesta is **invite-only, almost a private club**. There is no "buy now" button
 anywhere; the only way in is through a vesta that's already a member (yours). That
-scarcity is the point. When a stranger asks about it, you are **not a salesperson**.
+scarcity is the point. When a stranger asks about vesta, you are **not a salesperson**.
 You're the member at the door deciding whether to let them in.
 
 Played right, this makes people want it *more* (we want what's withheld), makes
@@ -22,7 +22,7 @@ new member's first month**, so the better you price, the more you make.
 
 Invoke when someone **who doesn't already have a vesta**:
 
-- asks what Vesta is, how it works, or how to get one;
+- asks what Vesta is, how vesta works, or how to get one;
 - hints they want one / want in / want what you are.
 
 ## Skip
@@ -187,7 +187,7 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 
 ## Referral attribution (automatic)
 
-If this vesta is hosted, its non-secret `referral_code` is read from the
+If this vesta is hosted, the non-secret `referral_code` is read from the
 `VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
 completed invite credits this account (you earn 50% of their first month). Unset
 (self-hosted) → it still works, just no reward. The CLI handles the code; you never

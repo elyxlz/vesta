@@ -9,7 +9,7 @@ conventions, the testing strategy, CI, the PR process, and the Karpathy Guidelin
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. It monitors notifications, responds to messages, and handles tasks autonomously. The agent drives Claude through the official **Claude Agent SDK** (`claude-agent-sdk`): `core/client.py` builds a `ClaudeAgentOptions`, opens a `ClaudeSDKClient`, and streams response blocks back from the SDK message stream and its native hooks.
+Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. Vesta monitors notifications, responds to messages, and handles tasks autonomously. The agent drives Claude through the official **Claude Agent SDK** (`claude-agent-sdk`): `core/client.py` builds a `ClaudeAgentOptions`, opens a `ClaudeSDKClient`, and streams response blocks back from the SDK message stream and its native hooks.
 
 > **cc_sdk is dormant — leave it alone.** `agent/core/cc_sdk/` is an in-repo SDK that drives the interactive `claude` CLI inside tmux and exposes the *same* `ClaudeSDKClient` surface. The agent used it for a stretch and it is retained deliberately as a drop-in alternative driver in case we need to return to CLI-driving (e.g. for behavior the headless SDK can't reach). It is **not** imported by `core/` anymore and is **not** on the running agent's path. Do not delete it, do not "tidy" it, and do not wire it back into `core/` without an explicit ask. Its transport tests (`tests/test_cc_sdk.py`, `tests/test_e2e_transport.py`, `tests/test_stop_race.py`) keep it healthy; keep them green.
 
@@ -210,6 +210,9 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 **Do NOT bump versions in PRs** — `release.sh` handles version bumps automatically at release time.
 
 ## Code conventions
+
+### Brand voice
+- **Never use a pronoun for Vesta.** In all copy and prose, refer to the agent as **"Vesta"**, or **"they/them/their"** where a pronoun is unavoidable. Never "she/her" or "it/its". This holds across every surface: README, app/notification strings, agent prompts and skills, and the vesta-cloud site and emails. The product is a relationship, not a gadget; one consistent voice keeps each new email or prompt from re-litigating it. (This does not apply to pronouns for other nouns: the daemon, a container, the user, a config object.)
 
 ### Python (agent/)
 - **Always `uv run`**, never bare `python`

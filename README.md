@@ -7,7 +7,7 @@ Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. In
 ## Why Vesta
 
 - **Opinionated and easy to set up.** One command to install, one command to start. No gateway, no infrastructure to manage.
-- **Self-improving.** Every way Vesta reaches the world (messaging, email, calendars) is a skill it can read and rewrite. It can edit its own source code, write new skills, and fix its own bugs: by default it stays in sync with official updates, but you can let it fully rewrite itself.
+- **Self-improving.** Every way Vesta reaches the world (messaging, email, calendars) is a skill Vesta can read and rewrite. Vesta can edit their own source code, write new skills, and fix their own bugs: by default Vesta stays in sync with official updates, but you can let them fully rewrite themselves.
 - **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
 - **Spreads by invitation.** Your Vesta can walk your friends through getting their own.
