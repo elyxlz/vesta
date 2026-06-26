@@ -30,7 +30,7 @@ jobs:
           token: ${{ secrets.RELEASE_PAT }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
 
