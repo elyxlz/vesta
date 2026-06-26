@@ -11,7 +11,7 @@ import { ContextStep } from "./ContextStep";
 import { AuthStep } from "./AuthStep";
 import { ClaudeLogo, OpenRouterLogo } from "./logos";
 import type { ProviderMode } from "./types";
-import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { useManifest } from "@/hooks/use-manifest";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -36,8 +36,8 @@ export function ProviderPicker({
   const [credentials, setCredentials] = useState<string | null>(null);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [authStartError, setAuthStartError] = useState<string | null>(null);
-  // Creation defaults (context window + presets) come from vestad, not a local copy.
-  const defaults = useAgentDefaults();
+  // Creation catalog (per-provider context window + presets) comes from the manifest, not a local copy.
+  const manifest = useManifest();
   // Claude's fixed model list; fetched only while on the Claude path.
   const claudeModels = useClaudeModels(provider === "claude");
 
@@ -64,9 +64,9 @@ export function ProviderPicker({
     };
   }, [step, authStart, authStartError]);
 
-  // Wait for vestad's defaults before rendering any step that needs the context window.
+  // Wait for the manifest before rendering any step that needs the context window.
   // The user reaches this picker after the personality step, so it is loaded in practice.
-  if (!defaults) {
+  if (!manifest) {
     return (
       <div
         className={cn(
@@ -157,7 +157,9 @@ export function ProviderPicker({
       )}
 
       <div className="w-full">
-        {step === "choice" && <ChoiceStep onPick={handleChoice} />}
+        {step === "choice" && (
+          <ChoiceStep onPick={handleChoice} manifest={manifest} />
+        )}
         {step === "auth" && (
           <AuthStep
             authStart={authStart}
@@ -176,7 +178,12 @@ export function ProviderPicker({
         )}
         {step === "model" && (
           <ModelStep
-            initialModel={model}
+            initialModel={
+              model ||
+              (provider
+                ? (manifest.providers[provider]?.default_model ?? "")
+                : "")
+            }
             onModelChange={setModel}
             onSubmit={(m) => {
               setModel(m);
@@ -188,10 +195,10 @@ export function ProviderPicker({
             onCancel={cancelToChoice}
           />
         )}
-        {step === "context" && (
+        {step === "context" && provider && (
           <ContextStep
-            presets={defaults.context_presets}
-            initial={defaults.context_tokens}
+            presets={manifest.providers[provider]?.context.presets ?? []}
+            initial={manifest.providers[provider]?.context.default ?? 0}
             onSubmit={handleContextSubmit}
             logo={stepLogo}
             onCancel={cancelToChoice}

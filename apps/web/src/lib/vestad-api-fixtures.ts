@@ -82,14 +82,6 @@ export const vestadApiFixtures = {
       "size": 1234567890
     }
   ],
-  "personality": {
-    "description": "Calm and wise",
-    "emoji": "🦉",
-    "name": "sage",
-    "order": 1,
-    "sample": "Let me think about that.",
-    "title": "The Sage"
-  },
   "tree_entry": {
     "is_dir": false,
     "mode": 420,

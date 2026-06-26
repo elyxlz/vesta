@@ -2,13 +2,15 @@
 
 Routes:
   - WS   /ws                   bidirectional event bus
-  - GET  /history              paginated event history (cursor optional)
-  - GET  /search               full-text search over events
+  - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
   - GET  /usage                normalized, provider-agnostic plan usage
-  - GET  /config               full live config + derived {authed, kind, setup_complete}
-  - PUT  /config               update preferences (model, context, thinking, personality, timezone, ...)
-  - PUT  /config/auth          sign in: set Claude/OpenRouter credentials
-  - DELETE /config/auth        sign out: clear credentials, leaving not_authenticated
+  - GET  /status               operational readiness: {authed, setup_complete} (vestad polls this)
+  - GET  /config               prefs only (personality, timezone, seed_context, operational)
+  - PUT  /config               update prefs (provider is set via /provider)
+  - GET  /provider             active provider (configured fields) + derived {authed}
+  - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
+  - PATCH /provider            change model / context / thinking on the active provider
+  - DELETE /provider           sign out: clear credentials, leaving not_authenticated
   Writes don't restart; the caller applies them with one restart afterwards.
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
@@ -18,6 +20,7 @@ import asyncio
 import dataclasses as dc
 import json
 import logging
+import typing as tp
 import sqlite3
 import weakref
 
@@ -26,7 +29,7 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from .config import VestaConfig, update_config_store, validate_config_updates
+from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
@@ -116,12 +119,14 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
 
 
 async def _history_handler(request: web.Request) -> web.Response:
-    """Paginated event history.
+    """Paginated event history, or full-text search when `q` is given (both return matching events in
+    the same shape; search has no cursor).
 
     Query params:
-      cursor  (int, optional): fetch events before this id. Omit for most recent.
-      limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE).
-      channel (str, optional): "app-chat" filters to the conversation event types.
+      q       (str, optional): FTS5 search; returns events ranked by relevance (cursor is null).
+      cursor  (int, optional): fetch events before this id. Omit for most recent. Ignored with `q`.
+      limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE; 20 for search).
+      channel (str, optional): "app-chat" filters to the conversation event types. Ignored with `q`.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -130,6 +135,20 @@ async def _history_handler(request: web.Request) -> web.Response:
         limit = int(limit_raw) if limit_raw else None
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
+
+    query = request.query.get("q", "").strip()
+    if query:
+        try:
+            events = event_bus.search(query, limit=limit if limit is not None else 20)
+        except sqlite3.OperationalError as e:
+            # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
+            logger.warning(f"search query rejected: {e}")
+            return web.json_response({"error": "invalid search query"}, status=400)
+        except sqlite3.Error as e:
+            # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
+            logger.error(f"search failed for query={query!r}: {e}")
+            return web.json_response({"error": "search failed"}, status=500)
+        return web.json_response({"events": events, "cursor": None})
 
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
@@ -147,35 +166,6 @@ async def _history_handler(request: web.Request) -> web.Response:
     return web.json_response({"events": events, "cursor": next_cursor})
 
 
-async def _search_handler(request: web.Request) -> web.Response:
-    """Full-text search over events.
-
-    Query params:
-      q     (str, required): FTS5 search query.
-      limit (int, optional): max results (default: 20).
-    """
-    event_bus: EventBus = request.app["event_bus"]
-    query = request.query.get("q", "").strip()
-    if not query:
-        return web.json_response({"error": "missing 'q' param"}, status=400)
-    limit_raw = request.query.get("limit", "")
-    try:
-        limit = int(limit_raw) if limit_raw else 20
-    except ValueError:
-        return web.json_response({"error": "invalid limit"}, status=400)
-    try:
-        results = event_bus.search(query, limit=limit)
-    except sqlite3.OperationalError as e:
-        # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
-        logger.warning(f"search query rejected: {e}")
-        return web.json_response({"error": "invalid search query"}, status=400)
-    except sqlite3.Error as e:
-        # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
-        logger.error(f"search failed for query={query!r}: {e}")
-        return web.json_response({"error": "search failed"}, status=500)
-    return web.json_response({"results": results})
-
-
 async def _usage_handler(request: web.Request) -> web.Response:
     """Report normalized, provider-agnostic plan usage for the agent's active provider."""
     config = request.app["config"]
@@ -187,96 +177,25 @@ async def _usage_handler(request: web.Request) -> web.Response:
     return web.json_response(dc.asdict(usage))
 
 
-class _ProviderUpdate(pyd.BaseModel):
-    """The `auth` sub-object of a PUT /config body: exactly one of `{credentials}` (Claude) or
-    `{openrouter_key, openrouter_model}` (OpenRouter)."""
-
-    model_config = pyd.ConfigDict(extra="forbid")
-
-    credentials: str | None = None
-    openrouter_key: str | None = None
-    openrouter_model: str | None = None
-
-    @pyd.model_validator(mode="after")
-    def _exactly_one_provider(self) -> "_ProviderUpdate":
-        if (self.credentials is None) == (self.openrouter_key is None):
-            raise ValueError("provide exactly one of credentials or openrouter_key")
-        if self.openrouter_key is not None and not self.openrouter_model:
-            raise ValueError("openrouter_model is required with openrouter_key")
-        return self
-
-
-async def _config_auth_put_handler(request: web.Request) -> web.Response:
-    """Sign in: set provider credentials (`{credentials}` for Claude, `{openrouter_key,
-    openrouter_model}` for OpenRouter). Writes the credential files + config store; the change is
-    applied by the next restart (callers write, then restart once)."""
-    state: State = request.app["state"]
-    config: VestaConfig = request.app["config"]
-    if state.provider_status is None:
-        return web.json_response({"error": "provider not initialized"}, status=503)
-    try:
-        update = _ProviderUpdate.model_validate(await request.json())
-    except (json.JSONDecodeError, TypeError):
-        return web.json_response({"error": "invalid json body"}, status=400)
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid auth: {e.errors(include_url=False)}"}, status=400)
-    try:
-        if update.credentials is not None:
-            state.provider_status = set_claude(update.credentials, config=config)
-        elif update.openrouter_key is not None and update.openrouter_model is not None:
-            state.provider_status = set_openrouter(update.openrouter_key, update.openrouter_model, config=config)
-    except (json.JSONDecodeError, TypeError) as e:
-        return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
-    except OSError as e:
-        return web.json_response({"error": f"auth write failed: {e}"}, status=500)
-    return web.json_response({"ok": True})
-
-
-async def _config_auth_delete_handler(request: web.Request) -> web.Response:
-    """Sign out: clear the provider credentials, leaving the agent not_authenticated. Idempotent.
-    Applied by the next restart."""
-    state: State = request.app["state"]
-    config: VestaConfig = request.app["config"]
-    try:
-        state.provider_status = clear_provider(config=config)
-    except OSError as e:
-        return web.json_response({"error": f"clear_provider failed: {e}"}, status=500)
-    return web.json_response({"ok": True})
-
-
 async def _config_get_handler(request: web.Request) -> web.Response:
-    """The full live config (every key, secrets redacted by SecretStr) plus the derived provider state
-    the client needs to render settings: `authed`, `kind`, and `setup_complete`. Model and context are
-    plain config fields here, so there's one read surface for everything the app shows."""
+    """Prefs only (personality, timezone, seed_context, operational), secrets redacted. The provider
+    is its own resource at GET /provider."""
     config: VestaConfig = request.app["config"]
-    state: State = request.app["state"]
-    status = state.provider_status
-    return web.json_response(
-        {
-            **config.model_dump(mode="json"),
-            "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
-            "kind": status.kind if status is not None else "none",
-            # vestad gates "alive" on this: an authenticated agent that hasn't yet finished first-start
-            # setup (or whose first model call failed) is not ready.
-            "setup_complete": state.persisted.first_start_done,
-        }
-    )
-
-
-async def _config_schema_handler(request: web.Request) -> web.Response:
-    """The config's JSON schema, so the client renders/filters the settings UI off the one model."""
-    return web.json_response(VestaConfig.model_json_schema())
+    data = stored_config(config)
+    data.pop("provider", None)
+    return web.json_response(data)
 
 
 async def _config_put_handler(request: web.Request) -> web.Response:
-    """Update the agent's preferences (model, context, thinking, personality, timezone, seed_context).
-    Writes the config store; the change is applied by the next restart (callers write, then restart
-    once). Credentials are not set here — they go through PUT/DELETE /config/auth."""
+    """Update prefs (personality, timezone, seed_context). The provider is set via /provider, not here.
+    Applied by the next restart (callers write, then restart once)."""
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
+    if isinstance(data, dict) and "provider" in data:
+        return web.json_response({"error": "provider is set via PUT/PATCH /provider"}, status=400)
     try:
         updates = validate_config_updates(config, data)
     except pyd.ValidationError as e:
@@ -289,6 +208,126 @@ async def _config_put_handler(request: web.Request) -> web.Response:
         update_config_store(updates)
     except OSError as e:
         return web.json_response({"error": f"failed to write config: {e}"}, status=500)
+    return web.json_response({"ok": True})
+
+
+class _ClaudeSignIn(pyd.BaseModel):
+    kind: tp.Literal["claude"]
+    # None on re-auth: preserve the agent's existing model rather than reset it.
+    model: tp.Literal["opus", "sonnet", "haiku"] | None = None
+    max_context_tokens: int | None = None
+    credentials: str
+
+
+class _OpenRouterSignIn(pyd.BaseModel):
+    kind: tp.Literal["openrouter"]
+    model: str
+    max_context_tokens: int | None = None
+    key: str
+
+
+_ProviderSignIn = tp.Annotated[_ClaudeSignIn | _OpenRouterSignIn, pyd.Field(discriminator="kind")]
+_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn] = pyd.TypeAdapter(_ProviderSignIn)
+
+
+class _ProviderPrefs(pyd.BaseModel):
+    """The PATCH /provider body: change the active provider's settable knobs (no credential change)."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    model: str | None = None
+    max_context_tokens: int | None = None
+    thinking: str | None = None
+
+
+async def _provider_get_handler(request: web.Request) -> web.Response:
+    """The active provider: its configured fields (key redacted, oauth excluded) plus the derived
+    `authed` flag (whether its credentials are currently valid). Readiness lives at GET /status."""
+    config: VestaConfig = request.app["config"]
+    state: State = request.app["state"]
+    status = state.provider_status
+    provider = stored_config(config)["provider"]
+    body = dict(provider) if isinstance(provider, dict) else {}
+    body["authed"] = status is not None and status.state == ProviderAuthState.AUTHENTICATED
+    return web.json_response(body)
+
+
+async def _status_handler(request: web.Request) -> web.Response:
+    """The agent's operational readiness: whether the active provider is authenticated and whether
+    first-start has finished. vestad polls this to gate Alive vs SettingUp vs NotAuthenticated (an
+    authenticated agent that hasn't finished first-start is not yet ready)."""
+    state: State = request.app["state"]
+    status = state.provider_status
+    return web.json_response(
+        {
+            "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
+            "setup_complete": state.persisted.first_start_done,
+        }
+    )
+
+
+async def _provider_put_handler(request: web.Request) -> web.Response:
+    """Sign in / switch provider: `{kind:"claude", model, credentials}` (OAuth blob written to the SDK
+    file, never stored) or `{kind:"openrouter", model, key}`. Applied by the next restart."""
+    state: State = request.app["state"]
+    config: VestaConfig = request.app["config"]
+    try:
+        raw = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    try:
+        signin = _SIGN_IN_ADAPTER.validate_python(raw)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
+    try:
+        if isinstance(signin, _ClaudeSignIn):
+            state.provider_status = set_claude(signin.credentials, signin.model, signin.max_context_tokens, config=config)
+        else:
+            state.provider_status = set_openrouter(signin.key, signin.model, signin.max_context_tokens, config=config)
+    except (json.JSONDecodeError, TypeError) as e:
+        return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
+    except OSError as e:
+        return web.json_response({"error": f"auth write failed: {e}"}, status=500)
+    return web.json_response({"ok": True})
+
+
+async def _provider_patch_handler(request: web.Request) -> web.Response:
+    """Change the active provider's settable knobs (model / context / thinking), deep-merged onto the
+    current provider and re-validated. No credential change. Applied by the next restart."""
+    config: VestaConfig = request.app["config"]
+    try:
+        raw = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    try:
+        prefs = _ProviderPrefs.model_validate(raw)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider prefs: {e.errors(include_url=False)}"}, status=400)
+    patch = prefs.model_dump(exclude_unset=True)
+    if not patch:
+        return web.json_response({"error": "no provider fields provided"}, status=400)
+    try:
+        updates = validate_config_updates(config, {"provider": patch})
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    try:
+        update_config_store(updates)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
+    return web.json_response({"ok": True})
+
+
+async def _provider_delete_handler(request: web.Request) -> web.Response:
+    """Sign out: clear the provider credentials, resetting to a valid signed-out state. Idempotent.
+    Applied by the next restart."""
+    state: State = request.app["state"]
+    config: VestaConfig = request.app["config"]
+    try:
+        state.provider_status = clear_provider(config=config)
+    except OSError as e:
+        return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})
 
 
@@ -349,13 +388,14 @@ async def start_ws_server(
     app.on_shutdown.append(_close_all_websockets)
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
-    app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/status", _status_handler)
     app.router.add_get("/config", _config_get_handler)
-    app.router.add_get("/config/schema", _config_schema_handler)
     app.router.add_put("/config", _config_put_handler)
-    app.router.add_put("/config/auth", _config_auth_put_handler)
-    app.router.add_delete("/config/auth", _config_auth_delete_handler)
+    app.router.add_get("/provider", _provider_get_handler)
+    app.router.add_put("/provider", _provider_put_handler)
+    app.router.add_patch("/provider", _provider_patch_handler)
+    app.router.add_delete("/provider", _provider_delete_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

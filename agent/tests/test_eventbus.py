@@ -231,14 +231,14 @@ def test_search(event_bus):
 
     results = event_bus.search("paris")
     assert len(results) == 2
-    assert any("paris" in r["content"] for r in results)
+    assert any("paris" in r["text"] for r in results)
 
     results = event_bus.search("london")
     assert len(results) == 2
 
     results = event_bus.search("sunny")
     assert len(results) == 1
-    assert results[0]["role"] == "chat"
+    assert results[0]["type"] == "chat"
 
 
 def test_search_no_results(event_bus):

@@ -322,12 +322,14 @@ class EventBus:
             return self._conversation_page(limit, cursor)
         return self._page(("id < ?",), (cursor,), limit)
 
-    def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
+    def search(self, query: str, *, limit: int = 20) -> list[StreamEvent]:
+        """Full-text search over events, returning the matching events in the same shape as recent()
+        (so /history can serve both recency and search), ranked by FTS relevance decayed toward recent."""
         if not self._conn:
             return []
         rows = self._conn.execute(
             """
-            SELECT e.ts, json_extract(e.data, '$.type') AS role, json_extract(e.data, '$.text') AS content,
+            SELECT e.data,
                    f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
             FROM events_fts f
             JOIN events e ON e.id = f.rowid
@@ -337,7 +339,7 @@ class EventBus:
             """,
             (_RECENCY_DECAY_RATE, query, limit),
         ).fetchall()
-        return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
+        return [json.loads(r[0]) for r in rows]
 
     def close(self) -> None:
         if self._conn:

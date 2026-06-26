@@ -444,64 +444,6 @@ async fn tunnel_handler(
     }
 }
 
-#[derive(Deserialize)]
-struct PresetFrontmatter {
-    #[serde(default)]
-    emoji: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    sample: String,
-    #[serde(default = "default_preset_order")]
-    order: u32,
-}
-
-fn default_preset_order() -> u32 {
-    u32::MAX
-}
-
-#[derive(Serialize)]
-struct Personality {
-    name: String,
-    emoji: String,
-    title: String,
-    description: String,
-    sample: String,
-    order: u32,
-}
-
-async fn list_personalities_handler() -> Json<Vec<Personality>> {
-    const PREFIX: &str = "skills/personality/presets/";
-    let mut results: Vec<Personality> = Vec::new();
-
-    for path in crate::agent_embed::AgentSource::iter() {
-        let Some(rest) = path.strip_prefix(PREFIX) else { continue };
-        let Some(name) = rest.strip_suffix(".md") else { continue };
-        let Some(file) = crate::agent_embed::AgentSource::get(&path) else { continue };
-        let Ok(content) = std::str::from_utf8(&file.data) else { continue };
-
-        // Preset files open with a YAML frontmatter block delimited by `---`
-        let Some(rest) = content.strip_prefix("---\n") else { continue };
-        let Some((yaml, _body)) = rest.split_once("\n---") else { continue };
-        let Ok(meta) = serde_yaml::from_str::<PresetFrontmatter>(yaml) else { continue };
-
-        let title = if meta.title.is_empty() { name.replace('-', " ") } else { meta.title };
-
-        results.push(Personality {
-            name: name.to_string(),
-            emoji: meta.emoji,
-            title,
-            description: meta.description,
-            sample: meta.sample,
-            order: meta.order,
-        });
-    }
-
-    results.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
-    Json(results)
-}
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
@@ -789,10 +731,12 @@ pub(crate) async fn drop_rename_notification(
 enum AgentWrite {
     /// The agent's `PUT /config` — a sparse preferences diff.
     Config(serde_json::Value),
-    /// The agent's `PUT /config/auth` — set provider credentials (sign in).
-    Auth(serde_json::Value),
-    /// The agent's `DELETE /config/auth` — clear credentials (sign out).
-    ClearAuth,
+    /// The agent's `PUT /provider` — sign in / switch provider.
+    Provider(serde_json::Value),
+    /// The agent's `PATCH /provider` — change model / context / thinking.
+    PatchProvider(serde_json::Value),
+    /// The agent's `DELETE /provider` — clear credentials (sign out).
+    ClearProvider,
 }
 
 /// Forward a write to the agent's own HTTP API. Writes only set desired state — they do NOT restart;
@@ -819,15 +763,15 @@ async fn write_to_agent(
     let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
-        AgentWrite::Auth(body) => provider.put_auth(&body).await,
-        AgentWrite::ClearAuth => provider.delete_auth().await,
+        AgentWrite::Provider(body) => provider.put_provider(&body).await,
+        AgentWrite::PatchProvider(body) => provider.patch_provider(&body).await,
+        AgentWrite::ClearProvider => provider.delete_provider().await,
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(serde_json::json!({"ok": true, "restart_required": true})))
 }
 
-/// Relay the agent's `GET /config` (config plus derived auth state; the agent owns it, vestad proxies
-/// it to the app).
+/// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -850,21 +794,44 @@ async fn set_config_handler(
     write_to_agent(&state, &name, AgentWrite::Config(body)).await
 }
 
-/// Sign in: forward credentials to the agent's `PUT /config/auth`. Write only — caller restarts to apply.
-async fn set_auth_handler(
+/// Relay the agent's `GET /provider` (active provider + derived auth state; vestad proxies it).
+async fn get_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    provider
+        .get_provider()
+        .await
+        .map(Json)
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))
+}
+
+/// Sign in / switch: forward the provider body to the agent's `PUT /provider`. Write only — caller restarts.
+async fn set_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent(&state, &name, AgentWrite::Auth(body)).await
+    write_to_agent(&state, &name, AgentWrite::Provider(body)).await
 }
 
-/// Sign out: forward to the agent's `DELETE /config/auth`. Write only — caller restarts to apply.
-async fn clear_auth_handler(
+/// Change model / context / thinking: forward to the agent's `PATCH /provider`. Write only — caller restarts.
+async fn patch_provider_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    write_to_agent(&state, &name, AgentWrite::PatchProvider(body)).await
+}
+
+/// Sign out: forward to the agent's `DELETE /provider`. Write only — caller restarts to apply.
+async fn clear_provider_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    write_to_agent(&state, &name, AgentWrite::ClearAuth).await
+    write_to_agent(&state, &name, AgentWrite::ClearProvider).await
 }
 
 // --- SSE Logs ---
@@ -2035,9 +2002,7 @@ pub fn build_router(state: SharedState) -> Router {
         // public onboarding UI). Unauthenticated so every frontend reads it the same way — the
         // app, the CLI, and the onboard skill (just another frontend hitting its own box's vestad
         // over the loopback), none of which then need to keep a hardcoded copy.
-        .route("/personalities", get(list_personalities_handler))
-        .route("/providers/claude/models", get(crate::providers::claude::list_models_handler))
-        .route("/agent-defaults", get(crate::defaults::agent_defaults_handler));
+        .route("/manifest", get(crate::manifest::manifest_handler));
 
     // Control/JSON routes: bounded request/response handlers. A finite TimeoutLayer caps each
     // request so a stalled docker/restic call cannot hold a connection open indefinitely.
@@ -2067,7 +2032,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
-        .route("/agents/{name}/config/auth", put(set_auth_handler).delete(clear_auth_handler))
+        .route(
+            "/agents/{name}/provider",
+            get(get_provider_handler)
+                .put(set_provider_handler)
+                .patch(patch_provider_handler)
+                .delete(clear_provider_handler),
+        )
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
         .route("/agents/{name}/file", axum::routing::put(write_file_handler))
@@ -2648,7 +2619,7 @@ mod tests {
     // those fixtures against its TypeScript types, so a wire format change on
     // either side fails CI instead of breaking clients at runtime.
 
-    use super::{Personality, ServiceEntry, TreeEntry};
+    use super::{ServiceEntry, TreeEntry};
     use crate::providers::claude::OAuthStartResponse;
     use crate::docker::{AgentStatus, ListEntry, StatusJson};
     use crate::types::{BackupInfo, BackupType};
@@ -2718,16 +2689,6 @@ mod tests {
         })
         .expect("serialize OAuthStartResponse");
 
-        let personality = serde_json::to_value(Personality {
-            name: "sage".into(),
-            emoji: "\u{1f989}".into(),
-            title: "The Sage".into(),
-            description: "Calm and wise".into(),
-            sample: "Let me think about that.".into(),
-            order: 1,
-        })
-        .expect("serialize Personality");
-
         let tree_entry = serde_json::to_value(TreeEntry {
             path: "notes/todo.md".into(),
             is_dir: false,
@@ -2753,7 +2714,6 @@ mod tests {
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,
-            "personality": personality,
             "tree_entry": tree_entry,
             "version": version,
         })

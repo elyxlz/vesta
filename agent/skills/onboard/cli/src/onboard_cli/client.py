@@ -62,10 +62,11 @@ class Client:
             raise OnboardError("missing AGENT_TOKEN — cannot authenticate to vestad")
         url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
         data = self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
-        token = data.get("token")
+        token = data["token"] if "token" in data else None
         if not token:
             # A non-cloud-managed box answers 404 {error}; surface it verbatim.
-            raise OnboardError(data.get("error") or "vestad did not return a server-identity token")
+            error = data["error"] if "error" in data else ""
+            raise OnboardError(error or "vestad did not return a server-identity token")
         return token
 
     # --- vestad: read-only reference data over the loopback ------------------
@@ -85,14 +86,23 @@ class Client:
         except ValueError:
             raise OnboardError(f"vestad {path} returned non-JSON ({resp.status_code})") from None
 
+    def fetch_manifest(self) -> dict[str, Any]:
+        return self._vestad_get("/manifest")
+
     def fetch_agent_defaults(self) -> dict[str, Any]:
-        return self._vestad_get("/agent-defaults")
+        # Read straight from the manifest, the single source of these defaults (the default provider's
+        # default model + the default personality). A missing key is a real error, not a silent default.
+        manifest = self.fetch_manifest()
+        provider = manifest["providers"][manifest["default_provider"]]
+        return {"model": provider["default_model"], "personality": manifest["default_personality"]}
 
     def fetch_personalities(self) -> list[dict[str, Any]]:
-        return self._vestad_get("/personalities")
+        # The personality catalog the manifest carries (merged from the skill presets by vestad).
+        return self.fetch_manifest()["personalities"]
 
     def fetch_claude_models(self) -> list[dict[str, Any]]:
-        return self._vestad_get("/providers/claude/models")
+        # Claude's model catalog lives in the manifest (slugs); shape them as {id} for the picker.
+        return [{"id": slug} for slug in self.fetch_manifest()["providers"]["claude"]["models"]]
 
     # --- control plane: account pre-create (authed as THIS vesta) ------------
 
@@ -132,7 +142,8 @@ class Client:
         if 400 <= resp.status_code < 500:
             return None  # invalid/expired code — a normal, surfaced outcome
         data = self._json(resp)  # raises on 5xx (real transport/server failure)
-        return resp.headers.get("set-auth-token") or data.get("token")
+        body_token = data["token"] if "token" in data else None
+        return resp.headers.get("set-auth-token") or body_token
 
     # --- control plane: onboarding (authed as the buyer) ---------------------
 
@@ -169,7 +180,7 @@ class Client:
                 headers=self._auth(token),
             )
         )
-        access = data.get("access_token")
+        access = data["access_token"] if "access_token" in data else None
         if not access:
             raise OnboardError("control plane did not return a server token")
         return access
@@ -192,7 +203,7 @@ class Client:
         """POST <tenant>/providers/claude/oauth/complete -> the credentials blob."""
         url = f"{self._cfg.tenant_base(subdomain)}/providers/claude/oauth/complete"
         data = self._json(self._raw_post(url, json={"session_id": session_id, "code": code}, token=server_token))
-        creds = data.get("credentials")
+        creds = data["credentials"] if "credentials" in data else None
         if not creds:
             raise OnboardError("OAuth completion returned no credentials")
         return creds
@@ -208,20 +219,21 @@ class Client:
         personality: str | None = None,
         seed_context: str | None = None,
     ) -> dict[str, Any]:
-        """Provision the agent: write its preferences (PUT /config) and Claude credentials
-        (PUT /config/auth), then restart once so it wakes with everything in place. Writes don't
-        restart on their own, so this is several writes + a single restart."""
+        """Provision the agent: sign in the Claude provider (PUT /provider, model folded in) and write
+        its preferences (PUT /config), then restart once so it wakes with everything in place. Writes
+        don't restart on their own, so this is several writes + a single restart."""
         base = self._cfg.tenant_base(subdomain)
-        prefs: dict[str, Any] = {}
+        provider: dict[str, Any] = {"kind": "claude", "credentials": credentials}
         if model:
-            prefs["agent_model"] = model
+            provider["model"] = model
+        self._json(self._raw_put(f"{base}/agents/{name}/provider", json=provider, token=server_token, timeout=120))
+        prefs: dict[str, Any] = {}
         if personality:
             prefs["agent_personality"] = personality
         if seed_context:
             prefs["seed_context"] = seed_context
         if prefs:
             self._json(self._raw_put(f"{base}/agents/{name}/config", json=prefs, token=server_token, timeout=120))
-        self._json(self._raw_put(f"{base}/agents/{name}/config/auth", json={"credentials": credentials}, token=server_token, timeout=120))
         return self._json(self._raw_post(f"{base}/agents/{name}/restart", json={}, token=server_token, timeout=120))
 
     # --- low-level helpers ---------------------------------------------------

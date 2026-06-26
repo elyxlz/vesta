@@ -121,8 +121,11 @@ def _config_with_memory(tmp_path, **overrides):
     return config
 
 
+_OPENROUTER = {"kind": "openrouter", "model": "deepseek/deepseek-v4-flash", "key": "sk-or-test"}
+
+
 def test_build_client_options_uses_proxy_url(tmp_path, state):
-    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4-flash")
+    config = _config_with_memory(tmp_path, provider=_OPENROUTER)
     state.openrouter_proxy_url = "http://127.0.0.1:54321"
     options = build_client_options(config, state)
     assert options.env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:54321"
@@ -131,6 +134,6 @@ def test_build_client_options_uses_proxy_url(tmp_path, state):
 def test_build_client_options_requires_proxy_for_openrouter(tmp_path, state):
     import pytest
 
-    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4-flash")
+    config = _config_with_memory(tmp_path, provider=_OPENROUTER)
     with pytest.raises(RuntimeError):
         build_client_options(config, state)

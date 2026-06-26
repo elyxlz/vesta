@@ -47,7 +47,7 @@ import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
 import { useProvider } from "@/hooks/use-provider";
 import { useClaudeModels } from "@/hooks/use-claude-models";
-import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { useManifest } from "@/hooks/use-manifest";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useUsage } from "./use-usage";
@@ -96,9 +96,9 @@ export function ProviderCard() {
   // is reflected here without a manual reload.
   const { provider, refresh } = useProvider(name, agent?.status);
   const claudeModels = useClaudeModels(provider?.kind === "claude");
-  // Context-window presets are owned by vestad (GET /agent-defaults); the
-  // context dialog needs them just like the setup wizard does.
-  const defaults = useAgentDefaults();
+  // Context-window presets come from the manifest (GET /manifest); the context dialog needs the
+  // active provider's presets just like the setup wizard does.
+  const manifest = useManifest();
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
@@ -171,7 +171,8 @@ export function ProviderCard() {
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-xs text-muted-foreground">
-              {isOpenRouter ? "OpenRouter" : "Claude account"}
+              {manifest?.providers[provider.kind]?.display ??
+                (isOpenRouter ? "OpenRouter" : "Claude account")}
             </span>
             <div className="flex min-w-0 items-center gap-2">
               <span
@@ -338,7 +339,7 @@ export function ProviderCard() {
             <div className="flex flex-col items-center gap-3 py-4">
               <ProgressBar message="changing context window, restarting agent..." />
             </div>
-          ) : !defaults ? (
+          ) : !manifest ? (
             <div className="flex w-full flex-col gap-1.5 py-2">
               <Skeleton className="h-12 w-full rounded-xl" />
               <Skeleton className="h-12 w-full rounded-xl" />
@@ -347,8 +348,14 @@ export function ProviderCard() {
           ) : (
             <div className="flex flex-col items-center gap-4 py-2">
               <ContextStep
-                presets={defaults.context_presets}
-                initial={provider.max_context_tokens ?? defaults.context_tokens}
+                presets={
+                  manifest.providers[provider.kind]?.context.presets ?? []
+                }
+                initial={
+                  provider.max_context_tokens ??
+                  manifest.providers[provider.kind]?.context.default ??
+                  0
+                }
                 submitLabel="apply"
                 onSubmit={(tokens) => void applyContext(tokens)}
               />

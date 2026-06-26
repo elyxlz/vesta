@@ -33,7 +33,7 @@ import aiohttp
 from aiohttp import web
 
 from . import logger
-from .config import VestaConfig
+from .config import OpenRouterConfig, VestaConfig
 from .models import State
 from .provider import OPENROUTER_SMALL_FAST_MODEL
 from .provider import TERMINAL_PROVIDER_ERRORS, observed_provider_failure
@@ -289,16 +289,14 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
     started = False
     try:
         providers: dict[str, str | None] = {}
-        if config.openrouter_key is not None:
-            key = config.openrouter_key.get_secret_value()
-            models = [config.agent_model]
+        if isinstance(config.provider, OpenRouterConfig):
+            key = config.provider.key.get_secret_value()
+            models = [config.provider.model]
             if OPENROUTER_SMALL_FAST_MODEL not in models:
                 models.append(OPENROUTER_SMALL_FAST_MODEL)
             # Probe models concurrently so boot isn't serialized across them.
             resolved = await asyncio.gather(*(_resolve_provider(client, model, key) for model in models))
             providers = dict(zip(models, resolved))
-        else:
-            logger.warning("OpenRouter caching: no key to probe with; proxy passes through uncached")
 
         app = web.Application()
         app["providers"] = providers

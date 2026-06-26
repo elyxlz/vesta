@@ -2,27 +2,18 @@ import type { FC } from "react";
 import { ClaudeLogo, OpenRouterLogo } from "./logos";
 import type { ProviderMode } from "./types";
 
-// Single source of truth for which providers the picker offers and how they're
-// branded. ChoiceStep renders its cards from this list and each step resolves
-// its logo here, so adding a provider is one entry (+ its logo + flow wiring in
-// ProviderPicker) rather than edits scattered across components.
+// Brand art + UI copy that isn't in the manifest (logo, tagline). The provider's display NAME comes
+// from the manifest (manifest.providers[id].display), so it isn't hardcoded here.
 export interface ProviderMeta {
   id: ProviderMode;
-  label: string;
   tagline: string;
   Logo: FC<{ className?: string }>;
 }
 
 export const PROVIDERS: ProviderMeta[] = [
-  {
-    id: "claude",
-    label: "Claude account",
-    tagline: "sign in with Claude (OAuth)",
-    Logo: ClaudeLogo,
-  },
+  { id: "claude", tagline: "sign in with Claude (OAuth)", Logo: ClaudeLogo },
   {
     id: "openrouter",
-    label: "OpenRouter key",
     tagline: "pay per token via OpenRouter",
     Logo: OpenRouterLogo,
   },

@@ -18,77 +18,72 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// A sparse settings diff for `updateSettings`. `auth` sets provider credentials (Claude or
-/// OpenRouter); every other field is a preference. All optional — send only what changes.
-export interface AgentSettings {
-  auth?:
-    | { credentials: string }
-    | { openrouter_key: string; openrouter_model: string };
-  agent_model?: string;
-  max_context_tokens?: number;
-  agent_personality?: string;
-  timezone?: string;
-}
+/// The nested provider body for `PUT /provider` (sign in / switch). The claude OAuth blob travels as
+/// a transient `credentials` field (written to the SDK file, never stored); openrouter carries `key`.
+type ProviderBody =
+  | {
+      kind: "claude";
+      credentials: string;
+      model?: string;
+      max_context_tokens?: number;
+    }
+  | {
+      kind: "openrouter";
+      model: string;
+      key: string;
+      max_context_tokens?: number;
+    };
 
-/// Apply a settings change: write the preferences (`PUT /config`) and/or credentials
-/// (`PUT /config/auth`), then restart the agent once to apply. The writes don't restart on their own,
-/// so a fresh agent gets its model + credentials in a single race-free restart.
-export async function updateSettings(
-  name: string,
-  settings: AgentSettings,
-): Promise<void> {
-  const { auth, ...prefs } = settings;
-  const hasPrefs = Object.keys(prefs).length > 0;
-  const enc = encodeURIComponent(name);
-  if (hasPrefs) {
-    await apiFetch(`/agents/${enc}/config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(prefs),
-    });
-  }
-  if (auth) {
-    await apiFetch(`/agents/${enc}/config/auth`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(auth),
-    });
-  }
-  if (hasPrefs || auth) await restartAgent(name);
-}
-
-/// Provision/attach a provider: map the chosen `ProviderResult` to the `auth` sub-object and send it
-/// with any preferences in one settings write. OpenRouter's model rides its auth body, so only Claude
-/// carries an explicit agent_model. Re-provisioning an existing agent omits timezone/personality to
-/// keep the agent's own.
+/// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
+/// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
+/// existing agent omits timezone/personality to keep the agent's own.
 export async function setProvider(
   name: string,
   result: ProviderResult,
   personality?: string,
   timezone?: string,
 ): Promise<void> {
-  const settings: AgentSettings = {
-    auth:
-      result.kind === "claude"
-        ? { credentials: result.credentials }
-        : {
-            openrouter_key: result.config.key,
-            openrouter_model: result.config.model,
-          },
-  };
-  if (result.kind === "claude" && result.model)
-    settings.agent_model = result.model;
-  if (result.maxContextTokens != null)
-    settings.max_context_tokens = result.maxContextTokens;
-  if (personality) settings.agent_personality = personality;
-  if (timezone) settings.timezone = timezone;
-  await updateSettings(name, settings);
+  const enc = encodeURIComponent(name);
+  const body: ProviderBody =
+    result.kind === "claude"
+      ? {
+          kind: "claude",
+          credentials: result.credentials,
+          ...(result.model ? { model: result.model } : {}),
+          ...(result.maxContextTokens != null
+            ? { max_context_tokens: result.maxContextTokens }
+            : {}),
+        }
+      : {
+          kind: "openrouter",
+          model: result.config.model,
+          key: result.config.key,
+          ...(result.maxContextTokens != null
+            ? { max_context_tokens: result.maxContextTokens }
+            : {}),
+        };
+  await apiFetch(`/agents/${enc}/provider`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const prefs: Record<string, string> = {};
+  if (personality) prefs.agent_personality = personality;
+  if (timezone) prefs.timezone = timezone;
+  if (Object.keys(prefs).length > 0) {
+    await apiFetch(`/agents/${enc}/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    });
+  }
+  await restartAgent(name);
 }
 
-/// Sign out: clear the agent's provider credentials (`DELETE /config/auth`), then restart so it boots
+/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
 /// not_authenticated.
 export async function signOutProvider(name: string): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config/auth`, {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
   await restartAgent(name);
@@ -100,25 +95,38 @@ export interface ProviderInfo {
   max_context_tokens: number | null;
 }
 
-/// Read an agent's current provider (kind + model), derived from its `GET /config`. `kind` is
-/// optional in the response: an agent still on pre-unification core returns a plain config dump with
-/// no derived `kind`, so we default to "none" rather than letting `providerMeta(undefined)` throw.
+/// Read an agent's active provider from its `GET /provider`. An unauthenticated agent (no creds, or
+/// signed out) reports `authed: false`, which we surface as `kind: "none"` for the UI.
 export async function getProvider(name: string): Promise<ProviderInfo> {
-  const config = await apiJson<{
-    kind?: ProviderInfo["kind"];
-    agent_model: string | null;
+  const provider = await apiJson<{
+    kind?: "claude" | "openrouter";
+    model: string | null;
     max_context_tokens: number | null;
-  }>(`/agents/${encodeURIComponent(name)}/config`);
+    authed?: boolean;
+  }>(`/agents/${encodeURIComponent(name)}/provider`);
   return {
-    kind: config.kind ?? "none",
-    model: config.agent_model,
-    max_context_tokens: config.max_context_tokens,
+    kind: provider.authed ? (provider.kind ?? "none") : "none",
+    model: provider.model,
+    max_context_tokens: provider.max_context_tokens,
   };
 }
 
-/// Change only the model preference. Vestad restarts the agent so it takes effect.
+/// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.
+async function patchProvider(
+  name: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  await restartAgent(name);
+}
+
+/// Change only the model. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await updateSettings(name, { agent_model: model });
+  await patchProvider(name, { model });
 }
 
 /// Change only the context window. Vestad restarts the agent so it takes effect.
@@ -126,7 +134,7 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await updateSettings(name, { max_context_tokens: maxContextTokens });
+  await patchProvider(name, { max_context_tokens: maxContextTokens });
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,

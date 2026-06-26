@@ -1,30 +1,20 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchPersonalities, type Personality } from "@/api/personalities";
-import { useAgentDefaults } from "@/hooks/use-agent-defaults";
+import { useManifest } from "@/hooks/use-manifest";
 
 export function PersonalityStep({
   onPicked,
 }: {
   onPicked: (name: string) => void;
 }) {
-  const [personalities, setPersonalities] = useState<Personality[] | null>(
-    null,
-  );
-  const [loadError, setLoadError] = useState<string | null>(null);
-  // The default preset comes from vestad (GET /agent-defaults), not a hardcoded copy.
-  // Until the user picks, fall through to vestad's default once it loads.
-  const defaults = useAgentDefaults();
+  // The personality catalog + the default come from the manifest (GET /manifest), not a side endpoint
+  // or a hardcoded copy. Until the user picks, fall through to the manifest default once it loads.
+  const manifest = useManifest();
   const [picked, setPicked] = useState<string | null>(null);
-  const selected = picked ?? defaults?.agent_personality ?? "";
-
-  useEffect(() => {
-    fetchPersonalities()
-      .then((list) => setPersonalities(list))
-      .catch((e: Error) => setLoadError(e.message));
-  }, []);
+  const selected = picked ?? manifest?.default_personality ?? "";
+  const personalities = manifest?.personalities ?? null;
 
   return (
     <div className="flex flex-col items-center gap-4 w-[560px] max-w-full px-4">
@@ -36,9 +26,7 @@ export function PersonalityStep({
         </FieldDescription>
       </div>
 
-      {loadError ? (
-        <p className="text-xs text-destructive">failed to load: {loadError}</p>
-      ) : personalities === null ? (
+      {personalities === null ? (
         <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-28 w-full rounded-2xl" />
@@ -80,7 +68,7 @@ export function PersonalityStep({
       <Button
         className="w-full"
         onClick={() => onPicked(selected)}
-        disabled={(personalities === null && !loadError) || !selected}
+        disabled={personalities === null || !selected}
       >
         continue
       </Button>

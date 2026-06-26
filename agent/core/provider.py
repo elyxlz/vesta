@@ -11,11 +11,11 @@ import time
 import typing as tp
 
 import aiohttp
+import pydantic as pyd
 
 from . import logger
-from .config import PROVIDER_PREF_FIELDS, VestaConfig, update_config_store
+from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, update_config_store
 
-CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
@@ -61,7 +61,6 @@ class ProviderStatus:
     state: ProviderAuthState
     kind: ProviderKind
     model: str | None
-    max_context_tokens: int | None = None
 
     def __post_init__(self) -> None:
         # The model is only meaningful for an authenticated provider; an agent whose credentials are
@@ -75,44 +74,57 @@ def derive_status(config: VestaConfig) -> ProviderStatus:
     """Re-derive provider status at boot, purely from disk: the config store (provider + key) and
     `.credentials.json`. On-disk state is the single source of truth — a runtime auth failure is an
     in-memory flip only (see observed_provider_failure), so boot is always an honest reading of what's
-    actually provisioned. Model and context come from the config store via VestaConfig."""
+    actually provisioned. Model comes from the config store via VestaConfig."""
     kind, authed = _derive_kind_and_auth(config)
     state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
-    return ProviderStatus(state=state, kind=kind, model=config.agent_model, max_context_tokens=config.max_context_tokens)
+    return ProviderStatus(state=state, kind=kind, model=config.provider.model)
 
 
-def set_claude(credentials_json: str, *, config: VestaConfig) -> ProviderStatus:
-    """Write the Claude OAuth credentials, set the provider to claude in the config store, and clear
-    any OpenRouter key, returning the authenticated status."""
+def _sign_in(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None, config: VestaConfig) -> str | None:
+    """Build a provider patch, merge it into the store (shared merge: same-kind keeps the rest, a kind
+    switch replaces), persist it, and return the resulting model for the status."""
+    patch: dict[str, pyd.JsonValue] = {"kind": kind}
+    if model is not None:
+        patch["model"] = model
+    if max_context_tokens is not None:
+        patch["max_context_tokens"] = max_context_tokens
+    if key is not None:
+        patch["key"] = key
+    merged = merge_provider(config, patch)
+    update_config_store({"provider": merged})
+    return merged["model"] if "model" in merged and isinstance(merged["model"], str) else None
+
+
+def set_claude(credentials_json: str, model: str | None, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Write the Claude OAuth credentials to the SDK path and merge a claude provider patch into the
+    store (model/context unspecified on re-auth are preserved). The OAuth blob lives in the credentials
+    file, never the store."""
     # Validate JSON shape before touching disk so we don't half-apply on bad input.
     json.loads(credentials_json)
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDENTIALS_PATH.write_text(credentials_json)
     CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    update_config_store({"agent_provider": "claude", "openrouter_key": None})
+    reported = _sign_in("claude", model=model, max_context_tokens=max_context_tokens, key=None, config=config)
     logger.startup("Provider set to claude")
-    return ProviderStatus(
-        state=ProviderAuthState.AUTHENTICATED, kind="claude", model=config.agent_model, max_context_tokens=config.max_context_tokens
-    )
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=reported)
 
 
-def set_openrouter(key: str, model: str, *, config: VestaConfig) -> ProviderStatus:
-    """Record the OpenRouter provider, key, and model in the config store (OpenRouter needs a valid
-    model). Vestad restarts the agent to apply it."""
-    update_config_store({"agent_provider": "openrouter", "openrouter_key": key, "agent_model": model})
+def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Merge the nested OpenRouter provider (key + model, plus any context chosen at sign-in) into the
+    store. Vestad restarts the agent to apply it."""
+    reported = _sign_in("openrouter", model=model, max_context_tokens=max_context_tokens, key=key, config=config)
     logger.startup(f"Provider set to openrouter model={model}")
-    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=model, max_context_tokens=config.max_context_tokens)
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=reported)
 
 
 def clear_provider(*, config: VestaConfig) -> ProviderStatus:
-    """Sign out: clear everything provider-owned — the Claude OAuth blob, the OpenRouter key, and the
-    provider preferences (model, context, thinking) — leaving the agent not_authenticated. Only
-    general config (e.g. personality) survives; the provider choice is kept as the last-used hint.
-    Vestad restarts the agent."""
+    """Sign out: remove the Claude OAuth blob and reset the stored provider to a valid signed-out
+    default (claude, no credentials), leaving the agent not_authenticated. General config (personality,
+    timezone, ...) survives. Vestad restarts the agent."""
     CREDENTIALS_PATH.unlink(missing_ok=True)
-    update_config_store({"openrouter_key": None, **{field: None for field in PROVIDER_PREF_FIELDS}})
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     logger.startup("Provider cleared (signed out)")
-    return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=config.agent_provider, model=None, max_context_tokens=None)
+    return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
 
 
 def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus | None:
@@ -130,18 +142,28 @@ def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus |
 
 
 def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
-    """The usable provider and whether its credential is valid: openrouter when chosen with a key,
-    claude when the OAuth blob is on disk, else none (a fresh, unprovisioned agent)."""
-    if config.agent_provider == "openrouter" and config.openrouter_key is not None:
-        return "openrouter", bool(config.openrouter_key.get_secret_value())
-    if CREDENTIALS_PATH.exists():
-        return "claude", _check_claude_auth(CREDENTIALS_PATH.read_text())
+    """The usable provider and whether its credential is valid: openrouter when chosen (key is
+    type-guaranteed), claude when the OAuth blob loaded from disk is valid, else none (unprovisioned)."""
+    provider = config.provider
+    if isinstance(provider, OpenRouterConfig):
+        return "openrouter", bool(provider.key.get_secret_value())
+    if provider.oauth is not None:
+        return "claude", _check_claude_oauth(provider.oauth)
     return "none", False
 
 
+def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:
+    """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt isn't
+    a problem — the SDK refreshes transparently."""
+    if isinstance(oauth.refreshToken, str) and oauth.refreshToken:
+        return True
+    if isinstance(oauth.expiresAt, int):
+        return oauth.expiresAt > int(time.time() * 1000)
+    return False
+
+
 def _check_claude_auth(content: str) -> bool:
-    """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt
-    isn't a problem — the SDK refreshes transparently."""
+    """The disk-boundary entry: parse a `.credentials.json` blob and delegate to _check_claude_oauth."""
     try:
         creds = json.loads(content)
     except (json.JSONDecodeError, TypeError):
@@ -149,13 +171,7 @@ def _check_claude_auth(content: str) -> bool:
     oauth = creds["claudeAiOauth"] if isinstance(creds, dict) and "claudeAiOauth" in creds else None
     if not isinstance(oauth, dict):
         return False
-    refresh = oauth["refreshToken"] if "refreshToken" in oauth else None
-    if isinstance(refresh, str) and refresh:
-        return True
-    expires_at = oauth["expiresAt"] if "expiresAt" in oauth else None
-    if isinstance(expires_at, int):
-        return expires_at > int(time.time() * 1000)
-    return False
+    return _check_claude_oauth(ClaudeOAuth.model_validate(oauth))
 
 
 # --- Plan usage (provider-agnostic) ---
@@ -247,9 +263,9 @@ async def _claude_usage() -> Usage:
 
 
 async def _openrouter_usage(config: VestaConfig) -> Usage:
-    if config.openrouter_key is None:
+    if not isinstance(config.provider, OpenRouterConfig):
         raise UsageError("no openrouter key")
-    headers = {"Authorization": f"Bearer {config.openrouter_key.get_secret_value()}"}
+    headers = {"Authorization": f"Bearer {config.provider.key.get_secret_value()}"}
     data = await _fetch_usage_json(OPENROUTER_KEY_URL, headers=headers)
     # OpenRouter wraps the payload in {"data": {...}}; usage and limit are already in dollars.
     payload = data["data"] if "data" in data and isinstance(data["data"], dict) else {}

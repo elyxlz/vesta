@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { BackupInfo } from "@/api/agents";
 import type { AuthStartResult } from "@/api/auth";
 import type { FileTreeEntry } from "@/api/files";
-import type { Personality } from "@/api/personalities";
 import type {
   AgentActivityState,
   AgentInfo,
@@ -55,11 +54,6 @@ describe("vestad API contract", () => {
     const auth = vestadApiFixtures.auth_start satisfies AuthStartResult;
     expect(auth.auth_url).toContain("https://");
     expect(auth.session_id).toBeTruthy();
-  });
-
-  it("personality satisfies Personality", () => {
-    const personality = vestadApiFixtures.personality satisfies Personality;
-    expect(personality.name).toBeTruthy();
   });
 
   it("tree entries satisfy FileTreeEntry", () => {

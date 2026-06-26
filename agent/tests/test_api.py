@@ -217,49 +217,57 @@ def test_config_update_rejects_bad_values(config):
             validate_config_updates(config, bad)
 
 
-def test_config_update_rejects_bad_pref_values(config):
+def test_config_update_rejects_bad_provider_values(config):
     from core.config import validate_config_updates
 
-    # Model/context/thinking are now plain config keys; they keep their field constraints on PUT /config.
-    for bad in [{"max_context_tokens": 0}, {"thinking": "x"}]:
+    # A provider partial keeps the field constraints (ge on context, the thinking union).
+    for bad in [{"provider": {"max_context_tokens": 0}}, {"provider": {"thinking": "x"}}]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)
 
 
-def test_provider_update_accepts_each_provider():
-    from core.api import _ProviderUpdate
+def test_sign_in_body_parses_each_provider():
+    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _OpenRouterSignIn
 
-    assert _ProviderUpdate.model_validate({"credentials": "{}"}).credentials == "{}"
-    parsed = _ProviderUpdate.model_validate({"openrouter_key": "k", "openrouter_model": "m"})
-    assert (parsed.openrouter_key, parsed.openrouter_model) == ("k", "m")
+    claude = _SIGN_IN_ADAPTER.validate_python({"kind": "claude", "model": "opus", "credentials": "{}"})
+    assert isinstance(claude, _ClaudeSignIn) and claude.credentials == "{}"
+    openrouter = _SIGN_IN_ADAPTER.validate_python({"kind": "openrouter", "model": "m", "key": "k"})
+    assert isinstance(openrouter, _OpenRouterSignIn) and (openrouter.key, openrouter.model) == ("k", "m")
+
+
+def test_sign_in_body_rejects_invalid():
+    from core.api import _SIGN_IN_ADAPTER
+
+    for bad in [{}, {"kind": "claude"}, {"kind": "openrouter", "model": "m"}, {"kind": "vllm"}]:
+        with pytest.raises(pyd.ValidationError):
+            _SIGN_IN_ADAPTER.validate_python(bad)
 
 
 @pytest.mark.anyio
-async def test_config_put_rejects_an_auth_key(config):
-    # Auth is its own endpoint (PUT /config/auth); a stray `auth` in a prefs body is not a config field.
+async def test_config_put_rejects_a_provider_key(config):
+    # The provider is set via /provider; a `provider` key in a /config (prefs) body is rejected.
     from core.api import _config_put_handler
 
     class _Req:
         app = {"config": config}
 
         async def json(self):
-            return {"auth": {"credentials": "{}"}}
+            return {"provider": {"model": "opus"}}
 
     resp = await _config_put_handler(typing.cast("web.Request", _Req()))
     assert resp.status == 400
 
 
 @pytest.mark.anyio
-async def test_config_auth_put_signs_in_then_delete_signs_out(config, monkeypatch):
-    # PUT /config/auth applies credentials; DELETE /config/auth clears them. Each is write-only (the
-    # caller restarts to apply), so the handlers just return ok.
+async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
+    # PUT /provider applies credentials; DELETE /provider clears them. Each is write-only (the caller
+    # restarts to apply), so the handlers just return ok.
     import core.api as api_mod
-    from core.api import _config_auth_delete_handler, _config_auth_put_handler
     from core.provider import ProviderAuthState, ProviderStatus
 
     signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
-    monkeypatch.setattr(api_mod, "set_claude", lambda creds, *, config: signed_in)
+    monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, ctx, *, config: signed_in)
     monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
 
     state = vm.State()
@@ -269,24 +277,68 @@ async def test_config_auth_put_signs_in_then_delete_signs_out(config, monkeypatc
         app = {"state": state, "config": config}
 
         async def json(self):
-            return {"credentials": "{}"}
+            return {"kind": "claude", "model": "opus", "credentials": "{}"}
 
-    put_resp = await _config_auth_put_handler(typing.cast("web.Request", _PutReq()))
+    put_resp = await api_mod._provider_put_handler(typing.cast("web.Request", _PutReq()))
     assert put_resp.status == 200
     assert state.provider_status is signed_in
 
     class _DelReq:
         app = {"state": state, "config": config}
 
-    del_resp = await _config_auth_delete_handler(typing.cast("web.Request", _DelReq()))
+    del_resp = await api_mod._provider_delete_handler(typing.cast("web.Request", _DelReq()))
     assert del_resp.status == 200
     assert state.provider_status is signed_out
 
 
-def test_provider_update_requires_exactly_one_provider():
+@pytest.mark.anyio
+async def test_status_reports_readiness_separate_from_provider(config):
+    # /status carries the readiness gate (authed + setup_complete); /provider carries the config + authed
+    # but NOT setup_complete (that's agent lifecycle, not the provider resource).
+    import core.api as api_mod
+    from core.provider import ProviderAuthState, ProviderStatus
 
-    from core.api import _ProviderUpdate
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    state.persisted.first_start_done = True
 
-    for bad in [{}, {"credentials": "c", "openrouter_key": "k"}, {"openrouter_key": "k"}, {"bogus": 1}]:
-        with pytest.raises(pyd.ValidationError):
-            _ProviderUpdate.model_validate(bad)
+    class _Req:
+        app = {"state": state, "config": config}
+
+    status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
+    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "setup_complete": True}
+
+    provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    provider_body = json.loads(typing.cast("str", provider_resp.text))
+    assert provider_body["authed"] is True
+    assert "setup_complete" not in provider_body  # readiness moved to /status
+    assert provider_body["kind"] == "claude"
+
+
+@pytest.mark.anyio
+async def test_history_q_returns_matching_events_in_history_shape(event_bus):
+    # Search is folded into /history?q= and returns matching events in the same {events, cursor} shape
+    # as recency (cursor null), replacing the old /search endpoint.
+    from core.api import _history_handler
+
+    event_bus.emit(UserEvent(type="user", text="what about paris"))
+    event_bus.emit(ChatEvent(type="chat", text="paris is lovely"))
+    event_bus.emit(ChatEvent(type="chat", text="london is grey"))
+
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app.router.add_get("/history", _history_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    try:
+        async with ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
+                assert resp.status == 200
+                data = await resp.json()
+        assert data["cursor"] is None
+        texts = [e["text"] for e in data["events"]]
+        assert "paris is lovely" in texts and "london is grey" not in texts
+    finally:
+        await runner.cleanup()

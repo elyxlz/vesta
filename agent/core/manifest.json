@@ -1,0 +1,32 @@
+{
+  "default_provider": "claude",
+  "default_personality": "dry",
+  "providers": {
+    "claude": {
+      "display": "Claude account",
+      "models": ["opus", "sonnet", "haiku"],
+      "default_model": "opus",
+      "context": {
+        "default": 1000000,
+        "presets": [
+          { "tokens": 1000000, "label": "1M", "note": "most context" },
+          { "tokens": 500000, "label": "500K", "note": "balanced" },
+          { "tokens": 200000, "label": "200K", "note": "cheapest prompt-cache reads, compacts soonest" }
+        ]
+      }
+    },
+    "openrouter": {
+      "display": "OpenRouter",
+      "models": "live",
+      "default_model": null,
+      "context": {
+        "default": 200000,
+        "presets": [
+          { "tokens": 200000, "label": "200K", "note": "full window" },
+          { "tokens": 128000, "label": "128K", "note": "balanced" },
+          { "tokens": 64000, "label": "64K", "note": "cheapest prompt-cache reads" }
+        ]
+      }
+    }
+  }
+}
