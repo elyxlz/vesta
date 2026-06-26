@@ -240,6 +240,8 @@ enum Command {
 enum GatewayAction {
     /// Restart the remote vestad daemon
     Restart,
+    /// Show the gateway setup: LAN, tunnel, port, auto-update, channel, backups
+    Info,
     /// Stream vestad logs from the remote gateway
     Logs {
         /// Number of lines to show initially
@@ -1176,6 +1178,32 @@ fn run(cli: Cli) {
             GatewayAction::Logs { tail, follow } => {
                 let c = get_client(host_ref, token_ref);
                 c.stream_gateway_logs(tail, follow).unwrap_or_else(|e| platform::die(&e));
+            }
+            GatewayAction::Info => {
+                let c = get_client(host_ref, token_ref);
+                let settings = c.get_gateway_settings().unwrap_or_else(|e| platform::die(&e));
+                let info = c.get_gateway_info().unwrap_or_else(|e| platform::die(&e));
+
+                let lan = &info["lan"];
+                let lan_line = if lan["exposed"].as_bool().unwrap_or(false) {
+                    format!("enabled at {}", lan["url"].as_str().unwrap_or("unknown"))
+                } else {
+                    "disabled".to_string()
+                };
+                eprintln!("lan:          {lan_line}");
+                eprintln!("tunnel:       {}", info["tunnel_url"].as_str().unwrap_or("—"));
+                eprintln!("port:         {}", info["port"].as_u64().unwrap_or(0));
+                eprintln!("auto-update:  {}", if settings["auto_update"].as_bool().unwrap_or(false) { "enabled" } else { "disabled" });
+                eprintln!("channel:      {}", settings["channel"].as_str().unwrap_or("stable"));
+
+                let backup = &settings["auto_backup"];
+                if backup["enabled"].as_bool().unwrap_or(false) {
+                    let hour = backup["hour"].as_u64().unwrap_or(0);
+                    eprintln!("backups:      daily at {hour:02}:00");
+                    print_retention(&backup["retention"]);
+                } else {
+                    eprintln!("backups:      disabled");
+                }
             }
         },
 

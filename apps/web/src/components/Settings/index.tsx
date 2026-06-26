@@ -31,6 +31,7 @@ import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { ConnectionControls } from "@/components/ConnectionControls";
+import { useGatewaySetup } from "@/components/Settings/use-gateway-setup";
 
 // Hosted (managed) boxes are always under vesta.run; the account + billing page
 // lives on the control plane. Self-hosted boxes never reach this.
@@ -48,6 +49,7 @@ export function AppSettings() {
   const appMode = useAppMode((s) => s.mode);
   const setAppMode = useAppMode((s) => s.setMode);
   const hostname = connectionHostname();
+  const gatewaySetup = useGatewaySetup();
 
   return (
     <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
@@ -170,6 +172,58 @@ export function AppSettings() {
               </Button>
             </div>
             <ConnectionControls />
+            {gatewaySetup && (
+              <div className="mt-4 flex flex-col gap-3">
+                <Field
+                  orientation="horizontal"
+                  className="items-center justify-between"
+                >
+                  <FieldContent>
+                    <FieldLabel className="text-sm">lan access</FieldLabel>
+                    <FieldDescription>
+                      whether other devices on your network can reach this
+                      gateway
+                    </FieldDescription>
+                  </FieldContent>
+                  <span className="shrink-0 text-sm text-muted-foreground">
+                    {gatewaySetup.info.lan.exposed
+                      ? (gatewaySetup.info.lan.url ?? "enabled")
+                      : "disabled"}
+                  </span>
+                </Field>
+                <Field
+                  orientation="horizontal"
+                  className="items-center justify-between"
+                >
+                  <FieldContent>
+                    <FieldLabel className="text-sm">remote access</FieldLabel>
+                    <FieldDescription>
+                      secure tunnel address for reaching this gateway from
+                      anywhere
+                    </FieldDescription>
+                  </FieldContent>
+                  <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
+                    {gatewaySetup.info.tunnel_url ?? "—"}
+                  </span>
+                </Field>
+                <Field
+                  orientation="horizontal"
+                  className="items-center justify-between"
+                >
+                  <FieldContent>
+                    <FieldLabel className="text-sm">backups</FieldLabel>
+                    <FieldDescription>
+                      automatic nightly snapshots of your agents
+                    </FieldDescription>
+                  </FieldContent>
+                  <span className="shrink-0 text-sm text-muted-foreground">
+                    {gatewaySetup.settings.auto_backup.enabled
+                      ? `daily at ${String(gatewaySetup.settings.auto_backup.hour).padStart(2, "0")}:00`
+                      : "disabled"}
+                  </span>
+                </Field>
+              </div>
+            )}
           </MenuSection>
         </CardContent>
       </Card>

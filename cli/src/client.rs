@@ -400,23 +400,31 @@ impl Client {
     }
 
     pub fn get_channel(&self) -> Result<String, String> {
-        let value: serde_json::Value = read_json(self.get("/settings/channel")?)?;
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
         require_str(&value, "channel")
     }
 
     pub fn set_channel(&self, channel: &str) -> Result<String, String> {
-        let value: serde_json::Value = read_json(self.put_json("/settings/channel", &serde_json::json!({ "channel": channel }))?)?;
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "channel": channel }))?)?;
         require_str(&value, "channel")
     }
 
     pub fn get_auto_update(&self) -> Result<bool, String> {
-        let value: serde_json::Value = read_json(self.get("/settings/auto-update")?)?;
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
         require_bool(&value, "auto_update")
     }
 
     pub fn set_auto_update(&self, enabled: bool) -> Result<bool, String> {
-        let value: serde_json::Value = read_json(self.put_json("/settings/auto-update", &serde_json::json!({ "auto_update": enabled }))?)?;
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "auto_update": enabled }))?)?;
         require_bool(&value, "auto_update")
+    }
+
+    pub fn get_gateway_settings(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/settings")?)
+    }
+
+    pub fn get_gateway_info(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/info")?)
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
@@ -657,11 +665,13 @@ impl Client {
     }
 
     pub fn get_auto_backup_settings(&self) -> Result<serde_json::Value, String> {
-        read_json(self.get("/settings/auto-backup")?)
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
+        Ok(value["auto_backup"].clone())
     }
 
     pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        read_json(self.put_json("/settings/auto-backup", body)?)
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "auto_backup": body }))?)?;
+        Ok(value["auto_backup"].clone())
     }
 
     pub fn list_all_backups(&self) -> Result<Vec<BackupInfo>, String> {

@@ -1,5 +1,6 @@
 import { getConnection } from "@/lib/connection";
-import type { LogEvent } from "@/lib/types";
+import type { LogEvent, ReleaseChannel } from "@/lib/types";
+import { apiJson } from "./client";
 import { openLogStream } from "./log-stream";
 
 let gatewayLogSource: EventSource | null = null;
@@ -32,4 +33,41 @@ export function stopGatewayLogs(): void {
     gatewayLogSource.close();
     gatewayLogSource = null;
   }
+}
+
+export interface GatewayLan {
+  exposed: boolean;
+  url: string | null;
+}
+
+export interface GatewayInfo {
+  lan: GatewayLan;
+  tunnel_url: string | null;
+  port: number;
+}
+
+export interface GatewayRetention {
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+
+export interface GatewayAutoBackup {
+  enabled: boolean;
+  hour: number;
+  retention: GatewayRetention;
+}
+
+export interface GatewaySettings {
+  auto_update: boolean;
+  channel: ReleaseChannel;
+  auto_backup: GatewayAutoBackup;
+}
+
+export async function fetchGatewayInfo(): Promise<GatewayInfo> {
+  return apiJson<GatewayInfo>("/gateway/info");
+}
+
+export async function fetchGatewaySettings(): Promise<GatewaySettings> {
+  return apiJson<GatewaySettings>("/gateway/settings");
 }
