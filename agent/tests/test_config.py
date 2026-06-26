@@ -239,6 +239,30 @@ def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_pa
     assert not legacy.exists()
 
 
+def test_load_config_converges_legacy_provider_file_first(agentdir, monkeypatch, tmp_path):
+    """A legacy OpenRouter agent stores its provider only in vesta-provider.env. load_config must
+    drain it into the store BEFORE building the config, so the returned config is the OpenRouter
+    provider — not the default (which would derive not_authenticated and defer all work)."""
+    from core import config as config_mod
+    from core.config import OpenRouterConfig
+
+    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "MAX_CONTEXT_TOKENS", "AGENT_PERSONALITY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    legacy = tmp_path / "vesta-provider.env"
+    legacy.write_text(
+        "export AGENT_PROVIDER=openrouter\nexport AGENT_MODEL='deepseek/deepseek-v4-flash'\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n"
+    )
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
+
+    config, _ = config_mod.load_config()
+
+    assert isinstance(config.provider, OpenRouterConfig)
+    assert config.provider.model == "deepseek/deepseek-v4-flash"
+    assert config.provider.key.get_secret_value() == "sk-or-v1-secret"
+    assert not legacy.exists()  # convergence ran and retired the legacy file
+
+
 # --- PUT /config (prefs) + PATCH /provider validation ---
 
 

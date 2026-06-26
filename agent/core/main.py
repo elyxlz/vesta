@@ -187,10 +187,6 @@ async def async_main() -> None:
     logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
     _report_config_issues(config_issues, config=config)
 
-    # Converge a legacy agent's env-based preferences into the writable config store, so the whole
-    # fleet ends up on the new config system. Idempotent and safe (see migrate_legacy_config_to_store).
-    vm.migrate_legacy_config_to_store()
-
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done
     restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)

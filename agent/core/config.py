@@ -367,7 +367,12 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     Config is on the container's boot path: an exception here exits the process, and with
     `--restart=unless-stopped` that becomes a tight crash loop. So drop each offending env override and
     rebuild, reverting only that field; if nothing is droppable, fall back to a default claude provider.
+
+    Legacy convergence runs first (before the config is built), so the loaded config reflects the
+    migrated nested provider rather than a stale default. This makes load_config the single owner of
+    "what config does the agent run on" — there is no separate boot step to sequence wrongly.
     """
+    migrate_legacy_config_to_store()
     issues: list[str] = []
     dropped: set[str] = set()
     while True:
