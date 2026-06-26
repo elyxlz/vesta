@@ -11,7 +11,29 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { LogEvent } from "@/lib/types";
-import { GatewayLogsViewerStyles as styles } from "./styles";
+import { GatewayLogsViewerStyles as styles, LogLevelColors } from "./styles";
+
+// vestad writes plain-text logs as `<timestamp>  <LEVEL>  <message>`. Split that
+// shape so the viewer can dim the timestamp and color the level; anything that
+// doesn't match (continuations, "error:" lines) renders as-is.
+const LOG_LINE_RE = /^(\S+)\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+([\s\S]*)$/;
+
+function LogLine({ text }: { text: string }) {
+  const match = LOG_LINE_RE.exec(text);
+  if (!match) {
+    return <div style={styles.line}>{text || " "}</div>;
+  }
+  const [, timestamp, level, rest] = match;
+  return (
+    <div style={styles.line}>
+      <span style={styles.timestamp}>{timestamp}</span>{" "}
+      <span style={{ ...styles.level, color: LogLevelColors[level] }}>
+        {level}
+      </span>{" "}
+      {rest}
+    </div>
+  );
+}
 
 interface GatewayLogsViewerProps {
   open: boolean;
@@ -19,6 +41,9 @@ interface GatewayLogsViewerProps {
 }
 
 const AUTOSCROLL_THRESHOLD_PX = 40;
+// Copy grabs only the most recent lines — enough to paste into a bug report without
+// dumping a whole follow session's worth of output.
+const COPY_TAIL_LINES = 200;
 
 export function GatewayLogsViewer({
   open,
@@ -73,7 +98,9 @@ export function GatewayLogsViewer({
   }, []);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(lines.join("\n"));
+    void navigator.clipboard.writeText(
+      lines.slice(-COPY_TAIL_LINES).join("\n"),
+    );
   };
 
   return (
@@ -109,11 +136,7 @@ export function GatewayLogsViewer({
           {lines.length === 0 ? (
             <span style={styles.empty}>No logs yet.</span>
           ) : (
-            lines.map((line, index) => (
-              <div key={index} style={styles.line}>
-                {line || " "}
-              </div>
-            ))
+            lines.map((line, index) => <LogLine key={index} text={line} />)
           )}
           <div ref={linesEndRef} />
         </div>
