@@ -169,7 +169,7 @@ CI runs these exact subcommands, so passing locally means passing CI:
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
 ./check.sh web            # eslint + prettier --check + tsc + vitest
 ./check.sh integration    # vestad integration tests (needs Docker)
-./check.sh live           # live agent e2e (Docker + ~/.claude/.credentials.json; real Claude)
+./check.sh live           # live agent e2e (Docker + OPENROUTER_KEY; real model via OpenRouter)
 ./check.sh all            # agent + cli + vestad + web
 ```
 
@@ -319,7 +319,7 @@ One workflow (`ci.yml`) runs on push to `master`, PRs, and releases; jobs are pa
 
 Docker-based jobs (integration tests, vestad Docker unit tests, live tests) build the agent image **from the checkout** (GHA layer cache) and run with `VESTAD_AGENT_IMAGE=vesta:local`, so PRs are validated against their own agent code and Dockerfile, never the previously released image.
 
-A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` secret **only on the release event** (not PRs — it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
+A live agent e2e job (`test-live`) runs a real agent against a real model on OpenRouter using the `OPENROUTER_KEY` secret **only on the release event** (not PRs — it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
 
 ## Pull requests
 

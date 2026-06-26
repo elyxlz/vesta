@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,7 +10,7 @@ type SharedAgent = Option<(TestAgent<'static>, String)>;
 
 /// The live suite runs against a POOL of two shared agents rather than one, so independent tests
 /// run in parallel. Each agent pays its own one-time first-start (the expensive multi-minute
-/// real-Claude setup), but the two first-starts run concurrently, so the pool's setup wall-clock
+/// real-model setup), but the two first-starts run concurrently, so the pool's setup wall-clock
 /// stays ~= a single first-start while the test bodies overlap.
 ///
 /// Tests are partitioned by agent and must NOT mix pools mid-test: notifications and interrupts
@@ -32,7 +31,7 @@ fn lock_pool(pool: &'static LazyLock<Mutex<SharedAgent>>) -> Option<(MutexGuard<
 }
 
 /// Lock pool A (general tests: file ops, mcp tools, interrupt). Returns None (test skips) when
-/// Claude credentials are unavailable.
+/// OPENROUTER_KEY is unset.
 pub fn lock_live_agent_a() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
     lock_pool(&LIVE_AGENT_A)
 }
@@ -72,10 +71,21 @@ fn exec_ok(container: &str, script: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn host_credentials_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let path = PathBuf::from(home).join(".claude/.credentials.json");
-    path.exists().then_some(path)
+/// Default OpenRouter model for the live suite — cheap and fast. Override with LIVE_TEST_MODEL.
+const DEFAULT_LIVE_MODEL: &str = "deepseek/deepseek-v4-flash";
+
+/// The OpenRouter model the live agents run with, from LIVE_TEST_MODEL or the default above.
+pub fn live_model() -> String {
+    std::env::var("LIVE_TEST_MODEL")
+        .ok()
+        .filter(|model| !model.is_empty())
+        .unwrap_or_else(|| DEFAULT_LIVE_MODEL.to_string())
+}
+
+/// The OpenRouter API key the live suite authenticates with, from OPENROUTER_KEY. None (tests skip)
+/// when it is unset, mirroring the old missing-credentials skip.
+pub fn openrouter_key() -> Option<String> {
+    std::env::var("OPENROUTER_KEY").ok().filter(|key| !key.is_empty())
 }
 
 pub fn write_notification(container: &str, message: &str, interrupt: bool) -> Result<(), String> {
@@ -133,11 +143,12 @@ const FIRST_START_SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 const READY_MARKER: &str = "/root/agent/e2e-test/ready.txt";
 const FIRST_START_ALIVE_POLL: Duration = Duration::from_secs(2);
 
-/// Agent-log markers meaning the injected credentials are being rejected by the API (a dead or
-/// expired CLAUDE_CREDENTIALS). When this happens the agent idles in `setting_up` until the full
-/// timeout, so first-start setup bails fast and prints the agent's own diagnostics on sight of one
-/// rather than hanging for ten minutes on a generic timeout.
-const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Invalid authentication credentials", "Please run /login"];
+/// Agent-log markers meaning the injected key is being rejected by the provider (a bad or
+/// out-of-credit OPENROUTER_KEY — the agent flips to not_authenticated on a terminal 401/402).
+/// When this happens the agent idles in `setting_up` until the full timeout, so first-start setup
+/// bails fast and prints the agent's own diagnostics on sight of one rather than hanging for ten
+/// minutes on a generic timeout.
+const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Provider auth lost (terminal upstream 401/402)"];
 
 /// Block until the agent has fully finished first-start and is idle, using the product's own
 /// idle signal rather than a timer.
@@ -159,9 +170,9 @@ fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
 
 /// Block until the agent reports `alive`, failing fast with diagnostics on an auth error.
 ///
-/// `wait_until_alive` would block for the full timeout if the injected credentials are
+/// `wait_until_alive` would block for the full timeout if the injected key is
 /// rejected. Poll the agent's own log alongside its status and bail the moment an auth
-/// error appears (a dead/expired CLAUDE_CREDENTIALS is the usual cause).
+/// error appears (a bad/out-of-credit OPENROUTER_KEY is the usual cause).
 pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str, container: &str) {
     let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
     loop {
@@ -175,38 +186,31 @@ pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str,
         let agent_log = exec_in_container(container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
         if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
             dump_agent_diagnostics(name);
-            panic!("agent hit an auth error — CLAUDE_CREDENTIALS is invalid/expired; re-seed the secret (agent diagnostics above)");
+            panic!("agent hit an auth error — OPENROUTER_KEY is invalid or out of credit; re-seed the secret (agent diagnostics above)");
         }
         thread::sleep(FIRST_START_ALIVE_POLL);
     }
 }
 
-/// Provision a freshly-created agent for live e2e (sonnet model, test memory, real
-/// credentials) and block until it has fully settled after first-start. Shared by the live
+/// Provision a freshly-created agent for live e2e (OpenRouter provider on `live_model()`, test
+/// memory, real key) and block until it has fully settled after first-start. Shared by the live
 /// agent pool and the upgrade e2e test, both of which need a real, idle agent. Panics with
 /// diagnostics on failure, matching the pool's fail-fast behavior. Callers must have already
-/// confirmed credentials exist (via `host_credentials_path`).
+/// confirmed the key exists (via `openrouter_key`).
 pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str) {
-    let credentials_path = host_credentials_path().expect("credentials present (caller checked)");
-    let credentials = fs::read_to_string(&credentials_path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", credentials_path.display()));
+    let key = openrouter_key().expect("OPENROUTER_KEY present (caller checked)");
+    let model = live_model();
 
     wait_for_container_running(container, Duration::from_secs(60)).expect("container running");
-
-    // Use sonnet for e2e tests — cheaper and faster than the default opus
-    exec_in_container(container, "echo 'export AGENT_MODEL=sonnet' >> ~/.bashrc")
-        .expect("set AGENT_MODEL=sonnet");
 
     exec_in_container(container, &format!("mkdir -p {E2E_FILES_DIR}")).expect("create e2e dir");
     exec_in_container(container, &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"))
         .expect("write test memory");
 
-    client.inject_token(name, &credentials).expect("inject real credentials");
-    // Always restart after injection so the agent boots with BOTH the credentials and
-    // the AGENT_MODEL=sonnet override from ~/.bashrc. Without the restart, the
-    // already-running agent picks up the credentials but keeps the default (opus)
-    // model for the whole first-start conversation.
-    client.restart_agent(name).expect("restart agent to apply model + credentials");
+    client.sign_in_openrouter(name, &key, &model).expect("sign in with OpenRouter");
+    // Restart after sign-in so the agent boots with the OpenRouter provider applied: vestad applies
+    // a provider write only on the next boot, so first-start then runs entirely on the chosen model.
+    client.restart_agent(name).expect("restart agent to apply provider");
 
     wait_until_alive_or_die(client, name, container);
 
@@ -219,8 +223,8 @@ pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, co
 }
 
 fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
-    if host_credentials_path().is_none() {
-        eprintln!("skipping live e2e: ~/.claude/.credentials.json not found");
+    if openrouter_key().is_none() {
+        eprintln!("skipping live e2e: OPENROUTER_KEY not set");
         return None;
     }
 

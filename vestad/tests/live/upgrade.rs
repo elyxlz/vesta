@@ -28,7 +28,7 @@ use vesta_tests::{
 };
 
 use super::common::{
-    host_credentials_path, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification,
+    openrouter_key, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification,
 };
 
 const AGENT_NAME: &str = "upgrade";
@@ -43,8 +43,8 @@ const UPGRADE_PROBE_MARKER: &str = "/root/agent/e2e-test/upgrade-ok.txt";
 
 #[test]
 fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() {
-    if host_credentials_path().is_none() {
-        eprintln!("skipping upgrade e2e: ~/.claude/.credentials.json not found");
+    if openrouter_key().is_none() {
+        eprintln!("skipping upgrade e2e: OPENROUTER_KEY not set");
         return;
     }
 
