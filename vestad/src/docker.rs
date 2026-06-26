@@ -90,7 +90,7 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
-const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
+pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {

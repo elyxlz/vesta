@@ -1,100 +1,25 @@
-import { useEffect, useRef } from "react";
-import { EditorState } from "@codemirror/state";
-import {
-  EditorView,
-  highlightActiveLine,
-  keymap,
-  lineNumbers,
-} from "@codemirror/view";
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from "@codemirror/commands";
-import {
-  bracketMatching,
-  defaultHighlightStyle,
-  indentOnInput,
-  syntaxHighlighting,
-} from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { python } from "@codemirror/lang-python";
-import { markdown } from "@codemirror/lang-markdown";
-import { json } from "@codemirror/lang-json";
+import { useState } from "react";
+import { Textarea } from "@/components/ui/textarea";
 
 interface FileEditorProps {
-  path: string;
   initialContent: string;
   readonly: boolean;
   encoding: "utf-8" | "base64";
   onChange: (value: string) => void;
-}
-
-function langFor(path: string) {
-  if (path.endsWith(".py")) return python();
-  if (path.endsWith(".md")) return markdown();
-  if (path.endsWith(".json")) return json();
-  if (path.endsWith(".ts") || path.endsWith(".tsx")) {
-    return javascript({ jsx: path.endsWith(".tsx"), typescript: true });
-  }
-  if (path.endsWith(".js") || path.endsWith(".jsx")) {
-    return javascript({ jsx: path.endsWith(".jsx") });
-  }
-  return null;
+  placeholder?: string;
 }
 
 export function FileEditor({
-  path,
   initialContent,
   readonly,
   encoding,
   onChange,
+  placeholder,
 }: FileEditorProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const onChangeRef = useRef(onChange);
-  // Only the value at editor-creation time matters; tracking it in a ref keeps
-  // it out of the effect deps so a parent re-render (e.g. saving, which updates
-  // the content prop) does not destroy and rebuild the live editor.
-  const initialContentRef = useRef(initialContent);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-    initialContentRef.current = initialContent;
-  });
-
-  useEffect(() => {
-    if (encoding === "base64") return;
-    const container = containerRef.current;
-    if (!container) return;
-
-    const extensions = [
-      lineNumbers(),
-      highlightActiveLine(),
-      history(),
-      bracketMatching(),
-      indentOnInput(),
-      syntaxHighlighting(defaultHighlightStyle),
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-      EditorState.readOnly.of(readonly),
-      EditorView.editable.of(!readonly),
-      EditorView.lineWrapping,
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          onChangeRef.current(update.state.doc.toString());
-        }
-      }),
-    ];
-    const lang = langFor(path);
-    if (lang) extensions.push(lang);
-
-    const view = new EditorView({
-      state: EditorState.create({ doc: initialContentRef.current, extensions }),
-      parent: container,
-    });
-
-    return () => view.destroy();
-  }, [path, readonly, encoding]);
+  // Seed once from the loaded file; the parent remounts via key={path} per file,
+  // and keeps the saved content in sync, so re-reading initialContent would only
+  // fight the user's in-progress edits.
+  const [value, setValue] = useState(initialContent);
 
   if (encoding === "base64") {
     return (
@@ -105,9 +30,16 @@ export function FileEditor({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full min-h-0 overflow-auto bg-background font-mono text-xs"
+    <Textarea
+      value={value}
+      readOnly={readonly}
+      placeholder={placeholder}
+      spellCheck={false}
+      onChange={(e) => {
+        setValue(e.target.value);
+        onChange(e.target.value);
+      }}
+      className="field-sizing-fixed h-full resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-xs leading-relaxed shadow-none focus-visible:border-0 focus-visible:ring-0"
     />
   );
 }

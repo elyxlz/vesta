@@ -1,7 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLayout } from "@/stores/use-layout";
 import { ActionsCard } from "./ActionsCard";
-import { ConstitutionCard } from "./ConstitutionCard";
 import { FilesTab } from "./FilesTab";
 import { ProviderCard } from "./ProviderCard";
 import { SttCard, TtsCard } from "./VoiceSection";
@@ -31,7 +30,6 @@ export function AgentSettings() {
             </div>
             <div className="flex min-w-0 flex-col gap-4">
               <ProviderCard />
-              <ConstitutionCard />
               <SttCard />
               <TtsCard />
             </div>

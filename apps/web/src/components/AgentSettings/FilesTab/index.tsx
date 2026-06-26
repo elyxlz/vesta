@@ -24,7 +24,12 @@ import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
 import { FileEditor } from "./FileEditor";
 import { SimpleView } from "./SimpleView";
-import { collectDreamPaths, friendlyLabel, isSimpleAllowed } from "./paths";
+import {
+  collectDreamPaths,
+  CONSTITUTION_PATH,
+  friendlyLabel,
+  isSimpleAllowed,
+} from "./paths";
 import { buildTree } from "./tree";
 
 type SaveStatus =
@@ -89,6 +94,9 @@ function SimpleSkeleton() {
     <div className="flex h-full min-h-0 flex-col gap-4 p-1">
       <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
         <SkeletonRow widthPct={32} />
+        <div className="border-t border-border/60">
+          <SkeletonRow widthPct={40} />
+        </div>
         <div className="border-t border-border/60">
           <SkeletonRow widthPct={28} />
         </div>
@@ -312,11 +320,15 @@ export function FilesTab() {
           ) : (
             <FileEditor
               key={loadedFile.path}
-              path={loadedFile.path}
               initialContent={loadedFile.content}
               readonly={loadedFile.readonly}
               encoding={loadedFile.encoding}
               onChange={setEditorContent}
+              placeholder={
+                loadedFile.path === CONSTITUTION_PATH
+                  ? "empty — set principles, boundaries, or facts the agent must always honor"
+                  : undefined
+              }
             />
           )}
         </CardContent>
