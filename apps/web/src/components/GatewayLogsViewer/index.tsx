@@ -78,7 +78,7 @@ export function GatewayLogsViewer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="flex h-[60vh] w-[60vw] max-w-[60vw] flex-col sm:max-w-[60vw]">
         <DialogHeader>
           <DialogTitle>Gateway logs</DialogTitle>
           <DialogDescription className="sr-only">
