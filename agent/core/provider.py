@@ -77,7 +77,8 @@ def derive_status(config: VestaConfig) -> ProviderStatus:
     actually provisioned. Model comes from the config store via VestaConfig."""
     kind, authed = _derive_kind_and_auth(config)
     state = ProviderAuthState.AUTHENTICATED if authed else ProviderAuthState.NOT_AUTHENTICATED
-    return ProviderStatus(state=state, kind=kind, model=config.provider.model)
+    model = config.provider.model if config.provider is not None else None
+    return ProviderStatus(state=state, kind=kind, model=model)
 
 
 def _sign_in(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None, config: VestaConfig) -> str | None:
@@ -118,11 +119,11 @@ def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, conf
 
 
 def clear_provider(*, config: VestaConfig) -> ProviderStatus:
-    """Sign out: remove the Claude OAuth blob and reset the stored provider to a valid signed-out
-    default (claude, no credentials), leaving the agent not_authenticated. General config (personality,
-    timezone, ...) survives. Vestad restarts the agent."""
+    """Sign out: remove the Claude OAuth blob and clear the stored provider to None (no provider
+    chosen), leaving the agent unprovisioned. General config (personality, timezone, ...) survives.
+    Vestad restarts the agent."""
     CREDENTIALS_PATH.unlink(missing_ok=True)
-    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
+    update_config_store({"provider": None})
     logger.startup("Provider cleared (signed out)")
     return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
 
@@ -142,14 +143,15 @@ def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus |
 
 
 def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
-    """The usable provider and whether its credential is valid: openrouter when chosen (key is
-    type-guaranteed), claude when the OAuth blob loaded from disk is valid, else none (unprovisioned)."""
+    """The usable provider and whether its credential is valid: none when no provider is chosen (fresh
+    / signed out); openrouter when chosen (key is type-guaranteed); claude when chosen, authed only if
+    the OAuth blob loaded from disk is valid (an expired/absent blob is claude-but-unauthenticated)."""
     provider = config.provider
+    if provider is None:
+        return "none", False
     if isinstance(provider, OpenRouterConfig):
         return "openrouter", bool(provider.key.get_secret_value())
-    if provider.oauth is not None:
-        return "claude", _check_claude_oauth(provider.oauth)
-    return "none", False
+    return "claude", provider.oauth is not None and _check_claude_oauth(provider.oauth)
 
 
 def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:

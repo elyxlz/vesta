@@ -138,8 +138,8 @@ async def process_batch(
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if isinstance(config.provider, vm.ClaudeConfig) and config.provider.oauth is None:
-        logger.startup("No credentials yet, waiting for auth before starting")
+    if state.provider_status is None or state.provider_status.state != ProviderAuthState.AUTHENTICATED:
+        logger.startup("No authenticated provider yet, waiting for sign-in before starting")
         return False
 
     if reason == "first_start":

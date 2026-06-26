@@ -296,8 +296,12 @@ async def test_status_reports_readiness_separate_from_provider(config):
     # /status carries the readiness gate (authed + setup_complete); /provider carries the config + authed
     # but NOT setup_complete (that's agent lifecycle, not the provider resource).
     import core.api as api_mod
+    from core.config import update_config_store
     from core.provider import ProviderAuthState, ProviderStatus
 
+    # A signed-in Claude agent: the chosen provider lives in the store, so /provider reports its kind.
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
+    config = vm.VestaConfig()
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.persisted.first_start_done = True

@@ -7,12 +7,13 @@ import json
 import pytest
 
 import core.models as vm
-from core.config import OpenRouterConfig, read_config_store, update_config_store
+from core.config import ClaudeConfig, ClaudeOAuth, OpenRouterConfig, read_config_store, update_config_store
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
     UsageError,
     _check_claude_auth,
+    _derive_kind_and_auth,
     clear_provider,
     derive_status,
     get_usage,
@@ -21,6 +22,33 @@ from core.provider import (
     set_claude,
     set_openrouter,
 )
+
+
+def _cfg(provider):
+    return vm.VestaConfig.model_construct(provider=provider)
+
+
+# --- Honest derivation: unprovisioned vs set-but-unauthenticated vs authenticated ---
+
+
+def test_derive_none_when_no_provider_chosen():
+    assert _derive_kind_and_auth(_cfg(None)) == ("none", False)
+
+
+def test_derive_claude_unauthenticated_when_oauth_invalid():
+    # Provider SET to claude (a real choice) but the OAuth blob is expired with no refresh token.
+    expired = ClaudeOAuth(accessToken="x", refreshToken=None, expiresAt=1)
+    assert _derive_kind_and_auth(_cfg(ClaudeConfig(oauth=expired))) == ("claude", False)
+
+
+def test_derive_claude_authenticated_when_oauth_refreshable():
+    refreshable = ClaudeOAuth(accessToken="x", refreshToken="r", expiresAt=0)
+    assert _derive_kind_and_auth(_cfg(ClaudeConfig(oauth=refreshable))) == ("claude", True)
+
+
+def test_derive_openrouter_authenticated_with_key():
+    assert _derive_kind_and_auth(_cfg(OpenRouterConfig(model="m", key="sk-or-v1-x"))) == ("openrouter", True)
+
 
 _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
 
@@ -125,12 +153,15 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
 
     status = clear_provider(config=prov)
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert status.kind == "none"
     assert status.model is None
     assert not provider_mod.CREDENTIALS_PATH.exists()
-    # The store resets to a valid signed-out default (claude, no key/oauth).
-    assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
-    # A fresh boot re-derives not_authenticated from disk (creds removed).
-    assert derive_status(vm.VestaConfig()).state == ProviderAuthState.NOT_AUTHENTICATED
+    # Sign-out clears the provider entirely (no provider chosen), not a fake default.
+    assert "provider" not in read_config_store()
+    # A fresh boot re-derives unprovisioned from disk (no provider, creds removed).
+    fresh = derive_status(vm.VestaConfig())
+    assert fresh.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert fresh.kind == "none"
 
 
 def test_set_claude_replaces_openrouter_provider(prov):
@@ -180,6 +211,8 @@ def test_observed_provider_failure_flips_in_memory_only(prov):
 def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
     from core import provider as provider_mod
 
+    # A signed-in Claude agent: the chosen provider in the store + valid creds on disk.
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(_CREDS)
     status = derive_status(vm.VestaConfig())
@@ -205,7 +238,9 @@ def test_authenticated_provider_reports_model(prov):
 def test_boot_derives_no_model_when_credentials_are_invalid(prov):
     from core import provider as provider_mod
 
-    # Credentials on disk (so kind=claude) but unusable (expired, no refresh token) -> not authenticated.
+    # Claude chosen in the store, but the creds on disk are unusable (expired, no refresh token) ->
+    # set-but-unauthenticated: kind stays claude, state not_authenticated.
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}))
     status = derive_status(vm.VestaConfig())
@@ -237,6 +272,7 @@ async def test_get_usage_empty_when_no_provider(prov):
 async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch):
     from core import provider as provider_mod
 
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
     sample = {
@@ -278,6 +314,7 @@ async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
 async def test_get_usage_propagates_fetch_error(prov, monkeypatch):
     from core import provider as provider_mod
 
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r"}}))
 

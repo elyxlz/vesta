@@ -12,12 +12,25 @@ from core.loops import (
     _load_notification_files,
     _notification_watcher,
     delete_notification_files,
+    drop_greeting_notification,
     format_notification_batch,
     load_notifications,
     monitor_loop,
     process_batch,
 )
+from core.provider import ProviderAuthState, ProviderStatus
 from wait_util import wait_for_condition
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "claude", "none"])
+def test_greeting_deferred_until_authenticated(config, kind):
+    """The greeting (and so first-start) is gated on the derived auth STATUS, not the provider shape:
+    any not-authenticated agent defers — a fresh agent with no provider (none), a chosen provider whose
+    key/token is rejected (openrouter/claude), or one whose Claude token expired. Regression for an
+    upgraded agent that loaded a stale unauthenticated provider and never ran its migrations."""
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=kind, model=None)
+    assert drop_greeting_notification(config=config, state=state, reason="first_start") is False
 
 
 # --- _load_notification_files ---
