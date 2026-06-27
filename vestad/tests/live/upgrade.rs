@@ -28,7 +28,8 @@ use vesta_tests::{
 };
 
 use super::common::{
-    openrouter_key, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification, ProviderApi,
+    create_file_request, openrouter_key, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification,
+    ProviderApi,
 };
 
 const AGENT_NAME: &str = "upgrade";
@@ -168,7 +169,7 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     // The agent must still do real work after the update, not just survive boot.
     write_notification(
         &container,
-        &format!("Create the file \"{UPGRADE_PROBE_MARKER}\" containing only the word: UPGRADED"),
+        &create_file_request(UPGRADE_PROBE_MARKER, "UPGRADED"),
         false,
     )
     .expect("send post-update probe");
