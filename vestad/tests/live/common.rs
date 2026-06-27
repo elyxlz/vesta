@@ -110,6 +110,13 @@ pub fn write_notification(container: &str, message: &str, interrupt: bool) -> Re
     Ok(())
 }
 
+/// The notification body for a "create this exact file" probe (the settle / post-update / dream-resume
+/// signals). "at this exact path" keeps the agent from paraphrasing the absolute path into a
+/// `~`-relative one (which writes to the wrong place and the probe never settles).
+pub fn create_file_request(path: &str, content: &str) -> String {
+    format!("Create the file at this exact path: \"{path}\" containing only the word: {content}")
+}
+
 pub fn wait_for_file_contains(container: &str, path: &str, needle: &str, timeout: Duration) -> Result<String, String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -162,7 +169,7 @@ const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Provider auth lost (termina
 fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
     write_notification(
         container,
-        &format!("Create the file \"{READY_MARKER}\" containing only the word: READY"),
+        &create_file_request(READY_MARKER, "READY"),
         false, // passive: the monitor loop delivers this only once the agent is idle
     )?;
     wait_for_file_contains(container, READY_MARKER, "READY", FIRST_START_SETTLE_TIMEOUT).map(|_| ())
