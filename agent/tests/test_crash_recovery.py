@@ -50,9 +50,14 @@ def _mock_client(enter):
 
 
 def _processor_config_state(tmp_path, session_id=None):
+    from core.provider import ProviderAuthState, ProviderStatus
+
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
+    # These tests exercise the client-session/resume path, which message_processor runs only for an
+    # authenticated provider (it idles otherwise).
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.persisted.session_id = session_id
     state.shutdown_event = asyncio.Event()
     return config, state

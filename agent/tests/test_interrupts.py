@@ -64,6 +64,11 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
     emitted: list[tuple[str, float]] = []
     config = vm.VestaConfig(interrupt_timeout=0.5)
     state = vm.State()
+    # message_processor runs the client loop only for an authenticated provider; these interrupt tests
+    # drive that loop, so mark the agent authenticated.
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.event_bus = EventBus()
 
     original_emit = state.event_bus.emit
@@ -108,6 +113,9 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
 @pytest.mark.anyio
 async def test_message_processor_interrupts_on_new_message(config, state):
     """New messages arriving during processing set the interrupt event and are processed after."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     processing_started = asyncio.Event()
     interrupt_seen = asyncio.Event()
 
@@ -161,6 +169,9 @@ async def test_message_processor_interrupts_on_new_message(config, state):
 @pytest.mark.anyio
 async def test_message_processor_sets_busy_flag_during_turn(config, state):
     """processor_busy is True while a turn runs and False once it finishes (gates the proactive check)."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     processing_started = asyncio.Event()
     busy_during_turn = False
 

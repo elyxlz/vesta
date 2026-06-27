@@ -253,14 +253,16 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
 
 
 async def _status_handler(request: web.Request) -> web.Response:
-    """The agent's operational readiness: whether the active provider is authenticated and whether
-    first-start has finished. vestad polls this to gate Alive vs SettingUp vs NotAuthenticated (an
+    """The agent's operational readiness: whether the active provider is authenticated, whether one is
+    configured at all (so vestad can tell unprovisioned from unauthenticated), and whether first-start
+    has finished. vestad polls this to gate Alive / SettingUp / NotAuthenticated / Unprovisioned (an
     authenticated agent that hasn't finished first-start is not yet ready)."""
     state: State = request.app["state"]
     status = state.provider_status
     return web.json_response(
         {
             "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
+            "provider_configured": status is not None and status.kind != "none",
             "setup_complete": state.persisted.first_start_done,
         }
     )

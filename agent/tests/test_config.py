@@ -36,11 +36,14 @@ def test_memory_paths(config):
     assert config.skills_dir == config.agent_dir / "skills"
 
 
-def test_default_provider_is_claude_opus():
-    provider = vm.VestaConfig().provider
-    assert isinstance(provider, ClaudeConfig)
-    assert provider.kind == "claude"
-    assert provider.model == "opus"
+def test_default_provider_is_none_when_unprovisioned(agentdir, monkeypatch, tmp_path):
+    """A fresh agent (no store, no legacy file, no creds) has no provider chosen at all."""
+    from core import config as config_mod
+
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
+    config, _ = config_mod.load_config()
+    assert config.provider is None
 
 
 # Both the plain-string form (thinking="adaptive") and the legacy JSON-dict form written before
@@ -122,17 +125,24 @@ def agentdir(tmp_path, monkeypatch):
     return tmp_path / "agent"
 
 
-def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch):
-    # The crash class: nothing in env, no store -> field defaults, no raise.
+def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_path):
+    # The crash class: nothing in env, no store -> field defaults (provider unchosen), no raise.
+    from core import config as config_mod
+
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config, issues = load_config()
-    assert (config.provider.model, config.provider.kind, config.agent_personality) == ("opus", "claude", "dry")
+    assert config.provider is None
+    assert config.agent_personality == "dry"
     assert issues == []
     assert isinstance(config, vm.VestaConfig)
 
 
 def test_store_sets_nested_provider(agentdir):
     update_config_store({"provider": {"kind": "claude", "model": "sonnet"}})
-    assert vm.VestaConfig().provider.model == "sonnet"
+    provider = vm.VestaConfig().provider
+    assert isinstance(provider, ClaudeConfig)
+    assert provider.model == "sonnet"
 
 
 def test_update_merges_and_clear_reverts(agentdir):
@@ -149,11 +159,25 @@ def test_update_rejects_keys_that_are_not_config_fields(agentdir):
         update_config_store({"not_a_field": "x"})
 
 
-def test_corrupt_store_does_not_crash_load(agentdir):
+def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch, tmp_path):
+    from core import config as config_mod
+
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config_store_path().write_text("{ not json")
     assert read_config_store() == {}
     config, _ = load_config()
-    assert config.provider.model == "opus"
+    assert config.provider is None
+
+
+def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path):
+    from core import config as config_mod
+    from core.config import stored_config
+
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
+    config, _ = config_mod.load_config()
+    assert stored_config(config)["provider"] is None
 
 
 # --- Legacy fleet convergence: flat -> nested provider ---
@@ -239,6 +263,30 @@ def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_pa
     assert not legacy.exists()
 
 
+def test_load_config_converges_legacy_provider_file_first(agentdir, monkeypatch, tmp_path):
+    """A legacy OpenRouter agent stores its provider only in vesta-provider.env. load_config must
+    drain it into the store BEFORE building the config, so the returned config is the OpenRouter
+    provider — not the default (which would derive not_authenticated and defer all work)."""
+    from core import config as config_mod
+    from core.config import OpenRouterConfig
+
+    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "MAX_CONTEXT_TOKENS", "AGENT_PERSONALITY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
+    legacy = tmp_path / "vesta-provider.env"
+    legacy.write_text(
+        "export AGENT_PROVIDER=openrouter\nexport AGENT_MODEL='deepseek/deepseek-v4-flash'\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n"
+    )
+    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
+
+    config, _ = config_mod.load_config()
+
+    assert isinstance(config.provider, OpenRouterConfig)
+    assert config.provider.model == "deepseek/deepseek-v4-flash"
+    assert config.provider.key.get_secret_value() == "sk-or-v1-secret"
+    assert not legacy.exists()  # convergence ran and retired the legacy file
+
+
 # --- PUT /config (prefs) + PATCH /provider validation ---
 
 
@@ -262,7 +310,9 @@ def test_validate_config_accepts_every_preference(config, key, value):
 
 
 def test_validate_provider_partial_deep_merges(config):
-    # A provider partial (PATCH /provider) merges onto the current provider and revalidates.
+    # A provider partial (PATCH /provider) merges onto the current provider and revalidates. PATCH only
+    # applies to an already-chosen provider, so seed one in the store first.
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     updates = validate_config_updates(config, {"provider": {"model": "sonnet"}})
     assert updates["provider"] == {"kind": "claude", "model": "sonnet"}
 

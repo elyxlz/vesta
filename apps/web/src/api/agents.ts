@@ -90,13 +90,17 @@ export async function signOutProvider(name: string): Promise<void> {
 }
 
 export interface ProviderInfo {
+  /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
+  /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
   kind: "claude" | "openrouter" | "none";
   model: string | null;
   max_context_tokens: number | null;
+  authed: boolean;
 }
 
-/// Read an agent's active provider from its `GET /provider`. An unauthenticated agent (no creds, or
-/// signed out) reports `authed: false`, which we surface as `kind: "none"` for the UI.
+/// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
+/// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
+/// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
   const provider = await apiJson<{
     kind?: "claude" | "openrouter";
@@ -105,9 +109,10 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
     authed?: boolean;
   }>(`/agents/${encodeURIComponent(name)}/provider`);
   return {
-    kind: provider.authed ? (provider.kind ?? "none") : "none",
+    kind: provider.kind ?? "none",
     model: provider.model,
     max_context_tokens: provider.max_context_tokens,
+    authed: provider.authed ?? false,
   };
 }
 
@@ -181,8 +186,8 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
-/// Poll /agents/{name} until it reports "alive" or "not_authenticated".
-/// A brand-new empty agent boots into not_authenticated until provisioned.
+/// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
+/// "unprovisioned" (no provider chosen) until provisioned; a re-auth case reports "not_authenticated".
 export async function waitUntilRunning(
   name: string,
   timeoutMs: number,
@@ -193,7 +198,12 @@ export async function waitUntilRunning(
     const resp = await apiJson<{ status: string }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (resp.status === "alive" || resp.status === "not_authenticated") return;
+    if (
+      resp.status === "alive" ||
+      resp.status === "not_authenticated" ||
+      resp.status === "unprovisioned"
+    )
+      return;
     if (
       resp.status === "dead" ||
       resp.status === "stopped" ||
@@ -221,7 +231,8 @@ export async function waitUntilAlive(
       resp.status === "dead" ||
       resp.status === "stopped" ||
       resp.status === "not_found" ||
-      resp.status === "not_authenticated"
+      resp.status === "not_authenticated" ||
+      resp.status === "unprovisioned"
     ) {
       throw new Error(`${name}: ${resp.status}`);
     }

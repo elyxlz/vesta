@@ -296,8 +296,12 @@ async def test_status_reports_readiness_separate_from_provider(config):
     # /status carries the readiness gate (authed + setup_complete); /provider carries the config + authed
     # but NOT setup_complete (that's agent lifecycle, not the provider resource).
     import core.api as api_mod
+    from core.config import update_config_store
     from core.provider import ProviderAuthState, ProviderStatus
 
+    # A signed-in Claude agent: the chosen provider lives in the store, so /provider reports its kind.
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
+    config = vm.VestaConfig()
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.persisted.first_start_done = True
@@ -306,13 +310,30 @@ async def test_status_reports_readiness_separate_from_provider(config):
         app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
-    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "setup_complete": True}
+    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "provider_configured": True, "setup_complete": True}
 
     provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     provider_body = json.loads(typing.cast("str", provider_resp.text))
     assert provider_body["authed"] is True
     assert "setup_complete" not in provider_body  # readiness moved to /status
     assert provider_body["kind"] == "claude"
+
+
+@pytest.mark.anyio
+async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config):
+    # A fresh agent (no provider chosen) reports provider_configured=False, so vestad can show
+    # "needs first sign-in" rather than "re-authenticate".
+    import core.api as api_mod
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
+
+    class _Req:
+        app = {"state": state, "config": config}
+
+    status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
+    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": False, "provider_configured": False, "setup_complete": False}
 
 
 @pytest.mark.anyio

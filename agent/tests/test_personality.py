@@ -11,6 +11,11 @@ from core.client import build_client_options
 def _config(tmp_path, monkeypatch):
     # Drive agent_dir through AGENT_DIR so the config field and config_store_path() agree.
     monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    # A signed-in agent: build_client_options needs a chosen provider. Seed it in the store so a
+    # rebuilt VestaConfig() (the config-store test re-reads after a write) keeps it.
+    from core.config import update_config_store
+
+    update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     config = vm.VestaConfig()
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("my memory body")

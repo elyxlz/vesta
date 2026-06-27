@@ -11,28 +11,32 @@ def test_config_accepts_openrouter_provider(tmp_path):
     assert config.provider.kind == "openrouter"
 
 
-def test_config_defaults_to_claude(tmp_path):
+def test_config_defaults_to_no_provider(tmp_path):
+    # A fresh agent has no provider chosen yet (distinct from a chosen-but-unauthenticated provider).
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    assert config.provider.kind == "claude"
+    assert config.provider is None
 
 
 def test_config_max_context_tokens_defaults_to_unset(tmp_path):
-    """Unset (None) by default: Claude runs at its model default (1M via beta) and OpenRouter falls
-    back to a 200k working cap. A chosen value overrides both."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    """Unset (None) by default on a chosen provider: Claude runs at its model default (1M via beta) and
+    OpenRouter falls back to a 200k working cap. A chosen value overrides both."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus"))
+    assert isinstance(config.provider, ClaudeConfig)
     assert config.provider.max_context_tokens is None
 
 
 def test_config_provider_carries_max_context_tokens(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus", max_context_tokens=400_000))
+    assert isinstance(config.provider, ClaudeConfig)
     assert config.provider.max_context_tokens == 400_000
 
 
 def _config_with_memory(tmp_path, *, provider=None):
-    kwargs = {"agent_dir": tmp_path / "agent"}
-    if provider is not None:
-        kwargs["provider"] = provider
-    config = vm.VestaConfig(**kwargs)
+    # build_client_options requires a chosen provider; default to Claude when a test doesn't pin one.
+    config = vm.VestaConfig(
+        agent_dir=tmp_path / "agent",
+        provider=provider if provider is not None else ClaudeConfig(),
+    )
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("test memory")
     return config

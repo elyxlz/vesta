@@ -2679,8 +2679,10 @@ mod tests {
     fn contract_fixtures() -> serde_json::Value {
         let agent_statuses: Vec<serde_json::Value> = [
             AgentStatus::Alive,
+            AgentStatus::SettingUp,
             AgentStatus::Starting,
             AgentStatus::NotAuthenticated,
+            AgentStatus::Unprovisioned,
             AgentStatus::Stopped,
             AgentStatus::Dead,
             AgentStatus::NotFound,

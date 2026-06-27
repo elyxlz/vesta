@@ -220,7 +220,9 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     model_config = pyd_settings.SettingsConfigDict(extra="ignore", populate_by_name=True)
 
-    provider: Provider = pyd.Field(default_factory=ClaudeConfig)
+    # None means no provider chosen yet (fresh agent, or signed out) — distinct from a chosen provider
+    # whose credential is missing/expired. A concrete provider always reflects an explicit choice.
+    provider: Provider | None = None
     agent_personality: str = _DEFAULT_PERSONALITY
 
     ephemeral: bool = False
@@ -318,7 +320,12 @@ def merge_provider(config: "VestaConfig", patch: dict[str, pyd.JsonValue]) -> di
     same-kind patch keeps the rest (a model-only change keeps the key; a re-auth keeps model/context/
     thinking) while a kind switch replaces wholesale. The single merge for both PATCH and sign-in."""
     store = read_config_store()
-    current = store["provider"] if "provider" in store and isinstance(store["provider"], dict) else {"kind": config.provider.kind}
+    if "provider" in store and isinstance(store["provider"], dict):
+        current = store["provider"]
+    elif config.provider is not None:
+        current = {"kind": config.provider.kind}
+    else:
+        current = {}  # no provider chosen yet; a sign-in patch carries its own kind
     current = tp.cast("dict[str, pyd.JsonValue]", current)
     if "kind" in patch and ("kind" not in current or current["kind"] != patch["kind"]):
         return dict(patch)
@@ -367,7 +374,12 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     Config is on the container's boot path: an exception here exits the process, and with
     `--restart=unless-stopped` that becomes a tight crash loop. So drop each offending env override and
     rebuild, reverting only that field; if nothing is droppable, fall back to a default claude provider.
+
+    Legacy convergence runs first (before the config is built), so the loaded config reflects the
+    migrated nested provider rather than a stale default. This makes load_config the single owner of
+    "what config does the agent run on" — there is no separate boot step to sequence wrongly.
     """
+    migrate_legacy_config_to_store()
     issues: list[str] = []
     dropped: set[str] = set()
     while True:

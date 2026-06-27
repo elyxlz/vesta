@@ -28,6 +28,7 @@ describe("vestad API contract", () => {
       vestadApiFixtures.agent_statuses satisfies readonly AgentStatus[];
     expect(statuses).toContain("alive");
     expect(statuses).toContain("not_authenticated");
+    expect(statuses).toContain("unprovisioned");
   });
 
   it("control WS agents message rows satisfy AgentInfo", () => {

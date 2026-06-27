@@ -30,7 +30,9 @@ export function ActionsCard() {
     agent?.status !== "not_found";
   const showAliveActions = agent?.status === "alive";
   const isAuthenticated = Boolean(
-    agent && agent.status !== "not_authenticated",
+    agent &&
+    agent.status !== "not_authenticated" &&
+    agent.status !== "unprovisioned",
   );
 
   // On mobile (no navbar sign-in button) an agent that needs auth is an urgent

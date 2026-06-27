@@ -138,8 +138,8 @@ async def process_batch(
 
 def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
-    if isinstance(config.provider, vm.ClaudeConfig) and config.provider.oauth is None:
-        logger.startup("No credentials yet, waiting for auth before starting")
+    if state.provider_status is None or state.provider_status.state != ProviderAuthState.AUTHENTICATED:
+        logger.startup("No authenticated provider yet, waiting for sign-in before starting")
         return False
 
     if reason == "first_start":
@@ -300,6 +300,14 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
 
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
+    # An agent with no authenticated provider can't drive the model. It still boots and stays reachable
+    # so vestad can deliver credentials over the API, but there is nothing to process here until sign-in
+    # restarts the process with a provider applied — so idle instead of building an SDK client (which
+    # requires a provider). Messages are deferred upstream while unauthenticated, so the queue stays empty.
+    if state.provider_status is None or state.provider_status.state != ProviderAuthState.AUTHENTICATED:
+        logger.client("No authenticated provider; idling until sign-in")
+        await state.shutdown_event.wait()
+        return
     logger.client("Creating new client session...")
     if isinstance(config.provider, vm.OpenRouterConfig):
         if state.openrouter_max_tokens is None:

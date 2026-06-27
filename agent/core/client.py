@@ -319,11 +319,18 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # Scope ANTHROPIC_BASE_URL to the Claude Code subprocess only; mutating
     # os.environ here would leak the OpenRouter URL into every other subprocess
     # the agent spawns (skill CLIs, gh, git, ...) and silently misroute them.
+    # message_processor only reaches here once the provider is authenticated (it idles otherwise), so a
+    # provider is always present. Narrow the Optional for the type checker and fail loudly rather than
+    # mis-build options if that invariant ever regresses.
+    provider = config.provider
+    if provider is None:
+        raise RuntimeError("build_client_options reached with no authenticated provider")
+
     sdk_env: dict[str, str] = {}
     betas: list[str] = []
     # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
     thinking_config = ThinkingConfigDisabled(type="disabled")
-    if isinstance(config.provider, vm.OpenRouterConfig):
+    if isinstance(provider, vm.OpenRouterConfig):
         # The SDK always routes through the local caching proxy, never OpenRouter
         # directly. start_cache_proxy runs first in message_processor, so the URL is set.
         if not state.openrouter_proxy_url:
@@ -331,7 +338,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
         # The OpenRouter key + background model the subprocess talks to OpenRouter with, injected
         # from the config store (no shell env inheritance). The union guarantees the key.
-        sdk_env["ANTHROPIC_AUTH_TOKEN"] = config.provider.key.get_secret_value()
+        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
         sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
         # Tell claude-code the model's real window so autocompact uses the right
         # threshold instead of its 200k default for non-Anthropic models.
@@ -341,19 +348,19 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         # Claude. The 1M-context beta unlocks windows above claude-code's 200k default.
         # Honor a user-chosen window: cap the autocompact threshold to it, and request the 1M
         # beta only when the choice needs the larger window. Unset keeps 1M beta on, no cap.
-        chosen = config.provider.max_context_tokens
+        chosen = provider.max_context_tokens
         if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
             betas = [CONTEXT_1M_BETA]
         if chosen is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
-        thinking_config = config.provider.thinking
+        thinking_config = provider.thinking
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
-        model=config.provider.model,
+        model=provider.model,
         betas=betas,  # ty: ignore[invalid-argument-type]
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",

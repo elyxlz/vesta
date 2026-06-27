@@ -28,6 +28,11 @@ pub struct AgentStatusView {
     /// Same back-compat default so a response without the field isn't stuck in `SettingUp`.
     #[serde(default = "default_true")]
     pub setup_complete: bool,
+    /// Whether the agent has a provider chosen at all. Defaults to `true` for back-compat so an older
+    /// agent that omits the field isn't mislabeled Unprovisioned; a fresh/signed-out agent reports
+    /// `provider_configured: false` explicitly.
+    #[serde(default = "default_true")]
+    pub provider_configured: bool,
 }
 
 fn default_true() -> bool {

@@ -21,9 +21,15 @@ async def _run_processor_test(
     """Shared helper for message_processor tests."""
     from core.loops import message_processor
 
+    from core.provider import ProviderAuthState, ProviderStatus
+
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = pre_state or vm.State()
+    # These tests exercise the active processing path; an authenticated provider lets message_processor
+    # build the (mocked) client rather than idling. Tests of the unauthenticated path set their own.
+    if state.provider_status is None:
+        state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -157,9 +163,11 @@ def test_restart_reason_round_trip(tmp_path):
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor
+    from core.provider import ProviderAuthState, ProviderStatus
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -225,6 +233,37 @@ async def test_process_message_no_correction(tmp_path, response):
         await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_unauthenticated_agent_idles_without_building_client(tmp_path):
+    """A boot with no authenticated provider must NOT build an SDK client (which requires a provider) —
+    it idles until sign-in restarts the process. Regression: build_client_options was called eagerly at
+    session start and crashed an unprovisioned agent."""
+    from core.loops import message_processor
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    built = MagicMock()
+    with (
+        patch("core.loops.build_client_options", built),
+        patch("core.loops.ClaudeSDKClient") as mock_client,
+    ):
+        task = asyncio.create_task(message_processor(queue, state=state, config=config))
+        await asyncio.sleep(0.05)
+        assert not task.done()  # idling, not crashed or returned early
+        state.shutdown_event.set()
+        await asyncio.wait_for(task, timeout=1.0)
+
+    built.assert_not_called()
+    mock_client.assert_not_called()
+    assert state.client is None
 
 
 @pytest.mark.anyio

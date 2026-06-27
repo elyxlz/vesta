@@ -27,7 +27,8 @@ interface ChatProps {
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name, agent } = useSelectedAgent();
-  const notAuthenticated = agent?.status === "not_authenticated";
+  const notAuthenticated =
+    agent?.status === "not_authenticated" || agent?.status === "unprovisioned";
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {

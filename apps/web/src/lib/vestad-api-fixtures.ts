@@ -10,8 +10,10 @@ export const vestadApiFixtures = {
   },
   "agent_statuses": [
     "alive",
+    "setting_up",
     "starting",
     "not_authenticated",
+    "unprovisioned",
     "stopped",
     "dead",
     "not_found"
