@@ -29,10 +29,8 @@ def test_skips_dream_before_first_start_done(tmp_path):
     assert state.persisted.first_start_done is False
     fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
 
-    with (
-        patch("core.loops._now", return_value=fake_now),
-        patch("core.loops.load_prompt", return_value="dreamer prompt"),
-    ):
+    # No load_prompt patch: the first_start_done guard returns before load_prompt is reached.
+    with patch("core.loops._now", return_value=fake_now):
         process_nightly_memory(state=state, config=config)
 
     assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
