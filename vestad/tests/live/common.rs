@@ -31,7 +31,7 @@ fn lock_pool(pool: &'static LazyLock<Mutex<SharedAgent>>) -> Option<(MutexGuard<
 }
 
 /// Lock pool A (general tests: file ops, mcp tools, interrupt). Returns None (test skips) when
-/// OPENROUTER_KEY is unset.
+/// CLAUDE_CREDENTIALS is unset.
 pub fn lock_live_agent_a() -> Option<(MutexGuard<'static, SharedAgent>, String)> {
     lock_pool(&LIVE_AGENT_A)
 }
@@ -71,10 +71,11 @@ fn exec_ok(container: &str, script: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Default OpenRouter model for the live suite — cheap and fast. Override with LIVE_TEST_MODEL.
-const DEFAULT_LIVE_MODEL: &str = "deepseek/deepseek-v4-flash";
+/// Default Claude model for the live suite — sonnet (cheaper/faster than opus, capable enough to
+/// drive first-start reliably). Override with LIVE_TEST_MODEL.
+const DEFAULT_LIVE_MODEL: &str = "sonnet";
 
-/// The OpenRouter model the live agents run with, from LIVE_TEST_MODEL or the default above.
+/// The Claude model the live agents run with, from LIVE_TEST_MODEL or the default above.
 pub fn live_model() -> String {
     std::env::var("LIVE_TEST_MODEL")
         .ok()
@@ -82,10 +83,12 @@ pub fn live_model() -> String {
         .unwrap_or_else(|| DEFAULT_LIVE_MODEL.to_string())
 }
 
-/// The OpenRouter API key the live suite authenticates with, from OPENROUTER_KEY. None (tests skip)
-/// when it is unset, mirroring the old missing-credentials skip.
-pub fn openrouter_key() -> Option<String> {
-    std::env::var("OPENROUTER_KEY").ok().filter(|key| !key.is_empty())
+/// Path to the Claude OAuth credentials the live suite signs in with. CI writes it from the
+/// CLAUDE_CREDENTIALS secret to `~/.claude/.credentials.json`; None (tests skip) when it is absent.
+pub fn host_credentials_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let path = std::path::PathBuf::from(home).join(".claude/.credentials.json");
+    path.exists().then_some(path)
 }
 
 pub fn write_notification(container: &str, message: &str, interrupt: bool) -> Result<(), String> {
@@ -150,8 +153,8 @@ const FIRST_START_SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 const READY_MARKER: &str = "/root/agent/e2e-test/ready.txt";
 const FIRST_START_ALIVE_POLL: Duration = Duration::from_secs(2);
 
-/// Agent-log markers meaning the injected key is being rejected by the provider (a bad or
-/// out-of-credit OPENROUTER_KEY — the agent flips to not_authenticated on a terminal 401/402).
+/// Agent-log markers meaning the injected credentials are being rejected by the provider (an
+/// expired/invalid CLAUDE_CREDENTIALS — the agent flips to not_authenticated on a terminal 401/402).
 /// When this happens the agent idles in `setting_up` until the full timeout, so first-start setup
 /// bails fast and prints the agent's own diagnostics on sight of one rather than hanging for ten
 /// minutes on a generic timeout.
@@ -177,9 +180,9 @@ fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
 
 /// Block until the agent reports `alive`, failing fast with diagnostics on an auth error.
 ///
-/// `wait_until_alive` would block for the full timeout if the injected key is
+/// `wait_until_alive` would block for the full timeout if the injected credentials are
 /// rejected. Poll the agent's own log alongside its status and bail the moment an auth
-/// error appears (a bad/out-of-credit OPENROUTER_KEY is the usual cause).
+/// error appears (an expired/invalid CLAUDE_CREDENTIALS is the usual cause).
 pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str, container: &str) {
     let alive_deadline = std::time::Instant::now() + FIRST_START_SETTLE_TIMEOUT;
     loop {
@@ -193,7 +196,7 @@ pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str,
         let agent_log = exec_in_container(container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
         if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
             dump_agent_diagnostics(name);
-            panic!("agent hit an auth error — OPENROUTER_KEY is invalid or out of credit; re-seed the secret (agent diagnostics above)");
+            panic!("agent hit an auth error — CLAUDE_CREDENTIALS is invalid or expired; re-seed the secret (agent diagnostics above)");
         }
         thread::sleep(FIRST_START_ALIVE_POLL);
     }
@@ -228,28 +231,33 @@ impl ProviderApi {
     }
 }
 
-/// Provision a freshly-created agent for live e2e (OpenRouter provider on `live_model()`, test
-/// memory, real key) and block until it has fully settled after first-start. Shared by the live
+/// Provision a freshly-created agent for live e2e (Claude provider on `live_model()`, test memory,
+/// real credentials) and block until it has fully settled after first-start. Shared by the live
 /// agent pool and the upgrade e2e test, both of which need a real, idle agent. Panics with
 /// diagnostics on failure, matching the pool's fail-fast behavior. Callers must have already
-/// confirmed the key exists (via `openrouter_key`).
+/// confirmed the credentials exist (via `host_credentials_path`).
 pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str, api: ProviderApi) {
-    let key = openrouter_key().expect("OPENROUTER_KEY present (caller checked)");
+    let credentials_path = host_credentials_path().expect("CLAUDE_CREDENTIALS present (caller checked)");
+    let credentials = fs::read_to_string(&credentials_path).unwrap_or_else(|e| panic!("read {}: {e}", credentials_path.display()));
     let model = live_model();
 
     wait_for_container_running(container, Duration::from_secs(60)).expect("container running");
+
+    // The legacy (pre-0.1.161) sign-in carries no model — that agent reads AGENT_MODEL from env. Set
+    // it so the old upgrade agent runs on `model` too; the current agent takes the model from the PUT.
+    exec_in_container(container, &format!("echo 'export AGENT_MODEL={model}' >> ~/.bashrc")).expect("set AGENT_MODEL");
 
     exec_in_container(container, &format!("mkdir -p {E2E_FILES_DIR}")).expect("create e2e dir");
     exec_in_container(container, &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"))
         .expect("write test memory");
 
     match api {
-        ProviderApi::Current => client.sign_in_openrouter(name, &key, &model),
-        ProviderApi::LegacyPrePut => client.sign_in_openrouter_legacy_pre_put(name, &key, &model),
+        ProviderApi::Current => client.sign_in_claude(name, &credentials, &model),
+        ProviderApi::LegacyPrePut => client.sign_in_claude_legacy_pre_put(name, &credentials),
     }
-    .expect("sign in with OpenRouter");
-    // Restart after sign-in so the agent boots with the OpenRouter provider applied: vestad applies
-    // a provider write only on the next boot, so first-start then runs entirely on the chosen model.
+    .expect("sign in with Claude");
+    // Restart after sign-in so the agent boots with the Claude provider (and AGENT_MODEL) applied:
+    // vestad applies a provider write only on the next boot, so first-start runs on the chosen model.
     client.restart_agent(name).expect("restart agent to apply provider");
 
     wait_until_alive_or_die(client, name, container);
@@ -263,8 +271,8 @@ pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, co
 }
 
 fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
-    if openrouter_key().is_none() {
-        eprintln!("skipping live e2e: OPENROUTER_KEY not set");
+    if host_credentials_path().is_none() {
+        eprintln!("skipping live e2e: CLAUDE_CREDENTIALS not set (no ~/.claude/.credentials.json)");
         return None;
     }
 

@@ -393,9 +393,9 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Live agent e2e (real LLM via OpenRouter) — RELEASE ONLY ──────────
-  # Runs a real agent container talking to a real model on OpenRouter via the
-  # OPENROUTER_KEY secret. These are slow and spend real API tokens, so they do NOT
+  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────
+  # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
+  # OAuth secret. These are slow and spend real API tokens, so they do NOT
   # run on PRs or master pushes — only on the release event, where they gate the
   # release (the `release` and `push-image` jobs depend on this one, so a live-test
   # failure blocks publishing artifacts and the image).
@@ -431,18 +431,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The live suite authenticates to OpenRouter with the OPENROUTER_KEY secret. A static API key,
-      # so there is nothing to refresh. A MISSING secret (forks have no repo secrets) makes the tests
-      # skip themselves; with the key present they run and gate the release.
-      - name: Check OpenRouter key
+      # The live suite authenticates to Claude with the CLAUDE_CREDENTIALS secret (an OAuth blob),
+      # written to ~/.claude/.credentials.json where the agent reads it. A MISSING secret (forks have
+      # no repo secrets) makes the tests skip themselves. The SDK refreshes the access token at runtime
+      # from the refresh token, so an expired access token is fine as long as the refresh token is live.
+      - name: Write Claude credentials
         env:
-          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
-          if [ -z "$OPENROUTER_KEY" ]; then
-            echo "::warning::OPENROUTER_KEY not available (fork release?) — live e2e tests will skip"
-          else
-            echo "OPENROUTER_KEY present — live e2e tests will run"
+          if [ -z "$CLAUDE_CREDENTIALS" ]; then
+            echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
+            exit 0
           fi
+          ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
+          import sys, json
+          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
+          print('ok')" 2>/dev/null || echo "invalid")
+          if [ "$ok" != "ok" ]; then
+            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken — re-seed from a fresh 'claude' login (~/.claude/.credentials.json)"
+            exit 1
+          fi
+          mkdir -p ~/.claude
+          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
 
       - name: Build vestad
         working-directory: vestad
@@ -450,8 +461,6 @@ jobs:
 
       - name: Run live e2e tests
         uses: nick-fields/retry@v4
-        env:
-          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
         with:
           timeout_minutes: 40
           max_attempts: 2

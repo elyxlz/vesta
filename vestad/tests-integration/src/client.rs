@@ -327,6 +327,26 @@ impl Client {
         Ok(())
     }
 
+    /// Sign an agent in with a Claude OAuth credentials blob + model via `PUT /provider`. The write
+    /// doesn't restart; callers restart afterwards. The agent must be running to receive the call.
+    pub fn sign_in_claude(&self, name: &str, credentials: &str, model: &str) -> Result<(), String> {
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
+        self.put_json(&format!("/agents/{}/provider", name), &body)?;
+        Ok(())
+    }
+
+    /// LEGACY(remove-when: the upgrade e2e's from-version (`previous_released_tag`) >= 0.1.161): sign
+    /// a pre-0.1.161 daemon in with Claude credentials. It serves `POST /agents/{name}/provider` and
+    /// its agent core expects just `{credentials}` (model comes from the `AGENT_MODEL` env the caller
+    /// sets). The upgrade test provisions the previous released daemon, so it must speak that contract.
+    pub fn sign_in_claude_legacy_pre_put(&self, name: &str, credentials: &str) -> Result<(), String> {
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"credentials": credentials});
+        self.post_json(&format!("/agents/{}/provider", name), &body)?;
+        Ok(())
+    }
+
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
         let resp = self.post(&format!("/agents/{}/backups", name))?;
         let data = read_sse_result(resp)?;
