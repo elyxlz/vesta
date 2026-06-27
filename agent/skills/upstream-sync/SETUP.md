@@ -35,10 +35,8 @@ __pycache__/
 EOF
 ```
 
-## 3. First sync
+## 3. Done
 
-```bash
-~/agent/skills/upstream-sync/scripts/sync.sh
-```
+That is the whole setup. The workspace now tracks upstream and `skills-install` works.
 
-It commits the baked-in defaults as your starting point, then merges upstream (a fresh repo has no shared history, so genuinely different files may conflict, resolve and re-run). From here on, `sync.sh` is the only command you need to pull upstream.
+Do not sync now. `$VESTA_UPSTREAM_REF` is the version baked into your image, so a fresh agent is already current: the first merge would pull nothing and would only conflict on files you have not changed yet (a fresh repo has no shared history). The ongoing pull lives in [SKILL.md](SKILL.md) (`sync.sh`); it runs later, during nightly maintenance, once upstream has actually moved ahead of you, and that is where real conflicts get resolved.
