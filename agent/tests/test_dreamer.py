@@ -19,11 +19,31 @@ def _setup(tmp_path, *, dreamer_hour=4):
     return config
 
 
+def test_skips_dream_before_first_start_done(tmp_path):
+    """A brand-new agent (first_start_done=False) has nothing to curate, so a catch-up dream
+    landing inside the morning window must not fire mid-onboarding."""
+    from core.loops import process_nightly_memory
+
+    config = _setup(tmp_path)
+    state = vm.State()
+    assert state.persisted.first_start_done is False
+    fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
+
+    with (
+        patch("core.loops._now", return_value=fake_now),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+    assert list(config.notifications_dir.glob("nightly_dream-*.json")) == []
+
+
 def test_drops_dream_notification(tmp_path):
     from core.loops import process_nightly_memory
 
     config = _setup(tmp_path)
     state = vm.State()
+    state.persisted.first_start_done = True
     fake_now = dt.datetime(2025, 6, 15, config.nightly_memory_hour, 0, 0)
 
     with (
@@ -60,6 +80,7 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
 
     config = _setup(tmp_path, dreamer_hour=dreamer_hour)
     state = vm.State()
+    state.persisted.first_start_done = True
     state.persisted.last_dreamer_run = last_dreamer_run
 
     with (

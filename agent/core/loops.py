@@ -386,6 +386,10 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
     """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but cannot preempt the agent for the rest of the day."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
+    # A brand-new agent has no history to curate; a catch-up dream firing inside the morning
+    # window would compact + restart mid-onboarding. Wait until first-start has completed.
+    if not state.persisted.first_start_done:
+        return
     now = _now()
     # Circular window so a late hour (e.g. 22:00) still catches up past midnight.
     hours_since_start = (now.hour - config.nightly_memory_hour) % 24
