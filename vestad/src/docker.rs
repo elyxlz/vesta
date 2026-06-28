@@ -94,10 +94,21 @@ pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 9] = [
+    let steps: [String; 10] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
+        // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
+        // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
+        // If the git workspace tracks .claude, a `git sparse-checkout reapply` (run by skills-install
+        // and by migrations) sparsifies the out-of-cone .claude/ and, on the image's git (2.39),
+        // deletes the untracked ~/.claude/.credentials.json with it, de-authing the agent. Self-heal
+        // at boot, before the agent runs anything that could reapply: drop .claude from the index and
+        // exclude it locally, so .claude is untracked and no reapply can touch it on ANY git version.
+        // Same rationale as tmux above -- this is the one place the fix reliably reaches already-
+        // snapshotted agents, since the skill scripts only update on a sync (itself a dangerous
+        // reapply). No-op outside a git repo (fresh agents before init); `|| true` never aborts boot.
+        "if gd=$(git -C ~ rev-parse --absolute-git-dir 2>/dev/null); then git -C ~ ls-files -z -- .claude | xargs -0r git -C ~ update-index --force-remove; grep -qxF '/.claude/' \"$gd/info/exclude\" 2>/dev/null || printf '/.claude/\\n' >> \"$gd/info/exclude\"; fi || true".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
         // recreates a container from a `docker export|import` snapshot and never re-runs the
@@ -2176,6 +2187,20 @@ mod tests {
         let tmux_at = script.find("command -v tmux").expect("tmux step present");
         let main_at = script.find("python -m core.main").expect("main step present");
         assert!(tmux_at < main_at, "tmux install must precede launching core.main");
+    }
+
+    #[test]
+    fn entrypoint_untracks_claude_from_git_workspace() {
+        // ~/.claude holds the agent's credentials but the repo tracks dev tooling there; if the git
+        // workspace tracks .claude, a sparse-checkout reapply deletes ~/.claude/.credentials.json.
+        // The entrypoint must untrack + exclude .claude at boot, before the agent can reapply.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("update-index --force-remove"), "entrypoint must untrack .claude: {script}");
+        assert!(script.contains("/.claude/"), "entrypoint must exclude .claude: {script}");
+        let untrack_at = script.find("update-index --force-remove").expect("untrack step present");
+        let main_at = script.find("python -m core.main").expect("main step present");
+        assert!(untrack_at < main_at, ".claude untrack must precede launching core.main");
     }
 
     #[test]
