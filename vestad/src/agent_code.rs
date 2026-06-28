@@ -46,6 +46,17 @@ fn embed_fingerprint() -> &'static str {
 
 /// Re-extracts embedded agent code into `agent-code/` whenever the on-disk
 /// fingerprint marker doesn't match the binary's (i.e. after a rebuild).
+/// Whether the next `ensure_agent_code` call would re-extract (the on-disk fingerprint is missing
+/// or differs from this binary's embedded code). Callers check this BEFORE extracting to learn the
+/// boot is delivering new agent code, so reconcile can restart running agents to pick it up — a
+/// re-extract `remove_dir_all`s the code dir, detaching the inode running agents' core mounts hold.
+pub fn agent_code_is_stale(config: &Path) -> bool {
+    let dir = agent_code_dir(config);
+    let marker = dir.join(FINGERPRINT_MARKER);
+    let main_py = dir.join(MAIN_PY);
+    !(main_py.exists() && fs::read_to_string(&marker).ok().as_deref() == Some(embed_fingerprint()))
+}
+
 pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
     let dir = agent_code_dir(config);
     let fingerprint = embed_fingerprint();
@@ -121,5 +132,22 @@ mod tests {
         fs::write(dir.join(FINGERPRINT_MARKER), "stale").expect("write stale marker");
         let _ = ensure_agent_code(config).expect("third call");
         assert_ne!(fs::read(&sentinel).expect("read sentinel"), b"SENTINEL");
+    }
+
+    #[test]
+    fn is_stale_tracks_whether_ensure_would_reextract() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = tmp.path();
+
+        // Nothing extracted yet -> stale (the next ensure would extract).
+        assert!(agent_code_is_stale(config), "missing code must read as stale");
+
+        ensure_agent_code(config).expect("extract");
+        assert!(!agent_code_is_stale(config), "freshly extracted code is not stale");
+
+        // A fingerprint mismatch (what a new vestad version produces) reads as stale -> reconcile
+        // restarts running agents to pick up the re-extracted core.
+        fs::write(agent_code_dir(config).join(FINGERPRINT_MARKER), "different-version").expect("write marker");
+        assert!(agent_code_is_stale(config), "a fingerprint mismatch must read as stale");
     }
 }

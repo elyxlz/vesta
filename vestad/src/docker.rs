@@ -1829,10 +1829,13 @@ fn reconcile_blocked_by_disk(available: Option<u64>) -> bool {
 
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
+/// `agent_code_changed` is true when this boot re-extracted the embedded core (see
+/// `agent_code_is_stale`); running core-mounted agents are restarted to reload it.
 /// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
 pub async fn reconcile_containers(
     docker: &Docker,
     env_config: &AgentEnvConfig,
+    agent_code_changed: bool,
     manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
 ) {
@@ -1942,11 +1945,20 @@ pub async fn reconcile_containers(
         if let Err(e) = ensure_on_failure_policy(docker, cname).await {
             tracing::warn!(agent = %name, error = %e, "failed to set on-failure restart policy");
         }
-        let running = container_status(docker, cname).await == ContainerStatus::Running;
+        let raw = docker.inspect_container(cname, None).await.ok();
+        let running = raw.as_ref().and_then(|r| r.state.as_ref()).and_then(|s| s.running).unwrap_or(false);
+        let has_core_mount = raw.as_ref().map(|r| mounts_have_core_code(r.mounts.as_deref().unwrap_or(&[]))).unwrap_or(false);
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
                 start_container(docker, cname).await;
+            } else if agent_code_changed && has_core_mount {
+                // vestad re-extracted the embedded core this boot. A running agent still holds the
+                // old code in memory and its core mount points at the now-replaced dir, so restart
+                // it to reload the new core and re-bind the mount. (Boot-started agents above came
+                // up fresh already; this catches agents that stayed running across the upgrade.)
+                tracing::info!(agent = %name, "restarting to pick up new agent code");
+                docker.restart_container(cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await.ok();
             }
         } else if running {
             tracing::info!(agent = %name, "stopping (user-stopped)");
