@@ -269,13 +269,21 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
     directDomUpdates: true,
   });
 
-  // Snap to the latest line when the stream first produces output (and after an agent
-  // switch resets the list).
-  const hadLinesRef = useRef(false);
+  // Pin to the bottom on first load (and after an agent switch resets the list).
+  // A single scrollToEnd lands short during the initial replay burst: the last
+  // rows aren't measured yet, so the estimated end sits above the real bottom, and
+  // followOnAppend's at-bottom gate drops as re-measurement grows the content. So
+  // keep snapping on each appended batch until we've actually reached the end —
+  // after that, anchorTo:"end" + followOnAppend keep the live tail pinned.
+  const reachedBottomRef = useRef(false);
   useLayoutEffect(() => {
-    const has = count > 0;
-    if (has && !hadLinesRef.current) virtualizer.scrollToEnd();
-    hadLinesRef.current = has;
+    if (count === 0) {
+      reachedBottomRef.current = false;
+      return;
+    }
+    if (reachedBottomRef.current) return;
+    virtualizer.scrollToEnd();
+    if (virtualizer.isAtEnd()) reachedBottomRef.current = true;
   }, [count, virtualizer]);
 
   const items = virtualizer.getVirtualItems();
