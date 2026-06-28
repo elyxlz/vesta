@@ -7,6 +7,7 @@ const logSources = new Map<string, EventSource>();
 export function streamLogs(
   name: string,
   onEvent: (event: LogEvent) => void,
+  opts?: { replay?: boolean },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const conn = getConnection();
@@ -15,7 +16,12 @@ export function streamLogs(
       return;
     }
 
-    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}`;
+    // A fresh stream replays the recent tail; a reconnect after a transport drop
+    // passes tail=0 so the server follows new lines only and we don't re-append
+    // the same block as duplicates.
+    const replay = opts?.replay ?? true;
+    const tailParam = replay ? "" : "&tail=0";
+    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}${tailParam}`;
     logSources.get(name)?.close();
     logSources.set(
       name,

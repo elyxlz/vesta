@@ -17,6 +17,8 @@ import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
+import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
+import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const MAX_LINES = 5000;
@@ -101,12 +103,24 @@ interface LogLine {
   html: string;
 }
 
-function ReconnectingNotice() {
-  return <div className="text-center text-white/70 py-2">— reconnecting —</div>;
+// "live" while the stream is healthy, "stopped" once the agent cleanly signals
+// agent_stopped (terminal — no reconnect), "reconnecting" during transport-drop backoff.
+type StreamState = "live" | "stopped" | "reconnecting";
+
+const STREAM_NOTICE: Record<Exclude<StreamState, "live">, string> = {
+  stopped: "— agent stopped —",
+  reconnecting: "— reconnecting —",
+};
+
+function StreamNotice({ state }: { state: StreamState }) {
+  if (state === "live") return null;
+  return (
+    <div className="text-center text-white/70 py-2">{STREAM_NOTICE[state]}</div>
+  );
 }
 
-function StreamingPlaceholder({ ended }: { ended: boolean }) {
-  if (ended) return <ReconnectingNotice />;
+function StreamingPlaceholder({ state }: { state: StreamState }) {
+  if (state !== "live") return <StreamNotice state={state} />;
   return (
     <div className="min-h-full flex flex-col items-center justify-end gap-2 py-1">
       <div className="flex items-center gap-1">
@@ -121,75 +135,111 @@ function StreamingPlaceholder({ ended }: { ended: boolean }) {
 
 interface ConsoleProps {
   name: string;
+  status: AgentStatus;
   onClose?: () => void;
   fullscreen?: boolean;
 }
 
-export function Console({ name, onClose, fullscreen }: ConsoleProps) {
+export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [ended, setEnded] = useState(false);
+  const [streamState, setStreamState] = useState<StreamState>("live");
   const idRef = useRef(0);
   const reconnectDelayRef = useRef(RECONNECT_BASE);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStream = useRef<() => void>(undefined);
+  const connect = useRef<(replay: boolean) => void>(undefined);
 
   useEffect(() => {
-    startStream.current = () => {
+    connect.current = (replay: boolean) => {
       if (!name || !activeRef.current) return;
       stopLogs(name);
-      setEnded(false);
+      setStreamState("live");
 
-      streamLogs(name, (event) => {
-        switch (event.kind) {
-          case "Line": {
-            // A line means the connection is healthy, so reset the backoff.
-            reconnectDelayRef.current = RECONNECT_BASE;
-            const stripped = stripAnsi(event.text);
-            setLines((prev) => {
-              const next = [
-                ...prev,
-                {
-                  id: idRef.current++,
-                  colorClass: lineColorClass(stripped),
-                  html: linkify(stripped),
-                },
-              ];
-              return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
-            });
-            break;
-          }
-          case "End":
-          case "Error":
-            setEnded(true);
-            if (activeRef.current) {
-              reconnectTimerRef.current = setTimeout(() => {
-                reconnectDelayRef.current = Math.min(
-                  reconnectDelayRef.current * 2,
-                  RECONNECT_MAX,
-                );
-                startStream.current?.();
-              }, reconnectDelayRef.current);
+      streamLogs(
+        name,
+        (event) => {
+          const action = logStreamAction(event);
+          switch (action.kind) {
+            case "append": {
+              // A line means the connection is healthy, so reset the backoff.
+              reconnectDelayRef.current = RECONNECT_BASE;
+              const stripped = stripAnsi(action.text);
+              setLines((prev) => {
+                const next = [
+                  ...prev,
+                  {
+                    id: idRef.current++,
+                    colorClass: lineColorClass(stripped),
+                    html: linkify(stripped),
+                  },
+                ];
+                return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+              });
+              break;
             }
-            break;
-        }
-      });
+            case "stopped":
+              // agent_stopped is a clean terminal signal, not a failure: show the
+              // final tail and wait. A restart re-streams via the status effect
+              // below, so we never blind-reconnect against a stopped container.
+              setStreamState("stopped");
+              break;
+            case "reconnect":
+              // A transport drop while the agent is up: reconnect with backoff,
+              // requesting no replay (tail=0) so the tail isn't re-appended.
+              setStreamState("reconnecting");
+              if (activeRef.current) {
+                reconnectTimerRef.current = setTimeout(() => {
+                  reconnectDelayRef.current = Math.min(
+                    reconnectDelayRef.current * 2,
+                    RECONNECT_MAX,
+                  );
+                  connect.current?.(false);
+                }, reconnectDelayRef.current);
+              }
+              break;
+          }
+        },
+        { replay },
+      );
     };
   });
 
+  // Open a fresh stream on mount / agent switch. Status changes are handled by the
+  // resume effect below, so a stop doesn't clear and re-dump the final tail.
   useEffect(() => {
     activeRef.current = true;
     idRef.current = 0;
     setLines([]);
-    startStream.current?.();
+    reconnectDelayRef.current = RECONNECT_BASE;
+    connect.current?.(true);
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (name) stopLogs(name);
     };
   }, [name]);
+
+  // Resume a fresh stream only when the agent comes back up after a stop. We never
+  // re-stream on the down transition (that re-dumped the same final tail), and never
+  // poll a stopped agent — the authoritative status tells us when it's back.
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    // Only a genuine status change matters; streamState is a dep purely so the
+    // guard reads the current liveness, and the prev === status check makes
+    // streamState-only re-runs no-ops.
+    if (prev === status || streamState === "live") return;
+    if (isAgentContainerUp(status)) {
+      idRef.current = 0;
+      setLines([]);
+      reconnectDelayRef.current = RECONNECT_BASE;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      connect.current?.(true);
+    }
+  }, [status, streamState]);
 
   useEffect(() => {
     if (!onClose) return;
@@ -271,7 +321,7 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
           }
         >
           {count === 0 ? (
-            <StreamingPlaceholder ended={ended} />
+            <StreamingPlaceholder state={streamState} />
           ) : (
             <div
               ref={virtualizer.containerRef}
@@ -313,7 +363,7 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
                     />
                     {isLast && (
                       <div className={fullscreen ? "pb-page" : "pb-2"}>
-                        {ended && <ReconnectingNotice />}
+                        <StreamNotice state={streamState} />
                       </div>
                     )}
                   </div>
