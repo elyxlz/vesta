@@ -36,13 +36,15 @@ take_upstream_index() {
   git checkout "$1" -- "$INDEX" 2>/dev/null || true
 }
 
-# Echo a copy of commit $1 with the vestad-managed paths stripped, so merging it never
-# tracks or writes agent/core et al.
+# Echo a copy of commit $1 with the vestad-managed paths AND the dev-only .claude/ tooling
+# stripped, so merging it never tracks or writes agent/core et al. -- nor the repo's .claude/
+# skills+workflows, which would collide with the agent's live ~/.claude (credentials, sessions)
+# and get sparsified away by a later reapply, taking .credentials.json with them.
 coreless() {
   local idx tree
   idx="$(mktemp)"
   GIT_INDEX_FILE="$idx" git read-tree "$1"
-  GIT_INDEX_FILE="$idx" git -c core.sparseCheckout=false rm -rf --cached --quiet --ignore-unmatch $MANAGED >/dev/null 2>&1 || true
+  GIT_INDEX_FILE="$idx" git -c core.sparseCheckout=false rm -rf --cached --quiet --ignore-unmatch $MANAGED .claude >/dev/null 2>&1 || true
   tree="$(GIT_INDEX_FILE="$idx" git write-tree)"
   rm -f "$idx"
   git commit-tree "$tree" -p "$1" -m "coreless $REF"
