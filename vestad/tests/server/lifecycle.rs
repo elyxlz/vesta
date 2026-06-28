@@ -1,3 +1,6 @@
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
 use vesta_tests::{
     TestAgent, TestServerBuilder, SERVER, SHARED_RO_AGENT, agent_container_name, docker_cmd,
     find_vestad, inject_fake_token, is_up, unique_agent,
@@ -213,6 +216,72 @@ fn user_desired_persists_and_boot_start_respects_it() {
 
     let _ = client.destroy_agent(&running_name);
     let _ = client.destroy_agent(&stopped_name);
+}
+
+/// Entrypoint-UNCHANGED upgrade path: when vestad re-extracts new agent code without a container
+/// config change (so the container is NOT rebuilt), a RUNNING agent must be restarted to pick up
+/// the new core — its old code stays in memory and its core mount points at the now-replaced dir.
+/// The upgrade e2e only covers entrypoint-CHANGED upgrades (which force a rebuild), so this pins the
+/// gap that left agents serving stale code after a same-entrypoint upgrade.
+#[test]
+fn running_agent_restarts_when_agent_code_changes() {
+    let user = format!("codechange-e2e-{}", std::process::id());
+    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
+    let vestad = find_vestad().expect("locate vestad binary");
+    let marker = home.path().join(".config/vesta/vestad/agent-code/.vestad-fingerprint");
+
+    let name;
+    let started_before;
+    let container;
+    {
+        let server = TestServerBuilder::new()
+            .user(&user)
+            .home(home.path().to_path_buf())
+            .vestad_bin(vestad.clone())
+            .start()
+            .expect("start vestad");
+        let client = server.client();
+        name = client.create_agent(&unique_agent("code-change")).expect("create agent");
+        client.wait_until_running(&name, 90).expect("agent should come up");
+        container = format!("vesta-{user}-{name}");
+        started_before = started_at(&container);
+        assert!(!started_before.is_empty(), "agent should be running before the simulated upgrade");
+
+        // Simulate a vestad version bump WITHOUT an entrypoint change: corrupt the fingerprint so
+        // the next boot re-extracts the core (agent_code_changed=true) while needs_rebuild stays
+        // false. The agent stays running across the restart (TestServer SIGKILLs vestad, so its
+        // stop-all-on-shutdown never runs) — exactly the case that left agents stale.
+        std::fs::write(&marker, "different-version").expect("corrupt fingerprint marker");
+    }
+
+    let server = TestServerBuilder::new()
+        .user(&user)
+        .home(home.path().to_path_buf())
+        .vestad_bin(vestad)
+        .start()
+        .expect("restart vestad on same home");
+    let client = server.client();
+
+    // Reconcile must restart the still-running agent (no rebuild needed) so it reloads the new core.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let now = started_at(&container);
+        if !now.is_empty() && now != started_before {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("running agent was NOT restarted after an agent-code change (StartedAt {started_before:?} unchanged)");
+        }
+        sleep(Duration::from_millis(500));
+    }
+    client.wait_until_running(&name, 90).expect("agent should be back up after the code-change restart");
+
+    let _ = client.destroy_agent(&name);
+}
+
+/// A container's `State.StartedAt` (RFC3339), or empty. A restart advances it.
+fn started_at(container: &str) -> String {
+    docker_cmd(&["inspect", "--format", "{{.State.StartedAt}}", container]).unwrap_or_default()
 }
 
 /// Read an agent home's settings.json as JSON (panics if missing/invalid — the test created it).

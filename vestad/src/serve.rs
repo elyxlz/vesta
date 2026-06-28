@@ -2472,6 +2472,10 @@ pub async fn run_server(cfg: ServerConfig) {
         mode = if cfg!(debug_assertions) { "dev" } else { "prod" },
         "agent code embedded in binary",
     );
+    // Capture whether this boot will deliver new agent code BEFORE extracting it: a re-extract
+    // replaces the code dir, so reconcile must restart running agents to reload the new core (and
+    // re-bind their now-detached core mount).
+    let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
     if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
@@ -2485,6 +2489,7 @@ pub async fn run_server(cfg: ServerConfig) {
         docker::reconcile_containers(
             &reconcile_docker,
             &reconcile_env,
+            agent_code_changed,
             &move |name| agent_settings.get(name).is_none_or(|s| s.manage_agent_code),
             // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
             // during the slow reconcile window would otherwise be reverted by the start/stop step.
