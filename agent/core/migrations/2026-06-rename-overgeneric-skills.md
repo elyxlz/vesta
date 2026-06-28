@@ -9,6 +9,18 @@ Only the skill **identity** changed (directory + the `name:` in its `SKILL.md`).
 
 This migration only re-points your installed-skills set at the new names. It does nothing for skills you never installed. Safe to run more than once: every step checks whether it is already in the end state and no-ops if so.
 
+### 0. First check: do you even have any of these? (the common case)
+
+These four skills are niche and most agents have none of them installed. Check before doing anything else:
+
+```bash
+ls -d ~/agent/skills/finance ~/agent/skills/tv ~/agent/skills/media-server ~/agent/skills/icloud 2>/dev/null
+```
+
+If that prints nothing, you have none of the renamed skills and there is **nothing to migrate**. Call `mark_migration_applied` with `name="2026-06-rename-overgeneric-skills"` now and stop. Do not run steps 1 to 4.
+
+If it lists one or more directories, do steps 1 to 4 for only those, then mark it applied in step 5. The git, grep and sparse-checkout commands below are defensive and may print harmless errors when something is already in its end state. Such an error is never a reason to leave this migration unmarked: once you have done what you can, **always finish with step 5**.
+
 ### 1. Install the renamed skills you had installed
 
 This installs each new name only if you currently have the old one in your sparse-checkout (i.e. you actually installed it). It leaves the old copy in place for step 2.
@@ -61,4 +73,4 @@ If you set up tracker search and registered the TorrentLeech plugin on your remo
 
 ### 5. Mark this migration applied
 
-Call `mark_migration_applied` with `name="2026-06-rename-overgeneric-skills"`.
+Call `mark_migration_applied` with `name="2026-06-rename-overgeneric-skills"`. Do this even if a step above printed an error or you are unsure a block fully applied: the migration is idempotent, so only genuinely-missing pieces would re-run on a later boot. The one outcome to avoid is leaving it unmarked because a defensive command failed.
