@@ -10,6 +10,11 @@ DEFAULTS: dict = {
     "key_path": "",
     "session_id": "",
     "accounts": [],
+    # Bank selection persists here so it survives reinstalls/renames, like the
+    # rest of the config. Empty means fall back to the module-level defaults in
+    # enablebanking.py. Set with: finance config set --aspsp-name <name> --aspsp-country <cc>
+    "aspsp_name": "",
+    "aspsp_country": "",
 }
 
 
