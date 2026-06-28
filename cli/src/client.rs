@@ -705,6 +705,18 @@ impl Client {
         let resp = self.get(&format!("/agents/{name}/logs?tail={tail}"))?;
         consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
     }
+
+    /// The agent's notification policy ({rules, defaults}), proxied from its GET /config/notification-policy.
+    pub fn get_notification_policy(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/config/notification-policy"))?)
+    }
+
+    /// Replace one or both policy sections (PUT /config/notification-policy with {rules?, defaults?}); the
+    /// section left out is preserved. Live — the agent applies it on its next monitor tick, no restart.
+    /// Returns the saved policy.
+    pub fn put_notification_policy(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        read_json(self.put_json(&format!("/agents/{name}/config/notification-policy"), body)?)
+    }
 }
 
 fn consume_sse_log_stream(
