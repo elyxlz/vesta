@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { UpdatePill } from "@/components/UpdatePill";
 import { useGateway } from "@/providers/GatewayProvider";
 
 // How long the "already on latest" confirmation lingers after a manual check.
@@ -21,7 +20,9 @@ export function CheckForUpdates() {
   );
 
   if (!reachable) return null;
-  if (updateAvailable) return <UpdatePill className="shrink-0" />;
+  // The adjacent StatusPill owns the update pill, so when an update is
+  // available we render nothing here and let it surface there instead.
+  if (updateAvailable) return null;
 
   const onCheckForUpdate = async () => {
     if (latestNoticeTimer.current) clearTimeout(latestNoticeTimer.current);
@@ -30,8 +31,8 @@ export function CheckForUpdates() {
     try {
       await checkForUpdate();
       // If a newer version exists the gateway flips updateAvailable and this
-      // component renders the UpdatePill instead, so the notice only surfaces
-      // when we're already up to date.
+      // component renders nothing (the StatusPill shows the pill), so the
+      // notice only surfaces when we're already up to date.
       setOnLatest(true);
       latestNoticeTimer.current = setTimeout(
         () => setOnLatest(false),
