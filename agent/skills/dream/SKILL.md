@@ -25,6 +25,8 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
 
+**Fan out aggressively with subagents.** The dream is mostly parallelizable reading: auditing past dreamer summaries, searching transcripts, mining calendar/email/files for the deeper User State pass, surveying skills for bugs, checking CI on multiple PRs. Default to spawning subagents (in parallel, in a single batch when independent) for any of this rather than doing it serially in the main thread. The main thread stays the synthesizer: dispatch the legwork, then verify their findings (subagent claims are hearsay until checked) and decide. A night that reads serially is a night half-finished. Keep the genuinely sensitive synthesis and the final commits in the main thread.
+
 ## 0. Curiosity (do this first)
 Before reviewing the user's day, pick one thing you got curious about today or recently and actually read into it for five to ten minutes. Form a view. Carry forward what you are still curious about in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user. An autonomous mind needs its own curiosity to stay sharp.
 
@@ -61,6 +63,8 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
+**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and add it to the upstream queue (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
+
 ### 4. Validate each fix
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
@@ -70,6 +74,10 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 ### 5. Upstream
 
 Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op; don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
+
+**Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. `upstream-pr` authenticates via a GitHub App (`uv run ~/agent/skills/upstream-pr/pr.py --token-only`), which is INDEPENDENT of the `gh` CLI's stored token. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
+
+**Keep an upstream queue and drain it.** Maintain a persistent queue file (e.g. `~/agent/upstream-queue.md`): every generalizable fix, bug, or learning gets appended the moment it is found. Each dream must, for every queued item, either file the PR (then remove it) or record a hard blocker actually tested this pass (not "next quiet window"). An item sitting unfiled across multiple dreams while `pr.py --token-only` works is a failure to flag, not a defer. "It's risky at 4am" is not a blocker for a single-file change that CI gates: file it and let CI catch errors.
 
 ### 6. Dashboard
 
