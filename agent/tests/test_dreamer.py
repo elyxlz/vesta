@@ -135,12 +135,14 @@ async def test_drain_compacts_then_triggers_restart():
     state.client = tp.cast(ClaudeSDKClient, client)
     state.compact_then_restart = True
 
-    await compact_then_restart_if_requested(state=state)
+    with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
+        await compact_then_restart_if_requested(state=state)
 
     client.query.assert_awaited_once_with("/compact")
     assert state.compact_then_restart is False
     assert state.compacting is False
-    assert state.graceful_shutdown.is_set()
+    # The restart is driven by vestad (docker restart), not a self-exit.
+    restart.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -169,10 +171,11 @@ async def test_drain_restarts_even_when_compaction_fails():
     state.client = tp.cast(ClaudeSDKClient, client)
     state.compact_then_restart = True
 
-    await compact_then_restart_if_requested(state=state)
+    with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
+        await compact_then_restart_if_requested(state=state)
 
     assert state.compacting is False
-    assert state.graceful_shutdown.is_set()
+    restart.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -221,8 +224,9 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     client = AsyncMock()
     client.receive_response = MagicMock(return_value=compact_response())
     state.client = tp.cast(ClaudeSDKClient, client)
-    await compact_then_restart_if_requested(state=state)
-    assert state.graceful_shutdown.is_set(), "graceful_shutdown fires after compaction"
+    with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
+        await compact_then_restart_if_requested(state=state)
+    restart.assert_awaited_once()  # restart fires after compaction (via vestad)
 
     # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.
     # A restarted process can only recover messages that are still on disk.

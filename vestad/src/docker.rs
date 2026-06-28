@@ -84,7 +84,11 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 // --- Expected container config (single source of truth) ---
 
 const NETWORK_MODE: &str = "host";
-const RESTART_POLICY: &str = "unless-stopped";
+// on-failure (not unless-stopped) so Docker recovers genuine crashes but never auto-starts a
+// stale container on daemon/host boot: vestad owns boot-start (reconcile -> rebuild -> start),
+// so an agent that needs a rebuild is never reachable on its pre-update container. The bound caps
+// a hard crash-loop so a wedged agent eventually stays down instead of thrashing forever.
+const RESTART_MAX_RETRIES: i64 = 5;
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
@@ -1156,6 +1160,36 @@ pub async fn start_container(docker: &Docker, cname: &str) -> bool {
     docker.start_container(cname, None).await.is_ok()
 }
 
+/// Ensure a container carries the `on-failure:N` restart policy, updating in place (`docker
+/// update`, no recreate) only when it differs. Migrates legacy `unless-stopped` agents at reconcile
+/// without a snapshot. `unless-stopped` would auto-start the container on daemon boot, which would
+/// defeat vestad owning boot-start; `on-failure` recovers crashes but never auto-starts on boot.
+pub async fn ensure_on_failure_policy(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    if container_restart_policy(docker, cname).await == "on-failure" {
+        return Ok(());
+    }
+    let update = bollard::models::ContainerUpdateBody {
+        restart_policy: Some(bollard::models::RestartPolicy {
+            name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(RESTART_MAX_RETRIES),
+        }),
+        ..Default::default()
+    };
+    tracing::info!(container = %cname, "migrating restart policy to on-failure");
+    docker.update_container(cname, update).await.map_err(DockerError::from)
+}
+
+/// Read a container's current restart-policy name (lowercased + hyphenated, e.g. "on-failure" /
+/// "unless-stopped"), or empty if unset.
+pub async fn container_restart_policy(docker: &Docker, cname: &str) -> String {
+    docker.inspect_container(cname, None).await.ok()
+        .and_then(|info| info.host_config)
+        .and_then(|h| h.restart_policy)
+        .and_then(|r| r.name)
+        .map(|n| format!("{n:?}").to_lowercase().replace('_', "-"))
+        .unwrap_or_default()
+}
+
 pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerError> {
     docker.remove_image(image, Some(RemoveImageOptions { force: true, ..Default::default() }), None).await?;
     Ok(())
@@ -1420,8 +1454,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         binds: Some(binds),
         network_mode: Some(NETWORK_MODE.to_string()),
         restart_policy: Some(bollard::models::RestartPolicy {
-            name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
-            ..Default::default()
+            name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(RESTART_MAX_RETRIES),
         }),
         device_requests,
         devices: Some(vec![bollard::models::DeviceMapping {
@@ -1750,6 +1784,20 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     Ok(())
 }
 
+/// Stop every running managed agent (best-effort, graceful). Called on vestad's own shutdown so a
+/// vestad update/restart never leaves an agent running on a soon-to-be-stale container: the next
+/// vestad boot rebuilds-then-starts the desired-running ones. The graceful stop (SIGTERM, then the
+/// stop timeout) lets each agent flush its SQLite/state before exit. Desired-state is untouched —
+/// these agents come back on the next boot unless the user marked them stopped.
+pub async fn stop_all_agents(docker: &Docker) {
+    for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
+        if container_status(docker, &cname).await == ContainerStatus::Running {
+            tracing::info!(agent = %agent_name, "stopping for vestad shutdown");
+            docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+        }
+    }
+}
+
 pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1782,33 +1830,34 @@ fn reconcile_blocked_by_disk(available: Option<u64>) -> bool {
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
 /// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
-pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
+pub async fn reconcile_containers(
+    docker: &Docker,
+    env_config: &AgentEnvConfig,
+    manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
+    wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
+) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
         return;
     }
 
-    // Refuse to rebuild or restart containers when the disk is critically full: a write
-    // failure mid-restart can corrupt an agent's writable layer (events.db, session_id).
-    // Containers keep running under Docker's `unless-stopped` policy, so skipping here just
-    // defers reconcile to the next startup once space is freed. If Docker doesn't report
-    // free space, proceed rather than lock out normal operation.
+    // Skip REBUILDS when the disk is critically full: a snapshot (docker export|import) writes a
+    // whole image and a failure mid-rebuild can corrupt an agent's writable layer (events.db,
+    // session_id). Starting an existing container is not write-heavy, so boot-start still runs —
+    // important now that vestad owns boot-start (on-failure never auto-starts on daemon boot), or a
+    // disk-full boot would leave every agent down. If Docker doesn't report free space, proceed.
     let available = docker_storage_available_bytes(docker).await;
-    if reconcile_blocked_by_disk(available) {
+    let disk_ok = !reconcile_blocked_by_disk(available);
+    if !disk_ok {
         tracing::error!(
             available_mb = available.unwrap_or(0) / 1_000_000,
             required_mb = MIN_RECONCILE_DISK_BYTES / 1_000_000,
-            "insufficient disk space, skipping container reconcile to avoid corruption; containers left as-is"
+            "insufficient disk space, skipping rebuilds (still starting agents); rebuilds retry next boot once space is freed"
         );
-        return;
     }
 
-    // Phase 1: ensure env files exist, track which are running
-    let mut was_running = std::collections::HashSet::new();
+    // Phase 1: ensure env files exist
     for ManagedAgent { cname, agent_name: name } in &agents {
-        if container_status(docker, cname).await == ContainerStatus::Running {
-            was_running.insert(name.clone());
-        }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
         if env_path.is_file() {
             tracing::info!(agent = %name, "env file ok");
@@ -1835,9 +1884,9 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
     }
 
-    // Phase 2: rebuild containers with wrong config. Uses container-derived mount
-    // topology (not settings) so a stale settings.json can't redirect the rebuild
-    // into wiping bind-mounted core code.
+    // Phase 2: rebuild containers with wrong config (skipped when disk is critically full — see the
+    // guard above). Uses container-derived mount topology (not settings) so a stale settings.json
+    // can't redirect the rebuild into wiping bind-mounted core code.
     let mut agent_code_ok = false;
     for ManagedAgent { cname, agent_name: name } in &agents {
         let raw = match docker.inspect_container(cname, None).await {
@@ -1861,6 +1910,10 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
+        if !disk_ok {
+            tracing::warn!(agent = %name, "rebuild needed but disk is full; deferring rebuild to next boot");
+            continue;
+        }
         tracing::info!(agent = %name, "rebuild needed");
         if has_core_mounts && !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
@@ -1877,20 +1930,27 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
     }
 
-    // Phase 3: restart running agents (picks up new env), start rebuilt ones
+    // Phase 3: bring container state in line with the user's desired-run state. vestad owns
+    // boot-start now — `on-failure` never auto-starts a container on daemon boot — so this is
+    // where desired-running agents come up. Rebuilds already happened in phase 2, so a
+    // needs-rebuild agent is started only after it's on its new container (never stale). First
+    // migrate every agent's policy to on-failure in place (legacy agents created with
+    // unless-stopped would otherwise let Docker auto-start them on the next boot, defeating
+    // vestad's ownership); then start the desired-running ones that are down and stop any
+    // user-stopped one that's somehow up.
     for ManagedAgent { cname, agent_name: name } in &agents {
-        match container_status(docker, cname).await {
-            ContainerStatus::Running => {
-                tracing::info!(agent = %name, "restarting");
-                docker.restart_container(cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await.ok();
-            }
-            ContainerStatus::Stopped if was_running.contains(name) => {
-                tracing::info!(agent = %name, "starting after rebuild");
+        if let Err(e) = ensure_on_failure_policy(docker, cname).await {
+            tracing::warn!(agent = %name, error = %e, "failed to set on-failure restart policy");
+        }
+        let running = container_status(docker, cname).await == ContainerStatus::Running;
+        if wants_running(name) {
+            if !running {
+                tracing::info!(agent = %name, "starting (desired running)");
                 start_container(docker, cname).await;
             }
-            status => {
-                tracing::info!(agent = %name, ?status, "not restarting");
-            }
+        } else if running {
+            tracing::info!(agent = %name, "stopping (user-stopped)");
+            docker.stop_container(cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
         }
     }
 
@@ -1971,16 +2031,9 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check restart policy — bollard returns the enum variant name
-    let restart = info.host_config.as_ref()
-        .and_then(|h| h.restart_policy.as_ref())
-        .and_then(|r| r.name.as_ref())
-        .map(|n| format!("{:?}", n).to_lowercase())
-        .unwrap_or_default();
-    if !restart.contains("unless") {
-        tracing::info!(container = %cname, actual = restart, expected = RESTART_POLICY, "rebuild needed: wrong restart policy");
-        return true;
-    }
+    // Restart policy is intentionally NOT a rebuild trigger: it doubles as the persisted
+    // desired-run marker (on-failure = running, no = user-stopped) and is reconciled in place
+    // with `docker update` (set_restart_policy), so a policy change never costs a snapshot.
 
     let devices = info.host_config.as_ref()
         .and_then(|h| h.devices.as_deref())
@@ -2134,6 +2187,11 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The agent restart policy, as a string for the Docker-gated test helper below. Production
+    // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
+    // need a "normal container" policy to build fixtures with.
+    const RESTART_POLICY: &str = "on-failure";
 
     #[test]
     fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
@@ -2623,6 +2681,7 @@ mod tests {
             .collect();
 
         let restart_policy = match restart {
+            "on-failure" => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
             "unless-stopped" => bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED,
             "no" => bollard::models::RestartPolicyNameEnum::NO,
             "always" => bollard::models::RestartPolicyNameEnum::ALWAYS,
@@ -2804,16 +2863,22 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_needs_rebuild_true_on_wrong_restart() {
+    async fn test_restart_policy_is_not_a_rebuild_trigger_and_reconciles_in_place() {
+        // The restart policy is reconciled in place (docker update, no snapshot): a legacy
+        // unless-stopped container must NOT need a rebuild, and ensure_on_failure_policy must flip
+        // it to on-failure live. (Old behavior treated a policy mismatch as a rebuild trigger.)
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-restart");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "no").await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong restart policy SHOULD need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
+        assert_eq!(container_restart_policy(&docker, &tc.name).await, "unless-stopped");
+        ensure_on_failure_policy(&docker, &tc.name).await.expect("update policy in place");
+        assert_eq!(container_restart_policy(&docker, &tc.name).await, "on-failure", "policy reconciled to on-failure without a rebuild");
     }
 
     #[tokio::test]

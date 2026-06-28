@@ -10,5 +10,6 @@ mod common;
 mod dreamer;
 mod file_ops;
 mod interrupt;
+mod lifecycle;
 mod mcp_tools;
 mod upgrade;

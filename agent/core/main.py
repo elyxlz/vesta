@@ -4,6 +4,7 @@ import asyncio
 import errno
 import os
 import signal
+import sys
 import tomllib
 import types
 import typing as tp
@@ -101,7 +102,10 @@ async def run_vesta(
     first_start: bool = False,
     restart_reason: str = vm.CLEAN_RESTART,
     config_issues: list[str] | None = None,
-) -> None:
+) -> bool:
+    """Run the agent until shutdown. Returns whether the agent is exiting because it crashed, so the
+    entry point can exit non-zero and let Docker's on-failure policy recover it (intentional
+    restarts/stops are vestad-driven and return False)."""
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
@@ -141,6 +145,11 @@ async def run_vesta(
 
     state.shutdown_event.set()
 
+    # A crash (set by the processor/loop error handlers) must exit non-zero so Docker's on-failure
+    # policy recovers us. Intentional restarts/stops are driven by vestad (docker restart/stop) and
+    # a SIGTERM-driven shutdown carries no crash reason, so those exit 0 — vestad starts us back, or
+    # leaves us down. Capture intent before the clean-restart default below overwrites a blank reason.
+    crashed = _is_crash_reason(state.persisted.last_restart_reason)
     reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
     if not state.persisted.last_restart_reason:
@@ -160,6 +169,7 @@ async def run_vesta(
         await state.cache_proxy_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
+    return crashed
 
 
 def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | None:
@@ -193,6 +203,13 @@ def collect_boot_turns(
     if greeting is not None:
         turns.append(greeting)
     return turns
+
+
+def _is_crash_reason(reason: str | None) -> bool:
+    """Whether a persisted restart reason marks an unexpected exit (set by the processor/loop error
+    handlers as `crash:`/`error:`), as opposed to a clean or vestad-driven shutdown. Drives the
+    non-zero exit that lets Docker's on-failure policy recover the agent."""
+    return reason is not None and (reason.startswith("crash:") or reason.startswith("error:"))
 
 
 def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
@@ -231,7 +248,7 @@ def _vesta_version(*, config: vm.VestaConfig) -> str:
         return "unknown"
 
 
-async def async_main() -> None:
+async def async_main() -> bool:
     config, config_issues = vm.load_config()
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
@@ -253,16 +270,22 @@ async def async_main() -> None:
     first_start = not initial_state.persisted.first_start_done
     restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)
     logger.init(f"Starting main loop ({restart_reason})...")
-    await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason, config_issues=config_issues)
+    return await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason, config_issues=config_issues)
 
 
 def main() -> None:
+    crashed = False
     try:
-        asyncio.run(async_main())
+        crashed = asyncio.run(async_main())
     except KeyboardInterrupt:
         pass
     except Exception:
         logger.exception("Fatal error")
+        crashed = True
+    # Exit non-zero on a crash so Docker's on-failure policy restarts the container; a clean or
+    # vestad-driven shutdown exits 0 (the container stays down unless vestad starts it back).
+    if crashed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
