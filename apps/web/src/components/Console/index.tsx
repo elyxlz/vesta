@@ -143,18 +143,11 @@ interface ConsoleProps {
 export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [streamState, setStreamStateRaw] = useState<StreamState>("live");
+  const [streamState, setStreamState] = useState<StreamState>("live");
   const idRef = useRef(0);
   const reconnectDelayRef = useRef(RECONNECT_BASE);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
-  // Mirror of streamState so the status-resume effect can read it synchronously
-  // without taking streamState as a dependency (which would re-key the stream).
-  const streamStateRef = useRef<StreamState>("live");
-  const setStreamState = (next: StreamState) => {
-    streamStateRef.current = next;
-    setStreamStateRaw(next);
-  };
 
   const connect = useRef<(replay: boolean) => void>(undefined);
 
@@ -235,7 +228,10 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
-    if (prev === status || streamStateRef.current === "live") return;
+    // Only a genuine status change matters; streamState is a dep purely so the
+    // guard reads the current liveness, and the prev === status check makes
+    // streamState-only re-runs no-ops.
+    if (prev === status || streamState === "live") return;
     if (isAgentContainerUp(status)) {
       idRef.current = 0;
       setLines([]);
@@ -243,7 +239,7 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       connect.current?.(true);
     }
-  }, [status]);
+  }, [status, streamState]);
 
   useEffect(() => {
     if (!onClose) return;
