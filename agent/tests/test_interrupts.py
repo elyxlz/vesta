@@ -1,6 +1,7 @@
 """Tests for interrupt system, converse streaming, and drain behavior."""
 
 import asyncio
+import datetime as dt
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -128,7 +129,7 @@ async def test_message_processor_interrupts_on_new_message(config, state):
 
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True, []))
+    await queue.put(vm.QueuedTurn("slow processing message", True, []))
 
     processed: list[str] = []
     original = slow_side_effect
@@ -143,7 +144,7 @@ async def test_message_processor_interrupts_on_new_message(config, state):
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True, []))
+        await queue.put(vm.QueuedTurn("urgent message", True, []))
         await interrupt_seen.wait()
         await wait_for_condition(lambda: "urgent message" in processed, message="urgent message never processed after interrupt")
         assert state.shutdown_event is not None
@@ -183,7 +184,7 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
 
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("message", True, []))
+    await queue.put(vm.QueuedTurn("message", True, []))
 
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -232,7 +233,7 @@ async def test_run_messages_with_interrupts_cancels_process_task(config, state):
 
     with patch("core.loops.process_message", hanging_process):
         interruptible_task = asyncio.create_task(
-            _run_messages_with_interrupts("test msg", is_user=True, file_paths=[], queue=queue, state=state, config=config)
+            _run_messages_with_interrupts(vm.QueuedTurn("test msg", True, []), queue=queue, state=state, config=config)
         )
         await task_started.wait()
         interruptible_task.cancel()
@@ -240,6 +241,79 @@ async def test_run_messages_with_interrupts_cancels_process_task(config, state):
             await interruptible_task
 
     assert task_cancelled, "process_task should have been cancelled, not left orphaned"
+
+
+@pytest.mark.anyio
+async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
+    """A boot turn (interruptible=False) runs to completion; a message queued mid-turn waits its turn."""
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    processed: list[str] = []
+    boot_started = asyncio.Event()
+    release_boot = asyncio.Event()
+
+    async def fake_process(msg, *, state, config, is_user):
+        processed.append(msg)
+        if msg == "boot":
+            boot_started.set()
+            await release_boot.wait()
+        return (["OK"], state)
+
+    with patch("core.loops.process_message", fake_process):
+        task = asyncio.create_task(
+            _run_messages_with_interrupts(vm.QueuedTurn("boot", False, [], interruptible=False), queue=queue, state=state, config=config)
+        )
+        await boot_started.wait()
+        await queue.put(vm.QueuedTurn("user message", True, []))
+        # The boot turn must not be interrupted: the interrupt event stays unset and the message waits.
+        await asyncio.sleep(0.1)
+        assert processed == ["boot"], "the queued message must not preempt the boot turn"
+        assert state.interrupt_event is not None and not state.interrupt_event.is_set()
+        release_boot.set()
+        await task
+
+    assert processed == ["boot", "user message"], f"the queued message must run after the boot turn, got: {processed}"
+
+
+@pytest.mark.anyio
+async def test_process_batch_does_not_sdk_abort_a_boot_turn(config, state, tmp_path):
+    """While a non-interruptible boot turn is in flight, process_batch must NOT fire client.interrupt()
+    (the SDK-level path), but must still queue the batch so it runs after the boot turn."""
+    from core.loops import process_batch
+
+    state.client = MagicMock()  # a live SDK client; attempt_interrupt would otherwise abort the turn
+    state.noninterruptible_turn_active = True
+    queue: asyncio.Queue = asyncio.Queue()
+
+    notif_file = tmp_path / "n.json"
+    notif_file.write_text("x")
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+
+    with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=queue, state=state, config=config)
+
+    mock_interrupt.assert_not_called()
+    assert not queue.empty(), "the notification batch must still be queued to run after the boot turn"
+
+
+@pytest.mark.anyio
+async def test_process_batch_sdk_aborts_a_normal_turn(config, state, tmp_path):
+    """The gate is specific to boot turns: with no boot turn in flight, process_batch still interrupts."""
+    from core.loops import process_batch
+
+    state.client = MagicMock()
+    state.noninterruptible_turn_active = False
+    queue: asyncio.Queue = asyncio.Queue()
+
+    notif_file = tmp_path / "n.json"
+    notif_file.write_text("x")
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+
+    with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=queue, state=state, config=config)
+
+    mock_interrupt.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -262,9 +336,9 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(c
         return (["OK"], state)
 
     with patch("core.loops.process_message", fake_process):
-        task = asyncio.create_task(_run_messages_with_interrupts("first", is_user=True, file_paths=[], queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
-        await queue.put(("second", True, []))
+        await queue.put(vm.QueuedTurn("second", True, []))
         # Negative assertion: prove "second" does NOT run while compaction holds the interrupt.
         # Waiting for absence requires a real time window; this sleep is intentional.
         await asyncio.sleep(0.1)
@@ -305,8 +379,7 @@ async def test_run_vesta_force_exits_on_hung_cleanup(config, state):
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
         patch("core.main.message_processor", hanging_on_cancel),
         patch("core.main.monitor_loop", hanging_on_cancel),
-        patch("core.main.drop_greeting_notification", return_value=False),
-        patch("core.main.drop_pending_migrations", return_value=0),
+        patch("core.main.collect_boot_turns", return_value=[]),
         patch("os._exit", fake_exit),
     ):
         mock_ws.return_value = MagicMock()

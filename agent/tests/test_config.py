@@ -1,6 +1,5 @@
 """Tests for VestaConfig and initialization."""
 
-import asyncio
 import os
 
 import pytest
@@ -94,25 +93,21 @@ def test_load_config_clean_env_has_no_issues(monkeypatch):
     assert issues == []
 
 
-def test_report_config_issues_notifies_agent(config):
-    """Config issues reach the agent as a core notification so it can tell the user."""
-    from core.loops import load_notifications
-    from core.main import _report_config_issues
+def test_config_issues_turn_tells_agent(config):
+    """Config issues reach the agent as a boot-turn body so it can tell the user."""
+    from core.main import config_issues_turn
 
-    _report_config_issues(["THINKING='bogus' is invalid (...); reverted to default"], config=config)
+    body = config_issues_turn(["THINKING='bogus' is invalid (...); reverted to default"], config=config)
 
-    notifs = asyncio.run(load_notifications(config=config))
-    assert len(notifs) == 1
-    assert notifs[0].type == vm.TYPE_CONFIG_INVALID
-    body = notifs[0].body
-    assert body is not None and "THINKING" in body
+    assert body is not None
+    assert "THINKING" in body
+    assert "restart_vesta" in body
 
 
-def test_report_config_issues_noop_without_issues(config):
-    from core.main import _report_config_issues
+def test_config_issues_turn_noop_without_issues(config):
+    from core.main import config_issues_turn
 
-    _report_config_issues([], config=config)
-    assert not config.notifications_dir.exists() or list(config.notifications_dir.glob("*.json")) == []
+    assert config_issues_turn([], config=config) is None
 
 
 # --- Config store (nested provider + scalar prefs) ---

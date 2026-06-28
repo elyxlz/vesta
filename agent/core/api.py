@@ -11,7 +11,12 @@ Routes:
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
-  Writes don't restart; the caller applies them with one restart afterwards.
+  - GET  /config/notification-interrupt-rules   ordered interrupt ruleset
+  - PUT  /config/notification-interrupt-rules   replace ruleset (LIVE — applies next tick, no restart)
+  - GET  /config/notification-default-overrides per-(source, type) default overrides
+  - PUT  /config/notification-default-overrides replace overrides (LIVE — applies next tick, no restart)
+  Writes don't restart; the caller applies them with one restart afterwards. The
+  notification endpoints are LIVE — applied on the next monitor tick, no restart.
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -23,6 +28,7 @@ import logging
 import typing as tp
 import sqlite3
 import weakref
+from collections.abc import Callable
 
 import aiohttp as _aiohttp
 import pydantic as pyd
@@ -33,6 +39,7 @@ from .config import VestaConfig, stored_config, update_config_store, validate_co
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
+from . import notification_interrupt_policy
 
 
 logger = logging.getLogger("vesta.api")
@@ -333,6 +340,84 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# The notification-policy sections (interrupt rules + default overrides) are live-edited lists with an
+# identical GET/PUT contract, so both endpoints share these helpers (parametrized by section key,
+# model, and load/save). Unlike the other /config writes, these are LIVE — monitor_loop picks the
+# change up on the next tick, no restart.
+async def _policy_section_get[M: pyd.BaseModel](request: web.Request, *, key: str, load: Callable[[VestaConfig], list[M]]) -> web.Response:
+    config: VestaConfig = request.app["config"]
+    items = await asyncio.to_thread(load, config)
+    return web.json_response({key: [item.model_dump() for item in items]})
+
+
+async def _policy_section_put[M: pyd.BaseModel](
+    request: web.Request,
+    *,
+    key: str,
+    model_cls: type[M],
+    save: Callable[[list[M], VestaConfig], list[M]],
+) -> web.Response:
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    if not isinstance(data, dict) or key not in data or not isinstance(data[key], list):
+        return web.json_response({"error": f"body must be {{{key}: [...]}}"}, status=400)
+    try:
+        items = [model_cls.model_validate(item) for item in data[key]]
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid {key}: {e.errors(include_url=False)}"}, status=400)
+    try:
+        saved = await asyncio.to_thread(save, items, config)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write {key}: {e}"}, status=500)
+    return web.json_response({key: [item.model_dump() for item in saved]})
+
+
+async def _config_notification_interrupt_rules_get_handler(request: web.Request) -> web.Response:
+    return await _policy_section_get(request, key="rules", load=notification_interrupt_policy.load_rules)
+
+
+async def _config_notification_interrupt_rules_put_handler(request: web.Request) -> web.Response:
+    return await _policy_section_put(
+        request, key="rules", model_cls=notification_interrupt_policy.NotificationInterruptRule, save=notification_interrupt_policy.save_rules
+    )
+
+
+async def _config_notification_default_overrides_get_handler(request: web.Request) -> web.Response:
+    return await _policy_section_get(request, key="defaults", load=notification_interrupt_policy.load_defaults)
+
+
+async def _config_notification_default_overrides_put_handler(request: web.Request) -> web.Response:
+    return await _policy_section_put(
+        request, key="defaults", model_cls=notification_interrupt_policy.NotificationDefault, save=notification_interrupt_policy.save_defaults
+    )
+
+
+async def _notifications_pending_handler(request: web.Request) -> web.Response:
+    """The ids (file stems) of notifications still on disk, i.e. received but not yet processed.
+    The history view uses this to mark each notification cleared (file gone) vs pending."""
+    config: VestaConfig = request.app["config"]
+
+    def _pending_ids() -> list[str]:
+        directory = config.notifications_dir
+        if not directory.exists():
+            return []
+        return [p.stem for p in directory.glob("*.json") if p.is_file()]
+
+    pending = await asyncio.to_thread(_pending_ids)
+    return web.json_response({"pending": pending})
+
+
+async def _notifications_static_defaults_handler(request: web.Request) -> web.Response:
+    """The static interrupt fallback per (source, type), aggregated in one query over the whole
+    history. The defaults card uses this instead of paging every notification page client-side."""
+    event_bus: EventBus = request.app["event_bus"]
+    defaults = await asyncio.to_thread(event_bus.notification_static_defaults)
+    return web.json_response({"defaults": defaults})
+
+
 async def _memory_get_handler(request: web.Request) -> web.Response:
     """Return current contents of MEMORY.md."""
     config: VestaConfig = request.app["config"]
@@ -398,6 +483,12 @@ async def start_ws_server(
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
+    app.router.add_get("/config/notification-interrupt-rules", _config_notification_interrupt_rules_get_handler)
+    app.router.add_put("/config/notification-interrupt-rules", _config_notification_interrupt_rules_put_handler)
+    app.router.add_get("/config/notification-default-overrides", _config_notification_default_overrides_get_handler)
+    app.router.add_put("/config/notification-default-overrides", _config_notification_default_overrides_put_handler)
+    app.router.add_get("/notifications/pending", _notifications_pending_handler)
+    app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

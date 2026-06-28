@@ -4,6 +4,7 @@ claude-code
 dashboard
 dream
 email-client
+notifications
 onboard
 personality
 proactive-check

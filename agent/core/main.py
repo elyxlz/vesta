@@ -1,12 +1,14 @@
 """Vesta main entry point and orchestration."""
 
 import asyncio
+import errno
 import os
 import signal
 import tomllib
 import types
 import typing as tp
 
+import aioconsole
 from rich import print_json
 
 from . import models as vm
@@ -15,13 +17,44 @@ from . import state_store
 from .api import start_ws_server
 from .diagnostics import format_crash_detail
 from .loops import (
-    drop_core_notification,
-    drop_greeting_notification,
+    greeting_turn,
     message_processor,
     monitor_loop,
 )
-from .default_skills import reconcile_default_skills
-from .migrations import drop_pending_migrations
+from .default_skills import default_skill_sync_turn
+from .migrations import pending_migration_turns
+
+
+async def input_handler(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State) -> None:
+    while not state.shutdown_event.is_set():
+        try:
+            user_msg = await aioconsole.ainput("")
+            if state.shutdown_event.is_set():
+                break
+            if not user_msg.strip():
+                continue
+
+            logger.user(user_msg.strip())
+            await queue.put(vm.QueuedTurn(user_msg.strip(), True, []))
+        except KeyboardInterrupt:
+            logger.shutdown("stdin: KeyboardInterrupt, shutting down")
+            state.shutdown_event.set()
+            break
+        except EOFError:
+            logger.shutdown("stdin: EOF (no TTY?), shutting down")
+            state.shutdown_event.set()
+            break
+        except asyncio.CancelledError:
+            break
+        except BlockingIOError:
+            await asyncio.sleep(0.1)
+            continue
+        except OSError as e:
+            if e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK:
+                await asyncio.sleep(0.1)
+                continue
+            else:
+                raise
 
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
@@ -61,19 +94,30 @@ def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: 
     state.graceful_shutdown.set()
 
 
-async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, restart_reason: str = vm.CLEAN_RESTART) -> None:
+async def run_vesta(
+    config: vm.VestaConfig,
+    *,
+    state: vm.State,
+    first_start: bool = False,
+    restart_reason: str = vm.CLEAN_RESTART,
+    config_issues: list[str] | None = None,
+) -> None:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
 
     logger.init(f"{config.agent_name.upper()} started")
 
-    message_queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
+    message_queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
-    drop_pending_migrations(state=state, config=config, first_start=first_start)
-    reconcile_default_skills(config=config, first_start=first_start)
+    # Boot-time control-flow runs as boot turns: enqueued first (before the processor/input/monitor
+    # tasks start), processed immediately and non-interruptibly so the agent converges and orients
+    # before taking any other work.
     greeting_reason = "first_start" if first_start else restart_reason
-    drop_greeting_notification(config=config, state=state, reason=greeting_reason)
+    for body in collect_boot_turns(
+        state=state, config=config, config_issues=config_issues or [], greeting_reason=greeting_reason, first_start=first_start
+    ):
+        await message_queue.put(vm.QueuedTurn(body, False, [], interruptible=False))
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
     # GET/PUT /config over this port to read auth state and deliver credentials, so a
@@ -118,18 +162,37 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.shutdown("sweet dreams!")
 
 
-def _report_config_issues(issues: list[str], *, config: vm.VestaConfig) -> None:
-    """Surface config vars that failed validation: log them and tell the agent via a core
-    notification so it can flag the bad values to the user, since the agent ran with defaults."""
+def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | None:
+    """Surface config vars that failed validation: log them and return a boot-turn body telling the
+    agent to flag the bad values to the user (the agent ran with defaults), or None when clean."""
     if not issues:
-        return
+        return None
     for issue in issues:
         logger.error(f"Invalid config, using default: {issue}")
-    body = (
+    return (
         "Some configuration env vars failed to validate and were reverted to their defaults. "
         "Let the user know so they can fix the values in ~/.bashrc and run restart_vesta:\n" + "\n".join(f"- {issue}" for issue in issues)
     )
-    drop_core_notification(type_=vm.TYPE_CONFIG_INVALID, body=body, interrupt=False, config=config)
+
+
+def collect_boot_turns(
+    *, state: vm.State, config: vm.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
+) -> list[str]:
+    """Boot-time control-flow as ordered prompt bodies: migrations, then default-skill sync, then
+    config issues, then the greeting last — converge first, orient and reach out last. Each is
+    delivered as a boot turn (immediate, non-interruptible), not a notification."""
+    turns: list[str] = []
+    turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
+    skill_sync = default_skill_sync_turn(config=config, first_start=first_start)
+    if skill_sync is not None:
+        turns.append(skill_sync)
+    config_turn = config_issues_turn(config_issues, config=config)
+    if config_turn is not None:
+        turns.append(config_turn)
+    greeting = greeting_turn(config=config, state=state, reason=greeting_reason)
+    if greeting is not None:
+        turns.append(greeting)
+    return turns
 
 
 def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
@@ -185,13 +248,12 @@ async def async_main() -> None:
 
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
-    _report_config_issues(config_issues, config=config)
 
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done
     restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)
     logger.init(f"Starting main loop ({restart_reason})...")
-    await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
+    await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason, config_issues=config_issues)
 
 
 def main() -> None:

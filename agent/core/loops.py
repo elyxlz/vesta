@@ -13,6 +13,7 @@ from watchfiles import awatch, Change
 
 from . import models as vm
 from . import logger
+from . import notification_interrupt_policy
 from . import state_store
 from .config import DEFAULT_CONTEXT_WINDOW
 from .client import (
@@ -29,7 +30,7 @@ from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState
 
-from .models import CORE_SOURCE, TYPE_FIRST_START_SETUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, TYPE_RESTART_GREETING
+from .models import CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
 
 def _now() -> dt.datetime:
@@ -111,7 +112,12 @@ def _delete_paths(file_paths: list[str]) -> None:
 
 
 async def process_batch(
-    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool, list[str]]], state: vm.State, config: vm.VestaConfig
+    notifications: list[vm.Notification],
+    *,
+    queue: asyncio.Queue[vm.QueuedTurn],
+    state: vm.State,
+    config: vm.VestaConfig,
+    external_suffix_name: str = "notification_suffix",
 ) -> None:
     """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
 
@@ -120,7 +126,9 @@ async def process_batch(
     if not notifications:
         return
 
-    if state.client:
+    # Don't SDK-abort a non-interruptible boot turn: the batch is still queued below and the
+    # queue-watcher defers it until the boot turn completes.
+    if state.client and not state.noninterruptible_turn_active:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
     system = [n for n in notifications if n.source == CORE_SOURCE]
@@ -128,19 +136,23 @@ async def process_batch(
 
     async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
         paths = [n.file_path for n in group if n.file_path]
-        await queue.put((format_notification_batch(group, suffix=suffix), False, paths))
+        await queue.put(vm.QueuedTurn(format_notification_batch(group, suffix=suffix), False, paths))
 
     if system:
         await queue_section(system, suffix="")
     if external:
-        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
+        await queue_section(external, suffix=load_prompt(external_suffix_name, config) or "")
 
 
-def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
-    """Drop a greeting notification (first_start_setup interrupting, restart greeting passive). Returns True if a notification was dropped."""
+def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> str | None:
+    """The boot greeting as a prompt body (or None to skip): first start runs the setup prompt,
+    a restart builds the wake-up context (reason + restart prompt + any pending dreamer summary).
+
+    Delivered as a boot turn rather than a notification — it is the agent's own startup context, not
+    an external event, so it never enters the interrupt-rules/pool/triage machinery."""
     if state.provider_status is None or state.provider_status.state != ProviderAuthState.AUTHENTICATED:
         logger.startup("No authenticated provider yet, waiting for sign-in before starting")
-        return False
+        return None
 
     if reason == "first_start":
         setup_prompt = load_prompt("first_start_setup", config)
@@ -148,11 +160,9 @@ def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reaso
             # No prompt to run, flip the flag so we don't loop into first-start every reboot.
             state.persisted.first_start_done = True
             state_store.save_state(state.persisted, config)
-            return False
-        body = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
-        drop_core_notification(type_=TYPE_FIRST_START_SETUP, body=body, interrupt=True, config=config)
-        logger.startup("Dropped first_start_setup notification")
-        return True
+            return None
+        logger.startup("Boot turn: first_start_setup")
+        return f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
 
     extras = []
     if state.persisted.show_dreamer_summary:
@@ -162,26 +172,24 @@ def drop_greeting_notification(*, config: vm.VestaConfig, state: vm.State, reaso
             extras.append(f"[Dreamer Summary: {path.stem}]\n{path.read_text().strip()}")
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
-        return False
+        return None
 
-    drop_core_notification(type_=TYPE_RESTART_GREETING, body=prompt.strip(), interrupt=False, config=config)
-    logger.startup(f"Dropped {reason} greeting notification")
-    return True
+    logger.startup(f"Boot turn: {reason} greeting")
+    return prompt.strip()
 
 
 # --- Message processing ---
 
 
 async def _run_messages_with_interrupts(
-    msg: str,
+    first: vm.QueuedTurn,
     *,
-    is_user: bool,
-    file_paths: list[str],
-    queue: asyncio.Queue[tuple[str, bool, list[str]]],
+    queue: asyncio.Queue[vm.QueuedTurn],
     state: vm.State,
     config: vm.VestaConfig,
 ) -> None:
-    """Run a message and any follow-ups; new queue items interrupt the current turn (deferred during compaction)."""
+    """Run a turn and any follow-ups; new queue items interrupt the current turn (deferred during
+    compaction, and never for a non-interruptible boot turn, which runs to completion)."""
 
     async def run_one(text: str, *, user: bool) -> None:
         try:
@@ -226,7 +234,7 @@ async def _run_messages_with_interrupts(
         finally:
             state.event_bus.set_state("idle")
 
-    pending: collections.deque[tuple[str, bool, list[str]]] = collections.deque([(msg, is_user, file_paths)])
+    pending: collections.deque[vm.QueuedTurn] = collections.deque([first])
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -236,7 +244,7 @@ async def _run_messages_with_interrupts(
                     await queue.put(remaining)
                 break
 
-            current_msg, current_is_user, current_file_paths = pending.popleft()
+            current = pending.popleft()
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
@@ -245,14 +253,18 @@ async def _run_messages_with_interrupts(
                 logger.client("Provider not authenticated; deferring message until re-auth")
                 continue
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(run_one(current_msg, user=current_is_user))
+            state.noninterruptible_turn_active = not current.interruptible
+            process_task = asyncio.create_task(run_one(current.text, user=current.is_user))
 
             while not process_task.done():
-                queue_task: asyncio.Task[tuple[str, bool, list[str]]] = asyncio.create_task(queue.get())
+                queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
                     pending.append(queue_task.result())
+                    if not current.interruptible:
+                        # Boot turns run to completion; the queued item waits its turn rather than preempting.
+                        continue
                     if state.compacting:
                         logger.client(f"Compaction in flight, deferring interrupt ({len(pending)} pending)")
                         continue
@@ -264,16 +276,19 @@ async def _run_messages_with_interrupts(
                     await _cancel_task(queue_task)
 
             await process_task
+            state.noninterruptible_turn_active = False
             # Keep the file if the turn flipped auth to not_authenticated (converse detects a
             # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
             if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
-                _delete_paths(current_file_paths)
+                _delete_paths(current.file_paths)
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
         if process_task:
             await _cancel_task(process_task)
         raise
+    finally:
+        state.noninterruptible_turn_active = False
 
 
 async def compact_then_restart_if_requested(*, state: vm.State) -> None:
@@ -299,7 +314,7 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     state.graceful_shutdown.set()
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:
     # An agent with no authenticated provider can't drive the model. It still boots and stays reachable
     # so vestad can deliver credentials over the API, but there is nothing to process here until sign-in
     # restarts the process with a provider applied — so idle instead of building an SDK client (which
@@ -333,15 +348,13 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool, list[str]]], *
                 try:
                     while not state.shutdown_event.is_set():
                         try:
-                            msg, is_user, file_paths = await asyncio.wait_for(queue.get(), timeout=1.0)
+                            turn = await asyncio.wait_for(queue.get(), timeout=1.0)
                         except TimeoutError:
                             continue
 
                         state.processor_busy = True
                         try:
-                            await _run_messages_with_interrupts(
-                                msg, is_user=is_user, file_paths=file_paths, queue=queue, state=state, config=config
-                            )
+                            await _run_messages_with_interrupts(turn, queue=queue, state=state, config=config)
                             await compact_then_restart_if_requested(state=state)
                         finally:
                             state.processor_busy = False
@@ -400,7 +413,7 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
-    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, interrupt=False, config=config)
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, interrupt=True, config=config)
     logger.dreamer("Dreamer notification dropped")
 
 
@@ -431,11 +444,14 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
         bridge_task.cancel()
 
 
-async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
     # Init one hour back so the first dreamer check runs on the first tick after boot.
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_passive: list[vm.Notification] = []
+    idle_since: dt.datetime | None = None
+    # Back-dated so the first qualifying idle window is immediately eligible for a triage pass.
+    last_notif_pool_triage = _now() - dt.timedelta(minutes=config.notif_pool_triage_interval)
     # Files sent to the queue but not yet processed (and thus not yet deleted from disk).
     # Trimmed each tick to the paths that still exist; prevents re-queueing mid-compaction.
     queued_paths: set[str] = set()
@@ -473,24 +489,52 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, list[str]]], *, sta
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
             notifications = await load_notifications(config=config)
-            interrupt_notifs = [n for n in notifications if n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
-            new_passive = [n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths)]
+            rules, defaults = await asyncio.to_thread(notification_interrupt_policy.load_policy, config)
+            fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
+            decisions = [(n, notification_interrupt_policy.should_interrupt(n, rules, defaults)) for n in fresh]
+            interrupt_notifs = [n for n, hot in decisions if hot]
+            new_passive = [n for n, hot in decisions if not hot]
 
-            # Emit each genuinely-new notification to the bus exactly once. load_notifications
+            # Emit each genuinely-new notification to the bus exactly once, enriched with structured
+            # facets + the static/effective interrupt disposition for the history view. load_notifications
             # re-reads every file each tick, so files kept on disk (e.g. deferred while
             # unauthenticated) must not re-emit — that was the notification storm.
-            for notif in (*interrupt_notifs, *new_passive):
-                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
+            for notif, hot in decisions:
+                state.event_bus.emit(
+                    {
+                        "type": "notification",
+                        "source": notif.source,
+                        "summary": notif.format_for_display(),
+                        "notif_type": notif.type,
+                        "sender": notification_interrupt_policy.notif_sender(notif) or "",
+                        "interrupt": notif.interrupt,
+                        "decided": "interrupt" if hot else "pool",
+                        "notif_id": pl.Path(notif.file_path).stem if notif.file_path else "",
+                    }
+                )
 
-            queued_paths.update(n.file_path for n in interrupt_notifs if n.file_path)
-            queued_paths.update(n.file_path for n in new_passive if n.file_path)
+            queued_paths.update(n.file_path for n in fresh if n.file_path)
             pending_passive.extend(new_passive)
 
             if interrupt_notifs:
                 await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
 
-            if pending_passive and state.event_bus.state == "idle":
-                await process_batch(pending_passive, queue=queue, state=state, config=config)
+            # Track how long the agent has been continuously idle; micro-gaps shorter than the
+            # grace never qualify, so a brief breather between turns doesn't trigger a triage pass.
+            if state.event_bus.state == "idle":
+                if idle_since is None:
+                    idle_since = now
+            else:
+                idle_since = None
+
+            if (
+                pending_passive
+                and idle_since is not None
+                and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds
+                and (now - last_notif_pool_triage).total_seconds() >= config.notif_pool_triage_interval * 60
+            ):
+                await process_batch(pending_passive, queue=queue, state=state, config=config, external_suffix_name="notification_triage")
                 pending_passive = []
+                last_notif_pool_triage = now
     finally:
         await _cancel_task(watcher_task)

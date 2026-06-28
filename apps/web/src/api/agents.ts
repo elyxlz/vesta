@@ -1,4 +1,7 @@
 import { apiJson, apiFetch } from "./client";
+import type { VestaEvent } from "@/lib/types";
+
+export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
 
 export interface OpenRouterConfig {
   key: string;
@@ -330,4 +333,118 @@ export interface Usage {
 
 export async function fetchUsage(name: string): Promise<Usage> {
   return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
+}
+
+export interface NotificationInterruptRule {
+  id: string;
+  source?: string | null;
+  type?: string | null;
+  sender?: string | null;
+  keyword?: string | null;
+  action: "interrupt" | "pool";
+}
+
+/// Read the agent's ordered notification interrupt ruleset (GET /config/notification-interrupt-rules).
+export async function getNotificationInterruptRules(
+  name: string,
+): Promise<NotificationInterruptRule[]> {
+  const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
+    `/agents/${encodeURIComponent(name)}/config/notification-interrupt-rules`,
+  );
+  return resp.rules;
+}
+
+/// Replace the full ordered ruleset (PUT /config/notification-interrupt-rules). This is live — the agent
+/// applies it on its next tick, so no restart is triggered. Returns the saved rules (ids assigned).
+export async function setNotificationInterruptRules(
+  name: string,
+  rules: NotificationInterruptRule[],
+): Promise<NotificationInterruptRule[]> {
+  const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
+    `/agents/${encodeURIComponent(name)}/config/notification-interrupt-rules`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rules }),
+    },
+  );
+  return resp.rules;
+}
+
+/// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
+/// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
+export async function getNotificationHistory(
+  name: string,
+  cursor?: number,
+): Promise<{ notifications: NotificationEvent[]; cursor: number | null }> {
+  const params = new URLSearchParams({ channel: "notifications" });
+  if (cursor != null) params.set("cursor", String(cursor));
+  const resp = await apiJson<{ events: VestaEvent[]; cursor: number | null }>(
+    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
+  );
+  const items = resp.events.filter(
+    (event): event is NotificationEvent => event.type === "notification",
+  );
+  // Newest-first for the view; the history endpoint returns ascending within a page.
+  items.reverse();
+  return { notifications: items, cursor: resp.cursor };
+}
+
+/// The ids (file stems) of notifications still on disk — received but not yet processed by the
+/// agent. A notification not in this set has been cleared (its file was deleted after processing).
+export async function getPendingNotifications(name: string): Promise<string[]> {
+  const resp = await apiJson<{ pending: string[] }>(
+    `/agents/${encodeURIComponent(name)}/notifications/pending`,
+  );
+  return resp.pending;
+}
+
+/// The static interrupt fallback per source/type, aggregated server-side over the whole history in
+/// one query (GET /notifications/static-defaults) — the default applied when no rule matches.
+export interface NotificationStaticDefault {
+  source: string;
+  type: string;
+  interrupt: boolean;
+}
+
+export async function getNotificationStaticDefaults(
+  name: string,
+): Promise<NotificationStaticDefault[]> {
+  const resp = await apiJson<{ defaults: NotificationStaticDefault[] }>(
+    `/agents/${encodeURIComponent(name)}/notifications/static-defaults`,
+  );
+  return resp.defaults;
+}
+
+/// A user override of a source's static default, keyed by exact (source, type). Consulted after the
+/// rules and before the source's static flag (GET/PUT /config/notification-default-overrides).
+export interface NotificationDefaultOverride {
+  source: string;
+  type: string;
+  action: "interrupt" | "pool";
+}
+
+export async function getNotificationDefaultOverrides(
+  name: string,
+): Promise<NotificationDefaultOverride[]> {
+  const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
+    `/agents/${encodeURIComponent(name)}/config/notification-default-overrides`,
+  );
+  return resp.defaults;
+}
+
+/// Replace the full set of default overrides (live — applied on the agent's next tick, no restart).
+export async function setNotificationDefaultOverrides(
+  name: string,
+  defaults: NotificationDefaultOverride[],
+): Promise<NotificationDefaultOverride[]> {
+  const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
+    `/agents/${encodeURIComponent(name)}/config/notification-default-overrides`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaults }),
+    },
+  );
+  return resp.defaults;
 }

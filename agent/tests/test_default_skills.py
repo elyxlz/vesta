@@ -1,13 +1,12 @@
 """Tests for the default-skill reconciler and the recall skill's search query."""
 
 import importlib.util
-import json
 import pathlib
 
 import pytest
 
 import core.models as vm
-from core.default_skills import missing_default_skills, reconcile_default_skills
+from core.default_skills import default_skill_sync_turn, missing_default_skills
 from core.events import ChatEvent, EventBus, UserEvent
 
 
@@ -34,54 +33,45 @@ def _install(config, name):
 
 def test_no_defaults_file_is_noop(skills_config):
     assert missing_default_skills(skills_config) == []
-    assert reconcile_default_skills(config=skills_config) == 0
-    assert list(skills_config.notifications_dir.glob("*.json")) == []
+    assert default_skill_sync_turn(config=skills_config) is None
 
 
-def test_all_installed_drops_nothing(skills_config):
+def test_all_installed_returns_nothing(skills_config):
     _write_defaults(skills_config, ["alpha", "beta"])
     _install(skills_config, "alpha")
     _install(skills_config, "beta")
 
     assert missing_default_skills(skills_config) == []
-    assert reconcile_default_skills(config=skills_config) == 0
-    assert list(skills_config.notifications_dir.glob("*.json")) == []
+    assert default_skill_sync_turn(config=skills_config) is None
 
 
-def test_missing_skills_drop_one_notification(skills_config):
+def test_missing_skills_return_one_boot_turn(skills_config):
     _write_defaults(skills_config, ["alpha", "beta", "gamma"])
     _install(skills_config, "beta")
 
     assert missing_default_skills(skills_config) == ["alpha", "gamma"]
-    count = reconcile_default_skills(config=skills_config)
+    body = default_skill_sync_turn(config=skills_config)
 
-    assert count == 2
-    files = list(skills_config.notifications_dir.glob("*.json"))
-    assert [f.name for f in files] == ["default_skill_sync.json"]
-    payload = json.loads(files[0].read_text())
-    assert payload["source"] == "core"
-    assert payload["type"] == "default_skill_sync"
-    assert payload["interrupt"] is False
-    assert "skills-install alpha" in payload["body"]
-    assert "skills-install gamma" in payload["body"]
-    assert "skills-install beta" not in payload["body"]
-    assert "restart_vesta" in payload["body"]
+    assert body is not None
+    assert "skills-install alpha" in body
+    assert "skills-install gamma" in body
+    assert "skills-install beta" not in body
+    assert "restart_vesta" in body
 
 
 def test_first_start_is_noop_even_when_missing(skills_config):
     _write_defaults(skills_config, ["alpha"])
 
-    assert reconcile_default_skills(config=skills_config, first_start=True) == 0
-    assert list(skills_config.notifications_dir.glob("*.json")) == []
+    assert default_skill_sync_turn(config=skills_config, first_start=True) is None
 
 
-def test_rerun_overwrites_rather_than_piling_up(skills_config):
+def test_rerun_returns_same_turn_each_boot(skills_config):
     _write_defaults(skills_config, ["alpha"])
 
-    reconcile_default_skills(config=skills_config)
-    reconcile_default_skills(config=skills_config)
+    first = default_skill_sync_turn(config=skills_config)
+    second = default_skill_sync_turn(config=skills_config)
 
-    assert [f.name for f in skills_config.notifications_dir.glob("*.json")] == ["default_skill_sync.json"]
+    assert first is not None and first == second
 
 
 # --- recall skill search query (mirrors EventBus.search over a real db) ---

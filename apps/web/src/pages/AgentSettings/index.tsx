@@ -7,7 +7,7 @@ export function AgentSettingsPage() {
 
   return (
     <div
-      className="flex flex-col flex-1 min-h-0 overflow-y-auto px-page"
+      className="flex flex-col flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-page"
       style={{ paddingTop: navbarHeight, ...navbarFadeMask(navbarHeight) }}
     >
       <AgentSettings />

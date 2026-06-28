@@ -1,11 +1,9 @@
 """Tests for the prompt-based migration runner."""
 
-import json
-
 import pytest
 
 import core.models as vm
-from core.migrations import drop_pending_migrations, list_pending
+from core.migrations import list_pending, pending_migration_turns
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def mig(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     migrations_dir = config.agent_dir / "core" / "migrations"
     migrations_dir.mkdir(parents=True)
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     return config, migrations_dir, vm.State()
 
@@ -47,53 +44,43 @@ def test_skips_already_applied(mig):
     assert [name for name, _ in pending] == ["002-second"]
 
 
-def test_drop_writes_one_notification_per_migration(mig):
+def test_returns_one_turn_per_migration_in_order(mig):
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first body")
     (migrations_dir / "002-second.md").write_text("second body")
 
-    count = drop_pending_migrations(state=state, config=config)
+    turns = pending_migration_turns(state=state, config=config)
 
-    assert count == 2
-    files = sorted(config.notifications_dir.glob("*.json"))
-    assert [f.name for f in files] == ["migration-001-first.json", "migration-002-second.json"]
-    payload = json.loads(files[0].read_text())
-    assert payload["source"] == "core"
-    assert payload["type"] == "migration"
-    assert payload["interrupt"] is False
-    assert "first body" in payload["body"]
-    assert "[Migration: 001-first]" in payload["body"]
+    assert len(turns) == 2
+    assert "[Migration: 001-first]" in turns[0]
+    assert "first body" in turns[0]
+    assert "[Migration: 002-second]" in turns[1]
 
 
-def test_drop_appends_mark_applied_step_with_correct_name(mig):
+def test_appends_mark_applied_step_with_correct_name(mig):
     """The runner appends the mark_migration_applied step so authors never hand-write the name."""
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("do the thing")
 
-    drop_pending_migrations(state=state, config=config)
+    turns = pending_migration_turns(state=state, config=config)
 
-    payload = json.loads((config.notifications_dir / "migration-001-first.json").read_text())
-    assert 'Call `mark_migration_applied` with `name="001-first"`.' in payload["body"]
+    assert 'Call `mark_migration_applied` with `name="001-first"`.' in turns[0]
 
 
-def test_drop_no_pending_returns_zero(mig):
+def test_no_pending_returns_empty(mig):
     config, _migrations_dir, state = mig
 
-    count = drop_pending_migrations(state=state, config=config)
-
-    assert count == 0
-    assert list(config.notifications_dir.glob("*.json")) == []
+    assert pending_migration_turns(state=state, config=config) == []
 
 
-def test_first_start_pre_marks_and_drops_nothing(mig):
+def test_first_start_pre_marks_and_returns_nothing(mig):
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first")
     (migrations_dir / "002-second.md").write_text("second")
 
-    count = drop_pending_migrations(state=state, config=config, first_start=True)
+    turns = pending_migration_turns(state=state, config=config, first_start=True)
 
-    assert count == 0
-    assert list(config.notifications_dir.glob("*.json")) == []
+    assert turns == []
     assert state.persisted.applied_migrations == ["001-first", "002-second"]
 
 
@@ -101,60 +88,51 @@ def test_legacy_agent_runs_migrations_on_subsequent_boot(mig):
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first body")
 
-    count = drop_pending_migrations(state=state, config=config, first_start=False)
+    turns = pending_migration_turns(state=state, config=config, first_start=False)
 
-    assert count == 1
-    # Drop does NOT pre-mark applied — the agent itself records completion via mark_migration_applied.
+    assert len(turns) == 1
+    # Returning a turn does NOT pre-mark applied — the agent records completion via mark_migration_applied.
     assert state.persisted.applied_migrations == []
 
 
-def test_redrop_when_agent_did_not_mark_applied(mig):
+def test_reruns_when_agent_did_not_mark_applied(mig):
     """If the agent never called mark_migration_applied (rate limit, crash), the migration runs again on the next boot."""
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first")
 
-    drop_pending_migrations(state=state, config=config, first_start=False)
+    assert len(pending_migration_turns(state=state, config=config)) == 1
     assert state.persisted.applied_migrations == []
 
-    # Simulate a boot: clear stale core notifications, then re-derive.
-    for f in config.notifications_dir.glob("*.json"):
-        f.unlink()
-
-    count = drop_pending_migrations(state=state, config=config, first_start=False)
-    assert count == 1, "should re-drop because applied_migrations is still empty"
+    # Simulate the next boot: still unmarked, so it re-derives the same turn.
+    assert len(pending_migration_turns(state=state, config=config)) == 1
 
 
-def test_no_redrop_after_agent_marks_applied(mig):
-    """Once the agent has called mark_migration_applied (recorded in state.persisted.applied_migrations), the migration is not re-dropped."""
+def test_no_rerun_after_agent_marks_applied(mig):
+    """Once the agent has called mark_migration_applied (recorded in state.persisted.applied_migrations), the migration is not re-run."""
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first")
 
-    drop_pending_migrations(state=state, config=config, first_start=False)
+    pending_migration_turns(state=state, config=config)
     # Simulate the agent's mark_migration_applied tool call.
     state.persisted.applied_migrations.append("001-first")
-    for f in config.notifications_dir.glob("*.json"):
-        f.unlink()
 
-    count = drop_pending_migrations(state=state, config=config, first_start=False)
-    assert count == 0
-    assert list(config.notifications_dir.glob("*.json")) == []
+    assert pending_migration_turns(state=state, config=config) == []
 
 
 def test_post_first_start_migration_added_later_runs(mig):
-    """A migration shipped after the agent's first boot should still drop."""
+    """A migration shipped after the agent's first boot should still run."""
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first")
 
-    drop_pending_migrations(state=state, config=config, first_start=True)
+    pending_migration_turns(state=state, config=config, first_start=True)
     assert state.persisted.applied_migrations == ["001-first"]
 
     # Later image adds a new migration.
     (migrations_dir / "002-second.md").write_text("second")
 
-    count = drop_pending_migrations(state=state, config=config, first_start=False)
+    turns = pending_migration_turns(state=state, config=config, first_start=False)
 
-    assert count == 1
-    # Drop alone doesn't mark — only the first-start pre-mark is in applied_migrations.
+    assert len(turns) == 1
+    assert "[Migration: 002-second]" in turns[0]
+    # Returning a turn alone doesn't mark — only the first-start pre-mark is in applied_migrations.
     assert state.persisted.applied_migrations == ["001-first"]
-    files = list(config.notifications_dir.glob("migration-002-second.json"))
-    assert len(files) == 1

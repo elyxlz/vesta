@@ -30,8 +30,8 @@ memory/dreamer/
 # Dreamer state (runtime)
 dreamer/
 
-# Notifications (runtime)
-notifications/
+# Notifications (runtime) — anchored so it only ignores the runtime dir, not the `notifications` skill
+/notifications/
 
 # Logs
 logs/

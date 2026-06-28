@@ -71,7 +71,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
 
     config, state = _processor_config_state(tmp_path, session_id="stale-session-id-1234567890")
     state_store.save_state(state.persisted, config)
-    queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
+    queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     enter_count = 0
 
@@ -114,7 +114,7 @@ async def test_resume_fallback_raises_when_enter_always_fails(tmp_path, session_
     from core.loops import message_processor
 
     config, state = _processor_config_state(tmp_path, session_id=session_id)
-    queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
+    queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     async def mock_enter(self):
         raise ClaudeSDKError(error)
@@ -148,8 +148,8 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
         patch("core.main.message_processor", side_effect=crashing_processor),
         patch("core.main.monitor_loop", new_callable=AsyncMock),
-        patch("core.main.drop_greeting_notification", return_value=False),
-        patch("core.main.drop_pending_migrations", return_value=0),
+        patch("core.main.input_handler", new_callable=AsyncMock),
+        patch("core.main.collect_boot_turns", return_value=[]),
     ):
         mock_runner = MagicMock()
         mock_runner.cleanup = AsyncMock()
