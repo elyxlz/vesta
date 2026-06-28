@@ -17,7 +17,7 @@ import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
-import { logStreamAction } from "@/lib/log-stream-policy";
+import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
 import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -143,11 +143,18 @@ interface ConsoleProps {
 export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [streamState, setStreamState] = useState<StreamState>("live");
+  const [streamState, setStreamStateRaw] = useState<StreamState>("live");
   const idRef = useRef(0);
   const reconnectDelayRef = useRef(RECONNECT_BASE);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
+  // Mirror of streamState so the status-resume effect can read it synchronously
+  // without taking streamState as a dependency (which would re-key the stream).
+  const streamStateRef = useRef<StreamState>("live");
+  const setStreamState = (next: StreamState) => {
+    streamStateRef.current = next;
+    setStreamStateRaw(next);
+  };
 
   const connect = useRef<(replay: boolean) => void>(undefined);
 
@@ -206,8 +213,8 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
     };
   });
 
-  // Re-keyed on status so an agent start/stop/restart re-streams a fresh tail;
-  // within a session, transport drops reconnect (tail=0) without re-keying.
+  // Open a fresh stream on mount / agent switch. Status changes are handled by the
+  // resume effect below, so a stop doesn't clear and re-dump the final tail.
   useEffect(() => {
     activeRef.current = true;
     idRef.current = 0;
@@ -219,7 +226,24 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (name) stopLogs(name);
     };
-  }, [name, status]);
+  }, [name]);
+
+  // Resume a fresh stream only when the agent comes back up after a stop. We never
+  // re-stream on the down transition (that re-dumped the same final tail), and never
+  // poll a stopped agent — the authoritative status tells us when it's back.
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (prev === status || streamStateRef.current === "live") return;
+    if (isAgentContainerUp(status)) {
+      idRef.current = 0;
+      setLines([]);
+      reconnectDelayRef.current = RECONNECT_BASE;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      connect.current?.(true);
+    }
+  }, [status]);
 
   useEffect(() => {
     if (!onClose) return;
