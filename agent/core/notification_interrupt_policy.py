@@ -2,7 +2,7 @@
 
 A persistent, ordered ruleset decides whether an incoming notification preempts the agent's
 current turn (`interrupt`) or waits in the passive pool until the agent is idle (`pool`). Both the
-user (PUT /config/notification-interrupt-rules) and the agent (tools) edit the same list; monitor_loop reads
+user (PUT /config/notification-policy) and the agent (tools) edit the same list; monitor_loop reads
 it each tick, so edits apply live with no restart.
 
 `source="core"` notifications (greetings, migrations, proactive checks, dreamer) are exempt: they

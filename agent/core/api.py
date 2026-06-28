@@ -11,12 +11,10 @@ Routes:
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
-  - GET  /config/notification-interrupt-rules   ordered interrupt ruleset
-  - PUT  /config/notification-interrupt-rules   replace ruleset (LIVE — applies next tick, no restart)
-  - GET  /config/notification-default-overrides per-(source, type) default overrides
-  - PUT  /config/notification-default-overrides replace overrides (LIVE — applies next tick, no restart)
+  - GET  /config/notification-policy   the policy: {rules, defaults} (ordered ruleset + per-(source, type) overrides)
+  - PUT  /config/notification-policy   replace either/both sections; body {rules?, defaults?} (LIVE — applies next tick)
   Writes don't restart; the caller applies them with one restart afterwards. The
-  notification endpoints are LIVE — applied on the next monitor tick, no restart.
+  notification endpoint is LIVE — applied on the next monitor tick, no restart.
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
 """
@@ -340,59 +338,54 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# The notification-policy sections (interrupt rules + default overrides) are live-edited lists with an
-# identical GET/PUT contract, so both endpoints share these helpers (parametrized by section key,
-# model, and load/save). Unlike the other /config writes, these are LIVE — monitor_loop picks the
-# change up on the next tick, no restart.
-async def _policy_section_get[M: pyd.BaseModel](request: web.Request, *, key: str, load: Callable[[VestaConfig], list[M]]) -> web.Response:
+# The notification policy is one file with two live-edited sections: an ordered interrupt `rules` list
+# and per-(source, type) `defaults` overrides. One endpoint serves both. A PUT replaces only the
+# sections present in the body, so the rules card and the defaults card each write independently
+# without clobbering the other (save_* is a read-modify-write that preserves the untouched section).
+# Unlike the other /config writes, this is LIVE — monitor_loop picks the change up on the next tick.
+_POLICY_SECTIONS: dict[str, tuple[type[pyd.BaseModel], Callable[[list[tp.Any], VestaConfig], list[tp.Any]]]] = {
+    "rules": (notification_interrupt_policy.NotificationInterruptRule, notification_interrupt_policy.save_rules),
+    "defaults": (notification_interrupt_policy.NotificationDefault, notification_interrupt_policy.save_defaults),
+}
+
+
+def _policy_response(config: VestaConfig) -> web.Response:
+    rules, defaults = notification_interrupt_policy.load_policy(config)
+    return web.json_response({"rules": [rule.model_dump() for rule in rules], "defaults": [default.model_dump() for default in defaults]})
+
+
+async def _config_notification_policy_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
-    items = await asyncio.to_thread(load, config)
-    return web.json_response({key: [item.model_dump() for item in items]})
+    return await asyncio.to_thread(_policy_response, config)
 
 
-async def _policy_section_put[M: pyd.BaseModel](
-    request: web.Request,
-    *,
-    key: str,
-    model_cls: type[M],
-    save: Callable[[list[M], VestaConfig], list[M]],
-) -> web.Response:
+async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if not isinstance(data, dict) or key not in data or not isinstance(data[key], list):
-        return web.json_response({"error": f"body must be {{{key}: [...]}}"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"error": "body must be an object with 'rules' and/or 'defaults' lists"}, status=400)
+    present = {key: data[key] for key in _POLICY_SECTIONS if key in data}
+    if not present or any(not isinstance(value, list) for value in present.values()):
+        return web.json_response({"error": "body must contain at least one of 'rules'/'defaults' as a list"}, status=400)
+    # Validate every present section before saving any, so a malformed 'defaults' can't land a partial
+    # write that already persisted 'rules'.
+    validated: dict[str, list[pyd.BaseModel]] = {}
+    for key, value in present.items():
+        model_cls, _save = _POLICY_SECTIONS[key]
+        try:
+            validated[key] = [model_cls.model_validate(item) for item in value]
+        except pyd.ValidationError as e:
+            return web.json_response({"error": f"invalid {key}: {e.errors(include_url=False)}"}, status=400)
     try:
-        items = [model_cls.model_validate(item) for item in data[key]]
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid {key}: {e.errors(include_url=False)}"}, status=400)
-    try:
-        saved = await asyncio.to_thread(save, items, config)
+        for key, items in validated.items():
+            _model_cls, save = _POLICY_SECTIONS[key]
+            await asyncio.to_thread(save, items, config)
     except OSError as e:
-        return web.json_response({"error": f"failed to write {key}: {e}"}, status=500)
-    return web.json_response({key: [item.model_dump() for item in saved]})
-
-
-async def _config_notification_interrupt_rules_get_handler(request: web.Request) -> web.Response:
-    return await _policy_section_get(request, key="rules", load=notification_interrupt_policy.load_rules)
-
-
-async def _config_notification_interrupt_rules_put_handler(request: web.Request) -> web.Response:
-    return await _policy_section_put(
-        request, key="rules", model_cls=notification_interrupt_policy.NotificationInterruptRule, save=notification_interrupt_policy.save_rules
-    )
-
-
-async def _config_notification_default_overrides_get_handler(request: web.Request) -> web.Response:
-    return await _policy_section_get(request, key="defaults", load=notification_interrupt_policy.load_defaults)
-
-
-async def _config_notification_default_overrides_put_handler(request: web.Request) -> web.Response:
-    return await _policy_section_put(
-        request, key="defaults", model_cls=notification_interrupt_policy.NotificationDefault, save=notification_interrupt_policy.save_defaults
-    )
+        return web.json_response({"error": f"failed to write notification policy: {e}"}, status=500)
+    return await asyncio.to_thread(_policy_response, config)
 
 
 async def _notifications_pending_handler(request: web.Request) -> web.Response:
@@ -483,10 +476,8 @@ async def start_ws_server(
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
-    app.router.add_get("/config/notification-interrupt-rules", _config_notification_interrupt_rules_get_handler)
-    app.router.add_put("/config/notification-interrupt-rules", _config_notification_interrupt_rules_put_handler)
-    app.router.add_get("/config/notification-default-overrides", _config_notification_default_overrides_get_handler)
-    app.router.add_put("/config/notification-default-overrides", _config_notification_default_overrides_put_handler)
+    app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
+    app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
     app.router.add_get("/notifications/pending", _notifications_pending_handler)
     app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)

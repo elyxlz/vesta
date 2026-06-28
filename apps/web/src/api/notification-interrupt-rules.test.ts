@@ -13,9 +13,7 @@ describe("notification rules api", () => {
       rules: [{ id: "a", source: "twitter", action: "pool" }],
     });
     const rules = await getNotificationInterruptRules("bob");
-    expect(spy).toHaveBeenCalledWith(
-      "/agents/bob/config/notification-interrupt-rules",
-    );
+    expect(spy).toHaveBeenCalledWith("/agents/bob/config/notification-policy");
     expect(rules).toEqual([{ id: "a", source: "twitter", action: "pool" }]);
   });
 
@@ -27,7 +25,7 @@ describe("notification rules api", () => {
       { id: "", source: "twitter", action: "pool" },
     ]);
     expect(spy).toHaveBeenCalledWith(
-      "/agents/bob/config/notification-interrupt-rules",
+      "/agents/bob/config/notification-policy",
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({

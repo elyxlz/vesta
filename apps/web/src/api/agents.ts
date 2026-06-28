@@ -344,24 +344,25 @@ export interface NotificationInterruptRule {
   action: "interrupt" | "pool";
 }
 
-/// Read the agent's ordered notification interrupt ruleset (GET /config/notification-interrupt-rules).
+/// Read the agent's ordered notification interrupt ruleset from the policy (GET /config/notification-policy).
 export async function getNotificationInterruptRules(
   name: string,
 ): Promise<NotificationInterruptRule[]> {
   const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-interrupt-rules`,
+    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
   );
   return resp.rules;
 }
 
-/// Replace the full ordered ruleset (PUT /config/notification-interrupt-rules). This is live — the agent
-/// applies it on its next tick, so no restart is triggered. Returns the saved rules (ids assigned).
+/// Replace the ruleset section of the policy (PUT /config/notification-policy with {rules}; the defaults
+/// section is left untouched). Live — the agent applies it on its next tick, no restart. Returns the
+/// saved rules (ids assigned).
 export async function setNotificationInterruptRules(
   name: string,
   rules: NotificationInterruptRule[],
 ): Promise<NotificationInterruptRule[]> {
   const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-interrupt-rules`,
+    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -417,7 +418,8 @@ export async function getNotificationStaticDefaults(
 }
 
 /// A user override of a source's static default, keyed by exact (source, type). Consulted after the
-/// rules and before the source's static flag (GET/PUT /config/notification-default-overrides).
+/// rules and before the source's static flag. Lives in the `defaults` section of the policy
+/// (GET/PUT /config/notification-policy).
 export interface NotificationDefaultOverride {
   source: string;
   type: string;
@@ -428,18 +430,19 @@ export async function getNotificationDefaultOverrides(
   name: string,
 ): Promise<NotificationDefaultOverride[]> {
   const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-default-overrides`,
+    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
   );
   return resp.defaults;
 }
 
-/// Replace the full set of default overrides (live — applied on the agent's next tick, no restart).
+/// Replace the defaults section of the policy (PUT /config/notification-policy with {defaults}; the rules
+/// section is left untouched). Live — applied on the agent's next tick, no restart.
 export async function setNotificationDefaultOverrides(
   name: string,
   defaults: NotificationDefaultOverride[],
 ): Promise<NotificationDefaultOverride[]> {
   const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-default-overrides`,
+    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
