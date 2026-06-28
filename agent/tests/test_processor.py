@@ -130,6 +130,12 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
 
 @pytest.mark.anyio
 async def test_restarts_on_timeout(tmp_path):
+    """An SDK hang surfaces as a response TimeoutError. The processor records it as an `error:`
+    reason, and that reason must classify as a CRASH so main() exits non-zero and Docker's
+    on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
+    hung-then-permanently-down."""
+    from core.main import _is_crash_reason
+
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
 
@@ -138,6 +144,7 @@ async def test_restarts_on_timeout(tmp_path):
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
+    assert _is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):

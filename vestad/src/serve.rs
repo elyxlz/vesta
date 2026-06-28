@@ -560,6 +560,11 @@ async fn start_agent_handler(
     tracing::info!(name = %name, "starting agent");
     let _guard = agent_write_guard(&state, &name).await;
 
+    {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+        save_settings(&settings);
+    }
     docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
@@ -570,6 +575,16 @@ async fn start_all_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
     let results = docker::start_all_agents(&state.docker).await;
+
+    // Starting all agents is an explicit "everything should run" — record it so boot-start agrees
+    // (otherwise an agent the user had stopped comes up now but goes back down on the next reboot).
+    {
+        let mut settings = state.settings.write().await;
+        for result in &results {
+            settings.agents.entry(result.name.clone()).or_default().user_desired = UserDesired::Running;
+        }
+        save_settings(&settings);
+    }
 
     let has_error = results.iter().any(|r| !r.ok);
     let status = if has_error {
@@ -588,14 +603,15 @@ async fn stop_agent_handler(
     tracing::info!(name = %name, "stopping agent");
     let _guard = agent_write_guard(&state, &name).await;
 
-    docker::stop_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
     {
         let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Stopped;
         settings.services.remove(&name);
         save_settings(&settings);
     }
+    docker::stop_agent(&state.docker, &name)
+        .await
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -606,6 +622,12 @@ async fn restart_agent_handler(
     tracing::info!(name = %name, "restarting agent");
     let _guard = agent_write_guard(&state, &name).await;
 
+    // A restart implies the agent should be running — record it so boot-start agrees with intent.
+    {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+        save_settings(&settings);
+    }
     docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
@@ -642,6 +664,12 @@ async fn rebuild_agent_handler(
     docker::rebuild_agent(&state.docker, &name, &state.env_config)
         .await
         .map_err(map_docker_err)?;
+    // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
+    {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+        save_settings(&settings);
+    }
     docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
@@ -1349,15 +1377,29 @@ fn default_channel() -> String {
     crate::channel::Channel::Stable.as_str().to_string()
 }
 
+/// Per-agent desired run state, persisted in settings.json. vestad owns boot-start, so it needs an
+/// explicit record of which agents the user wants running: after a reboot every container is
+/// `exited`, so container state alone can't distinguish "user stopped this" from "everything's
+/// down, start it". Defaults to Running so existing/fresh agents come up.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+enum UserDesired {
+    #[default]
+    Running,
+    Stopped,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct AgentSettings {
     #[serde(default = "default_true")]
     manage_agent_code: bool,
+    #[serde(default)]
+    user_desired: UserDesired,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { manage_agent_code: true }
+        Self { manage_agent_code: true, user_desired: UserDesired::Running }
     }
 }
 
@@ -2083,8 +2125,6 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
-        .route("/agents/{name}/stop", post(stop_agent_handler))
-        .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
         .route(
             "/agents/{name}/provider",
@@ -2152,6 +2192,20 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Self-lifecycle: stop/restart accept either the API key (app/CLI) or the agent's own
+    // X-Agent-Token. The agent-token branch is inherently self-scoped — the middleware checks the
+    // token against the agent name in the path — so an agent can stop/restart only itself. This is
+    // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
+    let agents_self_lifecycle = Router::new()
+        .route("/agents/{name}/stop", post(stop_agent_handler))
+        .route("/agents/{name}/restart", post(restart_agent_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
@@ -2175,6 +2229,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
+        .merge(agents_self_lifecycle)
         .merge(agents_services)
         .merge(agents_services_read)
         .merge(gateway_logs)
@@ -2427,11 +2482,19 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     tokio::spawn(async move {
-        docker::reconcile_containers(&reconcile_docker, &reconcile_env, &move |name| {
-            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-        })
+        docker::reconcile_containers(
+            &reconcile_docker,
+            &reconcile_env,
+            &move |name| agent_settings.get(name).is_none_or(|s| s.manage_agent_code),
+            // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
+            // during the slow reconcile window would otherwise be reverted by the start/stop step.
+            &|name| load_settings().agents.get(name).is_none_or(|s| s.user_desired == UserDesired::Running),
+        )
         .await;
     });
+    // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
+    // vestad update/restart hands off with nothing running on a stale container.
+    let shutdown_docker = docker.clone();
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,
@@ -2491,6 +2554,36 @@ pub async fn run_server(cfg: ServerConfig) {
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = https_handle => r.expect("https task panicked"),
+        _ = shutdown_signal() => {
+            tracing::info!("shutdown signal received, stopping all agents before exit");
+            docker::stop_all_agents(&shutdown_docker).await;
+        }
+    }
+}
+
+/// Resolve when vestad should shut down: SIGTERM (systemd stop/restart) or Ctrl-C. Lets vestad
+/// stop its agents before exiting so the next boot owns the clean rebuild-then-start handoff.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to install SIGTERM handler; relying on Ctrl-C only");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }
 
@@ -2518,6 +2611,31 @@ mod tests {
         let s: super::Settings =
             serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
         assert!(!s.auto_update);
+    }
+
+    // --- user_desired drives vestad's boot-start; a wrong default would silently keep every
+    // agent down (Stopped) or start a user-stopped one (if it didn't persist) ---
+
+    #[test]
+    fn agent_settings_default_user_desired_running() {
+        assert_eq!(super::AgentSettings::default().user_desired, super::UserDesired::Running);
+    }
+
+    #[test]
+    fn agent_settings_missing_user_desired_deserializes_running() {
+        // An agent entry written before the field existed (only manage_agent_code) must come up.
+        let s: super::AgentSettings =
+            serde_json::from_str(r#"{"manage_agent_code": true}"#).expect("valid AgentSettings");
+        assert_eq!(s.user_desired, super::UserDesired::Running);
+    }
+
+    #[test]
+    fn agent_settings_user_desired_stopped_round_trips() {
+        let s = super::AgentSettings { manage_agent_code: true, user_desired: super::UserDesired::Stopped };
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains(r#""user_desired":"stopped""#), "serialized as: {json}");
+        let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.user_desired, super::UserDesired::Stopped);
     }
 
     // --- Rename notification payload (the content contract the agent self-heals on) ---

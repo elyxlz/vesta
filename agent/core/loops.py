@@ -15,6 +15,7 @@ from . import models as vm
 from . import logger
 from . import notification_interrupt_policy
 from . import state_store
+from . import vestad_client
 from .config import DEFAULT_CONTEXT_WINDOW
 from .client import (
     process_message,
@@ -311,7 +312,11 @@ async def compact_then_restart_if_requested(*, state: vm.State) -> None:
     finally:
         state.compacting = False
         state.event_bus.set_state("idle")
-    state.graceful_shutdown.set()
+    # vestad owns the restart: it SIGTERMs us (clean shutdown) and starts us back, resuming the
+    # compacted session. We don't set graceful_shutdown ourselves — under the on-failure policy a
+    # clean self-exit would stay down. If vestad is unreachable, stay up on the compacted session.
+    if not await vestad_client.request_restart():
+        logger.warning("vestad unreachable for nightly restart; continuing on the compacted session")
 
 
 async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:

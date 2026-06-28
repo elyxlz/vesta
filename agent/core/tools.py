@@ -1,8 +1,6 @@
 """MCP tool server exposed to the Claude SDK: restart and completion-mark tools."""
 
 import datetime as dt
-import os
-import signal
 import typing as tp
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -10,18 +8,33 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from . import logger
 from . import models as vm
 from . import state_store
+from . import vestad_client
 from .api import start_ws_server
 
 
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
+    async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
+        # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
+        # SIGTERMs this process, the agent shuts down cleanly, and vestad restarts it or keeps it
+        # stopped. We never exit ourselves — under the on-failure policy a clean self-exit stays down.
+        if state.graceful_shutdown.is_set():
+            return {"content": [{"type": "text", "text": "Already shutting down."}]}
+        logger.shutdown(f"Container {verb} requested via vestad")
+        if not await request():
+            return {"content": [{"type": "text", "text": f"Could not reach vestad to {verb} — is the daemon running?"}]}
+        return {"content": [{"type": "text", "text": f"Container {verb} initiated."}]}
+
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        if state.graceful_shutdown.is_set():
-            state.shutdown_event.set()
-            return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        logger.shutdown("Container restart requested")
-        os.kill(os.getpid(), signal.SIGTERM)
-        return {"content": [{"type": "text", "text": "Container restart initiated."}]}
+        return await _lifecycle_via_vestad("restart", vestad_client.request_restart)
+
+    @tool(
+        "stop_vesta",
+        "Stop the agent container and keep it stopped. vestad records this as user-requested, so the agent stays down across reboots until it's explicitly started again. Use restart_vesta if you just want to reload.",
+        {},
+    )
+    async def stop_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return await _lifecycle_via_vestad("stop", vestad_client.request_stop)
 
     @tool(
         "mark_setup_done",
@@ -70,7 +83,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
         return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
-    return [restart_vesta, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:

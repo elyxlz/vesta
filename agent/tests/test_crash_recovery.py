@@ -155,11 +155,14 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         mock_runner.cleanup = AsyncMock()
         mock_ws.return_value = mock_runner
 
-        await run_vesta(config, state=state)
+        crashed = await run_vesta(config, state=state)
 
     reason = state.persisted.last_restart_reason or ""
     assert "crash" in reason
     assert "RuntimeError" in reason
+    # run_vesta reports the crash so the entry point exits non-zero and Docker's on-failure
+    # policy restarts the container.
+    assert crashed is True
 
 
 # --- stderr buffer ---

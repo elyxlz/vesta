@@ -373,9 +373,10 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
 def load_config() -> tuple[VestaConfig, list[str]]:
     """Build VestaConfig without ever raising.
 
-    Config is on the container's boot path: an exception here exits the process, and with
-    `--restart=unless-stopped` that becomes a tight crash loop. So drop each offending env override and
-    rebuild, reverting only that field; if nothing is droppable, fall back to a default claude provider.
+    Config is on the container's boot path: an exception here exits the process non-zero, which the
+    `on-failure` restart policy retries a few times before giving up and leaving the agent down. So
+    drop each offending env override and rebuild, reverting only that field; if nothing is droppable,
+    fall back to a default claude provider.
 
     Legacy convergence runs first (before the config is built), so the loaded config reflects the
     migrated nested provider rather than a stale default. This makes load_config the single owner of
