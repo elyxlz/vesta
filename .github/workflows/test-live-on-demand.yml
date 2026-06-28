@@ -69,17 +69,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Unlike the release gate (which lets a missing key skip the suite for fork releases),
-      # an on-demand run with no key is pointless — fail loudly instead of silently passing.
-      - name: Require OpenRouter key
+      # Unlike the release gate (which lets a missing secret skip the suite for fork releases),
+      # an on-demand run with no credentials is pointless — fail loudly instead of silently passing.
+      - name: Write Claude credentials
         env:
-          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
-          if [ -z "$OPENROUTER_KEY" ]; then
-            echo "::error::OPENROUTER_KEY secret is not available — live e2e cannot run"
+          if [ -z "$CLAUDE_CREDENTIALS" ]; then
+            echo "::error::CLAUDE_CREDENTIALS secret is not available — live e2e cannot run"
             exit 1
           fi
-          echo "OPENROUTER_KEY present — live e2e will run"
+          ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
+          import sys, json
+          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
+          print('ok')" 2>/dev/null || echo "invalid")
+          if [ "$ok" != "ok" ]; then
+            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken — re-seed from a fresh 'claude' login"
+            exit 1
+          fi
+          mkdir -p ~/.claude
+          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
 
       - name: Build vestad
         working-directory: vestad
@@ -88,7 +98,6 @@ jobs:
       - name: Run live e2e
         uses: nick-fields/retry@v4
         env:
-          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
           # Passed via env (not interpolated into the command) so dispatch inputs can't inject shell.
           TEST_FILTER: ${{ inputs.test_filter }}
           VESTA_UPGRADE_FROM: ${{ inputs.upgrade_from }}
