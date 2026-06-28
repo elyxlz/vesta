@@ -201,7 +201,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     notif_file.write_text(notif.model_dump_json())
     notif.file_path = str(notif_file)
 
-    dying_queue: asyncio.Queue[tuple[str, bool, list[str]]] = asyncio.Queue()
+    dying_queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     # monitor_loop calls process_batch on the interrupt notification.
     # process_batch queues the message and keeps the file on disk until processing completes.

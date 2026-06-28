@@ -68,6 +68,18 @@ class NotificationEvent(_BaseEvent):
     type: tp.Literal["notification"]
     source: str
     summary: str
+    # Structured facets for the notifications history view + rule-editor suggestions. `sender` is ""
+    # when the source attached no identity field. `interrupt` is the static default (no-rule
+    # baseline); `decided` is what actually happened given the rules at arrival. `notif_id` is the
+    # notification file's stem, used to tell whether it's still pending (file on disk) or cleared.
+    # NotRequired because events predating the enrichment (and any non-monitor emitter) lack them;
+    # readers already tolerate their absence (the SQL reader guards with IS NOT NULL, the web treats
+    # them as optional). The production emit in monitor_loop always supplies all five.
+    notif_type: tp.NotRequired[str]
+    sender: tp.NotRequired[str]
+    interrupt: tp.NotRequired[bool]
+    decided: tp.NotRequired[tp.Literal["interrupt", "pool"]]
+    notif_id: tp.NotRequired[str]
 
 
 class SubagentStartEvent(_BaseEvent):
@@ -151,6 +163,9 @@ END;
 """
 
 _RECENCY_DECAY_RATE = 0.01
+
+# The notifications history channel: filters to notification events for the paginated view.
+_NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
@@ -315,12 +330,52 @@ class EventBus:
     def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
         if channel == "app-chat":
             return self._conversation_page(limit, None)
+        if channel == "notifications":
+            return self._page((_NOTIFICATION_CONDITION,), (), limit)
         return self._page((), (), limit)
 
     def before(self, cursor: int, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
         if channel == "app-chat":
             return self._conversation_page(limit, cursor)
+        if channel == "notifications":
+            return self._page((_NOTIFICATION_CONDITION, "id < ?"), (cursor,), limit)
         return self._page(("id < ?",), (cursor,), limit)
+
+    def notification_static_defaults(self) -> list[dict[str, object]]:
+        """The static interrupt fallback for each (source, type) the agent has received.
+
+        One aggregating query over the whole history — picks the latest event per (source, type) so
+        a source whose default changed reflects its current value. `core` is exempt (rules never
+        apply) and excluded; events predating the enriched `interrupt` field are skipped. Replaces
+        client-side paging of the entire notification history. Short-lived read connection so it can
+        run off the event loop (see _page)."""
+        if not self._db_path:
+            return []
+        # Deferred import: models imports EventBus, so a module-level import here would be circular.
+        from . import models as vm
+
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        try:
+            rows = conn.execute(
+                """
+                SELECT json_extract(data, '$.source') AS source,
+                       json_extract(data, '$.notif_type') AS notif_type,
+                       json_extract(data, '$.interrupt') AS interrupt
+                FROM events
+                WHERE id IN (
+                    SELECT MAX(id) FROM events
+                    WHERE json_extract(data, '$.type') = 'notification'
+                      AND json_extract(data, '$.source') != ?
+                      AND json_extract(data, '$.interrupt') IS NOT NULL
+                    GROUP BY json_extract(data, '$.source'), json_extract(data, '$.notif_type')
+                )
+                ORDER BY source, notif_type
+                """,
+                (vm.CORE_SOURCE,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [{"source": source, "type": notif_type or "", "interrupt": bool(interrupt)} for source, notif_type, interrupt in rows]
 
     def search(self, query: str, *, limit: int = 20) -> list[StreamEvent]:
         """Full-text search over events, returning the matching events in the same shape as recent()

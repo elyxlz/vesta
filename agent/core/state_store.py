@@ -17,6 +17,17 @@ from . import config as cfg
 STATE_FILENAME = "state.json"
 
 
+def atomic_write_text(path: pl.Path, text: str) -> None:
+    """Write text to path atomically: write a sibling temp file, then rename over the target.
+
+    The single owner of the tmp-write + os.replace recipe (state.json, the notification interrupt
+    rules store, ...) so durability changes live in one place."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 class PersistedState(pyd.BaseModel):
     first_start_done: bool = False
     last_restart_reason: str | None = None
@@ -46,8 +57,4 @@ def load_state(config: cfg.VestaConfig) -> PersistedState:
 
 
 def save_state(state: PersistedState, config: cfg.VestaConfig) -> None:
-    path = state_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(state.model_dump_json())
-    os.replace(tmp, path)
+    atomic_write_text(state_path(config), state.model_dump_json())

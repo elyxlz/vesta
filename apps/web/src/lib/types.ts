@@ -41,7 +41,17 @@ export type VestaEvent =
     })
   | (BaseEvent & { type: "tool_end"; tool: string; subagent?: boolean })
   | (BaseEvent & { type: "error"; text: string })
-  | (BaseEvent & { type: "notification"; source: string; summary: string })
+  | (BaseEvent & {
+      type: "notification";
+      source: string;
+      summary: string;
+      // Enriched fields (present on notifications emitted since the history feature shipped).
+      notif_type?: string;
+      sender?: string;
+      interrupt?: boolean; // static default (no-rule baseline)
+      decided?: "interrupt" | "pool"; // effective decision given the rules
+      notif_id?: string; // file stem; pending while its file is on disk, cleared once processed
+    })
   | (BaseEvent & {
       type: "subagent_start";
       agent_id: string;

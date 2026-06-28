@@ -3,6 +3,7 @@ import collections
 import dataclasses as dc
 import datetime as dt
 import time
+import typing as tp
 
 import pydantic as pyd
 from aiohttp.web import AppRunner
@@ -27,15 +28,24 @@ __all__ = [
 
 CORE_SOURCE = "core"
 
-# Notification `type` values for `source=core` notifications. The filename stems
-# match these prefixes so we can identify core notifications cheaply on disk.
-TYPE_FIRST_START_SETUP = "first_start_setup"
-TYPE_RESTART_GREETING = "restart_greeting"
+# Notification `type` values for the `source=core` notifications that remain notifications (periodic
+# control-flow). Boot-time control-flow (greeting, migrations, skill-sync, config issues) is delivered
+# as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
-TYPE_MIGRATION = "migration"
-TYPE_CONFIG_INVALID = "config_invalid"
-TYPE_DEFAULT_SKILL_SYNC = "default_skill_sync"
+
+
+class QueuedTurn(tp.NamedTuple):
+    """One item in the agent's processing queue: a prompt plus how to handle it.
+
+    `interruptible=False` marks a boot turn — boot-time control-flow that must run to completion;
+    a later-queued message waits its turn instead of preempting it."""
+
+    text: str
+    is_user: bool
+    file_paths: list[str]
+    interruptible: bool = True
+
 
 CLEAN_RESTART = "restart: clean restart"
 NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
@@ -72,6 +82,11 @@ class State:
     cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
     compacting: bool = False
+    # True while a non-interruptible turn (a boot turn) is being processed. process_batch consults
+    # this before firing client.interrupt(), so a concurrent interrupt notification queues and waits
+    # rather than SDK-aborting the boot turn mid-stream (the queue-watcher's interruptible guard only
+    # covers the queue-driven path, not this direct SDK path).
+    noninterruptible_turn_active: bool = False
     # Set by mark_dreamer_complete; the message processor compacts the live session at the next
     # idle point, then triggers the restart (which resumes the compacted session). Deferred rather
     # than done inline because /compact only works while the session is idle, never mid-turn.
