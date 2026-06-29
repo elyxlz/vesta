@@ -61,30 +61,17 @@ function parseFields(content: string): { key: string; value: string }[] {
   }));
 }
 
-// Shows what happened to this notification: the effective decision, and a "by rule" note when a rule
-// overrode the source's static default (the defaults themselves live in the read-only defaults card).
+// Shows what happened to this notification: the effective decision (interrupt vs snooze).
 function Disposition({ event }: { event: NotificationEvent }) {
   const decided = event.decided;
   if (!decided) return null;
-  const defaultDisp =
-    event.interrupt === undefined
-      ? undefined
-      : event.interrupt
-        ? "interrupt"
-        : "pool";
-  const overridden = defaultDisp !== undefined && defaultDisp !== decided;
   return (
-    <div className="flex items-center gap-1.5">
-      <Badge
-        variant={decided === "interrupt" ? "default" : "secondary"}
-        className="w-[4.5rem]"
-      >
-        {decided === "interrupt" ? "interrupt" : "snooze"}
-      </Badge>
-      {overridden ? (
-        <span className="text-[10px] text-muted-foreground/60">by rule</span>
-      ) : null}
-    </div>
+    <Badge
+      variant={decided === "interrupt" ? "default" : "secondary"}
+      className="w-[4.5rem]"
+    >
+      {decided === "interrupt" ? "interrupt" : "snooze"}
+    </Badge>
   );
 }
 
@@ -130,10 +117,7 @@ export function NotificationRow({
   return (
     <Card
       size="sm"
-      className={cn(
-        "!gap-2.5 px-4 !py-3.5",
-        isPending && "bg-primary/5 ring-primary/40",
-      )}
+      className={cn("!gap-2.5 px-4 !py-3.5", isPending && "ring-primary/40")}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

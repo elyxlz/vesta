@@ -63,9 +63,8 @@ describe("NotificationsCard", () => {
 
     expect(await screen.findByText("twitter")).toBeTruthy();
     expect(screen.getByText("a new tweet")).toBeTruthy();
-    // decided=pool with default interrupt -> "snooze" + a "by rule" note
+    // decided=pool renders the "snooze" disposition badge.
     expect(screen.getByText("snooze")).toBeTruthy();
-    expect(screen.getByText(/by rule/i)).toBeTruthy();
   });
 
   it("loads older notifications when there's a cursor", async () => {
