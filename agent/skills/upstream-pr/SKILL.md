@@ -82,3 +82,9 @@ uv run ~/agent/skills/upstream-pr/pr.py --title "..." --branch my-branch --base 
 # Short-lived GitHub API token (for issues, check-runs, PR status)
 uv run ~/agent/skills/upstream-pr/pr.py --token-only
 ```
+
+## Formatting Python before pushing
+
+CI's `agent-tests` runs `uv run ruff format --check` and `uv run ruff check` from `agent/`. Format new/changed `.py` the same way before pushing: `cd ~/agent && uv run ruff format <path>` then `uv run ruff check <path>`.
+
+Use `uv run ruff`, never `uvx ruff`. `uv run` uses the ruff version locked in `agent/uv.lock` and the `[tool.ruff]` config (line-length, etc.) in `agent/pyproject.toml`, so it matches CI exactly. `uvx ruff` pulls a standalone latest ruff that ignores both the lock and the config, so it can format a file differently (e.g. wrap a line CI would leave alone) and fail CI's `--check` on otherwise-correct code. Likewise, don't format from inside a sparse-checkout worktree unless `agent/pyproject.toml` is materialized, or ruff misses the config and falls back to defaults.
