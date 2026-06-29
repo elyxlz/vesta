@@ -385,10 +385,9 @@ def _passive_config(tmp_path):
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.ephemeral = True  # no dreamer drops
     config.monitor_tick_interval = 1
-    # Tiny grace + back-dated interval (see monitor_loop init) make the triage pass fire promptly
-    # once idle, so passive-flush tests stay fast and deterministic under the gated trigger.
+    # Tiny grace makes the triage pass fire promptly once idle, so passive-flush tests stay fast and
+    # deterministic.
     config.notif_pool_idle_grace_seconds = 0.01
-    config.notif_pool_triage_interval = 1
     return config
 
 

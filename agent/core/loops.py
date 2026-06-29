@@ -460,8 +460,6 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_passive: list[vm.Notification] = []
     idle_since: dt.datetime | None = None
-    # Back-dated so the first qualifying idle window is immediately eligible for a triage pass.
-    last_notif_pool_triage = _now() - dt.timedelta(minutes=config.notif_pool_triage_interval)
     # Files sent to the queue but not yet processed (and thus not yet deleted from disk).
     # Trimmed each tick to the paths that still exist; prevents re-queueing mid-compaction.
     queued_paths: set[str] = set()
@@ -541,10 +539,8 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 pending_passive
                 and idle_since is not None
                 and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds
-                and (now - last_notif_pool_triage).total_seconds() >= config.notif_pool_triage_interval * 60
             ):
                 await process_batch(pending_passive, queue=queue, state=state, config=config, external_suffix_name="notification_triage")
                 pending_passive = []
-                last_notif_pool_triage = now
     finally:
         await _cancel_task(watcher_task)
