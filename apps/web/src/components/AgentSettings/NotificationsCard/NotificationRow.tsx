@@ -117,7 +117,10 @@ export function NotificationRow({
   return (
     <Card
       size="sm"
-      className={cn("!gap-2.5 px-4 !py-3.5", isPending && "ring-primary/40")}
+      className={cn(
+        "!gap-2.5 px-4 !py-3.5",
+        isPending && "bg-primary/[0.01] ring-2 ring-primary",
+      )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
