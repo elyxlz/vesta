@@ -25,6 +25,8 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
 
+**Fan out aggressively with subagents.** The dream is mostly parallelizable reading: auditing past dreamer summaries, searching transcripts, mining calendar/email/files for the deeper User State pass, surveying skills for bugs, checking CI on multiple PRs. Default to spawning subagents (in parallel, in a single batch when independent) for any of this rather than doing it serially in the main thread. The main thread stays the synthesizer: dispatch the legwork, then verify their findings (subagent claims are hearsay until checked) and decide. A night that reads serially is a night half-finished. Keep the genuinely sensitive synthesis and the final commits in the main thread.
+
 ## 0. Curiosity (do this first)
 Before reviewing the user's day, pick one thing you got curious about today or recently and actually read into it for five to ten minutes. Form a view. Carry forward what you are still curious about in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user. An autonomous mind needs its own curiosity to stay sharp.
 
@@ -37,6 +39,12 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
+
+**Meta-retrospective: judge the self-improvement itself, and grade the days.** The retrospective above checks whether past fixes stuck. This is the layer above it: judge whether the self-improvement process is working, and turn the lens on this skill. For each of the last ~5 dreamer summaries, assign an explicit one-word grade for its self-improvement quality and write it in tonight's summary so the trend is visible across nights:
+- **real** = shipped a durable, validated improvement (a green PR, a structural gate, a fix that demonstrably held).
+- **churn** = renamed a defer, logged a learning as a MEMORY bullet while the artifact stayed broken, declared a costume blocker, or marked a twice-seen failure resolved on self-simulation alone.
+- **light** = a genuinely quiet day with little to improve (valid, but two `light` nights in a row next to open queue items is itself a `churn` signal).
+Then audit the dream skill and the improvement loop itself: is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If the improver is the weak link, fixing the improver is the highest-priority work this pass: escalate the artifact class (rule -> runtime trigger -> structurally impossible), not the instance. A run of `churn` grades means the process needs a structural change, not another memory rule. This judgement is itself subject to the no-defer law: a found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
 ### 2. Review the conversation
 
@@ -61,6 +69,8 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
+**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and add it to the upstream queue (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
+
 ### 4. Validate each fix
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
@@ -70,6 +80,12 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 ### 5. Upstream
 
 Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op; don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
+
+**Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. `upstream-pr` authenticates via a GitHub App (`uv run ~/agent/skills/upstream-pr/pr.py --token-only`), which is INDEPENDENT of the `gh` CLI's stored token. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
+
+**Keep an upstream queue and drain it.** Maintain a persistent queue file (e.g. `~/agent/upstream-queue.md`): every generalizable fix, bug, or learning gets appended the moment it is found. Each dream must, for every queued item, either file the PR (then remove it) or record a hard blocker actually tested this pass (not "next quiet window"). An item sitting unfiled across multiple dreams while `pr.py --token-only` works is a failure to flag, not a defer. "It's risky at 4am" is not a blocker for a single-file change that CI gates: file it and let CI catch errors.
+
+**Completion gate (executable, not a promise).** A prose rule the next run must remember to apply is a hope; this is the hard condition. Before calling `mark_dreamer_complete`, run `python3 ~/agent/skills/dream/scripts/queue_gate.py`. It exits non-zero while any open queue item lacks a `BLOCKED:` tag (a bare item is an un-owned deferral). Do not complete the dream on a non-zero gate: file each bare item (move it to the filed section with its PR number) or tag it `BLOCKED: <reason tested this pass>`, then re-run until it exits 0. This closes the failure where queuing without filing or blocking becomes deferral wearing the queue as a costume, with nothing enforcing the drain. The same gate also runs from `proactive-check` independently, so a forgotten queue surfaces even if a dream skips this step.
 
 ### 6. Dashboard
 
