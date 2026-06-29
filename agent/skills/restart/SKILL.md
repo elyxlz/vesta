@@ -18,10 +18,20 @@ Skill setup steps add their daemon startup commands here, one fenced block per s
 Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate. This is load-bearing: crash/timeout recovery re-enters this skill repeatedly and a crash can interrupt the block partway, so an unguarded line piles up duplicate daemons (two of one poller wedge each other; many writing notifications swamp the event log).
 
 ```bash
-# True if a screen session with this exact name is already running.
+# Dead sockets from a previous boot can linger in /run/screen (a restart that
+# preserves /run leaves the old sessions behind, now marked "(Dead ???)"). The
+# guard below would treat such a corpse as "still running" and never restart the
+# daemon. Wipe them first so `running` reflects the true live state.
+screen -wipe >/dev/null 2>&1 || true
+
+# True if a LIVE screen session with this exact name is running. The `grep -v Dead`
+# drops any leftover "(Dead ???)" session the wipe didn't clear.
 # Trailing-whitespace match keeps `running whatsapp` false when only `whatsapp-elio` exists.
-running() { screen -ls 2>/dev/null | grep -qE "[0-9]+\.$1[[:space:]]"; }
+running() { screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -qv "Dead"; }
 
 # Skills append guarded startup lines below, e.g.:
-#   running foo || screen -dmS foo foo serve --notifications-dir ~/agent/notifications
+#   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
+# The trailing `sleep 1` is defensive: firing several `screen -dmS` back-to-back
+# right after a reboot can race and silently drop sessions; a brief beat per launch
+# makes them stick.
 ```
