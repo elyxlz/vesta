@@ -61,15 +61,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     registerChatCallbacks(send, setInput);
   }, [registerChatCallbacks, send]);
 
-  const [wasConnected, setWasConnected] = useState(false);
-
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useChatKeyboardFocus(textareaRef);
-
-  useEffect(() => {
-    if (connected) setWasConnected(true);
-  }, [connected]);
 
   const chatMessages = useMemo(
     () =>
@@ -157,11 +151,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         />
 
         <div className="relative">
-          <BottomBanner
-            wasConnected={wasConnected}
-            connected={connected}
-            error={voiceError}
-          />
+          <BottomBanner error={voiceError} />
           <ChatComposer
             fullscreen={fullscreen}
             connected={connected}
