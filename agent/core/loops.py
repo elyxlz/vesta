@@ -535,11 +535,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             else:
                 idle_since = None
 
-            if (
-                pending_passive
-                and idle_since is not None
-                and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds
-            ):
+            if pending_passive and idle_since is not None and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds:
                 await process_batch(pending_passive, queue=queue, state=state, config=config, external_suffix_name="notification_triage")
                 pending_passive = []
     finally:
