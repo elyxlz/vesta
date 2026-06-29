@@ -14,9 +14,9 @@ You and the user **work together** to find the right balance. The user has the j
 ## Mental model
 
 - **interrupt** = the notification preempts your current turn the moment it arrives.
-- **pool** = the notification does not touch your current work; it waits, and you handle it once you are idle.
+- **pool** (shown as **"snooze"** in the app) = the notification does not touch your current work; it is **deferred, not dismissed**. It waits in the pool and **still reaches you** — gathered into a triage pass once you have been idle a little while. Pooling only changes *when* you see a notification, never *whether*: nothing is silently dropped, and the choice is reversible at any time (re-tune the rule). You decide what to actually act on or drop later, when you triage it (see below).
 
-So each rule is a judgment: "this is worth dropping everything for" vs. "this can wait until I am free."
+So each rule is a judgment about **timing**, not visibility: "this is worth dropping everything for right now" vs. "this can wait until I am free" — never "let this through" vs. "ignore this forever".
 
 ## Your active role
 
@@ -57,7 +57,9 @@ uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --sourc
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py remove <id>
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py clear
 
-# Change a source's default (used when no rule matches), instead of a catch-all rule
+# Change a source's default (used when no rule matches), instead of a catch-all rule. Toggle-only:
+# you can only flip the default of a (source, type) you have actually received — see `facets`; you
+# cannot invent a fallback for a pair you've never seen.
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py set-default --source outlook --action pool
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py set-default --source outlook --type calendar --action interrupt
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py list-defaults
