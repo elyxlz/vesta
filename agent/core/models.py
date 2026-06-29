@@ -33,6 +33,7 @@ CORE_SOURCE = "core"
 # as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
+TYPE_WHATSMEOW_STALE = "whatsmeow_stale"
 
 
 class QueuedTurn(tp.NamedTuple):

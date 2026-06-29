@@ -235,28 +235,6 @@ jobs:
           fi
           echo "✓ All Go files are formatted"
 
-      # whatsmeow MUST stay on the latest commit: an outdated client gets a hard
-      # WhatsApp "Client outdated (405)" reject and is an extra stale-client ban
-      # signal. Fail the build if the pinned version is behind the Go proxy's
-      # @latest (fail-open only if the proxy is unreachable).
-      - name: whatsmeow on latest
-        working-directory: agent/skills/whatsapp/cli
-        run: |
-          PINNED=$(grep -E '^[[:space:]]+go\.mau\.fi/whatsmeow ' go.mod | awk '{print $2}')
-          LATEST=$(curl -fsS https://proxy.golang.org/go.mau.fi/whatsmeow/@latest \
-            | python3 -c 'import sys,json; print(json.load(sys.stdin)["Version"])' 2>/dev/null || true)
-          echo "pinned=$PINNED latest=$LATEST"
-          if [ -z "$LATEST" ]; then
-            echo "::warning::could not fetch latest whatsmeow; skipping freshness gate"
-            exit 0
-          fi
-          if [ "$PINNED" != "$LATEST" ]; then
-            echo "❌ whatsmeow is not on the latest version (pinned $PINNED, latest $LATEST)."
-            echo "Fix: cd agent/skills/whatsapp/cli && go get go.mau.fi/whatsmeow@latest && go mod tidy"
-            exit 1
-          fi
-          echo "✓ whatsmeow is on the latest version"
-
       # go vet is skipped — requires whisper.cpp CGO headers that are only
       # available in the Docker build environment. Compilation is verified
       # by the container image build in CI.
