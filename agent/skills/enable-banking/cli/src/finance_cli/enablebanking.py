@@ -100,14 +100,18 @@ def initiate_auth(conf: dict) -> tuple[str, str]:
     POST /auth to start the bank authorization flow.
     Returns (auth_url, state).
 
-    Edit ASPSP_NAME and ASPSP_COUNTRY at the top of this file to match your bank.
+    The bank (ASPSP) is read from config (`aspsp_name` / `aspsp_country`, set via
+    `finance config set`), so it survives reinstalls. When config is empty it falls
+    back to the ASPSP_NAME / ASPSP_COUNTRY module defaults at the top of this file.
     Use the Enable Banking portal to find available ASPSPs for your country.
     """
+    aspsp_name = conf["aspsp_name"] or ASPSP_NAME
+    aspsp_country = conf["aspsp_country"] or ASPSP_COUNTRY
     state = str(uuid.uuid4())
     valid_until = (datetime.now(UTC) + timedelta(days=CONSENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     body = {
         "access": {"valid_until": valid_until},
-        "aspsp": {"name": ASPSP_NAME, "country": ASPSP_COUNTRY},
+        "aspsp": {"name": aspsp_name, "country": aspsp_country},
         "state": state,
         "redirect_url": REDIRECT_URL,
         "psu_type": "personal",

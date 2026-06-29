@@ -100,12 +100,18 @@ def cmd_config_set(args) -> dict:
         conf["app_id"] = args.app_id
     if args.key_path:
         conf["key_path"] = args.key_path
+    if args.aspsp_name:
+        conf["aspsp_name"] = args.aspsp_name
+    if args.aspsp_country:
+        conf["aspsp_country"] = args.aspsp_country
     cfg.save(conf)
     return {
         "status": "saved",
         "config": {
             "app_id": conf.get("app_id", ""),
             "key_path": conf.get("key_path", ""),
+            "aspsp_name": conf.get("aspsp_name", ""),
+            "aspsp_country": conf.get("aspsp_country", ""),
             "session_id": "***" if conf.get("session_id") else "",
             "accounts_count": len(conf.get("accounts", [])),
         },
@@ -117,6 +123,8 @@ def cmd_config_show(args) -> dict:
     return {
         "app_id": conf.get("app_id", ""),
         "key_path": conf.get("key_path", ""),
+        "aspsp_name": conf.get("aspsp_name", ""),
+        "aspsp_country": conf.get("aspsp_country", ""),
         "session_id": "***" if conf.get("session_id") else "",
         "accounts": conf.get("accounts", []),
     }
@@ -319,6 +327,8 @@ def main():
     p_config_set = config_sub.add_parser("set", help="Set configuration values")
     p_config_set.add_argument("--app-id", dest="app_id", default=None, help="Enable Banking application UUID")
     p_config_set.add_argument("--key-path", dest="key_path", default=None, help="Path to RS256 private key PEM file")
+    p_config_set.add_argument("--aspsp-name", dest="aspsp_name", default=None, help="Bank (ASPSP) name, e.g. Revolut")
+    p_config_set.add_argument("--aspsp-country", dest="aspsp_country", default=None, help="Bank (ASPSP) country code, e.g. LT")
     p_config_set.set_defaults(func=cmd_config_set)
 
     config_sub.add_parser("show", help="Show current configuration").set_defaults(func=cmd_config_show)

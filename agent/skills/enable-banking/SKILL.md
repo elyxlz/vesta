@@ -44,6 +44,7 @@ screen -r finance
 # Configuration
 finance config show
 finance config set --app-id <uuid> --key-path ~/.finance/<uuid>.pem
+finance config set --aspsp-name Revolut --aspsp-country LT   # which bank to connect (persists; survives reinstalls)
 
 # Auth (connect your bank)
 finance auth login                           # prints URL, starts callback server on port 7866
@@ -123,7 +124,7 @@ See [SETUP.md](SETUP.md) for initial configuration instructions.
 
 - Use the `finance auth login` flow to browse available banks via Enable Banking
 - For EU banks, use the country code of the bank's licensed entity (e.g. `LT` for Revolut Bank UAB, the EU-licensed entity)
-- The `aspsp` name and country in `enablebanking.py` can be customized to your bank
+- Set your bank with `finance config set --aspsp-name <name> --aspsp-country <cc>`; it persists in `~/.finance/config.json` and survives reinstalls. The `ASPSP_NAME` / `ASPSP_COUNTRY` constants in `enablebanking.py` are only the fallback default when config is unset.
 - **Callback port**: 7866. Must be free during `finance auth login`. Port is forwarded from container to host.
 - **Redirect URL**: `https://localhost:7866/callback` (HTTPS with self-signed cert; browser SSL warning is expected, just copy the URL)
 
