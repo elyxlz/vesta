@@ -8,6 +8,7 @@ import sys
 
 import core.models as vm
 from core import notification_interrupt_policy as npn
+from core.events import EventBus, NotificationEvent
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "notifications" / "scripts" / "notif-interrupt-rules.py"
 
@@ -19,6 +20,27 @@ def _run(home: pl.Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def _config(home: pl.Path) -> vm.VestaConfig:
     return vm.VestaConfig(agent_dir=home / "agent")
+
+
+def _seed_notification(home: pl.Path, source: str, notif_type: str) -> None:
+    """Record one notification so the toggle-only set-default sees (source, type) as observed.
+
+    set-default can only flip the default of a (source, type) the agent has actually received, so the
+    override tests must first put that pair in the history the script reads (same events.db, via HOME)."""
+    bus = EventBus(data_dir=home / "agent" / "data")
+    event: NotificationEvent = {
+        "type": "notification",
+        "source": source,
+        "summary": "x",
+        "notif_type": notif_type,
+        "interrupt": False,
+        "decided": "pool",
+        "notif_id": f"{source}-{notif_type}-seed",
+    }
+    try:
+        bus.emit(event)
+    finally:
+        bus.close()
 
 
 def test_list_empty(tmp_path):
@@ -156,6 +178,7 @@ def test_add_rejects_invalid_keyword_regex(tmp_path):
 
 
 def test_set_default_writes_engine_loadable_override(tmp_path):
+    _seed_notification(tmp_path, "outlook", "message")
     result = _run(tmp_path, "set-default", "--source", "outlook", "--type", "message", "--action", "pool")
     assert result.returncode == 0, result.stderr
     defaults = npn.load_defaults(_config(tmp_path))
@@ -164,6 +187,7 @@ def test_set_default_writes_engine_loadable_override(tmp_path):
 
 
 def test_set_default_replaces_same_source_type(tmp_path):
+    _seed_notification(tmp_path, "outlook", "")
     _run(tmp_path, "set-default", "--source", "outlook", "--action", "pool")
     _run(tmp_path, "set-default", "--source", "outlook", "--action", "interrupt")
     defaults = npn.load_defaults(_config(tmp_path))
@@ -171,6 +195,7 @@ def test_set_default_replaces_same_source_type(tmp_path):
 
 
 def test_clear_default_removes_override(tmp_path):
+    _seed_notification(tmp_path, "outlook", "")
     _run(tmp_path, "set-default", "--source", "outlook", "--action", "pool")
     result = _run(tmp_path, "clear-default", "--source", "outlook")
     assert result.returncode == 0, result.stderr

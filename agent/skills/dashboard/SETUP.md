@@ -31,4 +31,4 @@ PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && sc
 
 ## 5. Check it's alive
 
-The build and server run in the background, so confirm the dashboard is actually serving before considering it done — e.g. `curl -fsS localhost:$PORT >/dev/null`. Don't assume success; a failed build or server won't tell you.
+The build and server run in the background, so confirm the dashboard is actually serving before considering it done, e.g. `curl -fsS localhost:$PORT >/dev/null`. Don't assume success; a failed build or server won't tell you.
