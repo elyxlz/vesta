@@ -29,6 +29,31 @@ The API never holds the agent's credentials. The agent:
 /sessions/{id}/pair` again (same endpoint; the birth token is not reused). One
 cheap call, no new number, no OTP, no user action.
 
+## CRITICAL: reply-first posture (anti-ban)
+
+A 2026-06-29 live run proved the whole auth flow works mechanically (register,
+auto-detect OTP, companion link, send) but the freshly-provisioned account was
+**banned by WhatsApp within ~15 minutes**. The trigger was the maximum-risk
+profile: a minutes-old number, a non-official multi-device client (whatsmeow,
+which WhatsApp fingerprints), an **immediate cold message to a non-contact**, on a
+rooted device. The blocker for managed WhatsApp is account trust, not the plumbing.
+
+So the managed strategy MUST be reply-first:
+
+1. **Never cold-initiate.** The agent must not send the first message in a thread
+   to someone who has not messaged it. Onboarding delivers the agent's managed
+   number to the user (seed context) with the instruction that **the user texts
+   the agent first**; the agent only ever replies inside an established thread.
+2. **Warm before use.** A freshly-provisioned number has near-zero trust; treat
+   the first days as warm-up (light, human-paced, reply-only) before any volume.
+3. **Prefer aged numbers** in the pool over fresh SIMs (a fresh SIM is itself a
+   ban signal).
+
+Wiring implication: `handleManagedAuth()` provisions + persists the number but
+does NOT auto-send; the skill's send path guards against initiating a thread to a
+non-contact. This refines GOAL #2 (the *first* message is inbound, then the agent
+replies). See `whatsapp-auth-api/PROGRESS.md` for the full finding.
+
 ## Implemented + tested
 
 `cli/managed_auth.go` — the HTTP client, on-disk state, and the handshake
@@ -58,5 +83,8 @@ daemon it is `wac.PairPhone`. So the Connect hook is a one-liner:
    `PairSuccess` event handler flips status to authenticated. On reconnect
    failure in `initiateReauth()`, if managed: `PairPhone` + `link` again.
 4. `onboard` CLI (`onboard/cli/.../cli.py`): add `--whatsapp-token`, thread it +
-   the user's number into `seed_context` so the born agent gets both.
+   the user's number into `seed_context` so the born agent gets both. Seed context
+   must also deliver the agent's managed number to the user with the **text-the-
+   agent-first** instruction (reply-first posture above), so the first message is
+   always inbound.
 5. vesta-cloud control plane: mint exactly one token per paid account.
