@@ -40,6 +40,12 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
+**Meta-retrospective: judge the self-improvement itself, and grade the days.** The retrospective above checks whether past fixes stuck. This is the layer above it: judge whether the self-improvement process is working, and turn the lens on this skill. For each of the last ~5 dreamer summaries, assign an explicit one-word grade for its self-improvement quality and write it in tonight's summary so the trend is visible across nights:
+- **real** = shipped a durable, validated improvement (a green PR, a structural gate, a fix that demonstrably held).
+- **churn** = renamed a defer, logged a learning as a MEMORY bullet while the artifact stayed broken, declared a costume blocker, or marked a twice-seen failure resolved on self-simulation alone.
+- **light** = a genuinely quiet day with little to improve (valid, but two `light` nights in a row next to open queue items is itself a `churn` signal).
+Then audit the dream skill and the improvement loop itself: is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If the improver is the weak link, fixing the improver is the highest-priority work this pass: escalate the artifact class (rule -> runtime trigger -> structurally impossible), not the instance. A run of `churn` grades means the process needs a structural change, not another memory rule. This judgement is itself subject to the no-defer law: a found weakness in the dream skill is a skill edit this pass, not a note for next time.
+
 ### 2. Review the conversation
 
 Review the conversation with fresh eyes. Note:
@@ -78,6 +84,8 @@ Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be 
 **Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. `upstream-pr` authenticates via a GitHub App (`uv run ~/agent/skills/upstream-pr/pr.py --token-only`), which is INDEPENDENT of the `gh` CLI's stored token. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
 
 **Keep an upstream queue and drain it.** Maintain a persistent queue file (e.g. `~/agent/upstream-queue.md`): every generalizable fix, bug, or learning gets appended the moment it is found. Each dream must, for every queued item, either file the PR (then remove it) or record a hard blocker actually tested this pass (not "next quiet window"). An item sitting unfiled across multiple dreams while `pr.py --token-only` works is a failure to flag, not a defer. "It's risky at 4am" is not a blocker for a single-file change that CI gates: file it and let CI catch errors.
+
+**Completion gate (executable, not a promise).** A prose rule the next run must remember to apply is a hope; this is the hard condition. Before calling `mark_dreamer_complete`, run `python3 ~/agent/skills/dream/scripts/queue_gate.py`. It exits non-zero while any open queue item lacks a `BLOCKED:` tag (a bare item is an un-owned deferral). Do not complete the dream on a non-zero gate: file each bare item (move it to the filed section with its PR number) or tag it `BLOCKED: <reason tested this pass>`, then re-run until it exits 0. This closes the failure where queuing without filing or blocking becomes deferral wearing the queue as a costume, with nothing enforcing the drain. The same gate also runs from `proactive-check` independently, so a forgotten queue surfaces even if a dream skips this step.
 
 ### 6. Dashboard
 
