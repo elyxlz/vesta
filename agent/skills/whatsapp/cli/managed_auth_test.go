@@ -170,3 +170,15 @@ func TestManagedLink_apiErrorSurfaces(t *testing.T) {
 		t.Fatal("expected error on 401")
 	}
 }
+
+func TestWaMeLink(t *testing.T) {
+	st := managedState{MSISDN: "+39 351 152 6318"}
+	got := st.WaMeLink("hi there")
+	want := "https://wa.me/393511526318?text=hi+there"
+	if got != want {
+		t.Errorf("WaMeLink = %q, want %q", got, want)
+	}
+	if l := waMeLink("393511526318", ""); l != "https://wa.me/393511526318" {
+		t.Errorf("waMeLink no-text = %q", l)
+	}
+}

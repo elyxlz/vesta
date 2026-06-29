@@ -69,6 +69,28 @@ daemon it is `wac.PairPhone`. So the Connect hook is a one-liner:
 `st, err := wac.managed.provision(token, wac.PairPhone)` (or `loadManagedState` +
 `reauth` on restart/drop).
 
+## Ban-avoidance ported into the skill
+
+- **#6 DeviceProps**: `client.go` now presents as Chrome-on-Linux
+  (`SetOSInfo("Linux", ...)` + `PlatformType=CHROME`) instead of the giveaway
+  default `Os="whatsmeow"`.
+- **#10 reply-first link**: `managedState.WaMeLink(text)` builds the
+  `https://wa.me/<number>?text=...` click-to-chat link the agent surfaces so the
+  user messages it FIRST; the agent only replies. Pure + unit-tested.
+
+Still to port from the auth-API reference companion
+(`internal/companion/whatsmeow`), which carries the unit-tested versions, do this
+in the whisper-enabled build env so it compiles:
+
+- **#2 reply-only hard guard + #4 circuit breaker**: track JIDs that messaged us
+  first; the send path (`messaging.go`) refuses to cold-initiate (ErrColdInitiate)
+  and pauses on velocity / low reply-ratio. Mirror `Companion.GuardedSend` + the
+  `gate`.
+- **#1 per-account proxy**: thread a proxy (from managed state / `WHATSAPP_PROXY`)
+  into `Connect()` via `client.SetProxyAddress(proxy)` before connecting (one call
+  covers pre-login + websocket + media). Required when the agent runs on a
+  datacenter host (Hetzner); skip on a residential host.
+
 ## Wiring TODO (do in the agent build env / supervised)
 
 1. `cli/cli.go::runServe` — read the token + API base from `--whatsapp-token` /

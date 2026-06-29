@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,26 @@ type managedState struct {
 	SessionID string `json:"session_id"`
 	Secret    string `json:"agent_secret"`
 	MSISDN    string `json:"msisdn"`
+}
+
+// WaMeLink builds the click-to-chat URL that gets the USER to message this agent
+// FIRST (reply-first onboarding, #10): the agent surfaces the link to its user, the
+// user taps and sends, and only then does the agent reply. A managed (fresh) number
+// must never cold-initiate, so the first message in any thread has to be inbound.
+func (s managedState) WaMeLink(text string) string { return waMeLink(s.MSISDN, text) }
+
+func waMeLink(msisdn, text string) string {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, msisdn)
+	link := "https://wa.me/" + digits
+	if text != "" {
+		link += "?text=" + url.QueryEscape(text)
+	}
+	return link
 }
 
 func newManagedAuth(base, dataDir string) *managedAuth {
