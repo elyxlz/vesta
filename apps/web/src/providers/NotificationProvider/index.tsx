@@ -151,7 +151,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             setAppBadge(true);
             setFaviconUnseen(true);
           }
-          // Defer to ChatProvider for the agent being actively chatted with —
+          // Defer to AgentSocketProvider for the agent being actively chatted with —
           // it fires after the typing delay so notification lines up with UI.
           if (chattingAgentRef.current === name) return;
           notifyAssistant(name, event.text);

@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  cleanup,
+  act,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import * as api from "@/api/agents";
@@ -53,12 +60,19 @@ describe("NotificationInterruptRulesCard", () => {
     render(<NotificationInterruptRulesCard />);
     await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
 
-    // The combobox is select-only: open it and pick a suggested value (selecting closes it).
+    // Open the add-rule dialog, then in step 1 pick a suggested source (selecting closes the combo).
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
     await userEvent.type(screen.getByLabelText("source"), "t");
     await userEvent.click(
       await screen.findByRole("option", { name: "twitter" }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    // Step 2 keeps the default interrupt action; commit.
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /add rule/i,
+      }),
+    );
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
@@ -73,10 +87,12 @@ describe("NotificationInterruptRulesCard", () => {
     await waitFor(() =>
       expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
     );
-    const addButton = screen.getByRole("button", {
-      name: /add rule/i,
+    // With no conditions entered, step 1 can't advance.
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    const nextButton = within(screen.getByRole("dialog")).getByRole("button", {
+      name: /next/i,
     }) as HTMLButtonElement;
-    expect(addButton.disabled).toBe(true);
+    expect(nextButton.disabled).toBe(true);
   });
 
   it("blocks an invalid keyword regex and accepts a valid one", async () => {
@@ -85,18 +101,19 @@ describe("NotificationInterruptRulesCard", () => {
     await waitFor(() =>
       expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
     );
-    const addButton = screen.getByRole("button", {
-      name: /add rule/i,
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    const nextButton = within(screen.getByRole("dialog")).getByRole("button", {
+      name: /next/i,
     }) as HTMLButtonElement;
 
     await userEvent.type(screen.getByLabelText("keyword"), "(unclosed");
     expect(screen.getByText(/invalid keyword regex/i)).toBeTruthy();
-    expect(addButton.disabled).toBe(true);
+    expect(nextButton.disabled).toBe(true);
 
-    // Completing the group makes it a valid regex; the error clears and add re-enables.
+    // Completing the group makes it a valid regex; the error clears and next re-enables.
     await userEvent.type(screen.getByLabelText("keyword"), ")");
     expect(screen.queryByText(/invalid keyword regex/i)).toBeNull();
-    expect(addButton.disabled).toBe(false);
+    expect(nextButton.disabled).toBe(false);
   });
 
   it("deletes a rule and auto-saves", async () => {
@@ -157,6 +174,7 @@ describe("NotificationInterruptRulesCard", () => {
     await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
 
     // Typing into the source combobox opens it and surfaces values seen in recent notifications.
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
     await userEvent.type(screen.getByLabelText("source"), "t");
     expect(await screen.findByRole("option", { name: "twitter" })).toBeTruthy();
   });
@@ -172,7 +190,7 @@ describe("NotificationInterruptRulesCard handle", () => {
   });
   afterEach(cleanup);
 
-  it("seeds a pooled rule from a notification via addFromNotification", async () => {
+  it("opens the add-rule dialog pre-filled from a notification, then commits on review", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -183,17 +201,22 @@ describe("NotificationInterruptRulesCard handle", () => {
       expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
     );
 
+    // addFromNotification opens the wizard pre-filled (source/type carried over) rather than
+    // committing silently; the user reviews and commits.
     act(() =>
       ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /next/i }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /add rule/i }),
     );
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg[0]).toMatchObject({
-      source: "twitter",
-      type: "tweet",
-      action: "pool",
-    });
+    expect(rulesArg[0]).toMatchObject({ source: "twitter", type: "tweet" });
   });
 
   it("ignores addFromNotification fired before the ruleset has loaded", async () => {
@@ -257,6 +280,7 @@ describe("NotificationInterruptRulesCard core protection", () => {
     await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
 
     // "r" matches both "twitter" and "core", but core is filtered out of the suggestions.
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
     await userEvent.type(screen.getByLabelText("source"), "r");
     expect(await screen.findByRole("option", { name: "twitter" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "core" })).toBeNull();
@@ -308,8 +332,15 @@ describe("NotificationInterruptRulesCard core protection", () => {
     act(() =>
       ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /next/i }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /add rule/i }),
+    );
 
-    // Optimistically shown, then the save fails and the rule is rolled back.
+    // Optimistically shown in the list, then the save fails and the rule is rolled back.
     expect(await screen.findByText(/twitter/)).toBeTruthy();
     await screen.findByText("invalid rules");
     await waitFor(() => expect(screen.queryByText(/twitter/)).toBeNull());
@@ -334,8 +365,14 @@ describe("NotificationInterruptRulesCard cascade", () => {
       expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
     );
 
-    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
     await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /add rule/i,
+      }),
+    );
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
@@ -343,7 +380,7 @@ describe("NotificationInterruptRulesCard cascade", () => {
     expect(rulesArg[0].source).toBeUndefined();
   });
 
-  it("disables type until a source is picked", async () => {
+  it("reveals type only after a source is picked", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
     vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
       notifications: [
@@ -359,15 +396,13 @@ describe("NotificationInterruptRulesCard cascade", () => {
     render(<NotificationInterruptRulesCard />);
     await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
 
-    expect((screen.getByLabelText("type") as HTMLInputElement).disabled).toBe(
-      true,
-    );
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    // type isn't shown at all until a source is chosen.
+    expect(screen.queryByLabelText("type")).toBeNull();
     await userEvent.type(screen.getByLabelText("source"), "t");
     await userEvent.click(
       await screen.findByRole("option", { name: "twitter" }),
     );
-    expect((screen.getByLabelText("type") as HTMLInputElement).disabled).toBe(
-      false,
-    );
+    expect(await screen.findByLabelText("type")).toBeTruthy();
   });
 });

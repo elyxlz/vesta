@@ -385,10 +385,9 @@ def _passive_config(tmp_path):
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.ephemeral = True  # no dreamer drops
     config.monitor_tick_interval = 1
-    # Tiny grace + back-dated interval (see monitor_loop init) make the triage pass fire promptly
-    # once idle, so passive-flush tests stay fast and deterministic under the gated trigger.
+    # Tiny grace makes the triage pass fire promptly once idle, so passive-flush tests stay fast and
+    # deterministic.
     config.notif_pool_idle_grace_seconds = 0.01
-    config.notif_pool_triage_interval = 1
     return config
 
 
@@ -837,5 +836,23 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
         older, _ = bus.before(cursor, limit=2, channel="notifications")
         assert all(e["type"] == "notification" for e in older)
         assert len(page) + len(older) == 3  # all 3 notifs, user event never returned
+    finally:
+        bus.close()
+
+
+def test_notifications_channel_is_arrivals_only(tmp_path):
+    """The 'notifications' channel returns only arrivals. Clears are live broadcast-only deltas (not
+    persisted), so they never appear here — pending is seeded from the connect snapshot instead."""
+    from core.events import EventBus
+
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        bus.emit({"type": "user", "text": "ignored"})  # excluded: not a notification
+        bus.emit({"type": "notification", "source": "s", "summary": "x", "notif_id": "n0"})
+        bus.emit({"type": "notification_cleared", "notif_id": "n0"})  # broadcast-only, not persisted
+
+        page, _ = bus.recent(channel="notifications")
+        kinds = [e["type"] for e in page]
+        assert kinds == ["notification"]  # only the arrival; no user, no cleared
     finally:
         bus.close()

@@ -1,5 +1,7 @@
 """Tests for the GET/PUT /config/notification-policy agent API endpoint."""
 
+import json
+
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -8,7 +10,6 @@ from core import notification_interrupt_policy as npn
 from core.api import (
     _config_notification_policy_get_handler,
     _config_notification_policy_put_handler,
-    _notifications_pending_handler,
     _notifications_static_defaults_handler,
 )
 from core.events import EventBus
@@ -22,7 +23,6 @@ async def _client(tmp_path):
     app["event_bus"] = EventBus(data_dir=config.data_dir)
     app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
     app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
-    app.router.add_get("/notifications/pending", _notifications_pending_handler)
     app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     client = TestClient(TestServer(app))
     await client.start_server()
@@ -56,6 +56,24 @@ async def test_put_then_get_round_trip_and_persist(tmp_path):
 
         # Persisted to disk for the loop to read.
         assert npn.load_rules(config)[0].source == "twitter"
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_put_drops_a_core_notification_so_the_agent_learns(tmp_path):
+    """The policy applies live (no restart), so a user edit would otherwise be invisible to the running
+    agent. PUT drops a pooled source=core notification recapping the change."""
+    client, config = await _client(tmp_path)
+    try:
+        await client.put("/config/notification-policy", json={"rules": [{"source": "twitter", "action": "pool"}]})
+        files = list(config.notifications_dir.glob("*.json"))
+        assert len(files) == 1
+        notif = json.loads(files[0].read_text())
+        assert notif["source"] == "core"
+        assert notif["type"] == vm.TYPE_NOTIFICATION_POLICY_CHANGE
+        assert notif["interrupt"] is False  # pooled — not worth preempting the agent
+        assert "twitter" in notif["body"]
     finally:
         await client.close()
 
@@ -117,32 +135,6 @@ async def test_put_rejects_core_source(tmp_path):
         )
         assert resp.status == 400
         assert npn.load_rules(config) == []
-    finally:
-        await client.close()
-
-
-@pytest.mark.anyio
-async def test_pending_lists_notification_file_stems(tmp_path):
-    client, config = await _client(tmp_path)
-    try:
-        config.notifications_dir.mkdir(parents=True, exist_ok=True)
-        (config.notifications_dir / "twitter-123.json").write_text("{}")
-        (config.notifications_dir / "email-456.json").write_text("{}")
-        resp = await client.get("/notifications/pending")
-        assert resp.status == 200
-        pending = (await resp.json())["pending"]
-        assert set(pending) == {"twitter-123", "email-456"}
-    finally:
-        await client.close()
-
-
-@pytest.mark.anyio
-async def test_pending_empty_when_no_notifications(tmp_path):
-    client, _ = await _client(tmp_path)
-    try:
-        resp = await client.get("/notifications/pending")
-        assert resp.status == 200
-        assert (await resp.json()) == {"pending": []}
     finally:
         await client.close()
 

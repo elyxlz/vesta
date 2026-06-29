@@ -282,6 +282,11 @@ async def _run_messages_with_interrupts(
             # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
             if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
                 _delete_paths(current.file_paths)
+                # Tell live clients the notification cleared (file gone). Only notification turns carry
+                # file_paths, so user-message turns emit nothing. notif_id is the file stem, matching
+                # the arrival's NotificationEvent.notif_id.
+                for path_str in current.file_paths:
+                    state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(path_str).stem})
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
@@ -455,8 +460,6 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_passive: list[vm.Notification] = []
     idle_since: dt.datetime | None = None
-    # Back-dated so the first qualifying idle window is immediately eligible for a triage pass.
-    last_notif_pool_triage = _now() - dt.timedelta(minutes=config.notif_pool_triage_interval)
     # Files sent to the queue but not yet processed (and thus not yet deleted from disk).
     # Trimmed each tick to the paths that still exist; prevents re-queueing mid-compaction.
     queued_paths: set[str] = set()
@@ -532,14 +535,8 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             else:
                 idle_since = None
 
-            if (
-                pending_passive
-                and idle_since is not None
-                and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds
-                and (now - last_notif_pool_triage).total_seconds() >= config.notif_pool_triage_interval * 60
-            ):
+            if pending_passive and idle_since is not None and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds:
                 await process_batch(pending_passive, queue=queue, state=state, config=config, external_suffix_name="notification_triage")
                 pending_passive = []
-                last_notif_pool_triage = now
     finally:
         await _cancel_task(watcher_task)

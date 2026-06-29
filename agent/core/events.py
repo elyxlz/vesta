@@ -82,6 +82,15 @@ class NotificationEvent(_BaseEvent):
     notif_id: tp.NotRequired[str]
 
 
+class NotificationClearedEvent(_BaseEvent):
+    type: tp.Literal["notification_cleared"]
+    # The cleared notification's file stem (matches a prior NotificationEvent.notif_id). Emitted when
+    # the agent processes a notification and deletes its file. A live broadcast-only delta (never
+    # persisted, see emit()): the notifications view seeds pending from the connect snapshot and then
+    # removes ids as these arrive.
+    notif_id: str
+
+
 class SubagentStartEvent(_BaseEvent):
     type: tp.Literal["subagent_start"]
     agent_id: str
@@ -108,20 +117,34 @@ type StreamEvent = (
     | UserEvent
     | ErrorEvent
     | NotificationEvent
+    | NotificationClearedEvent
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
 )
 
 
-class HistoryEvent(tp.TypedDict):
-    type: tp.Literal["history"]
-    events: list[StreamEvent]
+# The connect handshake: one event sent directly to a client on a successful WS connect (not via
+# the bus, so never persisted/broadcast). Each top-level key except `state` is a domain object so
+# new connect-time state is added within a domain (or as a new domain) without disturbing readers;
+# consumers read only the domains they care about (web: all; CLI: chat; vestad: state).
+class SnapshotChat(tp.TypedDict):
+    events: list[StreamEvent]  # recent app-chat seed; empty when the client connected with skip_history
+    cursor: int | None  # load-older pagination cursor
+
+
+class SnapshotNotifications(tp.TypedDict):
+    pending: list[str]  # notification file stems still on disk (received but not yet processed)
+
+
+class SnapshotEvent(tp.TypedDict):
+    type: tp.Literal["snapshot"]
     state: AgentState
-    cursor: int | None
+    chat: SnapshotChat
+    notifications: SnapshotNotifications
 
 
-type VestaEvent = StreamEvent | HistoryEvent
+type VestaEvent = StreamEvent | SnapshotEvent
 
 PAGE_SIZE = 50
 
@@ -164,7 +187,9 @@ END;
 
 _RECENCY_DECAY_RATE = 0.01
 
-# The notifications history channel: filters to notification events for the paginated view.
+# The notifications history channel: the arrivals list for the paginated view. Clears are not here —
+# pending state is seeded from the connect snapshot and kept live via broadcast notification_cleared
+# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events.
 _NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
@@ -225,7 +250,9 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        if event["type"] != "status" and self._conn:
+        # status (activity flips) and notification_cleared (pending deltas) are live-only signals with
+        # no place in history — broadcast them but don't persist.
+        if event["type"] not in ("status", "notification_cleared") and self._conn:
             # Event-logging is best-effort: a failed history write must NEVER crash the
             # agent loop. Without this guard, a transient "database is locked" (the db
             # held by a long maintenance op past the busy timeout) propagated out of emit

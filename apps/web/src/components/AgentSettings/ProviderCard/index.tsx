@@ -5,6 +5,7 @@ import {
   RefreshCw,
   LogOut,
   Plug,
+  Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -136,7 +137,7 @@ export function ProviderCard() {
         <CardContent className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted [corner-shape:squircle]">
-              <Plug className="size-6 text-muted-foreground" />
+              <Unplug className="size-6 text-muted-foreground" />
             </div>
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-xs text-muted-foreground">provider</span>
@@ -149,7 +150,11 @@ export function ProviderCard() {
             {name} needs a provider before it can respond. Connect Claude or
             OpenRouter to get started.
           </p>
-          <Button size="sm" onClick={() => void handleOpenAuth()}>
+          <Button
+            size="sm"
+            className="self-start"
+            onClick={() => void handleOpenAuth()}
+          >
             <Plug className="size-4" />
             set up provider
           </Button>
@@ -447,8 +452,8 @@ export function ProviderCard() {
           <AlertDialogHeader>
             <AlertDialogTitle>sign out {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              this clears its provider — credentials, model, and context window.
-              {name} won't be able to respond until you reconnect a provider.
+              this disconnects {name}'s provider and {name} won't be able to
+              respond until you connect a provider again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error && (

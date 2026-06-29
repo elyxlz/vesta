@@ -88,25 +88,27 @@ describe("agent stream contract", () => {
       "tool_end",
       "error",
       "notification",
+      "notification_cleared",
       "subagent_start",
       "subagent_stop",
     ]);
   });
 
-  it("the history event the agent emits satisfies the history VestaEvent member", () => {
-    // VestaEvent's history member nests a mutable VestaEvent[]; the `as const` fixture is deeply
-    // readonly, so check the wrapper against a readonly-array history shape and the nested events
-    // against `readonly VestaEvent[]`. Both `satisfies` are field-name/field-type compile-time checks.
-    const history = streamEventFixtures.history_event satisfies {
-      type: "history";
+  it("the snapshot event the agent emits satisfies the snapshot VestaEvent member", () => {
+    // VestaEvent's snapshot member nests a mutable VestaEvent[] under chat.events; the `as const`
+    // fixture is deeply readonly, so check the wrapper against a readonly-array snapshot shape and the
+    // nested events against `readonly VestaEvent[]`. Both `satisfies` are compile-time field checks.
+    const snapshot = streamEventFixtures.snapshot_event satisfies {
+      type: "snapshot";
       ts?: string;
-      events: readonly VestaEvent[];
       state: AgentActivityState;
-      cursor: number | null;
+      chat: { events: readonly VestaEvent[]; cursor: number | null };
+      notifications: { pending: readonly string[] };
     };
-    const nested = history.events satisfies readonly VestaEvent[];
-    expect(history.type).toBe("history");
+    const nested = snapshot.chat.events satisfies readonly VestaEvent[];
+    expect(snapshot.type).toBe("snapshot");
     expect(nested.length).toBeGreaterThan(0);
-    expect(history.cursor).toBe(42);
+    expect(snapshot.chat.cursor).toBe(42);
+    expect(snapshot.notifications.pending).toContain("email-123");
   });
 });

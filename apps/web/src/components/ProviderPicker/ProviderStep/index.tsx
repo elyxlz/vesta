@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 
 // Shared layout for every provider step (Claude auth + each OpenRouter step).
 // Standardizes the chrome — logo, title, subtitle, optional oauth link, a
@@ -19,6 +20,7 @@ export function ProviderStep({
   onSubmit,
   onCancel,
   error,
+  className,
 }: {
   logo?: ReactNode;
   title: string;
@@ -30,6 +32,7 @@ export function ProviderStep({
   onSubmit: () => void;
   onCancel?: () => void;
   error?: string | null;
+  className?: string;
 }) {
   return (
     <form
@@ -37,7 +40,7 @@ export function ProviderStep({
         e.preventDefault();
         onSubmit();
       }}
-      className="flex w-full flex-col items-center gap-5"
+      className={cn("flex w-full flex-col items-center gap-5", className)}
     >
       {logo}
       <div className="flex w-full flex-col items-center gap-1 text-center">
@@ -48,20 +51,26 @@ export function ProviderStep({
       </div>
       {oauthLink}
       {children}
-      <Button type="submit" className="w-full" disabled={submitDisabled}>
-        {submitLabel}
-      </Button>
-      {error && <p className="text-xs text-destructive text-center">{error}</p>}
-      {onCancel && (
-        <Button
-          type="button"
-          variant="link"
-          onClick={onCancel}
-          className="h-auto self-center px-0 py-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-        >
-          cancel
+      {/* Actions are one semantic group: a small gap between submit/error/cancel,
+          while the form's gap-5 keeps a big gap between heading, content, actions. */}
+      <div className="flex w-full flex-col items-center gap-2">
+        <Button type="submit" className="w-full" disabled={submitDisabled}>
+          {submitLabel}
         </Button>
-      )}
+        {error && (
+          <p className="text-xs text-destructive text-center">{error}</p>
+        )}
+        {onCancel && (
+          <Button
+            type="button"
+            variant="link"
+            onClick={onCancel}
+            className="h-auto self-center px-0 py-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+          >
+            cancel
+          </Button>
+        )}
+      </div>
     </form>
   );
 }

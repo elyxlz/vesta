@@ -469,7 +469,7 @@ fn remove_default(defaults: &[serde_json::Value], source: &str, r#type: &str) ->
 
 /// "source/type", or just "source" when the type is the empty (no-type) bucket.
 fn default_scope(source: &str, r#type: &str) -> String {
-    if r#type.is_empty() { source.to_string() } else { format!("{source}/{}", r#type) }
+    if r#type.is_empty() { source.to_string() } else { format!("{source}/{type}") }
 }
 
 /// Pretty-print a JSON list, or an explanatory line on stderr when it's empty.

@@ -346,11 +346,17 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
 
     notif_file = tmp_path / "notif.json"
     notif_file.write_text("{}")
+    sub = state.event_bus.subscribe()
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
         await _run_messages_with_interrupts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert not notif_file.exists(), "normally-processed notification file should be deleted"
+    # The clear must also be announced on the stream, so live clients flip the row from pending to
+    # cleared without re-polling disk.
+    cleared = [e for e in (sub.get_nowait() for _ in range(sub.qsize())) if e["type"] == "notification_cleared"]
+    assert len(cleared) == 1
+    assert cleared[0]["notif_id"] == "notif"
 
 
 @pytest.mark.anyio

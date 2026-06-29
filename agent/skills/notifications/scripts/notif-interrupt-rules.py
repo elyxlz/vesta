@@ -27,6 +27,11 @@ EVENTS_DB = pathlib.Path.home() / "agent" / "data" / "events.db"
 # Mirrors NotificationInterruptRule: id + optional match fields + required action.
 MATCH_FIELDS = ("source", "type", "sender", "keyword")
 ACTIONS = ("interrupt", "pool")
+# The exact key sets core's pydantic models accept (extra="forbid"): a section written with any other
+# shape is silently dropped by core's validator (issue #925). Keep in step with
+# NotificationInterruptRule / NotificationDefault in core/notification_interrupt_policy.py.
+RULE_KEYS = {"id", *MATCH_FIELDS, "action"}
+DEFAULT_KEYS = {"source", "type", "action"}
 # Mirrors models.CORE_SOURCE: core notifications are exempt from rules, so they can't be targeted.
 CORE_SOURCE = "core"
 # Facet label -> the field stored on the NotificationEvent in events.db (see core/events.py).
@@ -49,8 +54,31 @@ def load_section(key: str) -> list[dict[str, object]]:
     return section if isinstance(section, list) else []
 
 
+def _validate_section(key: str, items: list[dict[str, object]]) -> None:
+    """Guard the write boundary so the skill can never persist a section core would silently drop
+    (issue #925): every entry must have only the keys core accepts, a valid action, a non-core source,
+    and (rules) a compilable keyword regex. Raises ValueError/re.error; main() reports and exits 1."""
+    allowed = RULE_KEYS if key == "rules" else DEFAULT_KEYS
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f"{key} entry is not an object: {item!r}")
+        unknown = set(item) - allowed
+        if unknown:
+            raise ValueError(f"{key} entry has fields core forbids: {sorted(unknown)}")
+        action = item["action"] if "action" in item else None
+        if action not in ACTIONS:
+            raise ValueError(f"{key} entry action must be one of {ACTIONS}")
+        source = item["source"] if "source" in item else None
+        if isinstance(source, str) and source.strip().lower() == CORE_SOURCE:
+            raise ValueError(f"{key} entry cannot target source={CORE_SOURCE}")
+        keyword = item["keyword"] if "keyword" in item else None
+        if isinstance(keyword, str):
+            re.compile(keyword)
+
+
 def save_section(key: str, items: list[dict[str, object]]) -> None:
     # Read-modify-write so replacing one section preserves the other.
+    _validate_section(key, items)
     policy = _load_policy()
     policy[key] = items
     POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -121,9 +149,38 @@ def cmd_list_defaults(_: argparse.Namespace) -> int:
     return 0
 
 
+def _observed_pairs() -> set[tuple[str, str]]:
+    """The (source, type) pairs the agent has actually received (distinct, from events.db), lowercased
+    for matching. A default override may only toggle one of these — the agent can't invent a fallback
+    for a (source, type) it has never seen (that would just add a row that never fires). Mirrors the
+    (source, notif_type) grouping in core's notification_static_defaults."""
+    if not EVENTS_DB.exists():
+        return set()
+    conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT lower(json_extract(data, '$.source')) AS source, "
+            "lower(coalesce(json_extract(data, '$.notif_type'), '')) AS type FROM events "
+            "WHERE json_extract(data, '$.type') = 'notification' AND source IS NOT NULL AND source != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {(str(source), str(type_ or "")) for source, type_ in rows}
+
+
 def cmd_set_default(args: argparse.Namespace) -> int:
     if args.source.strip().lower() == CORE_SOURCE:
         print(f"error: cannot override source={CORE_SOURCE}; core notifications are never affected by rules", file=sys.stderr)
+        return 1
+    # Toggle-only: refuse to create a fallback for a (source, type) never received, so the agent can't
+    # add phantom rows (e.g. app-chat with no type when every app-chat notification has type=message).
+    if (args.source.strip().lower(), args.type.strip().lower()) not in _observed_pairs():
+        scope = f"{args.source}/{args.type}" if args.type else args.source
+        print(
+            f"error: no notifications received for {scope}; you can only change the default of a "
+            f"(source, type) the agent has actually seen. Run `facets` to list them.",
+            file=sys.stderr,
+        )
         return 1
     entry = {"source": args.source, "type": args.type, "action": args.action}
     # Replace any existing override for this exact (source, type), then add the new one.
@@ -198,7 +255,10 @@ def main() -> int:
 
     sub.add_parser("list-defaults", help="Print the per-(source, type) default overrides as JSON.")
 
-    set_default = sub.add_parser("set-default", help="Override a source's default disposition for a (source, type), used when no rule matches.")
+    set_default = sub.add_parser(
+        "set-default",
+        help="Toggle the default disposition of a (source, type) you've received (see `facets`), used when no rule matches. Can't invent a new (source, type).",
+    )
     set_default.add_argument("--source", required=True, help="The notification source, e.g. outlook, twitter.")
     set_default.add_argument(
         "--type", default="", help="The notification type to scope to (omit to target the source's no-type notifications)."
@@ -220,7 +280,12 @@ def main() -> int:
         "set-default": cmd_set_default,
         "clear-default": cmd_clear_default,
     }
-    return handlers[args.command](args)
+    try:
+        return handlers[args.command](args)
+    except (ValueError, re.error) as e:
+        # The write guard refused a section core would drop; report instead of corrupting the file.
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

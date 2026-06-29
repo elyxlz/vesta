@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderTree } from "lucide-react";
+import { ChevronLeft, FolderTree } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,8 @@ import {
   type FileTreeEntry,
 } from "@/api/files";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useFillHeight } from "@/hooks/use-fill-height";
 import { useAppMode } from "@/stores/use-app-mode";
 import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
@@ -65,13 +67,10 @@ function AdvancedSkeleton() {
       </CardHeader>
       <CardContent className="flex-1 min-h-0 !px-3 !py-3">
         <div className="flex flex-col gap-3">
-          {[64, 48, 56, 40, 60, 44, 52].map((width, i) => (
+          {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className="flex items-center gap-2">
               <Skeleton className="size-3 shrink-0 rounded" />
-              <Skeleton
-                className="h-3 rounded"
-                style={{ width: `${width}%` }}
-              />
+              <Skeleton className="h-3 flex-1 rounded" />
             </div>
           ))}
         </div>
@@ -80,11 +79,11 @@ function AdvancedSkeleton() {
   );
 }
 
-function SkeletonRow({ widthPct = 50 }: { widthPct?: number }) {
+function SkeletonRow() {
   return (
     <div className="flex w-full items-center gap-2.5 px-4 py-3">
       <Skeleton className="size-4 shrink-0 rounded-full" />
-      <Skeleton className="h-3 rounded" style={{ width: `${widthPct}%` }} />
+      <Skeleton className="h-3 flex-1 rounded" />
     </div>
   );
 }
@@ -93,12 +92,12 @@ function SimpleSkeleton() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-1">
       <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
-        <SkeletonRow widthPct={32} />
+        <SkeletonRow />
         <div className="border-t border-border/60">
-          <SkeletonRow widthPct={40} />
+          <SkeletonRow />
         </div>
         <div className="border-t border-border/60">
-          <SkeletonRow widthPct={28} />
+          <SkeletonRow />
         </div>
       </Card>
       <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
@@ -107,9 +106,9 @@ function SimpleSkeleton() {
           <Skeleton className="h-3 w-12" />
         </CardHeader>
         <CardContent className="flex-1 min-h-0 !px-0 !py-0">
-          {[44, 56, 36, 48].map((width, i) => (
+          {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="border-b border-border/60 last:border-b-0">
-              <SkeletonRow widthPct={width} />
+              <SkeletonRow />
             </div>
           ))}
         </CardContent>
@@ -118,9 +117,36 @@ function SimpleSkeleton() {
   );
 }
 
+// Text-like lines of varying width filling the editor area while a file (or the
+// whole tab) loads.
+const EDITOR_SKELETON_LINES = [
+  82, 64, 90, 48, 73, 88, 40, 67, 95, 56, 78, 44, 84, 61, 70, 50, 86, 38,
+];
+
+function FileEditorSkeleton() {
+  return (
+    <div className="flex h-full flex-col gap-3 overflow-hidden px-4 py-4">
+      {EDITOR_SKELETON_LINES.map((width, i) => (
+        <Skeleton
+          key={i}
+          className="h-3.5 shrink-0 rounded"
+          style={{ width: `${width}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// The Tabs container's pb-6 sits below the panel on mobile; reserve it.
+const MOBILE_BOTTOM_GAP = 24;
+
 export function FilesTab() {
   const { name: agentName, agent } = useSelectedAgent();
   const isAlive = agent?.status === "alive";
+  const isMobile = useIsMobile();
+  // Mobile uses a drill-in (tree, then editor): the active panel fills the space
+  // down to the viewport bottom.
+  const { ref: fillRef, height: fillHeight } = useFillHeight(MOBILE_BOTTOM_GAP);
 
   const [entries, setEntries] = useState<FileTreeEntry[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
@@ -152,6 +178,14 @@ export function FilesTab() {
     setSelectedPath(null);
     setLoadedFile(null);
     setLoadError(null);
+    setStatus({ kind: "idle" });
+  };
+  // Mobile drill-in: return from the editor/dreams detail view back to the tree.
+  const goBack = () => {
+    setSelectedPath(null);
+    setLoadedFile(null);
+    setLoadError(null);
+    setDreamsActive(false);
     setStatus({ kind: "idle" });
   };
 
@@ -229,109 +263,160 @@ export function FilesTab() {
     );
   }
 
+  const saveControls = (
+    <>
+      {loadedFile?.readonly && (
+        <Badge variant="outline" className="text-[10px]">
+          read-only
+        </Badge>
+      )}
+      {(status.kind !== "idle" || dirty) && (
+        <span className={cn("text-[10px]", statusClass(status))}>
+          {statusText(status, dirty)}
+        </span>
+      )}
+      <Button
+        size="xs"
+        disabled={
+          !dirty || status.kind === "saving" || (loadedFile?.readonly ?? false)
+        }
+        onClick={onSave}
+      >
+        save
+      </Button>
+    </>
+  );
+
+  const treeInner = (
+    <div className="flex flex-1 min-h-0 flex-col">
+      {treeError ? (
+        <p className="px-1 py-2 text-xs text-destructive">
+          failed to load: {treeError}
+        </p>
+      ) : !entries ? (
+        mode === "simple" ? (
+          <SimpleSkeleton />
+        ) : (
+          <AdvancedSkeleton />
+        )
+      ) : mode === "simple" ? (
+        <SimpleView
+          entries={entries}
+          selected={selectedPath}
+          dreamsActive={dreamsActive}
+          onSelect={selectFile}
+          onShowDreams={showDreams}
+        />
+      ) : root ? (
+        <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
+          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+            <FolderTree className="size-4 text-muted-foreground" />
+            <CardTitle className="!text-sm !font-medium">/root</CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
+            <FileTree
+              root={root}
+              selected={selectedPath}
+              onSelect={selectFile}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+  );
+
+  const editorBody = (
+    <CardContent className="flex-1 min-h-0 !px-0">
+      {!entries && !treeError ? (
+        <FileEditorSkeleton />
+      ) : dreamsActive && agentName ? (
+        <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
+      ) : loadError ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
+          {loadError}
+        </div>
+      ) : !selectedPath ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
+          select a file to view or edit
+        </div>
+      ) : !loadedFile ? (
+        <FileEditorSkeleton />
+      ) : (
+        <FileEditor
+          key={loadedFile.path}
+          initialContent={loadedFile.content}
+          readonly={loadedFile.readonly}
+          encoding={loadedFile.encoding}
+          onChange={setEditorContent}
+          placeholder={
+            loadedFile.path === CONSTITUTION_PATH
+              ? "empty — set principles, boundaries, or facts the agent must always honor"
+              : undefined
+          }
+        />
+      )}
+    </CardContent>
+  );
+
+  // Mobile drill-in: the tree, then the editor/dreams detail view with a back
+  // button. Only one panel shows at a time, each filling the screen.
+  if (isMobile) {
+    const inDetail = dreamsActive || selectedPath !== null;
+    return (
+      <div
+        ref={fillRef}
+        style={{ height: fillHeight }}
+        className="flex min-h-0 flex-col"
+      >
+        {inDetail ? (
+          <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
+            <div className="shrink-0 flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="back to files"
+                onClick={goBack}
+              >
+                <ChevronLeft className="size-5" />
+              </Button>
+              <span className="flex-1 truncate text-xs text-muted-foreground">
+                {headerLabel}
+              </span>
+              {!dreamsActive && saveControls}
+            </div>
+            {editorBody}
+          </Card>
+        ) : (
+          treeInner
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="grid h-[70vh] min-h-0 grid-cols-[280px_minmax(0,1fr)] gap-4">
-      <div className="flex min-h-0 flex-col gap-2">
-        <div className="flex flex-1 min-h-0 flex-col">
-          {treeError ? (
-            <p className="px-1 py-2 text-xs text-destructive">
-              failed to load: {treeError}
-            </p>
-          ) : !entries ? (
-            mode === "simple" ? (
-              <SimpleSkeleton />
-            ) : (
-              <AdvancedSkeleton />
-            )
-          ) : mode === "simple" ? (
-            <SimpleView
-              entries={entries}
-              selected={selectedPath}
-              dreamsActive={dreamsActive}
-              onSelect={selectFile}
-              onShowDreams={showDreams}
-            />
-          ) : root ? (
-            <Card
-              size="sm"
-              className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col"
-            >
-              <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
-                <FolderTree className="size-4 text-muted-foreground" />
-                <CardTitle className="!text-sm !font-medium">/root</CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
-                <FileTree
-                  root={root}
-                  selected={selectedPath}
-                  onSelect={selectFile}
-                />
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-      </div>
+      <div className="flex min-h-0 flex-col gap-2">{treeInner}</div>
 
       <Card size="sm" className="!py-0 !gap-0 flex min-w-0 flex-col">
         {!dreamsActive && (
           <CardHeader className="shrink-0 items-center !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
             <CardTitle className="truncate !text-xs !font-normal text-muted-foreground">
-              {headerLabel}
+              {!entries && !treeError ? (
+                <Skeleton className="h-3 w-28" />
+              ) : (
+                headerLabel
+              )}
             </CardTitle>
             <CardAction className="!row-span-1 !self-center flex items-center gap-2">
-              {loadedFile?.readonly && (
-                <Badge variant="outline" className="text-[10px]">
-                  read-only
-                </Badge>
+              {entries ? (
+                saveControls
+              ) : (
+                <Skeleton className="h-6 w-12 rounded-full" />
               )}
-              {(status.kind !== "idle" || dirty) && (
-                <span className={cn("text-[10px]", statusClass(status))}>
-                  {statusText(status, dirty)}
-                </span>
-              )}
-              <Button
-                size="xs"
-                disabled={
-                  !dirty ||
-                  status.kind === "saving" ||
-                  (loadedFile?.readonly ?? false)
-                }
-                onClick={onSave}
-              >
-                save
-              </Button>
             </CardAction>
           </CardHeader>
         )}
-
-        <CardContent className="flex-1 min-h-0 !px-0">
-          {dreamsActive && agentName ? (
-            <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
-          ) : loadError ? (
-            <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
-              {loadError}
-            </div>
-          ) : !selectedPath ? (
-            <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
-              select a file to view or edit
-            </div>
-          ) : !loadedFile ? (
-            <Skeleton className="h-full w-full" />
-          ) : (
-            <FileEditor
-              key={loadedFile.path}
-              initialContent={loadedFile.content}
-              readonly={loadedFile.readonly}
-              encoding={loadedFile.encoding}
-              onChange={setEditorContent}
-              placeholder={
-                loadedFile.path === CONSTITUTION_PATH
-                  ? "empty — set principles, boundaries, or facts the agent must always honor"
-                  : undefined
-              }
-            />
-          )}
-        </CardContent>
+        {editorBody}
       </Card>
     </div>
   );

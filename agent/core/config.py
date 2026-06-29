@@ -229,8 +229,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     monitor_tick_interval: int = pyd.Field(default=2, ge=1)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
-    notif_pool_triage_interval: int = pyd.Field(default=10, ge=1)
-    notif_pool_idle_grace_seconds: float = pyd.Field(default=60.0, gt=0)
+    notif_pool_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)

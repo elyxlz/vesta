@@ -33,3 +33,6 @@ vestad/vendored/
 
 # Personal notes
 ROADMAP.md
+
+# Local MCP server config — holds secret tokens, never commit
+.mcp.json

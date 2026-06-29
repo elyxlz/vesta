@@ -374,6 +374,8 @@ export async function setNotificationInterruptRules(
 
 /// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
 /// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
+/// Pending state isn't derived here — it's seeded from the connect snapshot and kept live via
+/// `notification_cleared` deltas.
 export async function getNotificationHistory(
   name: string,
   cursor?: number,
@@ -389,15 +391,6 @@ export async function getNotificationHistory(
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
   return { notifications: items, cursor: resp.cursor };
-}
-
-/// The ids (file stems) of notifications still on disk — received but not yet processed by the
-/// agent. A notification not in this set has been cleared (its file was deleted after processing).
-export async function getPendingNotifications(name: string): Promise<string[]> {
-  const resp = await apiJson<{ pending: string[] }>(
-    `/agents/${encodeURIComponent(name)}/notifications/pending`,
-  );
-  return resp.pending;
 }
 
 /// The static interrupt fallback per source/type, aggregated server-side over the whole history in

@@ -23,9 +23,9 @@ describe("DefaultRulesCard", () => {
     render(<DefaultRulesCard />);
 
     expect(await screen.findByText("twitter")).toBeTruthy();
-    expect(screen.getByText("snoozes")).toBeTruthy();
+    expect(screen.getByText("snooze")).toBeTruthy();
     expect(screen.getByText("calendar")).toBeTruthy();
-    expect(screen.getByText("interrupts")).toBeTruthy();
+    expect(screen.getByText("interrupt")).toBeTruthy();
   });
 
   it("shows a placeholder when there are no defaults yet", async () => {
@@ -47,12 +47,11 @@ describe("DefaultRulesCard", () => {
       await screen.findByRole("button", { name: /default for twitter/i }),
     );
 
-    // snoozes (static) -> interrupts: differs from the static default, so it pins an override.
+    // snooze (static) -> interrupt: differs from the static default, so it pins an override.
     expect(setSpy).toHaveBeenCalledWith("bob", [
       { source: "twitter", type: "tweet", action: "interrupt" },
     ]);
-    expect(await screen.findByText("by you")).toBeTruthy();
-    expect(screen.getByText("interrupts")).toBeTruthy();
+    expect(await screen.findByText("interrupt")).toBeTruthy();
   });
 
   it("toggling an override back to the source default clears it (inherit)", async () => {
@@ -67,13 +66,13 @@ describe("DefaultRulesCard", () => {
       .mockResolvedValue([]);
     render(<DefaultRulesCard />);
 
-    expect(await screen.findByText("by you")).toBeTruthy();
+    // The override makes the effective disposition interrupt; wait for it to load.
     await userEvent.click(
-      screen.getByRole("button", { name: /default for twitter/i }),
+      await screen.findByRole("button", { name: /default for twitter/i }),
     );
 
-    // interrupts (override) -> snoozes equals the static default, so the override is removed.
+    // interrupt (override) -> snooze equals the static default, so the override is removed.
     expect(setSpy).toHaveBeenCalledWith("bob", []);
-    await waitFor(() => expect(screen.queryByText("by you")).toBeNull());
+    await waitFor(() => expect(screen.getByText("snooze")).toBeTruthy());
   });
 });

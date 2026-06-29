@@ -28,3 +28,7 @@ Add this startup command to the `## Daemons` section of `~/agent/skills/restart/
 ```
 PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
+
+## 5. Check it's alive
+
+The build and server run in the background, so confirm the dashboard is actually serving before considering it done, e.g. `curl -fsS localhost:$PORT >/dev/null`. Don't assume success; a failed build or server won't tell you.

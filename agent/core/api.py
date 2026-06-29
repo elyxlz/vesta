@@ -32,10 +32,10 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
+from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
-from .models import State
+from .models import State, TYPE_NOTIFICATION_POLICY_CHANGE
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
 from . import notification_interrupt_policy
 
@@ -43,13 +43,24 @@ from . import notification_interrupt_policy
 logger = logging.getLogger("vesta.api")
 
 
+def _pending_notification_ids(config: VestaConfig) -> list[str]:
+    """Notification file stems still on disk — received but not yet processed. Seeds the connect
+    snapshot's `notifications.pending`; run off the loop by the caller (globs the dir)."""
+    directory = config.notifications_dir
+    if not directory.exists():
+        return []
+    return [p.stem for p in directory.glob("*.json") if p.is_file()]
+
+
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Bidirectional event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
     Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends recent history unless ?skip_history=1 is passed."""
+    On connect: sends a `snapshot` seed (state + chat + pending notifications); ?skip_history=1
+    omits the chat backlog for lightweight taps."""
     event_bus: EventBus = request.app["event_bus"]
+    config: VestaConfig = request.app["config"]
     skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
@@ -60,15 +71,19 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        if not skip_history:
-            # The chat WS is the app-chat surface, so seed it with the app-chat channel:
-            # notifications/internal events still arrive on the live stream but never bury
-            # the conversation in the capped recent window. Always send the history event,
-            # even with no events, so the client can tell "still loading" from "no messages".
-            # Run the read off the loop: a slow scan on a large db must not freeze the agent
-            # (it would starve vestad's GET /config status poll and flap the agent to "starting").
+        # The connect snapshot: one event seeding the client with current agent state. `chat` is the
+        # app-chat conversation (notifications/internal events still arrive live but never bury the
+        # capped recent window) — skipped with ?skip_history=1 for lightweight taps. `notifications`
+        # carries the ids still on disk so the view can mark pending without polling. Always sent, even
+        # empty, so the client can tell "still loading" from "no messages". Reads run off the loop: a
+        # slow scan must not freeze the agent (it would starve vestad's status poll and flap "starting").
+        if skip_history:
+            chat = SnapshotChat(events=[], cursor=None)
+        else:
             events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
-            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+            chat = SnapshotChat(events=events, cursor=cursor)
+        pending = await asyncio.to_thread(_pending_notification_ids, config)
+        await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
@@ -359,6 +374,30 @@ async def _config_notification_policy_get_handler(request: web.Request) -> web.R
     return await asyncio.to_thread(_policy_response, config)
 
 
+def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
+    """A plain-language recap of the sections the user just saved, for the core notification that tells
+    the agent its policy was retuned. Renders each entry from its model_dump (no per-model coupling)."""
+
+    def render(item: pyd.BaseModel) -> str:
+        dumped = item.model_dump()
+        conds = ", ".join(
+            f"{key}={dumped[key]}" for key in ("source", "type", "sender", "keyword") if key in dumped and dumped[key] not in (None, "")
+        )
+        action = dumped["action"] if "action" in dumped else "?"
+        return f"{conds or 'any'} -> {action}"
+
+    parts: list[str] = []
+    for key, label in (("rules", "interrupt rules"), ("defaults", "default overrides")):
+        if key in validated:
+            items = validated[key]
+            parts.append(f"{label} ({len(items)}): " + ("; ".join(render(item) for item in items) if items else "none"))
+    body = " and ".join(parts) if parts else "your notification policy"
+    return (
+        "[The user updated your notification interrupt policy from the app — you didn't make this change; "
+        f"it's already live.] Now: {body}. If any of this is wrong for your focus, raise it with the user."
+    )
+
+
 async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     try:
@@ -385,22 +424,19 @@ async def _config_notification_policy_put_handler(request: web.Request) -> web.R
             await asyncio.to_thread(save, items, config)
     except OSError as e:
         return web.json_response({"error": f"failed to write notification policy: {e}"}, status=500)
+    # Surface the change to the agent in-context (pooled core notification): the agent's own edits go
+    # through the skill's direct file write, never this endpoint, so this fires only for user changes.
+    # Deferred import: loops pulls heavy deps and would be a wide import at module load.
+    from .loops import drop_core_notification
+
+    await asyncio.to_thread(
+        drop_core_notification,
+        type_=TYPE_NOTIFICATION_POLICY_CHANGE,
+        body=_policy_change_summary(validated),
+        interrupt=False,
+        config=config,
+    )
     return await asyncio.to_thread(_policy_response, config)
-
-
-async def _notifications_pending_handler(request: web.Request) -> web.Response:
-    """The ids (file stems) of notifications still on disk, i.e. received but not yet processed.
-    The history view uses this to mark each notification cleared (file gone) vs pending."""
-    config: VestaConfig = request.app["config"]
-
-    def _pending_ids() -> list[str]:
-        directory = config.notifications_dir
-        if not directory.exists():
-            return []
-        return [p.stem for p in directory.glob("*.json") if p.is_file()]
-
-    pending = await asyncio.to_thread(_pending_ids)
-    return web.json_response({"pending": pending})
 
 
 async def _notifications_static_defaults_handler(request: web.Request) -> web.Response:
@@ -478,7 +514,6 @@ async def start_ws_server(
     app.router.add_delete("/provider", _provider_delete_handler)
     app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
     app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
-    app.router.add_get("/notifications/pending", _notifications_pending_handler)
     app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)

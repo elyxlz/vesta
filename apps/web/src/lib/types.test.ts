@@ -12,9 +12,10 @@ describe("VestaEvent contract", () => {
     "tool_end",
     "error",
     "notification",
+    "notification_cleared",
     "subagent_start",
     "subagent_stop",
-    "history",
+    "snapshot",
   ] as const;
 
   it("covers all expected event types", () => {
@@ -30,11 +31,12 @@ describe("VestaEvent contract", () => {
     { type: "tool_end", tool: "Bash", subagent: true },
     { type: "subagent_start", agent_id: "abc", agent_type: "browser" },
     { type: "subagent_stop", agent_id: "abc", agent_type: "browser" },
+    { type: "notification_cleared", notif_id: "email-123" },
     {
-      type: "history",
-      events: [{ type: "user", text: "hello" }],
+      type: "snapshot",
       state: "idle",
-      cursor: null,
+      chat: { events: [{ type: "user", text: "hello" }], cursor: null },
+      notifications: { pending: ["email-123"] },
     },
   ])("$type satisfies the VestaEvent shape", (event) => {
     expect(event.type).toBeTruthy();

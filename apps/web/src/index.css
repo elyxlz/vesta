@@ -14,9 +14,12 @@
   --foreground: oklch(0.147 0.005 80);
   --card: oklch(0.995 0.005 80);
   --card-foreground: oklch(0.147 0.005 80);
+  /* Card hairline ring as a single theme-aware token, so a card can override its
+     ring with one base utility (e.g. ring-primary) and have it hold in both themes. */
+  --card-ring: oklch(0.147 0.005 80 / 5%);
   --popover: oklch(0.995 0.005 80);
   --popover-foreground: oklch(0.147 0.005 80);
-  --primary: oklch(0.7 0.06 75);
+  --primary: oklch(0.8 0.06 75);
   --primary-foreground: oklch(0.25 0.015 75);
   --secondary: oklch(0.97 0.006 80);
   --secondary-foreground: oklch(0.216 0.006 80);
@@ -105,6 +108,7 @@ html[data-platform="android"] {
   --foreground: oklch(0.985 0.006 80);
   --card: oklch(0.216 0.007 80);
   --card-foreground: oklch(0.985 0.006 80);
+  --card-ring: oklch(0.985 0.006 80 / 10%);
   --popover: oklch(0.216 0.007 80);
   --popover-foreground: oklch(0.985 0.006 80);
   --primary: oklch(0.8 0.06 75);
@@ -184,6 +188,8 @@ html[data-platform="android"] {
   --radius-squircle-lg: var(--rounded-squircle-lg);
   --radius-squircle-md: var(--rounded-squircle-md);
   --radius-squircle-sm: var(--rounded-squircle-sm);
+  /* Lighter than Tailwind's default shadow-sm (0.1 alpha) — same geometry, softer. */
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
 }
 
 @layer base {

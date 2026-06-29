@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -23,7 +23,7 @@ export function AgentMenu() {
   const { name, agent, isBusy, start, stop, restart, rebuild, backup } =
     useSelectedAgent();
   const { setDeleteDialogOpen, handleOpenAuth } = useModals();
-  const { showToolCalls, setShowToolCalls } = useChatContext();
+  const { showToolCalls, setShowToolCalls } = useAgentSocket();
   const gateway = useGateway();
   const appMode = useAppMode((s) => s.mode);
 

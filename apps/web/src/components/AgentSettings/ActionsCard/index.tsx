@@ -6,7 +6,7 @@ import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 export function ActionsCard() {
@@ -22,7 +22,7 @@ export function ActionsCard() {
     backup,
   } = useSelectedAgent();
   const { handleOpenAuth, setDeleteDialogOpen } = useModals();
-  const { showToolCalls, setShowToolCalls } = useChatContext();
+  const { showToolCalls, setShowToolCalls } = useAgentSocket();
 
   const isRunning =
     agent?.status !== "stopped" &&
@@ -70,12 +70,6 @@ export function ActionsCard() {
           onRestart={() => void restart()}
           onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
-          onAuthenticate={
-            reachable && !showTopSignIn
-              ? () => void handleOpenAuth()
-              : undefined
-          }
-          isAuthenticated={isAuthenticated}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

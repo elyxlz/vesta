@@ -1,4 +1,6 @@
 import { memo } from "react";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,7 @@ export const ChatBubble = memo(function ChatBubble({
   fullscreen?: boolean;
   isMobile: boolean;
 }) {
-  if (event.type === "history" || event.type === "status") return null;
+  if (event.type === "status") return null;
 
   const ts = event.ts
     ? new Date(event.ts).toLocaleTimeString("en-US", {
@@ -39,45 +41,46 @@ export const ChatBubble = memo(function ChatBubble({
 
   const isUser = event.type === "user";
   const text = event.text;
+  // Mobile fullscreen lifts the agent bubble onto a card surface with a ring/shadow; the
+  // bg override goes through the same `*:data-[slot=bubble-content]` channel the variant uses
+  // so twMerge drops the variant's bg-secondary cleanly.
+  const mobileCard = fullscreen && isMobile;
 
   return (
-    <div
-      className={cn(
-        "flex",
-        isUser ? "justify-end" : "justify-start",
-        className,
-      )}
-    >
-      <div
+    <Message align={isUser ? "end" : "start"} className={className}>
+      <Bubble
+        variant={isUser ? "default" : "secondary"}
+        align={isUser ? "end" : "start"}
         className={cn(
-          "flex items-end max-w-[85%] rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5 text-sm leading-relaxed",
-          fullscreen &&
-            isMobile &&
-            "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
-          isUser
-            ? "bg-primary text-primary-foreground rounded-br-sm"
-            : cn(
-                "text-secondary-foreground rounded-bl-sm",
-                fullscreen && isMobile ? "bg-card" : "bg-secondary",
-              ),
+          "max-w-[85%]",
+          !isUser && mobileCard && "*:data-[slot=bubble-content]:bg-card",
         )}
       >
-        <div className="min-w-0 break-words">
-          <Markdown>{text}</Markdown>
-        </div>
-        {ts && (
-          <span
-            className={cn(
-              "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
-              isUser
-                ? "text-primary-foreground/50"
-                : "text-muted-foreground/50",
-            )}
-          >
-            {ts}
-          </span>
-        )}
-      </div>
-    </div>
+        <BubbleContent
+          className={cn(
+            "flex items-end rounded-squircle-sm [corner-shape:squircle] px-3 py-1.5",
+            isUser ? "rounded-br-sm" : "rounded-bl-sm",
+            mobileCard &&
+              "shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
+          )}
+        >
+          <div className="min-w-0 break-words">
+            <Markdown>{text}</Markdown>
+          </div>
+          {ts && (
+            <span
+              className={cn(
+                "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
+                isUser
+                  ? "text-primary-foreground/50"
+                  : "text-muted-foreground/50",
+              )}
+            >
+              {ts}
+            </span>
+          )}
+        </BubbleContent>
+      </Bubble>
+    </Message>
   );
 });
