@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardDescription, CardTitle } from "@/components/ui/card";
@@ -21,19 +21,19 @@ function rowKey(event: NotificationEvent): string {
 }
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
-// the rules cards beside it stay sticky. Live-updating: the initial page is fetched over REST, then
-// new arrivals and clears stream in over the agent socket. "Pending" is derived from the event log —
-// an arrival with no matching `notification_cleared` is still on disk — so no disk-state polling.
+// the rules cards beside it stay sticky. Live-updating: the row list comes from the REST history
+// (paginated), while "pending" is a live set — seeded from the connect snapshot's on-disk ids, plus
+// notifications that arrive live, minus ones cleared live. No disk-state polling; a reconnect re-sends
+// the snapshot, which re-seeds the set for free.
 export function NotificationsCard({
   onMakeRule,
 }: {
   onMakeRule?: (event: NotificationEvent) => void;
 }) {
   const { name: agentName } = useSelectedAgent();
-  const { arrivals, cleared: liveCleared, connected } = useLiveNotifications();
+  const { pendingSeed, arrivals, cleared } = useLiveNotifications();
 
   const [items, setItems] = useState<NotificationEvent[] | null>(null);
-  const [cleared, setCleared] = useState<Set<string>>(new Set());
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,9 +42,18 @@ export function NotificationsCard({
   const currentAgent = useRef(agentName);
   // Keys of arrivals already in `items`, so live merges don't duplicate a REST-loaded row.
   const seenRef = useRef<Set<string>>(new Set());
-  const prevConnectedRef = useRef(connected);
 
-  // Load (or reload) the newest page and reset derived state. Stable: only refs + setters.
+  // Pending = on disk, not yet processed: snapshot seed ∪ live arrivals − live clears. A clear after
+  // an arrival wins (delete last), so a notification that arrived and was processed isn't pending.
+  const pendingIds = useMemo(() => {
+    const set = new Set(pendingSeed);
+    for (const arrival of arrivals)
+      if (arrival.notif_id) set.add(arrival.notif_id);
+    for (const id of cleared) set.delete(id);
+    return set;
+  }, [pendingSeed, arrivals, cleared]);
+
+  // Load (or reload) the newest page of the row list. Stable: only refs + setters.
   const loadFirstPage = useCallback((name: string) => {
     setItems(null);
     setError(null);
@@ -54,7 +63,6 @@ export function NotificationsCard({
         if (currentAgent.current !== name) return;
         setItems(page.notifications);
         setCursor(page.cursor);
-        setCleared(new Set(page.cleared));
         seenRef.current = new Set(page.notifications.map(rowKey));
       })
       .catch((e: Error) => {
@@ -78,30 +86,6 @@ export function NotificationsCard({
     setItems((prev) => (prev ? [...[...fresh].reverse(), ...prev] : prev));
   }, [arrivals, items]);
 
-  // Fold live clears into the cleared set; rows derive their pending dot from it.
-  useEffect(() => {
-    if (liveCleared.length === 0) return;
-    setCleared((prev) => {
-      let changed = false;
-      const next = new Set(prev);
-      for (const id of liveCleared)
-        if (!next.has(id)) {
-          next.add(id);
-          changed = true;
-        }
-      return changed ? next : prev;
-    });
-  }, [liveCleared]);
-
-  // After a reconnect the stream may have gaps, so re-fetch the newest page to resync.
-  useEffect(() => {
-    const wasConnected = prevConnectedRef.current;
-    prevConnectedRef.current = connected;
-    if (!wasConnected && connected && agentName && items !== null) {
-      loadFirstPage(agentName);
-    }
-  }, [connected, agentName, items, loadFirstPage]);
-
   const loadMore = async () => {
     if (!agentName || cursor === null || loadingMore) return;
     const requestedAgent = agentName;
@@ -112,7 +96,6 @@ export function NotificationsCard({
       page.notifications.forEach((n) => seenRef.current.add(rowKey(n)));
       setItems((prev) => [...(prev ?? []), ...page.notifications]);
       setCursor(page.cursor);
-      setCleared((prev) => new Set([...prev, ...page.cleared]));
     } catch (e) {
       if (currentAgent.current === requestedAgent)
         setError((e as Error).message);
@@ -160,8 +143,8 @@ export function NotificationsCard({
             <NotificationRow
               key={event.notif_id ?? event.ts ?? `row-${i}`}
               event={event}
-              // Pending = received but not yet processed: an arrival with no matching clear yet.
-              isPending={!!event.notif_id && !cleared.has(event.notif_id)}
+              // Pending = received but not yet processed (still on disk per the live pending set).
+              isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
               onMakeRule={onMakeRule}
             />
           ))}

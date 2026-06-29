@@ -29,14 +29,6 @@ function typingDelay(charCount: number): number {
   return raw + Math.floor(Math.random() * variance * 2) - variance;
 }
 
-// Module-level sender so non-descendant components (Settings, etc.) can push
-// typed events over the already-open agent WebSocket without opening their
-// own connection.
-let activeSender: ((event: object) => boolean) | null = null;
-export function sendAgentEvent(event: object): boolean {
-  return activeSender ? activeSender(event) : false;
-}
-
 interface UseAgentSocketOptions {
   name: string | null;
   active: boolean;
@@ -55,6 +47,11 @@ export function useAgentSocketState({
   const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  // Pending-notification ids from the latest connect snapshot — the authoritative seed the
+  // notifications view derives pending state from (then maintains live via notification_cleared).
+  const [pendingNotifications, setPendingNotifications] = useState<string[]>(
+    [],
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
 
@@ -146,11 +143,12 @@ export function useAgentSocketState({
       onMessage: (data) => {
         try {
           const event = JSON.parse(data) as VestaEvent;
-          if (event.type === "history") {
-            setMessages(capTail(event.events));
-            cursorRef.current = event.cursor;
+          if (event.type === "snapshot") {
+            setMessages(capTail(event.chat.events));
+            cursorRef.current = event.chat.cursor;
             setHistoryLoaded(true);
-            if (event.state) setAgentState(event.state);
+            setAgentState(event.state);
+            setPendingNotifications(event.notifications.pending);
             return;
           }
           if (event.type === "user") {
@@ -215,13 +213,6 @@ export function useAgentSocketState({
     [sendEvent],
   );
 
-  useEffect(() => {
-    activeSender = sendEvent;
-    return () => {
-      activeSender = null;
-    };
-  }, [sendEvent]);
-
   const hasMore = cursorRef.current !== null;
 
   const loadMore = useCallback(async () => {
@@ -247,6 +238,7 @@ export function useAgentSocketState({
     isTyping,
     connected,
     historyLoaded,
+    pendingNotifications,
     hasMore,
     loadingMore,
     loadMore,

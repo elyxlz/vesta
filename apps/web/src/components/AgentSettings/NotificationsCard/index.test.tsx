@@ -9,13 +9,19 @@ import {
 import type { VestaEvent } from "@/lib/types";
 import { NotificationsCard } from "./index";
 
-function socketValue(messages: VestaEvent[]): AgentSocketValue {
+// A fake AgentSocket context: `pending` is the connect-snapshot seed; `messages` carries any live
+// notification / notification_cleared deltas the card folds on top of it.
+function socketValue(
+  messages: VestaEvent[],
+  pending: string[] = [],
+): AgentSocketValue {
   return {
     messages,
     agentState: "idle",
     isTyping: false,
     connected: true,
     historyLoaded: true,
+    pendingNotifications: pending,
     hasMore: false,
     loadingMore: false,
     loadMore: () => {},
@@ -51,7 +57,6 @@ describe("NotificationsCard", () => {
           ts: new Date().toISOString(),
         },
       ],
-      cleared: [],
       cursor: null,
     });
     render(<NotificationsCard />);
@@ -77,7 +82,6 @@ describe("NotificationsCard", () => {
             ts: new Date().toISOString(),
           },
         ],
-        cleared: [],
         cursor: 42,
       })
       .mockResolvedValueOnce({
@@ -91,7 +95,6 @@ describe("NotificationsCard", () => {
             ts: new Date().toISOString(),
           },
         ],
-        cleared: [],
         cursor: null,
       });
     render(<NotificationsCard />);
@@ -106,7 +109,6 @@ describe("NotificationsCard", () => {
   it("shows an empty state when there are none", async () => {
     vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
       notifications: [],
-      cleared: [],
       cursor: null,
     });
     render(<NotificationsCard />);
@@ -133,7 +135,6 @@ describe("NotificationsCard make-rule", () => {
           ts: new Date().toISOString(),
         },
       ],
-      cleared: [],
       cursor: null,
     });
     render(<NotificationsCard onMakeRule={onMakeRule} />);
@@ -157,7 +158,6 @@ describe("NotificationsCard make-rule", () => {
           ts: new Date().toISOString(),
         },
       ],
-      cleared: [],
       cursor: null,
     });
     render(<NotificationsCard onMakeRule={vi.fn()} />);
@@ -167,13 +167,13 @@ describe("NotificationsCard make-rule", () => {
   });
 });
 
-describe("NotificationsCard pending/cleared", () => {
+describe("NotificationsCard pending", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
   afterEach(cleanup);
 
-  it("derives pending from the log: an arrival with no matching clear is pending, a cleared one isn't", async () => {
+  it("marks pending from the snapshot seed: ids in the seed get the dot, others don't", async () => {
     vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
       notifications: [
         {
@@ -195,14 +195,16 @@ describe("NotificationsCard pending/cleared", () => {
           ts: new Date().toISOString(),
         },
       ],
-      // n-cleared has a matching clear in the log; n-pending does not.
-      cleared: ["n-cleared"],
       cursor: null,
     });
-    render(<NotificationsCard />);
+    render(
+      // Snapshot seed says only n-pending is still on disk.
+      <AgentSocketContext.Provider value={socketValue([], ["n-pending"])}>
+        <NotificationsCard />
+      </AgentSocketContext.Provider>,
+    );
     await screen.findByText("twitter");
 
-    // Only the row with no clear carries the pending marker.
     expect(await screen.findAllByText("pending")).toHaveLength(1);
   });
 
@@ -221,26 +223,32 @@ describe("NotificationsCard pending/cleared", () => {
           ts: new Date().toISOString(),
         },
       ],
-      cleared: [],
       cursor: null,
     });
+    // Seeded as pending by the snapshot.
     const { rerender } = render(
-      <AgentSocketContext.Provider value={socketValue([])}>
+      <AgentSocketContext.Provider
+        value={socketValue([], ["abc-app-chat-message"])}
+      >
         <NotificationsCard />
       </AgentSocketContext.Provider>,
     );
     await screen.findByText("app-chat");
     expect(screen.getAllByText("pending")).toHaveLength(1);
 
+    // A live clear for the same id removes it from the pending set.
     rerender(
       <AgentSocketContext.Provider
-        value={socketValue([
-          {
-            type: "notification_cleared",
-            notif_id: "abc-app-chat-message",
-            ts: new Date().toISOString(),
-          },
-        ])}
+        value={socketValue(
+          [
+            {
+              type: "notification_cleared",
+              notif_id: "abc-app-chat-message",
+              ts: new Date().toISOString(),
+            },
+          ],
+          ["abc-app-chat-message"],
+        )}
       >
         <NotificationsCard />
       </AgentSocketContext.Provider>,

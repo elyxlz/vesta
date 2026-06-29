@@ -3,9 +3,11 @@
 import asyncio
 import json
 import socket
+import tempfile
 import time
 import typing
 import weakref
+from pathlib import Path
 
 import pydantic as pyd
 import pytest
@@ -26,6 +28,7 @@ def _pick_port() -> int:
 async def _start_server(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
+    app["config"] = vm.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -54,7 +57,7 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 
 @pytest.mark.anyio
-async def test_ws_sends_history_by_default(event_bus):
+async def test_ws_sends_snapshot_by_default(event_bus):
     event_bus.emit(ChatEvent(type="chat", text="hello"))
     runner, base = await _start_server(event_bus)
     try:
@@ -62,15 +65,15 @@ async def test_ws_sends_history_by_default(event_bus):
             async with session.ws_connect(f"{base}/ws") as ws:
                 msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
                 data = json.loads(msg.data)
-                assert data["type"] == "history"
-                assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["events"])
+                assert data["type"] == "snapshot"
+                assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["chat"]["events"])
     finally:
         await runner.cleanup()
 
 
 @pytest.mark.anyio
-async def test_ws_sends_empty_history_when_no_events(event_bus):
-    """The history event is always sent on connect, even with no events, so the client
+async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
+    """The snapshot is always sent on connect, even with no events, so the client
     can distinguish 'still loading' from 'no messages' instead of guessing."""
     runner, base = await _start_server(event_bus)
     try:
@@ -78,26 +81,32 @@ async def test_ws_sends_empty_history_when_no_events(event_bus):
             async with session.ws_connect(f"{base}/ws") as ws:
                 msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
                 data = json.loads(msg.data)
-                assert data["type"] == "history"
-                assert data["events"] == []
-                assert data["cursor"] is None
+                assert data["type"] == "snapshot"
+                assert data["chat"]["events"] == []
+                assert data["chat"]["cursor"] is None
+                assert data["notifications"]["pending"] == []
     finally:
         await runner.cleanup()
 
 
 @pytest.mark.anyio
-async def test_ws_skip_history_omits_history_event(event_bus):
+async def test_ws_skip_history_sends_snapshot_without_chat(event_bus):
+    """skip_history still sends the snapshot (state + notifications), just omitting the heavy chat
+    seed, so lightweight taps get connect state without the conversation backlog."""
     event_bus.emit(ChatEvent(type="chat", text="stored"))
     runner, base = await _start_server(event_bus)
     try:
         async with ClientSession() as session:
             async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                snapshot = json.loads(msg.data)
+                assert snapshot["type"] == "snapshot"
+                assert snapshot["chat"]["events"] == []  # "stored" backlog omitted
                 event_bus.emit(ChatEvent(type="chat", text="live"))
                 received = await _drain_until(
                     ws,
                     lambda r: any(e.get("type") == "chat" and e.get("text") == "live" for e in r),
                 )
-                assert not any(e.get("type") == "history" for e in received)
                 assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
     finally:
         await runner.cleanup()
@@ -118,10 +127,10 @@ async def test_ws_history_survives_notification_storm(event_bus):
             async with session.ws_connect(f"{base}/ws") as ws:
                 msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
                 data = json.loads(msg.data)
-                assert data["type"] == "history"
-                history_types = {e["type"] for e in data["events"]}
+                assert data["type"] == "snapshot"
+                history_types = {e["type"] for e in data["chat"]["events"]}
                 assert history_types == {"user", "chat"}
-                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["events"])
+                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["chat"]["events"])
     finally:
         await runner.cleanup()
 
@@ -168,6 +177,8 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     async with ClientSession() as session:
         ws = await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth)
         await wait_for_condition(lambda: len(runner.app["websockets"]) == 1, message="WS handler never registered")
+        # Drain the connect snapshot (always sent, even with skip_history) so the next frame is the close.
+        await asyncio.wait_for(ws.receive(), timeout=SHUTDOWN_BUDGET_SEC)
 
         cleanup_task = asyncio.create_task(runner.cleanup())
         try:

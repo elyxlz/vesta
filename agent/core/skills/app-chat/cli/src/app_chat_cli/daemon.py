@@ -129,8 +129,8 @@ def _handle_event(state: DaemonState, raw: str) -> None:
 
     event_type = event["type"]
 
-    if event_type == "history" and "events" in event:
-        _replay_missed(state, event["events"])
+    if event_type == "snapshot" and "chat" in event and "events" in event["chat"]:
+        _replay_missed(state, event["chat"]["events"])
         return
 
     if "ts" in event:

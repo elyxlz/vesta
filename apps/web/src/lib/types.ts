@@ -53,8 +53,8 @@ export type VestaEvent =
       notif_id?: string; // file stem; pending while its file is on disk, cleared once processed
     })
   | (BaseEvent & {
-      // Emitted when the agent processes a notification and deletes its file; flips the matching
-      // history row (same notif_id) from pending to cleared without re-polling disk.
+      // Live broadcast-only delta: emitted when the agent processes a notification and deletes its
+      // file. The view seeds pending from the connect snapshot, then removes this id when it arrives.
       type: "notification_cleared";
       notif_id: string;
     })
@@ -69,10 +69,12 @@ export type VestaEvent =
       agent_type: string;
     })
   | (BaseEvent & {
-      type: "history";
-      events: VestaEvent[];
+      // The connect handshake: one event seeding a client with current agent state. Each domain
+      // (chat, notifications, …) is its own object so new connect-time state extends without churn.
+      type: "snapshot";
       state: AgentActivityState;
-      cursor: number | null;
+      chat: { events: VestaEvent[]; cursor: number | null };
+      notifications: { pending: string[] };
     });
 
 export type LogEvent =

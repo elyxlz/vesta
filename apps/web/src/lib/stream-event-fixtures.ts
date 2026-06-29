@@ -55,6 +55,11 @@ export const streamEventFixtures = {
       "summary": "new mail"
     },
     {
+      "type": "notification_cleared",
+      "ts": "2026-01-01T00:00:00Z",
+      "notif_id": "email-123"
+    },
+    {
       "type": "subagent_start",
       "ts": "2026-01-01T00:00:00Z",
       "agent_id": "abc",
@@ -67,21 +72,28 @@ export const streamEventFixtures = {
       "agent_type": "browser"
     }
   ],
-  "history_event": {
-    "type": "history",
-    "events": [
-      {
-        "type": "status",
-        "ts": "2026-01-01T00:00:00Z",
-        "state": "idle"
-      },
-      {
-        "type": "assistant",
-        "ts": "2026-01-01T00:00:00Z",
-        "text": "hi"
-      }
-    ],
+  "snapshot_event": {
+    "type": "snapshot",
     "state": "idle",
-    "cursor": 42
+    "chat": {
+      "events": [
+        {
+          "type": "status",
+          "ts": "2026-01-01T00:00:00Z",
+          "state": "idle"
+        },
+        {
+          "type": "assistant",
+          "ts": "2026-01-01T00:00:00Z",
+          "text": "hi"
+        }
+      ],
+      "cursor": 42
+    },
+    "notifications": {
+      "pending": [
+        "email-123"
+      ]
+    }
   }
 } as const;

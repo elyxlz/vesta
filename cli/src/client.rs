@@ -854,8 +854,8 @@ fn run_chat_session(
                                 std::io::stdout().flush().ok();
                             }
                         }
-                        Some("history") if render_history => {
-                            if let Some(events) = msg["events"].as_array() {
+                        Some("snapshot") if render_history => {
+                            if let Some(events) = msg["chat"]["events"].as_array() {
                                 for event in events {
                                     let event_type = event["type"].as_str().unwrap_or("");
                                     let time = time_from_ts(event["ts"].as_str().unwrap_or(""));

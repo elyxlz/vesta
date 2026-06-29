@@ -176,7 +176,7 @@ fn vendor_cloudflared(manifest_dir: &Path) {
     if !dest.exists() {
         std::fs::create_dir_all(&vendored_dir)
             .expect("failed to create vendored dir");
-        let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
+        let url = format!("{CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-linux-{arch}");
         if !curl_fetch(&url, &dest, "cloudflared") {
             panic!("failed to download cloudflared from {url} (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
         }

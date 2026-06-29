@@ -231,7 +231,8 @@ async fn agent_activity_listener(
                         Err(_) => continue,
                     };
                     let msg_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    if msg_type == "status" || msg_type == "history" {
+                    // `state` is top-level on both the live `status` event and the connect `snapshot`.
+                    if msg_type == "status" || msg_type == "snapshot" {
                         if let Some(state) = parsed.get("state").and_then(|v| v.as_str()) {
                             let _ = tx.send((name.clone(), state.to_string())).await;
                         }

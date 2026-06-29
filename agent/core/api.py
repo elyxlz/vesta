@@ -32,7 +32,7 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
+from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
@@ -43,13 +43,24 @@ from . import notification_interrupt_policy
 logger = logging.getLogger("vesta.api")
 
 
+def _pending_notification_ids(config: VestaConfig) -> list[str]:
+    """Notification file stems still on disk — received but not yet processed. Seeds the connect
+    snapshot's `notifications.pending`; run off the loop by the caller (globs the dir)."""
+    directory = config.notifications_dir
+    if not directory.exists():
+        return []
+    return [p.stem for p in directory.glob("*.json") if p.is_file()]
+
+
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Bidirectional event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
     Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends recent history unless ?skip_history=1 is passed."""
+    On connect: sends a `snapshot` seed (state + chat + pending notifications); ?skip_history=1
+    omits the chat backlog for lightweight taps."""
     event_bus: EventBus = request.app["event_bus"]
+    config: VestaConfig = request.app["config"]
     skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
@@ -60,15 +71,19 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        if not skip_history:
-            # The chat WS is the app-chat surface, so seed it with the app-chat channel:
-            # notifications/internal events still arrive on the live stream but never bury
-            # the conversation in the capped recent window. Always send the history event,
-            # even with no events, so the client can tell "still loading" from "no messages".
-            # Run the read off the loop: a slow scan on a large db must not freeze the agent
-            # (it would starve vestad's GET /config status poll and flap the agent to "starting").
+        # The connect snapshot: one event seeding the client with current agent state. `chat` is the
+        # app-chat conversation (notifications/internal events still arrive live but never bury the
+        # capped recent window) — skipped with ?skip_history=1 for lightweight taps. `notifications`
+        # carries the ids still on disk so the view can mark pending without polling. Always sent, even
+        # empty, so the client can tell "still loading" from "no messages". Reads run off the loop: a
+        # slow scan must not freeze the agent (it would starve vestad's status poll and flap "starting").
+        if skip_history:
+            chat = SnapshotChat(events=[], cursor=None)
+        else:
             events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
-            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+            chat = SnapshotChat(events=events, cursor=cursor)
+        pending = await asyncio.to_thread(_pending_notification_ids, config)
+        await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)

@@ -17,7 +17,7 @@ export const ChatBubble = memo(function ChatBubble({
   fullscreen?: boolean;
   isMobile: boolean;
 }) {
-  if (event.type === "history" || event.type === "status") return null;
+  if (event.type === "status") return null;
 
   const ts = event.ts
     ? new Date(event.ts).toLocaleTimeString("en-US", {
