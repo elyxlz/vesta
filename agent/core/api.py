@@ -35,7 +35,7 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
-from .models import State
+from .models import State, TYPE_NOTIFICATION_POLICY_CHANGE
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
 from . import notification_interrupt_policy
 
@@ -374,6 +374,30 @@ async def _config_notification_policy_get_handler(request: web.Request) -> web.R
     return await asyncio.to_thread(_policy_response, config)
 
 
+def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
+    """A plain-language recap of the sections the user just saved, for the core notification that tells
+    the agent its policy was retuned. Renders each entry from its model_dump (no per-model coupling)."""
+
+    def render(item: pyd.BaseModel) -> str:
+        dumped = item.model_dump()
+        conds = ", ".join(
+            f"{key}={dumped[key]}" for key in ("source", "type", "sender", "keyword") if key in dumped and dumped[key] not in (None, "")
+        )
+        action = dumped["action"] if "action" in dumped else "?"
+        return f"{conds or 'any'} -> {action}"
+
+    parts: list[str] = []
+    for key, label in (("rules", "interrupt rules"), ("defaults", "default overrides")):
+        if key in validated:
+            items = validated[key]
+            parts.append(f"{label} ({len(items)}): " + ("; ".join(render(item) for item in items) if items else "none"))
+    body = " and ".join(parts) if parts else "your notification policy"
+    return (
+        "[The user updated your notification interrupt policy from the app — you didn't make this change; "
+        f"it's already live.] Now: {body}. If any of this is wrong for your focus, raise it with the user."
+    )
+
+
 async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     try:
@@ -400,6 +424,18 @@ async def _config_notification_policy_put_handler(request: web.Request) -> web.R
             await asyncio.to_thread(save, items, config)
     except OSError as e:
         return web.json_response({"error": f"failed to write notification policy: {e}"}, status=500)
+    # Surface the change to the agent in-context (pooled core notification): the agent's own edits go
+    # through the skill's direct file write, never this endpoint, so this fires only for user changes.
+    # Deferred import: loops pulls heavy deps and would be a wide import at module load.
+    from .loops import drop_core_notification
+
+    await asyncio.to_thread(
+        drop_core_notification,
+        type_=TYPE_NOTIFICATION_POLICY_CHANGE,
+        body=_policy_change_summary(validated),
+        interrupt=False,
+        config=config,
+    )
     return await asyncio.to_thread(_policy_response, config)
 
 
