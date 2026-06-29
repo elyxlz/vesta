@@ -27,6 +27,11 @@ EVENTS_DB = pathlib.Path.home() / "agent" / "data" / "events.db"
 # Mirrors NotificationInterruptRule: id + optional match fields + required action.
 MATCH_FIELDS = ("source", "type", "sender", "keyword")
 ACTIONS = ("interrupt", "pool")
+# The exact key sets core's pydantic models accept (extra="forbid"): a section written with any other
+# shape is silently dropped by core's validator (issue #925). Keep in step with
+# NotificationInterruptRule / NotificationDefault in core/notification_interrupt_policy.py.
+RULE_KEYS = {"id", *MATCH_FIELDS, "action"}
+DEFAULT_KEYS = {"source", "type", "action"}
 # Mirrors models.CORE_SOURCE: core notifications are exempt from rules, so they can't be targeted.
 CORE_SOURCE = "core"
 # Facet label -> the field stored on the NotificationEvent in events.db (see core/events.py).
@@ -49,8 +54,31 @@ def load_section(key: str) -> list[dict[str, object]]:
     return section if isinstance(section, list) else []
 
 
+def _validate_section(key: str, items: list[dict[str, object]]) -> None:
+    """Guard the write boundary so the skill can never persist a section core would silently drop
+    (issue #925): every entry must have only the keys core accepts, a valid action, a non-core source,
+    and (rules) a compilable keyword regex. Raises ValueError/re.error; main() reports and exits 1."""
+    allowed = RULE_KEYS if key == "rules" else DEFAULT_KEYS
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f"{key} entry is not an object: {item!r}")
+        unknown = set(item) - allowed
+        if unknown:
+            raise ValueError(f"{key} entry has fields core forbids: {sorted(unknown)}")
+        action = item["action"] if "action" in item else None
+        if action not in ACTIONS:
+            raise ValueError(f"{key} entry action must be one of {ACTIONS}")
+        source = item["source"] if "source" in item else None
+        if isinstance(source, str) and source.strip().lower() == CORE_SOURCE:
+            raise ValueError(f"{key} entry cannot target source={CORE_SOURCE}")
+        keyword = item["keyword"] if "keyword" in item else None
+        if isinstance(keyword, str):
+            re.compile(keyword)
+
+
 def save_section(key: str, items: list[dict[str, object]]) -> None:
     # Read-modify-write so replacing one section preserves the other.
+    _validate_section(key, items)
     policy = _load_policy()
     policy[key] = items
     POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -220,7 +248,12 @@ def main() -> int:
         "set-default": cmd_set_default,
         "clear-default": cmd_clear_default,
     }
-    return handlers[args.command](args)
+    try:
+        return handlers[args.command](args)
+    except (ValueError, re.error) as e:
+        # The write guard refused a section core would drop; report instead of corrupting the file.
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
