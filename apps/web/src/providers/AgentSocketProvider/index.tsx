@@ -1,13 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useChat } from "./use-chat";
+import { useAgentSocketState } from "./use-agent-socket";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
 import { useVoice } from "@/stores/use-voice";
-import { ChatContext, type ChatContextValue } from "./context";
+import { AgentSocketContext, type AgentSocketValue } from "./context";
 
-export { useChatContext } from "./context";
+export { useAgentSocket } from "./context";
 
-export function ChatProvider({ children }: { children: ReactNode }) {
+export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const { name, agent, setAgentState } = useSelectedAgent();
   const { speak, prefetch } = useVoice();
   const { notifyAssistant, setChattingAgent } = useNotifications();
@@ -24,7 +24,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     agent?.status === "alive" ||
     agent?.status === "not_authenticated" ||
     agent?.status === "unprovisioned";
-  const chat = useChat({
+  const socket = useAgentSocketState({
     name,
     active: connectable,
     onAssistantMessage: (text) => {
@@ -35,10 +35,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    setAgentState(chat.agentState);
-  }, [chat.agentState, setAgentState]);
+    setAgentState(socket.agentState);
+  }, [socket.agentState, setAgentState]);
 
-  const value: ChatContextValue = { ...chat, showToolCalls, setShowToolCalls };
+  const value: AgentSocketValue = {
+    ...socket,
+    showToolCalls,
+    setShowToolCalls,
+  };
 
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <AgentSocketContext.Provider value={value}>
+      {children}
+    </AgentSocketContext.Provider>
+  );
 }

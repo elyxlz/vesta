@@ -6,13 +6,6 @@ import {
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
@@ -30,6 +23,15 @@ const ESTIMATED_LINE_HEIGHT = 20;
 const OVERSCAN_ROWS = 16;
 // How close to the bottom still counts as pinned for follow-on-append.
 const AT_BOTTOM_THRESHOLD_PX = 80;
+// The opening `tail -n N -f` dumps the recent tail back-to-back, then `-f` idles.
+// We buffer that burst behind the "streaming logs..." placeholder and flush it as a
+// single batch so the list mounts already-complete and one scrollToEnd lands at the
+// true bottom (an incremental per-line fill leaves scroll short — rows re-measure
+// taller than the estimate after the at-end gate has already dropped). Flush once the
+// burst goes quiet for this long...
+const INITIAL_FILL_QUIESCE_MS = 150;
+// ...or this long has passed regardless, so a perpetually-chatty agent still renders.
+const INITIAL_FILL_MAX_MS = 1500;
 
 const LOG_LEVEL_TAGS = new Set([
   "DEBUG",
@@ -122,7 +124,7 @@ function StreamNotice({ state }: { state: StreamState }) {
 function StreamingPlaceholder({ state }: { state: StreamState }) {
   if (state !== "live") return <StreamNotice state={state} />;
   return (
-    <div className="min-h-full flex flex-col items-center justify-end gap-2 py-1">
+    <div className="min-h-full flex flex-col items-center justify-end gap-2 py-10">
       <div className="flex items-center gap-1">
         <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
         <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
@@ -136,11 +138,10 @@ function StreamingPlaceholder({ state }: { state: StreamState }) {
 interface ConsoleProps {
   name: string;
   status: AgentStatus;
-  onClose?: () => void;
   fullscreen?: boolean;
 }
 
-export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
+export function Console({ name, status, fullscreen }: ConsoleProps) {
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [streamState, setStreamState] = useState<StreamState>("live");
@@ -149,6 +150,27 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
+  // Initial replay-tail buffering: while `fillingRef` is set, appended lines collect
+  // in `bufferRef` instead of `lines`, then flush as one batch (see the FILL consts).
+  const fillingRef = useRef(true);
+  const bufferRef = useRef<LogLine[]>([]);
+  const quiesceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushBuffer = useCallback(() => {
+    if (!fillingRef.current) return;
+    fillingRef.current = false;
+    if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
+    if (capTimerRef.current) clearTimeout(capTimerRef.current);
+    quiesceTimerRef.current = null;
+    capTimerRef.current = null;
+    const buffered = bufferRef.current;
+    bufferRef.current = [];
+    setLines(
+      buffered.length > MAX_LINES ? buffered.slice(-MAX_LINES) : buffered,
+    );
+  }, []);
+
   const connect = useRef<(replay: boolean) => void>(undefined);
 
   useEffect(() => {
@@ -156,6 +178,13 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
       if (!name || !activeRef.current) return;
       stopLogs(name);
       setStreamState("live");
+      // Only a fresh replay connect buffers a tail; a reconnect (tail=0) appends live.
+      fillingRef.current = replay;
+      bufferRef.current = [];
+      if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
+      if (capTimerRef.current) clearTimeout(capTimerRef.current);
+      quiesceTimerRef.current = null;
+      capTimerRef.current = null;
 
       streamLogs(
         name,
@@ -166,15 +195,29 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
               // A line means the connection is healthy, so reset the backoff.
               reconnectDelayRef.current = RECONNECT_BASE;
               const stripped = stripAnsi(action.text);
+              const line = {
+                id: idRef.current++,
+                colorClass: lineColorClass(stripped),
+                html: linkify(stripped),
+              };
+              if (fillingRef.current) {
+                // Buffer the opening tail; flush on quiescence or the max cap.
+                bufferRef.current.push(line);
+                if (quiesceTimerRef.current)
+                  clearTimeout(quiesceTimerRef.current);
+                quiesceTimerRef.current = setTimeout(
+                  flushBuffer,
+                  INITIAL_FILL_QUIESCE_MS,
+                );
+                if (!capTimerRef.current)
+                  capTimerRef.current = setTimeout(
+                    flushBuffer,
+                    INITIAL_FILL_MAX_MS,
+                  );
+                break;
+              }
               setLines((prev) => {
-                const next = [
-                  ...prev,
-                  {
-                    id: idRef.current++,
-                    colorClass: lineColorClass(stripped),
-                    html: linkify(stripped),
-                  },
-                ];
+                const next = [...prev, line];
                 return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
               });
               break;
@@ -183,11 +226,14 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
               // agent_stopped is a clean terminal signal, not a failure: show the
               // final tail and wait. A restart re-streams via the status effect
               // below, so we never blind-reconnect against a stopped container.
+              flushBuffer();
               setStreamState("stopped");
               break;
             case "reconnect":
               // A transport drop while the agent is up: reconnect with backoff,
-              // requesting no replay (tail=0) so the tail isn't re-appended.
+              // requesting no replay (tail=0) so the tail isn't re-appended. Surface
+              // any partial buffered tail first so we never drop it on the way down.
+              flushBuffer();
               setStreamState("reconnecting");
               if (activeRef.current) {
                 reconnectTimerRef.current = setTimeout(() => {
@@ -217,6 +263,8 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
+      if (capTimerRef.current) clearTimeout(capTimerRef.current);
       if (name) stopLogs(name);
     };
   }, [name]);
@@ -241,15 +289,6 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
     }
   }, [status, streamState]);
 
-  useEffect(() => {
-    if (!onClose) return;
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleEsc);
-    return () => window.removeEventListener("keydown", handleEsc);
-  }, [onClose]);
-
   const parentRef = useRef<HTMLDivElement>(null);
   const count = lines.length;
 
@@ -269,53 +308,28 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
     directDomUpdates: true,
   });
 
-  // Pin to the bottom on first load (and after an agent switch resets the list).
-  // A single scrollToEnd lands short during the initial replay burst: the last
-  // rows aren't measured yet, so the estimated end sits above the real bottom, and
-  // followOnAppend's at-bottom gate drops as re-measurement grows the content. So
-  // keep snapping on each appended batch until we've actually reached the end —
-  // after that, anchorTo:"end" + followOnAppend keep the live tail pinned.
-  const reachedBottomRef = useRef(false);
+  // Jump to the bottom when the buffered tail first lands (count 0 -> N in one batch),
+  // and again whenever the list resets to empty (agent switch / resume) and refills.
+  // Because the list mounts already-complete, one scrollToEnd + the virtualizer's
+  // reconcile loop reaches the true bottom; from then on anchorTo:"end" +
+  // followOnAppend keep the live tail pinned.
+  const hadLinesRef = useRef(false);
   useLayoutEffect(() => {
-    if (count === 0) {
-      reachedBottomRef.current = false;
-      return;
-    }
-    if (reachedBottomRef.current) return;
-    virtualizer.scrollToEnd();
-    if (virtualizer.isAtEnd()) reachedBottomRef.current = true;
+    const hasLines = count > 0;
+    if (hasLines && !hadLinesRef.current) virtualizer.scrollToEnd();
+    hadLinesRef.current = hasLines;
   }, [count, virtualizer]);
 
   const items = virtualizer.getVirtualItems();
-  const linePad = fullscreen ? "px-page" : "px-3";
+  const linePad = fullscreen ? "px-page" : "px-5";
 
   return (
     <div
       className={cn(
-        "flex flex-col h-full",
-        fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
+        "flex flex-col h-full dark bg-[#1a1a1a] text-[#e8e8e8]",
+        fullscreen && "dark-overlay",
       )}
     >
-      {!fullscreen && (
-        <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
-          <span className="text-sm font-medium">{name} logs</span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="size-9"
-                aria-label="close logs"
-                onClick={onClose}
-              >
-                <X className="size-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>close</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-
       <div className="flex-1 min-h-0">
         <div
           ref={parentRef}
@@ -359,7 +373,7 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
                           }}
                         />
                       ) : (
-                        <div className="h-2" />
+                        <div className="h-6" />
                       ))}
                     <div
                       className={cn(
@@ -370,7 +384,7 @@ export function Console({ name, status, onClose, fullscreen }: ConsoleProps) {
                       dangerouslySetInnerHTML={{ __html: line.html }}
                     />
                     {isLast && (
-                      <div className={fullscreen ? "pb-page" : "pb-2"}>
+                      <div className={fullscreen ? "pb-page" : "pb-6"}>
                         <StreamNotice state={streamState} />
                       </div>
                     )}

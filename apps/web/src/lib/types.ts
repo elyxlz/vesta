@@ -53,6 +53,12 @@ export type VestaEvent =
       notif_id?: string; // file stem; pending while its file is on disk, cleared once processed
     })
   | (BaseEvent & {
+      // Emitted when the agent processes a notification and deletes its file; flips the matching
+      // history row (same notif_id) from pending to cleared without re-polling disk.
+      type: "notification_cleared";
+      notif_id: string;
+    })
+  | (BaseEvent & {
       type: "subagent_start";
       agent_id: string;
       agent_type: string;

@@ -82,6 +82,14 @@ class NotificationEvent(_BaseEvent):
     notif_id: tp.NotRequired[str]
 
 
+class NotificationClearedEvent(_BaseEvent):
+    type: tp.Literal["notification_cleared"]
+    # The cleared notification's file stem (matches a prior NotificationEvent.notif_id). Emitted when
+    # the agent processes a notification and deletes its file, so the history view can flip a row from
+    # pending to cleared live — the disk-state poll this replaced is gone.
+    notif_id: str
+
+
 class SubagentStartEvent(_BaseEvent):
     type: tp.Literal["subagent_start"]
     agent_id: str
@@ -108,6 +116,7 @@ type StreamEvent = (
     | UserEvent
     | ErrorEvent
     | NotificationEvent
+    | NotificationClearedEvent
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
@@ -164,8 +173,10 @@ END;
 
 _RECENCY_DECAY_RATE = 0.01
 
-# The notifications history channel: filters to notification events for the paginated view.
-_NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
+# The notifications history channel: notification arrivals + their clears, so the paginated view can
+# reconstruct pending-vs-cleared state from the log alone (an arrival with no matching clear is still
+# pending). `notification_static_defaults` keeps its own arrivals-only query below, so it's unaffected.
+_NOTIFICATION_CONDITION = "json_extract(data, '$.type') IN ('notification', 'notification_cleared')"
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an

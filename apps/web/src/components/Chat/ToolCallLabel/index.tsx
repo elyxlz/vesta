@@ -1,5 +1,11 @@
-import { memo, useState } from "react";
+import { memo } from "react";
 import { ChevronRight, Wrench } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { cn } from "@/lib/utils";
 
 const TOOL_LABELS: Record<string, string> = {
@@ -24,40 +30,34 @@ export const ToolCallLabel = memo(function ToolCallLabel({
   input: string;
   className?: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
   return (
     <div className={cn("flex max-w-[85%]", className)}>
-      {/* The pill IS the container: it switches (size + corner radius) to wrap the input on
-          expand — instantly, no animation — rather than dropping a separate box below. */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className={cn(
-          "flex min-w-0 cursor-pointer flex-col items-start overflow-hidden border border-muted-foreground/15 bg-muted/50 text-left hover:bg-muted/80",
-          expanded
-            ? "gap-1.5 rounded-2xl px-3 py-2"
-            : "rounded-full px-2.5 py-1",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <Wrench className="size-3 shrink-0 text-muted-foreground/60" />
-          <span className="whitespace-nowrap text-[11px] text-muted-foreground/70">
-            {TOOL_LABELS[tool] ?? tool}
-          </span>
-          <ChevronRight
-            className={cn(
-              "size-3 text-muted-foreground/40",
-              expanded && "rotate-90",
-            )}
-          />
-        </div>
-        {expanded && (
-          <pre className="w-full whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground/70">
+      {/* The Collapsible root IS the pill: it morphs (corner radius + padding) between the
+          closed label and the open label-over-input — instantly, no animation — rather than
+          dropping a separate box below. */}
+      <Collapsible className="group/tool min-w-0 overflow-hidden rounded-full border border-muted-foreground/15 bg-muted/50 data-[state=open]:rounded-2xl">
+        <CollapsibleTrigger asChild>
+          <Marker
+            asChild
+            className="w-fit cursor-pointer gap-1.5 px-2.5 py-1 hover:bg-muted/80 data-[state=open]:px-3 data-[state=open]:pt-2 data-[state=open]:pb-1.5"
+          >
+            <button type="button">
+              <MarkerIcon className="size-3 text-muted-foreground/60">
+                <Wrench className="size-3" />
+              </MarkerIcon>
+              <MarkerContent className="whitespace-nowrap text-[11px] text-muted-foreground/70">
+                {TOOL_LABELS[tool] ?? tool}
+              </MarkerContent>
+              <ChevronRight className="size-3 text-muted-foreground/40 transition-transform group-data-[state=open]/tool:rotate-90" />
+            </button>
+          </Marker>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre className="w-full whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-relaxed text-muted-foreground/70">
             {input}
           </pre>
-        )}
-      </button>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 });

@@ -26,7 +26,7 @@ export function DisconnectedOverlay() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-muted/80 backdrop-blur-sm"
     >
       <Empty className="border-none">
-        <EmptyHeader>
+        <EmptyHeader className="max-w-md">
           <Spinner className="size-6" />
           <EmptyTitle>disconnected from gateway</EmptyTitle>
           <EmptyDescription>

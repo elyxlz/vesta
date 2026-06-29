@@ -388,21 +388,6 @@ async def _config_notification_policy_put_handler(request: web.Request) -> web.R
     return await asyncio.to_thread(_policy_response, config)
 
 
-async def _notifications_pending_handler(request: web.Request) -> web.Response:
-    """The ids (file stems) of notifications still on disk, i.e. received but not yet processed.
-    The history view uses this to mark each notification cleared (file gone) vs pending."""
-    config: VestaConfig = request.app["config"]
-
-    def _pending_ids() -> list[str]:
-        directory = config.notifications_dir
-        if not directory.exists():
-            return []
-        return [p.stem for p in directory.glob("*.json") if p.is_file()]
-
-    pending = await asyncio.to_thread(_pending_ids)
-    return web.json_response({"pending": pending})
-
-
 async def _notifications_static_defaults_handler(request: web.Request) -> web.Response:
     """The static interrupt fallback per (source, type), aggregated in one query over the whole
     history. The defaults card uses this instead of paging every notification page client-side."""
@@ -478,7 +463,6 @@ async def start_ws_server(
     app.router.add_delete("/provider", _provider_delete_handler)
     app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
     app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
-    app.router.add_get("/notifications/pending", _notifications_pending_handler)
     app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)

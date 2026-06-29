@@ -4,10 +4,13 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type RefObject,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AnimatePresence, motion } from "motion/react";
+import { ArrowDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -19,8 +22,8 @@ import { buildDecorated } from "./virtual";
 // virtualizer over-correct on every tool row that scrolled into view, which read as jank.
 const ESTIMATED_MESSAGE_HEIGHT = 64;
 const ESTIMATED_TOOL_HEIGHT = 30;
-// How close to the bottom (px) still counts as "pinned" — drives follow-on-append + the
-// at-bottom signal that hides the "new message" pill.
+// How close to the bottom (px) still counts as "pinned" — drives follow-on-append and
+// gates the load-older check (don't page up while sitting at the bottom).
 const AT_BOTTOM_THRESHOLD_PX = 80;
 // Scrolling within this many px of the top loads the previous page.
 const LOAD_OLDER_TOP_PX = 120;
@@ -36,7 +39,6 @@ export interface ChatScrollHandle {
 
 interface ChatMessageAreaProps {
   scrollRef: RefObject<ChatScrollHandle | null>;
-  onAtBottomChange: (atBottom: boolean) => void;
   loadMore: () => void;
   hasMore: boolean;
   loadingMore: boolean;
@@ -106,7 +108,6 @@ function ChatSkeleton() {
 
 export function ChatMessageArea({
   scrollRef,
-  onAtBottomChange,
   loadMore,
   hasMore,
   loadingMore,
@@ -123,6 +124,9 @@ export function ChatMessageArea({
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
   const parentRef = useRef<HTMLDivElement>(null);
+  // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
+  // the user scrolls up. Recomputed on scroll and on content resize (see below).
+  const [atBottom, setAtBottom] = useState(true);
 
   const getItemKey = useCallback(
     (index: number) => decorated[index].key,
@@ -172,24 +176,38 @@ export function ChatMessageArea({
     hadRowsRef.current = hasRows;
   }, [count, virtualizer]);
 
-  const atBottomRef = useRef(true);
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
-    const atBottom = virtualizer.isAtEnd(AT_BOTTOM_THRESHOLD_PX);
-    if (atBottom !== atBottomRef.current) {
-      atBottomRef.current = atBottom;
-      onAtBottomChange(atBottom);
-    }
-    if (
-      hasMore &&
-      !loadingMore &&
-      !atBottom &&
-      el.scrollTop < LOAD_OLDER_TOP_PX
-    ) {
+    // Distance-from-end straight off the DOM rather than virtualizer.isAtEnd(): the latter
+    // reads a measurement cache that can lag a row resize, and we recompute this from a
+    // ResizeObserver too, so a single authoritative source keeps the two in agreement.
+    const atEnd =
+      el.scrollHeight - el.scrollTop - el.clientHeight <=
+      AT_BOTTOM_THRESHOLD_PX;
+    setAtBottom(atEnd);
+    if (hasMore && !loadingMore && !atEnd && el.scrollTop < LOAD_OLDER_TOP_PX) {
       loadMore();
     }
-  }, [virtualizer, onAtBottomChange, hasMore, loadingMore, loadMore]);
+  }, [hasMore, loadingMore, loadMore]);
+
+  // "At bottom" depends on content height, not just scroll position: after the first paint the
+  // virtualizer measures real row heights (vs. the estimates scrollToEnd used), which moves the
+  // end without firing a scroll event. Recompute on every content resize so the button doesn't
+  // get stuck showing when we're actually pinned to the latest message.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    const content = el?.firstElementChild;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      setAtBottom(
+        el.scrollHeight - el.scrollTop - el.clientHeight <=
+          AT_BOTTOM_THRESHOLD_PX,
+      );
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
 
   const items = virtualizer.getVirtualItems();
   const topPad = fullscreen ? navbarHeight + 16 : 32;
@@ -304,6 +322,23 @@ export function ChatMessageArea({
           })}
         </div>
       </div>
+      {count > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-sm"
+          aria-label="Scroll to latest message"
+          data-active={!atBottom}
+          onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
+          className={cn(
+            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-background text-foreground shadow-sm transition-all duration-200 hover:bg-muted hover:text-foreground",
+            "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
+            "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
+          )}
+        >
+          <ArrowDown />
+        </Button>
+      )}
     </CardContent>
   );
 }

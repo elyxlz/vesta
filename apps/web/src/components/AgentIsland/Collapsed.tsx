@@ -1,8 +1,6 @@
-import { motion } from "motion/react";
 import { Orb } from "@/components/Orb";
 import { cn } from "@/lib/utils";
 import type { OrbVisualState } from "@/components/Orb/styles";
-import { agentIslandContentTransition } from "./transitions";
 
 type AgentIslandCollapsedProps = {
   name: string;
@@ -11,6 +9,8 @@ type AgentIslandCollapsedProps = {
   error: string;
 };
 
+// Self-sized content view (no motion / no layoutId). The shell crossfades whole
+// views, so this just renders the collapsed pill content at its natural size.
 export function AgentIslandCollapsed({
   name,
   orbState,
@@ -19,44 +19,31 @@ export function AgentIslandCollapsed({
 }: AgentIslandCollapsedProps) {
   const showStatus = statusLabel && statusLabel !== "alive";
   return (
-    <div className="flex h-8 w-full min-w-0 items-center gap-1.5 will-change-transform">
-      <motion.div
-        layoutId="agent-island-orb"
-        layout
-        className="flex shrink-0 items-center justify-center will-change-transform"
-        transition={agentIslandContentTransition}
-      >
+    <div className="flex h-8 min-w-0 max-w-[min(100vw-2rem,280px)] items-center gap-1.5 px-5">
+      <div className="flex shrink-0 items-center justify-center">
         <Orb
           state={orbState}
           size={28}
           suppressMotion
           label={`${name}: ${statusLabel || orbState}`}
         />
-      </motion.div>
-      <div className="relative -top-0.5 min-w-0 flex-1 flex items-baseline gap-1.5">
-        <motion.span
-          layoutId="agent-island-name"
-          layout
-          className="min-w-0 truncate font-serif text-base sm:text-lg font-medium leading-tight tracking-tight will-change-transform"
-          transition={agentIslandContentTransition}
-        >
+      </div>
+      <div className="relative -top-0.5 flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="min-w-0 truncate font-serif text-base font-medium leading-tight tracking-tight sm:text-lg">
           {name}
-        </motion.span>
+        </span>
         {showStatus && (
-          <motion.span
-            layoutId="agent-island-status"
-            layout
-            transition={agentIslandContentTransition}
+          <span
             className={cn(
-              "shrink-0 text-xs will-change-transform",
+              "shrink-0 whitespace-nowrap text-xs",
               error ? "text-destructive" : "text-muted-foreground",
             )}
           >
             {statusLabel}
-          </motion.span>
+          </span>
         )}
       </div>
-      {/* persistent live region so screen readers hear status changes even when collapsed */}
+      {/* persistent live region so screen readers hear status changes when collapsed */}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
         {statusLabel}
       </span>

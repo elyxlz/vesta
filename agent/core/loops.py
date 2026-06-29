@@ -282,6 +282,11 @@ async def _run_messages_with_interrupts(
             # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
             if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
                 _delete_paths(current.file_paths)
+                # Tell live clients the notification cleared (file gone). Only notification turns carry
+                # file_paths, so user-message turns emit nothing. notif_id is the file stem, matching
+                # the arrival's NotificationEvent.notif_id.
+                for path_str in current.file_paths:
+                    state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(path_str).stem})
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:

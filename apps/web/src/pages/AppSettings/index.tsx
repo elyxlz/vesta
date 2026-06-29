@@ -4,10 +4,10 @@ import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
+import { SettingsScrollArea } from "@/components/SettingsScrollArea";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { useLayout } from "@/stores/use-layout";
-import { navbarFadeMask } from "@/lib/navbar-fade";
 
 export function AppSettingsPage() {
   const navigate = useNavigate();
@@ -35,13 +35,15 @@ export function AppSettingsPage() {
         }
       />
       <div
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-page pb-8"
-        style={{ paddingTop: navbarHeight, ...navbarFadeMask(navbarHeight) }}
+        className="flex min-h-0 flex-1 flex-col"
+        style={{ paddingTop: navbarHeight }}
       >
         <div className="flex min-h-11 shrink-0 items-center justify-center pt-6 pb-2">
           <h1 className="text-lg font-semibold">app settings</h1>
         </div>
-        <AppSettings />
+        <SettingsScrollArea>
+          <AppSettings />
+        </SettingsScrollArea>
       </div>
     </>
   );

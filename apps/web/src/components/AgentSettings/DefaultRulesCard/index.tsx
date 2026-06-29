@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { Lock } from "lucide-react";
+import { CornerDownRight, Lock, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   getNotificationDefaultOverrides,
   getNotificationStaticDefaults,
@@ -65,6 +66,7 @@ export function DefaultRulesCard() {
     NotificationStaticDefault[]
   >([]);
   const [overrides, setOverrides] = useState<NotificationDefaultOverride[]>([]);
+  const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,6 +74,7 @@ export function DefaultRulesCard() {
     let cancelled = false;
     setStaticDefaults([]);
     setOverrides([]);
+    setLoading(true);
     setSaveError(null);
     Promise.all([
       getNotificationStaticDefaults(agentName),
@@ -82,7 +85,10 @@ export function DefaultRulesCard() {
         setStaticDefaults(defaults);
         setOverrides(ovr);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -123,54 +129,78 @@ export function DefaultRulesCard() {
 
   return (
     <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <SlidersHorizontal className="size-4 text-muted-foreground" />
+          defaults
+        </CardTitle>
+      </CardHeader>
       <CardContent>
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            defaults
-          </div>
-
+        <div className="flex flex-col gap-4 pb-2">
           <div className="flex flex-col gap-1">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               <Lock className="size-3.5 text-muted-foreground" />
               core notifications
             </span>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              greetings, migrations, proactive checks, and the nightly dreamer
-              always follow their own setting — rules never apply to them.
+              the agent's own internal notifications follow their own setting.
+              rules can't override them.
             </p>
           </div>
 
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-semibold text-foreground">
-                per-source defaults
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                <CornerDownRight className="size-3.5 text-muted-foreground" />
+                fallback behavior
               </span>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                when no rule matches, each notification uses its source's
-                default. Click a badge to override it.
+                how each source behaves when no rule matches. click a badge to
+                change it.
               </p>
             </div>
-            {rows.length === 0 ? (
+            {loading ? (
+              <div className="mx-auto grid min-h-20 w-[98%] grid-cols-[max-content_max-content_minmax(0,1fr)] content-start items-center gap-x-3 gap-y-2">
+                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
+                  source
+                </span>
+                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
+                  type
+                </span>
+                <span className="justify-self-end text-[10px] tracking-wide text-muted-foreground/50 uppercase">
+                  rule
+                </span>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Fragment key={i}>
+                    <Skeleton className="h-5 w-16 rounded-3xl" />
+                    <Skeleton className="h-5 w-14 rounded-3xl" />
+                    <Skeleton className="h-5 w-16 justify-self-end rounded-3xl" />
+                  </Fragment>
+                ))}
+              </div>
+            ) : rows.length === 0 ? (
               <p className="text-xs text-muted-foreground/70">
                 defaults appear here as notifications arrive.
               </p>
             ) : (
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  type
-                </span>
+              <div className="mx-auto grid min-h-20 w-[98%] grid-cols-[max-content_max-content_minmax(0,1fr)] content-start items-center gap-x-3 gap-y-2">
                 <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
                   source
                 </span>
+                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
+                  type
+                </span>
                 <span className="justify-self-end text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  default
+                  rule
                 </span>
                 {rows.map((row) => {
                   const effective: Disposition =
                     row.override ?? row.staticDisposition ?? "pool";
-                  const overridden = row.override !== null;
                   return (
                     <Fragment key={overrideKey(row.source, row.type)}>
+                      <span className="text-sm text-foreground">
+                        {row.source}
+                      </span>
                       <span className="min-w-0">
                         {row.type ? (
                           <Badge variant="secondary">{row.type}</Badge>
@@ -180,15 +210,7 @@ export function DefaultRulesCard() {
                           </span>
                         )}
                       </span>
-                      <span className="truncate text-sm text-foreground">
-                        {row.source}
-                      </span>
                       <span className="flex items-center gap-1.5 justify-self-end">
-                        {overridden ? (
-                          <span className="text-[10px] text-muted-foreground/60">
-                            by you
-                          </span>
-                        ) : null}
                         <Badge
                           asChild
                           variant={
@@ -198,9 +220,7 @@ export function DefaultRulesCard() {
                           <button
                             type="button"
                             aria-label={`default for ${row.source} ${row.type || "(no type)"}: ${
-                              effective === "interrupt"
-                                ? "interrupts"
-                                : "snoozes"
+                              effective === "interrupt" ? "interrupt" : "snooze"
                             }, click to toggle`}
                             onClick={() =>
                               toggle(
@@ -211,9 +231,7 @@ export function DefaultRulesCard() {
                               )
                             }
                           >
-                            {effective === "interrupt"
-                              ? "interrupts"
-                              : "snoozes"}
+                            {effective === "interrupt" ? "interrupt" : "snooze"}
                           </button>
                         </Badge>
                       </span>

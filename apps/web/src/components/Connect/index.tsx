@@ -126,10 +126,10 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
             <ConnectHeader />
-            <div className="w-full">
+            <div className="flex h-9 w-full items-center">
               <ProgressBar />
             </div>
           </motion.div>
@@ -146,7 +146,7 @@ export function Connect() {
         <div className="flex flex-1 items-center justify-center">
           <motion.div
             {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4 text-center"
+            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
           >
             <ConnectHeader />
             {sessionExpired && (
@@ -158,7 +158,7 @@ export function Connect() {
               type="button"
               onClick={handleHostedSignIn}
               disabled={busy}
-              className="w-full"
+              className="max-w-full px-6"
             >
               {busy
                 ? isTauri
@@ -201,7 +201,7 @@ export function Connect() {
         <motion.form
           {...connectEntrance}
           onSubmit={handleSubmit}
-          className="flex w-[360px] max-w-full flex-col items-center gap-5 px-4"
+          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4"
         >
           <ConnectHeader />
           {sessionExpired && (

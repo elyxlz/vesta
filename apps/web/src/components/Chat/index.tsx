@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,7 +53,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadMore,
     send,
     showToolCalls,
-  } = useChatContext();
+  } = useAgentSocket();
 
   const [input, setInput] = useState("");
 
@@ -65,8 +65,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomVisibleRef = useRef(true);
-  const [hasNewMessage, setHasNewMessage] = useState(false);
   useChatKeyboardFocus(textareaRef);
 
   useEffect(() => {
@@ -85,24 +83,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       ),
     [messages, showToolCalls],
   );
-
-  const lastMsgRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const latest = chatMessages[chatMessages.length - 1];
-    const latestKey = latest ? `${latest.ts}-${latest.type}` : null;
-    const prev = lastMsgRef.current;
-    lastMsgRef.current = latestKey;
-
-    if (prev && latestKey && latestKey !== prev && !bottomVisibleRef.current) {
-      if (latest.type !== "user") setHasNewMessage(true);
-    }
-  }, [chatMessages]);
-
-  const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    bottomVisibleRef.current = atBottom;
-    if (atBottom) setHasNewMessage(false);
-  }, []);
 
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollToBottom();
@@ -162,7 +142,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <ChatMessageArea
           scrollRef={scrollRef}
-          onAtBottomChange={handleAtBottomChange}
           loadMore={loadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
@@ -179,8 +158,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <div className="relative">
           <BottomBanner
-            hasNewMessage={hasNewMessage}
-            onScrollToBottom={scrollToBottom}
             wasConnected={wasConnected}
             connected={connected}
             error={voiceError}

@@ -372,12 +372,18 @@ export async function setNotificationInterruptRules(
   return resp.rules;
 }
 
-/// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
-/// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
+/// One page of received notifications, newest first (GET /history?channel=notifications). The channel
+/// also carries `notification_cleared` events, returned as `cleared` notif_ids so the caller can
+/// reconstruct pending state (an arrival with no matching clear is still pending). Pass the returned
+/// `cursor` to fetch the next older page; a null cursor means there are no older ones.
 export async function getNotificationHistory(
   name: string,
   cursor?: number,
-): Promise<{ notifications: NotificationEvent[]; cursor: number | null }> {
+): Promise<{
+  notifications: NotificationEvent[];
+  cleared: string[];
+  cursor: number | null;
+}> {
   const params = new URLSearchParams({ channel: "notifications" });
   if (cursor != null) params.set("cursor", String(cursor));
   const resp = await apiJson<{ events: VestaEvent[]; cursor: number | null }>(
@@ -386,18 +392,12 @@ export async function getNotificationHistory(
   const items = resp.events.filter(
     (event): event is NotificationEvent => event.type === "notification",
   );
+  const cleared = resp.events
+    .filter((event) => event.type === "notification_cleared")
+    .map((event) => event.notif_id);
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
-  return { notifications: items, cursor: resp.cursor };
-}
-
-/// The ids (file stems) of notifications still on disk — received but not yet processed by the
-/// agent. A notification not in this set has been cleared (its file was deleted after processing).
-export async function getPendingNotifications(name: string): Promise<string[]> {
-  const resp = await apiJson<{ pending: string[] }>(
-    `/agents/${encodeURIComponent(name)}/notifications/pending`,
-  );
-  return resp.pending;
+  return { notifications: items, cleared, cursor: resp.cursor };
 }
 
 /// The static interrupt fallback per source/type, aggregated server-side over the whole history in

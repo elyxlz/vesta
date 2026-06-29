@@ -839,3 +839,25 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
         assert len(page) + len(older) == 3  # all 3 notifs, user event never returned
     finally:
         bus.close()
+
+
+def test_history_notifications_channel_includes_cleared_events(tmp_path):
+    """The 'notifications' channel carries clears alongside arrivals, so the view can reconstruct
+    pending-vs-cleared from the log alone (an arrival with no later clear is still pending)."""
+    from core.events import EventBus
+
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        bus.emit({"type": "user", "text": "ignored"})  # must be excluded
+        bus.emit({"type": "notification", "source": "s", "summary": "x", "notif_id": "n0"})
+        bus.emit({"type": "notification", "source": "s", "summary": "x", "notif_id": "n1"})
+        bus.emit({"type": "notification_cleared", "notif_id": "n0"})
+
+        page, _ = bus.recent(channel="notifications")
+        kinds = [e["type"] for e in page]
+        assert "notification_cleared" in kinds
+        assert "user" not in kinds
+        cleared_ids = {e["notif_id"] for e in page if e["type"] == "notification_cleared"}
+        assert cleared_ids == {"n0"}  # n1 has no clear -> still pending
+    finally:
+        bus.close()

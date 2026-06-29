@@ -30,26 +30,26 @@ function typingDelay(charCount: number): number {
 }
 
 // Module-level sender so non-descendant components (Settings, etc.) can push
-// typed events over the already-open chat WebSocket without opening their
+// typed events over the already-open agent WebSocket without opening their
 // own connection.
 let activeSender: ((event: object) => boolean) | null = null;
-export function sendChatEvent(event: object): boolean {
+export function sendAgentEvent(event: object): boolean {
   return activeSender ? activeSender(event) : false;
 }
 
-interface UseChatOptions {
+interface UseAgentSocketOptions {
   name: string | null;
   active: boolean;
   onAssistantMessage?: (text: string) => void;
   onPrefetch?: (text: string) => void;
 }
 
-export function useChat({
+export function useAgentSocketState({
   name,
   active,
   onAssistantMessage,
   onPrefetch,
-}: UseChatOptions) {
+}: UseAgentSocketOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [isTyping, setIsTyping] = useState(false);

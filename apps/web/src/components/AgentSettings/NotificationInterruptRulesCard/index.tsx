@@ -1,15 +1,23 @@
 import {
   forwardRef,
+  type ReactNode,
   useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
 } from "react";
-import { BellRing } from "lucide-react";
+import { ListFilter, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Combobox,
   ComboboxContent,
@@ -18,14 +26,17 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   getNotificationHistory,
   getNotificationInterruptRules,
@@ -34,6 +45,7 @@ import {
   type NotificationInterruptRule,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { cn } from "@/lib/utils";
 
 function uniqueStrings(values: (string | undefined)[]): string[] {
   return [...new Set(values.filter((v): v is string => !!v))];
@@ -96,10 +108,37 @@ export interface NotificationInterruptRulesHandle {
   addFromNotification: (seed: { source?: string; type?: string }) => void;
 }
 
+// A labeled field row in the add-rule dialog: a small heading above its control, with an "· optional"
+// hint when the condition can be left blank.
+function Field({
+  label,
+  optional,
+  children,
+}: {
+  label: string;
+  optional?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs font-medium text-foreground">
+        {label}
+        {optional ? (
+          <span className="font-normal text-muted-foreground/50">
+            {" "}
+            · optional
+          </span>
+        ) : null}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 // Editor for the agent's notification interrupt rules: active rules render as read-only summaries
-// (conditions + a clickable action badge + delete), while a distinct composer below adds new ones.
-// First match wins; every change auto-saves and applies live. Exposes addFromNotification so the
-// recent-notifications card can seed a rule on click.
+// (conditions + a clickable action badge + delete), and a full-width button opens a two-step dialog
+// (match conditions -> action) to add a new one. First match wins; every change auto-saves and
+// applies live. Exposes addFromNotification so the recent-notifications card can seed a rule on click.
 export const NotificationInterruptRulesCard = forwardRef<
   NotificationInterruptRulesHandle,
   object
@@ -115,6 +154,12 @@ export const NotificationInterruptRulesCard = forwardRef<
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The add-rule dialog: a two-step wizard (match conditions -> action).
+  const [addOpen, setAddOpen] = useState(false);
+  const [step, setStep] = useState<1 | 2>(1);
+  // The dialog's content element, so the combobox popups portal inside it — otherwise they land in
+  // body, which the dialog marks inert (pointer-events: none) and the options become unclickable.
+  const [dialogEl, setDialogEl] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!agentName) return;
@@ -227,6 +272,24 @@ export const NotificationInterruptRulesCard = forwardRef<
     }
   })();
 
+  // Live preview: how many recent notifications the drafted conditions would catch, so the rule's
+  // effect is visible before it's added. Approximates the engine (exact source/type/sender, regex
+  // keyword over the summary) against the history we already fetched for suggestions.
+  const draftMatchCount =
+    draftHasCondition && keywordRegexError === null
+      ? (() => {
+          const pattern = draft.keyword.trim();
+          const keywordRe = pattern ? new RegExp(pattern, "i") : null;
+          return notifications.filter((n) => {
+            if (draft.source && n.source !== draft.source) return false;
+            if (draft.type && n.notif_type !== draft.type) return false;
+            if (draft.sender && n.sender !== draft.sender) return false;
+            if (keywordRe && !keywordRe.test(n.summary)) return false;
+            return true;
+          }).length;
+        })()
+      : null;
+
   const addDraft = () => {
     if (!draftHasCondition || keywordRegexError !== null) return;
     setSaveError(null);
@@ -244,28 +307,42 @@ export const NotificationInterruptRulesCard = forwardRef<
     setDraft(EMPTY_DRAFT);
   };
 
+  // Close the dialog and discard any half-entered draft.
+  const closeAdd = () => {
+    setAddOpen(false);
+    setStep(1);
+    setDraft(EMPTY_DRAFT);
+  };
+
+  // Commit the drafted rule from step 2, then close (addDraft clears the draft itself).
+  const handleAdd = () => {
+    addDraft();
+    setAddOpen(false);
+    setStep(1);
+  };
+
+  const step1Valid = draftHasCondition && keywordRegexError === null;
+
   useImperativeHandle(
     ref,
     () => ({
       addFromNotification: (seed) => {
-        // Refuse while the ruleset is still loading: committing against `null` would treat the
-        // unloaded rules as empty and the debounced save would overwrite the user's rules with just
-        // this one. The sibling card's make-rule button can fire before this card's fetch resolves.
-        if (rules === null) return;
         // Core notifications can never be targeted by a rule — refuse to seed one.
         if (seed.source && isCore(seed.source)) return;
-        commit([
-          ...rules,
-          {
-            id: newRuleId(),
-            action: "pool",
-            source: seed.source,
-            type: seed.type,
-          },
-        ]);
+        // Open the add-rule dialog pre-filled from the notification, so the user
+        // reviews the conditions and picks an action instead of a rule being
+        // committed silently. (The dialog only renders once rules have loaded, so
+        // its save still has the real ruleset.)
+        setDraft({
+          ...EMPTY_DRAFT,
+          source: seed.source ?? "",
+          type: seed.type ?? "",
+        });
+        setStep(1);
+        setAddOpen(true);
       },
     }),
-    [commit, rules],
+    [],
   );
 
   // Cascading suggestions: each pick narrows the next. Core is never a rule source.
@@ -306,11 +383,11 @@ export const NotificationInterruptRulesCard = forwardRef<
     >
       <ComboboxInput
         aria-label={field}
-        placeholder={field}
+        placeholder={`any ${field}`}
         disabled={disabled}
-        className="w-28"
+        className="w-full"
       />
-      <ComboboxContent>
+      <ComboboxContent container={dialogEl}>
         <ComboboxEmpty>no matches</ComboboxEmpty>
         <ComboboxList>
           {(item: string) => (
@@ -325,40 +402,43 @@ export const NotificationInterruptRulesCard = forwardRef<
 
   return (
     <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <ListFilter className="size-4 text-muted-foreground" />
+          interrupt rules
+        </CardTitle>
+        <CardDescription className="text-xs">
+          what interrupts {agentName || "the agent"}, and what can wait for a
+          quiet moment.
+        </CardDescription>
+      </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <BellRing className="size-4 text-muted-foreground" />
-            interrupt rules
-          </div>
-          <p className="text-xs text-muted-foreground">
-            decide which notifications interrupt the agent now vs. wait until
-            it's idle. first matching rule wins; unmatched notifications keep
-            their default. applies live.
-          </p>
-
           {loadError ? (
             <p className="text-xs text-destructive">
               failed to load: {loadError}
             </p>
           ) : rules === null ? (
-            <p className="text-xs text-muted-foreground/60">loading…</p>
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="flex flex-1 items-center gap-1">
+                    <Skeleton className="h-5 w-24 rounded-3xl" />
+                    <Skeleton className="h-5 w-16 rounded-3xl" />
+                  </div>
+                  <Skeleton className="h-5 w-14 rounded-3xl" />
+                </div>
+              ))}
+            </div>
           ) : (
             <>
               {/* Active rules: read-only summaries with a clickable action badge + delete. */}
-              {rules.length === 0 ? (
-                <p className="text-xs text-muted-foreground/60">
-                  no rules yet.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-1.5">
+              {rules.length > 0 ? (
+                <div className="flex flex-col gap-2">
                   {rules.map((rule, index) => {
                     const conditions = ruleConditions(rule);
                     return (
-                      <div
-                        key={rule.id}
-                        className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5"
-                      >
+                      <div key={rule.id} className="flex items-center gap-2">
                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                           {conditions.length === 0 ? (
                             <span className="text-[11px] text-muted-foreground/60">
@@ -406,80 +486,163 @@ export const NotificationInterruptRulesCard = forwardRef<
                     );
                   })}
                 </div>
-              )}
+              ) : null}
 
-              {/* Add composer: visually distinct (dashed) from the active rules above. */}
-              <div className="flex flex-col gap-2 rounded-lg bg-background/40 p-2.5">
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  add a rule
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {/* Sequential: pick source, then type, then sender — each narrows the next. */}
-                  {renderCombobox("source", sourceOptions, false, (value) =>
-                    setDraft((d) => ({
-                      ...d,
-                      source: value,
-                      type: "",
-                      sender: "",
-                    })),
-                  )}
-                  {renderCombobox("type", typeOptions, !draft.source, (value) =>
-                    setDraft((d) => ({ ...d, type: value, sender: "" })),
-                  )}
-                  {renderCombobox(
-                    "sender",
-                    senderOptions,
-                    !draft.type,
-                    (value) => setDraft((d) => ({ ...d, sender: value })),
-                  )}
-                  {/* keyword is an independent, general condition (a regex) — usable on its own. */}
-                  <Input
-                    aria-label="keyword"
-                    placeholder="keyword (regex)"
-                    value={draft.keyword}
-                    aria-invalid={keywordRegexError !== null}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d, keyword: e.target.value }))
-                    }
-                    className="h-8 w-28"
-                  />
-                  <Select
-                    value={draft.action}
-                    onValueChange={(v) =>
-                      setDraft((d) => ({ ...d, action: v as Draft["action"] }))
-                    }
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label="action"
-                      className="w-28"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="interrupt">interrupt</SelectItem>
-                      <SelectItem value="pool">snooze</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="xs"
-                    aria-label="add rule"
-                    onClick={addDraft}
-                    disabled={!draftHasCondition || keywordRegexError !== null}
-                    className="ml-auto"
-                  >
-                    add
+              {/* Add a rule via a two-step dialog so the card stays a clean list + one action. */}
+              <Dialog
+                open={addOpen}
+                onOpenChange={(next) => (next ? setAddOpen(true) : closeAdd())}
+              >
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="w-full gap-1.5">
+                    <Plus className="size-4" />
+                    add rule
                   </Button>
-                </div>
-                {keywordRegexError !== null ? (
-                  <p className="text-[10px] text-destructive">
-                    invalid keyword regex: {keywordRegexError}
-                  </p>
-                ) : null}
-              </div>
+                </DialogTrigger>
+                <DialogContent
+                  className="sm:max-w-[440px]"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                >
+                  <DialogHeader>
+                    <DialogTitle>add rule</DialogTitle>
+                    <DialogDescription>
+                      step {step} of 2 ·{" "}
+                      {step === 1
+                        ? "pick a source, then optionally narrow it down. blank fields match everything."
+                        : "choose what happens when a notification matches."}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  {step === 1 ? (
+                    <div className="flex flex-col gap-3">
+                      {/* Reveal-on-fill: source first, then type, then sender — each narrows the next. */}
+                      <Field label="source">
+                        {renderCombobox(
+                          "source",
+                          sourceOptions,
+                          false,
+                          (value) =>
+                            setDraft((d) => ({
+                              ...d,
+                              source: value,
+                              type: "",
+                              sender: "",
+                            })),
+                        )}
+                      </Field>
+
+                      {draft.source ? (
+                        <Field label="type" optional>
+                          {renderCombobox("type", typeOptions, false, (value) =>
+                            setDraft((d) => ({
+                              ...d,
+                              type: value,
+                              sender: "",
+                            })),
+                          )}
+                        </Field>
+                      ) : null}
+
+                      {draft.type ? (
+                        <Field label="sender" optional>
+                          {renderCombobox(
+                            "sender",
+                            senderOptions,
+                            false,
+                            (value) =>
+                              setDraft((d) => ({ ...d, sender: value })),
+                          )}
+                        </Field>
+                      ) : null}
+
+                      {/* keyword is an independent, general condition (a regex) — usable on its own. */}
+                      <Field label="keyword" optional>
+                        <Input
+                          aria-label="keyword"
+                          placeholder="regex, e.g. urgent|asap"
+                          value={draft.keyword}
+                          aria-invalid={keywordRegexError !== null}
+                          onChange={(e) =>
+                            setDraft((d) => ({ ...d, keyword: e.target.value }))
+                          }
+                          className="w-full"
+                        />
+                      </Field>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["interrupt", "pool"] as const).map((action) => {
+                        const selected = draft.action === action;
+                        return (
+                          <button
+                            key={action}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => setDraft((d) => ({ ...d, action }))}
+                            className={cn(
+                              "flex flex-col items-start gap-0.5 rounded-xl border p-3 text-left transition-colors",
+                              selected
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:bg-muted/40",
+                            )}
+                          >
+                            <span className="text-sm font-medium text-foreground">
+                              {action === "interrupt" ? "interrupt" : "snooze"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {action === "interrupt"
+                                ? "break in right away"
+                                : "wait for a quiet moment"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <DialogFooter>
+                    {step === 1 ? (
+                      <>
+                        {keywordRegexError !== null ? (
+                          <p className="mr-auto min-w-0 self-center truncate text-xs text-destructive">
+                            invalid keyword regex: {keywordRegexError}
+                          </p>
+                        ) : draftMatchCount !== null ? (
+                          <p className="mr-auto min-w-0 self-center truncate text-xs text-muted-foreground">
+                            {draftMatchCount === 0
+                              ? "no recent notifications match yet"
+                              : `matches ${draftMatchCount} of your recent notifications`}
+                          </p>
+                        ) : null}
+                        <DialogClose asChild>
+                          <Button variant="ghost">cancel</Button>
+                        </DialogClose>
+                        <Button
+                          onClick={() => setStep(2)}
+                          disabled={!step1Valid}
+                        >
+                          next
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="ghost" onClick={() => setStep(1)}>
+                          back
+                        </Button>
+                        <Button onClick={handleAdd}>add rule</Button>
+                      </>
+                    )}
+                  </DialogFooter>
+                  {/* Combobox popups portal into this out-of-flow layer (not the
+                      DialogContent itself, which is a `grid gap-6`) so an opening
+                      dropdown is anchored without adding a grid row that grows the
+                      dialog. Still inside the dialog, so options stay clickable. */}
+                  <div ref={setDialogEl} className="absolute" />
+                </DialogContent>
+              </Dialog>
 
               {saveError ? (
-                <p className="text-[10px] text-destructive">{saveError}</p>
+                <p className="text-xs text-destructive">{saveError}</p>
               ) : null}
             </>
           )}
