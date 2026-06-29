@@ -31,11 +31,18 @@ cheap call, no new number, no OTP, no user action.
 
 ## Implemented + tested
 
-`cli/managed_auth.go` — the HTTP client + on-disk state: `redeem` (with
-queued-poll), `link` (first-link and reauth), `status`, `save`/`loadManagedState`.
-`cli/managed_auth_test.go` covers redeem (immediate + queued→fulfilled), link
-(code+secret sent), and error surfacing. (Verified in isolation; the full CLI
-build needs the whisper.cpp headers present in the agent image.)
+`cli/managed_auth.go` — the HTTP client, on-disk state, and the handshake
+orchestration: `redeem` (with queued-poll), `provision` (redeem → mint code via an
+injected `pairPhone` → `link`), `reauth` (fresh code → re-link), `link`, `status`,
+`save`/`loadManagedState`. `cli/managed_auth_test.go` covers all of it (redeem
+immediate + queued→fulfilled, provision full handshake, reauth, link code+secret,
+errors). Verified in isolation; the full CLI build needs the whisper.cpp headers
+present in the agent image.
+
+`pairPhone` is injected so the flow is testable without a live client; in the
+daemon it is `wac.PairPhone`. So the Connect hook is a one-liner:
+`st, err := wac.managed.provision(token, wac.PairPhone)` (or `loadManagedState` +
+`reauth` on restart/drop).
 
 ## Wiring TODO (do in the agent build env / supervised)
 

@@ -96,6 +96,71 @@ func TestManagedLink_postsCodeWithSecret(t *testing.T) {
 	}
 }
 
+func TestProvision_redeemThenPairThenLink(t *testing.T) {
+	var paired, postedCode string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redeem":
+			_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "s1", "agent_secret": "sek", "msisdn": "+447700900003", "state": "pending"})
+		case "/sessions/s1/pair":
+			if r.Header.Get("X-Agent-Secret") != "sek" {
+				http.Error(w, "unauth", http.StatusUnauthorized)
+				return
+			}
+			var b map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			postedCode = b["code"]
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := newManagedAuth(srv.URL, t.TempDir()).provision("tok", func(msisdn string) (string, error) {
+		paired = msisdn
+		return "WXYZ-7788", nil
+	})
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if paired != "+447700900003" {
+		t.Fatalf("pairPhone got msisdn %q, want the assigned number", paired)
+	}
+	if postedCode != "WXYZ-7788" {
+		t.Fatalf("posted code = %q", postedCode)
+	}
+	if st.MSISDN != "+447700900003" || st.Secret != "sek" {
+		t.Fatalf("state %+v", st)
+	}
+}
+
+func TestReauth_freshCodeToSavedSession(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sessions/s9/pair" {
+			var b map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			got = b["code"]
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	err := newManagedAuth(srv.URL, t.TempDir()).reauth(
+		managedState{SessionID: "s9", Secret: "x", MSISDN: "+44"},
+		func(msisdn string) (string, error) { return "FRSH-0001", nil },
+	)
+	if err != nil {
+		t.Fatalf("reauth: %v", err)
+	}
+	if got != "FRSH-0001" {
+		t.Fatalf("reauth code = %q", got)
+	}
+}
+
 func TestManagedLink_apiErrorSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)

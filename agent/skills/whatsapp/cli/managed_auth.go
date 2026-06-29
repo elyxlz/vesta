@@ -86,6 +86,33 @@ func (m *managedAuth) redeem(token string) (managedState, error) {
 	return st, nil
 }
 
+// provision runs the full first-time handshake: redeem the token, then mint a
+// pairing code for the assigned number and post it so the API links the
+// companion. pairPhone is whatsmeow PairPhone(number) (injected so this is
+// testable without a live client). On a restart, load the saved state and call
+// reauth directly instead.
+func (m *managedAuth) provision(token string, pairPhone func(msisdn string) (string, error)) (managedState, error) {
+	st, err := m.redeem(token)
+	if err != nil {
+		return managedState{}, err
+	}
+	if err := m.reauth(st, pairPhone); err != nil {
+		return managedState{}, err
+	}
+	return st, nil
+}
+
+// reauth mints a fresh pairing code for the session's number and posts it,
+// re-linking the same companion. The skill calls this on a dropped session — no
+// new number, no OTP, no user action.
+func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (string, error)) error {
+	code, err := pairPhone(st.MSISDN)
+	if err != nil {
+		return fmt.Errorf("pair phone: %w", err)
+	}
+	return m.link(st, code)
+}
+
 // link posts a fresh pairing code (from whatsmeow PairPhone) to the session; the
 // API drives the primary to accept it. Serves both first link and reauth.
 func (m *managedAuth) link(st managedState, code string) error {
