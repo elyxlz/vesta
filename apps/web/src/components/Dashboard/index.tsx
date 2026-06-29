@@ -20,12 +20,13 @@ import {
   EmptyMedia,
 } from "@/components/ui/empty";
 
-// Pre-iframe states (no dashboard, error, loading) wear the same card chrome as
-// the chat panel so the two columns match until the dashboard iframe paints.
+// Pre-iframe states (no dashboard, error, loading) wear the same card chrome (shadow + ring + squircle)
+// as the live dashboard shell, so nothing pops in when the iframe paints. The default Card shadow/ring
+// matches agent/skills/dashboard/app shell's non-fullscreen container.
 function DashboardShell({ children }: { children?: ReactNode }) {
   return (
     <div className="h-full w-full p-2">
-      <Card className="flex flex-col h-full w-full gap-0 p-0 overflow-hidden relative shadow-none">
+      <Card className="relative flex h-full w-full flex-col gap-0 overflow-hidden p-0">
         {children}
       </Card>
     </div>
