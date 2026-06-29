@@ -4,8 +4,10 @@ skill once wrote a bare list to a file core no longer read, so rules were silent
 
 import argparse
 import importlib.util
+import json
 import pathlib
 import re
+import sqlite3
 
 import pytest
 
@@ -43,6 +45,32 @@ def test_skill_and_core_agree_on_the_rule_key_set(tmp_path, monkeypatch):
     skill = _load_skill(tmp_path, monkeypatch)
     assert skill.RULE_KEYS == set(nip.NotificationInterruptRule.model_fields)
     assert skill.DEFAULT_KEYS == set(nip.NotificationDefault.model_fields)
+
+
+def _seed_events(db_path: pathlib.Path, notifications: list[dict]) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, data TEXT)")
+    for notif in notifications:
+        conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("t", json.dumps(notif)))
+    conn.commit()
+    conn.close()
+
+
+def test_set_default_toggles_an_observed_pair_but_refuses_to_invent_one(tmp_path, monkeypatch):
+    skill = _load_skill(tmp_path, monkeypatch)
+    db = tmp_path / "data" / "events.db"
+    _seed_events(db, [{"type": "notification", "source": "app-chat", "notif_type": "message"}])
+    monkeypatch.setattr(skill, "EVENTS_DB", db)
+
+    # The observed (app-chat, message) pair can be toggled, and core reads the override.
+    assert skill.cmd_set_default(argparse.Namespace(source="app-chat", type="message", action="pool")) == 0
+    defaults = nip.load_defaults(vm.VestaConfig(agent_dir=tmp_path))
+    assert any(d.source == "app-chat" and d.type == "message" and d.action == "pool" for d in defaults)
+
+    # app-chat with no type was never received (every app-chat notif has type=message) -> refused,
+    # so the agent can't add a phantom "app-chat / — " fallback row.
+    assert skill.cmd_set_default(argparse.Namespace(source="app-chat", type="", action="interrupt")) == 1
 
 
 @pytest.mark.parametrize(

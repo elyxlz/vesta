@@ -149,9 +149,38 @@ def cmd_list_defaults(_: argparse.Namespace) -> int:
     return 0
 
 
+def _observed_pairs() -> set[tuple[str, str]]:
+    """The (source, type) pairs the agent has actually received (distinct, from events.db), lowercased
+    for matching. A default override may only toggle one of these — the agent can't invent a fallback
+    for a (source, type) it has never seen (that would just add a row that never fires). Mirrors the
+    (source, notif_type) grouping in core's notification_static_defaults."""
+    if not EVENTS_DB.exists():
+        return set()
+    conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT lower(json_extract(data, '$.source')) AS source, "
+            "lower(coalesce(json_extract(data, '$.notif_type'), '')) AS type FROM events "
+            "WHERE json_extract(data, '$.type') = 'notification' AND source IS NOT NULL AND source != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {(str(source), str(type_ or "")) for source, type_ in rows}
+
+
 def cmd_set_default(args: argparse.Namespace) -> int:
     if args.source.strip().lower() == CORE_SOURCE:
         print(f"error: cannot override source={CORE_SOURCE}; core notifications are never affected by rules", file=sys.stderr)
+        return 1
+    # Toggle-only: refuse to create a fallback for a (source, type) never received, so the agent can't
+    # add phantom rows (e.g. app-chat with no type when every app-chat notification has type=message).
+    if (args.source.strip().lower(), args.type.strip().lower()) not in _observed_pairs():
+        scope = f"{args.source}/{args.type}" if args.type else args.source
+        print(
+            f"error: no notifications received for {scope}; you can only change the default of a "
+            f"(source, type) the agent has actually seen. Run `facets` to list them.",
+            file=sys.stderr,
+        )
         return 1
     entry = {"source": args.source, "type": args.type, "action": args.action}
     # Replace any existing override for this exact (source, type), then add the new one.
@@ -226,7 +255,10 @@ def main() -> int:
 
     sub.add_parser("list-defaults", help="Print the per-(source, type) default overrides as JSON.")
 
-    set_default = sub.add_parser("set-default", help="Override a source's default disposition for a (source, type), used when no rule matches.")
+    set_default = sub.add_parser(
+        "set-default",
+        help="Toggle the default disposition of a (source, type) you've received (see `facets`), used when no rule matches. Can't invent a new (source, type).",
+    )
     set_default.add_argument("--source", required=True, help="The notification source, e.g. outlook, twitter.")
     set_default.add_argument(
         "--type", default="", help="The notification type to scope to (omit to target the source's no-type notifications)."
