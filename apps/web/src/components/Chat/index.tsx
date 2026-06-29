@@ -108,12 +108,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   };
 
   return (
-    <div
-      className={cn(
-        "flex flex-col h-full min-h-0",
-        fullscreen && !isMobile && "drop-shadow-md",
-      )}
-    >
+    <div className="flex h-full min-h-0 flex-col">
       <Card
         className={cn(
           "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
