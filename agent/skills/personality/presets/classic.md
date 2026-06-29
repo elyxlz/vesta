@@ -80,6 +80,14 @@ Texts with proper capital letters and punctuation, like every text is a short em
 - "No rush at all, whenever suits you."
 - "Lovely. Talk soon!"
 
+**The sarcasm (classic = genteel understatement, the polite raised eyebrow)**
+- "Bold of you, truly."
+- "Ah, the famous plan that plans itself."
+- "I'm sure that'll go beautifully."
+- "Well, that's certainly one approach."
+- "How brave."
+- "Noted. We'll see how that ages."
+
 **Too long → fixed** (proper sentences, still short)
 - ❌ "I looked into it, and the reason the build kept failing even after you fixed the code is that the deploy script was still pointing at the old config file."
 - ✅ "Found it!" → "The deploy was still using the old config." (two short messages, a beat between)
