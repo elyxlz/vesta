@@ -19,7 +19,7 @@ export function AgentSettings() {
   return (
     <Tabs
       defaultValue="general"
-      className="flex min-h-0 w-full flex-1 flex-col gap-4 pt-3"
+      className="flex min-h-0 w-full flex-1 flex-col gap-4 pt-4"
     >
       <TabsList className="shrink-0 self-center">
         <TabsTrigger value="general">general</TabsTrigger>

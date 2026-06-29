@@ -190,7 +190,7 @@ describe("NotificationInterruptRulesCard handle", () => {
   });
   afterEach(cleanup);
 
-  it("seeds a pooled rule from a notification via addFromNotification", async () => {
+  it("opens the add-rule dialog pre-filled from a notification, then commits on review", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -201,17 +201,22 @@ describe("NotificationInterruptRulesCard handle", () => {
       expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
     );
 
+    // addFromNotification opens the wizard pre-filled (source/type carried over) rather than
+    // committing silently; the user reviews and commits.
     act(() =>
       ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /next/i }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /add rule/i }),
     );
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg[0]).toMatchObject({
-      source: "twitter",
-      type: "tweet",
-      action: "pool",
-    });
+    expect(rulesArg[0]).toMatchObject({ source: "twitter", type: "tweet" });
   });
 
   it("ignores addFromNotification fired before the ruleset has loaded", async () => {
@@ -327,8 +332,15 @@ describe("NotificationInterruptRulesCard core protection", () => {
     act(() =>
       ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /next/i }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /add rule/i }),
+    );
 
-    // Optimistically shown, then the save fails and the rule is rolled back.
+    // Optimistically shown in the list, then the save fails and the rule is rolled back.
     expect(await screen.findByText(/twitter/)).toBeTruthy();
     await screen.findByText("invalid rules");
     await waitFor(() => expect(screen.queryByText(/twitter/)).toBeNull());
