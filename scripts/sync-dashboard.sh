@@ -35,4 +35,21 @@ perl -i -pe 's/bg-background ?//g; s/ bg-background//g' "$DASHBOARD_SRC/index.cs
 perl -i -pe 's|^(\s*html \{)$|$1\n    background: transparent;|; s|^(\s*body \{)$|$1\n    background: transparent;|' "$DASHBOARD_SRC/index.css"
 perl -i -pe 'print "\@source \"./components/ui\";\n\@source \"./lib\";\n\@source \"./hooks\";\n" if $. == 1' "$DASHBOARD_SRC/index.css"
 
+# Guard: every font the synced index.css @imports must be a dependency of the dashboard's own
+# package.json. The CSS is synced but package.json is NOT, so a font newly added to apps/web (e.g.
+# jetbrains-mono) lands in the dashboard's CSS while its package is missing — the agent's dashboard
+# build then crashes on the unresolved @import. Catch it here (and in CI's dashboard-sync-check),
+# not at agent build time. Fix = add the font to agent/skills/dashboard/app/package.json with the
+# version from apps/web/package.json.
+missing=()
+while IFS= read -r font; do
+  [ -z "$font" ] && continue
+  grep -q "\"$font\"" "$DASHBOARD/package.json" || missing+=("$font")
+done < <(grep -oE '@fontsource-variable/[a-z0-9-]+' "$DASHBOARD_SRC/index.css" | sort -u)
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "ERROR: index.css imports fonts the dashboard package.json doesn't depend on: ${missing[*]}" >&2
+  echo "  Add each to agent/skills/dashboard/app/package.json (version from apps/web/package.json), then re-run." >&2
+  exit 1
+fi
+
 echo "Synced $(ls "$DASHBOARD_SRC/components/ui/" | wc -l) UI components"
