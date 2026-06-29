@@ -14,14 +14,6 @@ cd ~/agent/skills/dashboard/app && npm install
 cd ~/agent/skills/dashboard/app && npx vite build
 ```
 
-> **Run install and build in the FOREGROUND and confirm each succeeded before moving on — do NOT
-> background them.** Only the preview *server* in step 3 is long-running and backgrounded; install
-> and build are one-shot. A backgrounded build hides its failure: a missing dependency or broken
-> import fails silently and you carry on thinking the dashboard is ready when `dist/` is stale or
-> absent. After building, confirm the command exited 0 and printed vite's `✓ built in …` and that
-> `dist/` exists. If it failed, fix the cause (e.g. install a missing package) and rebuild — never
-> register or report the dashboard ready off an unverified build.
-
 ## 3. Start the dashboard server
 
 Register with vestad to get a port (see [service](../service/SKILL.md)), then start the server:
@@ -36,3 +28,7 @@ Add this startup command to the `## Daemons` section of `~/agent/skills/restart/
 ```
 PORT=$(~/agent/skills/service/scripts/register-service dashboard --public) && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
+
+## 5. Check it's alive
+
+The build and server run in the background, so confirm the dashboard is actually serving before considering it done — e.g. `curl -fsS localhost:$PORT >/dev/null`. Don't assume success; a failed build or server won't tell you.
