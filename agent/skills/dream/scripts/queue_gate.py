@@ -48,9 +48,7 @@ def main() -> int:
     if not bare:
         print("queue-gate: all open items filed or BLOCKED-tagged. PASS")
         return 0
-    print(
-        f"queue-gate: FAIL, {len(bare)} un-owned open item(s). File them or tag BLOCKED:<tested reason>:"
-    )
+    print(f"queue-gate: FAIL, {len(bare)} un-owned open item(s). File them or tag BLOCKED:<tested reason>:")
     for b in bare:
         print(f"  {b}")
     return 1
