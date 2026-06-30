@@ -872,6 +872,33 @@ export const NotificationInterruptRulesCard = forwardRef<
                                   type: "",
                                 })),
                             )}
+                            {/* Quick-pick the sources seen so far, without opening the combobox. */}
+                            {sourceOptions.length > 0 ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {sourceOptions.slice(0, 8).map((s) => (
+                                  <Button
+                                    key={s}
+                                    type="button"
+                                    size="xs"
+                                    variant={
+                                      draft.source === s
+                                        ? "secondary"
+                                        : "outline"
+                                    }
+                                    aria-pressed={draft.source === s}
+                                    onClick={() =>
+                                      setDraft((d) => ({
+                                        ...d,
+                                        source: d.source === s ? "" : s,
+                                        type: "",
+                                      }))
+                                    }
+                                  >
+                                    {s}
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : null}
                           </Field>
 
                           {/* Progressive disclosure: type only matters once a source is chosen. */}
