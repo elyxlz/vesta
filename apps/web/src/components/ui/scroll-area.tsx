@@ -14,9 +14,10 @@ function ScrollArea({
       className={cn("relative", className)}
       {...props}
     >
+      {/* py keeps focus rings on controls at the very top/bottom from being clipped by the overflow. */}
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="scroll-fade size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        className="scroll-fade size-full rounded-[inherit] py-1.5 transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
