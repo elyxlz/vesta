@@ -40,6 +40,7 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   Field as UIField,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -227,20 +228,22 @@ export interface NotificationInterruptRulesHandle {
   addFromNotification: (seed: { source?: string; type?: string }) => void;
 }
 
-// A labeled field in the add-rule dialog (shadcn Field + FieldLabel), kept compact, with an
-// "· optional" hint when the condition can be left blank.
+// A labeled field in the add-rule dialog (shadcn Field + FieldLabel), with an "· optional" hint when
+// the condition can be left blank and an optional helper line under the control.
 function Field({
   label,
   optional,
+  description,
   children,
 }: {
   label: string;
   optional?: boolean;
+  description?: string;
   children: ReactNode;
 }) {
   return (
-    <UIField className="gap-1.5">
-      <FieldLabel className="text-xs font-medium text-foreground">
+    <UIField className="gap-2">
+      <FieldLabel className="font-medium">
         {label}
         {optional ? (
           <span className="font-normal text-muted-foreground/50">
@@ -250,6 +253,9 @@ function Field({
         ) : null}
       </FieldLabel>
       {children}
+      {description ? (
+        <FieldDescription className="text-xs">{description}</FieldDescription>
+      ) : null}
     </UIField>
   );
 }
@@ -623,7 +629,7 @@ export const NotificationInterruptRulesCard = forwardRef<
     return (
       <div
         key={index}
-        className="flex flex-col gap-1.5 rounded-lg border border-border/60 p-2"
+        className="flex flex-col gap-2 rounded-xl border border-border/60 p-3"
       >
         <div className="flex items-center gap-1.5">
           <Input
@@ -836,7 +842,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="sm:max-w-[440px]"
+                  className="sm:max-w-[460px]"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                 >
                   <DialogHeader>
@@ -844,15 +850,18 @@ export const NotificationInterruptRulesCard = forwardRef<
                     <DialogDescription>
                       step {step} of 2 ·{" "}
                       {step === 1
-                        ? "pick a source, then optionally narrow it down. blank fields match everything."
+                        ? "start with a source, then narrow it down if you want."
                         : "choose what happens when a notification matches."}
                     </DialogDescription>
                   </DialogHeader>
 
                   {step === 1 ? (
-                    <FieldGroup className="gap-3">
+                    <FieldGroup className="gap-6 py-1">
                       {/* Reveal-on-fill: source first, then type. Everything else is a field condition. */}
-                      <Field label="source">
+                      <Field
+                        label="source"
+                        description="which app or service. leave blank to match every source."
+                      >
                         {renderCombobox(
                           "source",
                           sourceOptions,
@@ -866,8 +875,13 @@ export const NotificationInterruptRulesCard = forwardRef<
                         )}
                       </Field>
 
+                      {/* Progressive disclosure: type only matters once a source is chosen. */}
                       {draft.source ? (
-                        <Field label="type" optional>
+                        <Field
+                          label="type"
+                          optional
+                          description={`kind of ${draft.source} notification, e.g. message or mention.`}
+                        >
                           {renderCombobox("type", typeOptions, false, (value) =>
                             setDraft((d) => ({ ...d, type: value })),
                           )}
@@ -875,32 +889,39 @@ export const NotificationInterruptRulesCard = forwardRef<
                       ) : null}
 
                       {/* Conditions: sender / keyword / any field, all uniform predicates. */}
-                      {draft.predicates.length > 0 ? (
-                        <Field label="conditions" optional>
-                          <div className="flex flex-col gap-2">
+                      <Field
+                        label="conditions"
+                        optional
+                        description={
+                          draft.predicates.length === 0
+                            ? "add one to match on a sender, a keyword, or any field."
+                            : undefined
+                        }
+                      >
+                        {draft.predicates.length > 0 ? (
+                          <div className="flex flex-col gap-2.5">
                             {draft.predicates.map((p, i) =>
                               renderPredicateRow(p, i),
                             )}
                           </div>
-                        </Field>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {(["sender", "keyword", "field"] as const).map(
-                          (preset) => (
-                            <Button
-                              key={preset}
-                              type="button"
-                              variant="ghost"
-                              size="xs"
-                              className="text-muted-foreground"
-                              onClick={() => addPredicate(preset)}
-                            >
-                              <Plus data-icon="inline-start" />
-                              {preset}
-                            </Button>
-                          ),
-                        )}
-                      </div>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(["sender", "keyword", "field"] as const).map(
+                            (preset) => (
+                              <Button
+                                key={preset}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addPredicate(preset)}
+                              >
+                                <Plus data-icon="inline-start" />
+                                {preset}
+                              </Button>
+                            ),
+                          )}
+                        </div>
+                      </Field>
                     </FieldGroup>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
