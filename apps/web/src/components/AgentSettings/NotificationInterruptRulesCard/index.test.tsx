@@ -20,6 +20,23 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({ name: "bob" }),
 }));
 
+// Controllable live-notification arrivals (the agent socket). Tests mutate liveState.arrivals to
+// simulate a notification arriving without a manual refresh.
+const { liveState } = vi.hoisted(() => ({
+  liveState: { arrivals: [] as api.NotificationEvent[] },
+}));
+vi.mock("@/hooks/use-live-notifications", () => ({
+  useLiveNotifications: () => ({
+    pendingSeed: [],
+    arrivals: liveState.arrivals,
+    cleared: [],
+    connected: true,
+  }),
+}));
+afterEach(() => {
+  liveState.arrivals = [];
+});
+
 describe("NotificationInterruptRulesCard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -148,6 +165,30 @@ describe("NotificationInterruptRulesCard", () => {
     unmount();
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledWith("bob", []));
+  });
+
+  it("feeds live notification arrivals into suggestions without a refresh", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
+    // REST history is empty; the only notification is a live arrival from the socket.
+    liveState.arrivals = [
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        notif_id: "n1",
+      },
+    ];
+    render(<NotificationInterruptRulesCard />);
+    await waitFor(() =>
+      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    await userEvent.type(screen.getByLabelText("source"), "w");
+    expect(
+      await screen.findByRole("option", { name: "whatsapp" }),
+    ).toBeTruthy();
   });
 
   it("offers source/type/sender suggestions from recent notifications", async () => {

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -46,10 +47,19 @@ import {
   type NotificationInterruptRule,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useLiveNotifications } from "@/hooks/use-live-notifications";
 import { cn } from "@/lib/utils";
 
 function uniqueStrings(values: (string | undefined)[]): string[] {
   return [...new Set(values.filter((v): v is string => !!v))];
+}
+
+// Stable identity for a notification, to dedupe the REST history against live arrivals.
+function notifKey(n: NotificationEvent): string {
+  return (
+    n.notif_id ||
+    `${n.source}|${n.notif_type ?? ""}|${n.sender ?? ""}|${n.summary}`
+  );
 }
 
 // Core notifications (the agent's own internals) are exempt from rules, so never offer/accept them.
@@ -265,7 +275,24 @@ export const NotificationInterruptRulesCard = forwardRef<
   // Last successfully-saved ruleset, so a rejected save can roll the optimistic change back.
   const lastSaved = useRef<NotificationInterruptRule[]>([]);
   const [rules, setRules] = useState<NotificationInterruptRule[] | null>(null);
-  const [notifications, setNotifications] = useState<NotificationEvent[]>([]);
+  const [historyNotifications, setHistoryNotifications] = useState<
+    NotificationEvent[]
+  >([]);
+  // Live arrivals from the agent socket, so suggestions/facets update as notifications come in without
+  // a manual refresh. Tolerant of no provider (tests): arrivals is [] and the card is REST-only.
+  const { arrivals } = useLiveNotifications();
+  // Live arrivals first (most recent), then the fetched history, deduped — suggestions read newest-first.
+  const notifications = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: NotificationEvent[] = [];
+    for (const n of [...arrivals, ...historyNotifications]) {
+      const key = notifKey(n);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(n);
+    }
+    return merged;
+  }, [arrivals, historyNotifications]);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -302,10 +329,10 @@ export const NotificationInterruptRulesCard = forwardRef<
   useEffect(() => {
     if (!agentName) return;
     let cancelled = false;
-    setNotifications([]);
+    setHistoryNotifications([]);
     getNotificationHistory(agentName)
       .then((page) => {
-        if (!cancelled) setNotifications(page.notifications);
+        if (!cancelled) setHistoryNotifications(page.notifications);
       })
       .catch(() => {});
     return () => {

@@ -8,9 +8,24 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({ name: "bob" }),
 }));
 
+// Controllable live arrivals (the agent socket); tests mutate liveState.arrivals to simulate a
+// notification arriving without a refresh.
+const { liveState } = vi.hoisted(() => ({
+  liveState: { arrivals: [] as api.NotificationEvent[] },
+}));
+vi.mock("@/hooks/use-live-notifications", () => ({
+  useLiveNotifications: () => ({
+    pendingSeed: [],
+    arrivals: liveState.arrivals,
+    cleared: [],
+    connected: true,
+  }),
+}));
+
 describe("DefaultRulesCard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    liveState.arrivals = [];
     vi.spyOn(api, "getNotificationDefaultOverrides").mockResolvedValue([]);
   });
   afterEach(cleanup);
@@ -26,6 +41,26 @@ describe("DefaultRulesCard", () => {
     expect(screen.getByText("snooze")).toBeTruthy();
     expect(screen.getByText("calendar")).toBeTruthy();
     expect(screen.getByText("interrupt")).toBeTruthy();
+  });
+
+  it("surfaces a newly-arrived source live, without a refresh", async () => {
+    // No defaults from the endpoint; the row comes only from a live arrival.
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([]);
+    liveState.arrivals = [
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: true,
+        notif_id: "n1",
+      },
+    ];
+    render(<DefaultRulesCard />);
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /default for whatsapp message/i }),
+    ).toBeTruthy();
   });
 
   it("shows a placeholder when there are no defaults yet", async () => {

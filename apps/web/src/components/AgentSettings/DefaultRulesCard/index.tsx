@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { CornerDownRight, Lock, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,11 +8,44 @@ import {
   getNotificationStaticDefaults,
   setNotificationDefaultOverrides,
   type NotificationDefaultOverride,
+  type NotificationEvent,
   type NotificationStaticDefault,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useLiveNotifications } from "@/hooks/use-live-notifications";
 
 type Disposition = "interrupt" | "pool";
+
+const CORE_SOURCE = "core";
+
+// Fold live notification arrivals into the fetched static defaults so a new (source, type) appears as
+// soon as it arrives, no manual refresh. A notification's own `interrupt` flag is its static baseline
+// (what static-defaults aggregates server-side); the newest arrival per pair wins and overrides the
+// fetched value. Core is exempt (never shown), and arrivals predating the flag are skipped.
+function mergeLiveDefaults(
+  base: NotificationStaticDefault[],
+  arrivals: NotificationEvent[],
+): NotificationStaticDefault[] {
+  const byKey = new Map(
+    base.map((d) => [`${d.source.toLowerCase()}␟${d.type.toLowerCase()}`, d]),
+  );
+  // Arrivals are newest-first; keep the first (newest) seen per pair.
+  const fromArrivals = new Map<string, NotificationStaticDefault>();
+  for (const a of arrivals) {
+    if (a.source.toLowerCase() === CORE_SOURCE || a.interrupt === undefined)
+      continue;
+    const type = a.notif_type ?? "";
+    const key = `${a.source.toLowerCase()}␟${type.toLowerCase()}`;
+    if (!fromArrivals.has(key))
+      fromArrivals.set(key, {
+        source: a.source,
+        type,
+        interrupt: a.interrupt,
+      });
+  }
+  for (const [key, d] of fromArrivals) byKey.set(key, d);
+  return [...byKey.values()];
+}
 
 interface DefaultRow {
   source: string;
@@ -68,6 +101,9 @@ export function DefaultRulesCard() {
   const [overrides, setOverrides] = useState<NotificationDefaultOverride[]>([]);
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Live arrivals so a newly-seen (source, type) shows up without a refresh. Tolerant of no provider
+  // (tests): arrivals is [] and the card is REST-only.
+  const { arrivals } = useLiveNotifications();
 
   useEffect(() => {
     if (!agentName) return;
@@ -125,7 +161,11 @@ export function DefaultRulesCard() {
     [agentName, overrides],
   );
 
-  const rows = buildRows(staticDefaults, overrides);
+  const liveDefaults = useMemo(
+    () => mergeLiveDefaults(staticDefaults, arrivals),
+    [staticDefaults, arrivals],
+  );
+  const rows = buildRows(liveDefaults, overrides);
 
   return (
     <Card size="sm">

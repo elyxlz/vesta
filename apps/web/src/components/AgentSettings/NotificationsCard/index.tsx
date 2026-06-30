@@ -12,7 +12,7 @@ import {
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
-import { useLiveNotifications } from "./use-live-notifications";
+import { useLiveNotifications } from "@/hooks/use-live-notifications";
 
 // Identity for dedupe: notif_id when present (stable across REST history + the live stream),
 // falling back to the timestamp for older events that predate notif_id.
