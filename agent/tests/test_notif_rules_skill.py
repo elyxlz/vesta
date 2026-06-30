@@ -29,7 +29,9 @@ def _load_skill(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_skill_writes_a_rule_core_reads_and_applies(tmp_path, monkeypatch):
     skill = _load_skill(tmp_path, monkeypatch)
-    skill.cmd_add(argparse.Namespace(source="app-chat", type=None, sender=None, keyword=None, action="pool"))
+    skill.cmd_add(
+        argparse.Namespace(source="app-chat", type=None, sender=None, keyword=None, match=None, action="pool", before=None, after=None)
+    )
 
     # The exact file + shape core reads, validated by core's own model.
     config = vm.VestaConfig(agent_dir=tmp_path)
@@ -79,7 +81,8 @@ def test_set_default_toggles_an_observed_pair_but_refuses_to_invent_one(tmp_path
         {"source": "x", "action": "bogus"},  # action core would reject
         {"weird": 1, "action": "pool"},  # unknown field (core forbids extras)
         {"source": "core", "action": "pool"},  # core source is never targetable
-        {"keyword": "(unclosed", "action": "pool"},  # invalid keyword regex
+        {"match": [{"field": "body", "op": "regex", "value": "(unclosed"}], "action": "pool"},  # invalid predicate regex
+        {"match": [{"field": "x", "value": "y", "bogus": 1}], "action": "pool"},  # predicate has a field core forbids
     ],
 )
 def test_write_guard_refuses_a_section_core_would_drop(tmp_path, monkeypatch, bad_rule):

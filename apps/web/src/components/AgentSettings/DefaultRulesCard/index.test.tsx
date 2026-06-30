@@ -8,9 +8,24 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({ name: "bob" }),
 }));
 
+// Controllable live arrivals (the agent socket); tests mutate liveState.arrivals to simulate a
+// notification arriving without a refresh.
+const { liveState } = vi.hoisted(() => ({
+  liveState: { arrivals: [] as api.NotificationEvent[] },
+}));
+vi.mock("@/hooks/use-live-notifications", () => ({
+  useLiveNotifications: () => ({
+    pendingSeed: [],
+    arrivals: liveState.arrivals,
+    cleared: [],
+    connected: true,
+  }),
+}));
+
 describe("DefaultRulesCard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    liveState.arrivals = [];
     vi.spyOn(api, "getNotificationDefaultOverrides").mockResolvedValue([]);
   });
   afterEach(cleanup);
@@ -26,6 +41,113 @@ describe("DefaultRulesCard", () => {
     expect(screen.getByText("snooze")).toBeTruthy();
     expect(screen.getByText("calendar")).toBeTruthy();
     expect(screen.getByText("interrupt")).toBeTruthy();
+  });
+
+  it("groups types under their source, named once", async () => {
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([
+      { source: "whatsapp", type: "message", interrupt: true },
+      { source: "whatsapp", type: "reaction", interrupt: false },
+      { source: "telegram", type: "message", interrupt: true },
+    ]);
+    render(<DefaultRulesCard />);
+    await screen.findByText("whatsapp");
+    // Few sources -> expanded by default, so the per-type rows are visible...
+    expect(screen.getByText("reaction")).toBeTruthy();
+    // ...and the source name appears once (a group header), not once per type.
+    expect(screen.getAllByText("whatsapp")).toHaveLength(1);
+    expect(screen.getByText("telegram")).toBeTruthy();
+  });
+
+  it("collapses sources when dense and expands on demand", async () => {
+    // 7 sources trips the dense threshold, so groups collapse to a tally.
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) => ({
+        source: `src${i}`,
+        type: "message",
+        interrupt: true,
+      })),
+    );
+    render(<DefaultRulesCard />);
+    await screen.findByText("src0");
+    // Collapsed: the per-type toggle rows are hidden, only the tally shows.
+    expect(
+      screen.queryByRole("button", { name: /default for src0 message/i }),
+    ).toBeNull();
+    expect(screen.getAllByText("1 interrupt").length).toBeGreaterThan(0);
+    // The dense affordance appears; expand all reveals every type row.
+    await userEvent.click(screen.getByRole("button", { name: /expand all/i }));
+    expect(
+      screen.getAllByRole("button", { name: /default for src0 message/i }),
+    ).toHaveLength(1);
+  });
+
+  it("expands a single source on click when dense", async () => {
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) => ({
+        source: `src${i}`,
+        type: "message",
+        interrupt: true,
+      })),
+    );
+    render(<DefaultRulesCard />);
+    await screen.findByText("src3");
+    expect(
+      screen.queryByRole("button", { name: /default for src3 message/i }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: /src3,.*expand/i }),
+    );
+    expect(
+      screen.getByRole("button", { name: /default for src3 message/i }),
+    ).toBeTruthy();
+  });
+
+  it("surfaces a newly-arrived source live, without a refresh", async () => {
+    // No defaults from the endpoint; the row comes only from a live arrival.
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([]);
+    liveState.arrivals = [
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: true,
+        notif_id: "n1",
+      },
+    ];
+    render(<DefaultRulesCard />);
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /default for whatsapp message/i }),
+    ).toBeTruthy();
+  });
+
+  it("lets the newest arrival win the baseline for a (source, type)", async () => {
+    // Arrivals are oldest-first; a later interrupt=false must override an earlier interrupt=true.
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([]);
+    liveState.arrivals = [
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: true,
+        notif_id: "old",
+      },
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: false,
+        notif_id: "new",
+      },
+    ];
+    render(<DefaultRulesCard />);
+    // The newest (interrupt=false) baseline wins -> shown as snooze, not interrupt.
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    expect(screen.getByText("snooze")).toBeTruthy();
+    expect(screen.queryByText("interrupt")).toBeNull();
   });
 
   it("shows a placeholder when there are no defaults yet", async () => {

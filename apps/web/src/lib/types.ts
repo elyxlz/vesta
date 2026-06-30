@@ -48,6 +48,7 @@ export type VestaEvent =
       // Enriched fields (present on notifications emitted since the history feature shipped).
       notif_type?: string;
       sender?: string;
+      fields?: Record<string, string>; // targetable structured extras, e.g. { chat_name: "Bride squad" }
       interrupt?: boolean; // static default (no-rule baseline)
       decided?: "interrupt" | "pool"; // effective decision given the rules
       notif_id?: string; // file stem; pending while its file is on disk, cleared once processed

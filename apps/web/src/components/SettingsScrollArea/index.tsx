@@ -2,8 +2,8 @@ import { type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 // Shared scroll surface for the settings pages: the page header / tab row stays
-// fixed and only this container scrolls, with shadcn's scroll-aware `scroll-fade`
-// softening whichever edge still has hidden content.
+// fixed and only this container scrolls, with the scroll-aware `scroll-fade`
+// utility (defined in index.css) softening whichever edge still has hidden content.
 //
 // The container itself spans the full width so its scrollbar sits flush with the
 // inset-frame edge; the horizontal page padding lives on the inner wrapper instead,

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CardDescription, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -12,7 +18,7 @@ import {
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
-import { useLiveNotifications } from "./use-live-notifications";
+import { useLiveNotifications } from "@/hooks/use-live-notifications";
 
 // Identity for dedupe: notif_id when present (stable across REST history + the live stream),
 // falling back to the timestamp for older events that predate notif_id.
@@ -25,11 +31,7 @@ function rowKey(event: NotificationEvent): string {
 // (paginated), while "pending" is a live set — seeded from the connect snapshot's on-disk ids, plus
 // notifications that arrive live, minus ones cleared live. No disk-state polling; a reconnect re-sends
 // the snapshot, which re-seeds the set for free.
-export function NotificationsCard({
-  onMakeRule,
-}: {
-  onMakeRule?: (event: NotificationEvent) => void;
-}) {
+export function NotificationsCard() {
   const { name: agentName } = useSelectedAgent();
   const { pendingSeed, arrivals, cleared } = useLiveNotifications();
 
@@ -105,8 +107,8 @@ export function NotificationsCard({
   };
 
   return (
-    <div className="flex flex-col gap-3 px-0.5">
-      <div className="grid gap-1.5 px-4">
+    <Card size="sm">
+      <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
           <BellRing className="size-4 text-muted-foreground" />
           recent notifications
@@ -115,52 +117,52 @@ export function NotificationsCard({
           everything the agent has received, and whether each interrupted the
           agent or was snoozed until it was free.
         </CardDescription>
-      </div>
-
-      {error ? (
-        <p className="text-xs text-destructive">failed to load: {error}</p>
-      ) : items === null ? (
-        <div className="flex flex-col gap-2.5 pt-1">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <NotificationRowSkeleton key={i} />
-          ))}
-        </div>
-      ) : items.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <BellRing />
-            </EmptyMedia>
-            <EmptyTitle>No notifications yet</EmptyTitle>
-            <EmptyDescription>
-              They'll show up here as the agent receives them.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div className="flex flex-col gap-2.5 pt-1">
-          {items.map((event, i) => (
-            <NotificationRow
-              key={event.notif_id ?? event.ts ?? `row-${i}`}
-              event={event}
-              // Pending = received but not yet processed (still on disk per the live pending set).
-              isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
-              onMakeRule={onMakeRule}
-            />
-          ))}
-          {cursor !== null ? (
-            <Button
-              size="xs"
-              variant="outline"
-              className="mt-1 self-center"
-              disabled={loadingMore}
-              onClick={loadMore}
-            >
-              {loadingMore ? "loading…" : "load older"}
-            </Button>
-          ) : null}
-        </div>
-      )}
-    </div>
+      </CardHeader>
+      <CardContent>
+        {error ? (
+          <p className="text-xs text-destructive">failed to load: {error}</p>
+        ) : items === null ? (
+          <div className="flex flex-col gap-2.5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <NotificationRowSkeleton key={i} />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <BellRing />
+              </EmptyMedia>
+              <EmptyTitle>No notifications yet</EmptyTitle>
+              <EmptyDescription>
+                They'll show up here as the agent receives them.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {items.map((event, i) => (
+              <NotificationRow
+                key={event.notif_id ?? event.ts ?? `row-${i}`}
+                event={event}
+                // Pending = received but not yet processed (still on disk per the live pending set).
+                isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
+              />
+            ))}
+            {cursor !== null ? (
+              <Button
+                size="xs"
+                variant="outline"
+                className="mt-1 self-center"
+                disabled={loadingMore}
+                onClick={loadMore}
+              >
+                {loadingMore ? "loading…" : "load older"}
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

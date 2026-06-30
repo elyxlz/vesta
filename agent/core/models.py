@@ -33,9 +33,6 @@ CORE_SOURCE = "core"
 # as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
-# Dropped when the user edits notification rules/defaults from the app (PUT /config/notification-policy),
-# so the agent learns in-context that the user retuned its interrupt policy (it didn't make the change).
-TYPE_NOTIFICATION_POLICY_CHANGE = "notification_policy_change"
 
 
 class QueuedTurn(tp.NamedTuple):
