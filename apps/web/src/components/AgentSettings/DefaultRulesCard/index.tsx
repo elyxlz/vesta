@@ -7,6 +7,11 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getNotificationDefaultOverrides,
@@ -220,8 +225,6 @@ export function DefaultRulesCard() {
   const [openState, setOpenState] = useState<Record<string, boolean>>({});
   const isOpen = (source: string) =>
     source in openState ? openState[source] : !dense;
-  const toggleOpen = (source: string) =>
-    setOpenState((s) => ({ ...s, [source]: !isOpen(source) }));
   const allOpen = groups.every((g) => isOpen(g.source));
   const setAllOpen = (open: boolean) =>
     setOpenState(Object.fromEntries(groups.map((g) => [g.source, open])));
@@ -290,12 +293,16 @@ export function DefaultRulesCard() {
                 {groups.map((group) => {
                   const open = isOpen(group.source);
                   return (
-                    <div key={group.source} className="flex flex-col gap-1.5">
-                      <button
-                        type="button"
-                        aria-expanded={open}
+                    <Collapsible
+                      key={group.source}
+                      open={open}
+                      onOpenChange={(next) =>
+                        setOpenState((s) => ({ ...s, [group.source]: next }))
+                      }
+                      className="flex flex-col gap-1.5"
+                    >
+                      <CollapsibleTrigger
                         aria-label={`${group.source}, ${group.rows.length} ${group.rows.length === 1 ? "type" : "types"}, ${open ? "collapse" : "expand"}`}
-                        onClick={() => toggleOpen(group.source)}
                         className="flex items-center gap-2 text-left"
                       >
                         <ChevronRight
@@ -316,65 +323,63 @@ export function DefaultRulesCard() {
                             {tallyLabel(group.rows)}
                           </span>
                         ) : null}
-                      </button>
+                      </CollapsibleTrigger>
 
-                      {open ? (
-                        <div className="flex flex-col gap-1.5 pl-5">
-                          {group.rows.map((row) => {
-                            const effective = effectiveOf(row);
-                            return (
-                              <div
-                                key={overrideKey(row.source, row.type)}
-                                className="flex items-center gap-2"
+                      <CollapsibleContent className="flex flex-col gap-1.5 pl-5">
+                        {group.rows.map((row) => {
+                          const effective = effectiveOf(row);
+                          return (
+                            <div
+                              key={overrideKey(row.source, row.type)}
+                              className="flex items-center gap-2"
+                            >
+                              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                                {row.type || (
+                                  <span className="text-muted-foreground/50">
+                                    no type
+                                  </span>
+                                )}
+                              </span>
+                              {row.override ? (
+                                <span
+                                  className="size-1.5 shrink-0 rounded-full bg-primary/60"
+                                  title="you changed this — tap to inherit again"
+                                />
+                              ) : null}
+                              <Badge
+                                asChild
+                                variant={
+                                  effective === "interrupt"
+                                    ? "default"
+                                    : "secondary"
+                                }
                               >
-                                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                                  {row.type || (
-                                    <span className="text-muted-foreground/50">
-                                      no type
-                                    </span>
-                                  )}
-                                </span>
-                                {row.override ? (
-                                  <span
-                                    className="size-1.5 shrink-0 rounded-full bg-primary/60"
-                                    title="you changed this — tap to inherit again"
-                                  />
-                                ) : null}
-                                <Badge
-                                  asChild
-                                  variant={
+                                <button
+                                  type="button"
+                                  aria-label={`default for ${row.source} ${row.type || "(no type)"}: ${
                                     effective === "interrupt"
-                                      ? "default"
-                                      : "secondary"
+                                      ? "interrupt"
+                                      : "snooze"
+                                  }, tap to toggle`}
+                                  onClick={() =>
+                                    toggle(
+                                      row.source,
+                                      row.type,
+                                      effective,
+                                      row.staticDisposition,
+                                    )
                                   }
                                 >
-                                  <button
-                                    type="button"
-                                    aria-label={`default for ${row.source} ${row.type || "(no type)"}: ${
-                                      effective === "interrupt"
-                                        ? "interrupt"
-                                        : "snooze"
-                                    }, tap to toggle`}
-                                    onClick={() =>
-                                      toggle(
-                                        row.source,
-                                        row.type,
-                                        effective,
-                                        row.staticDisposition,
-                                      )
-                                    }
-                                  >
-                                    {effective === "interrupt"
-                                      ? "interrupt"
-                                      : "snooze"}
-                                  </button>
-                                </Badge>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </div>
+                                  {effective === "interrupt"
+                                    ? "interrupt"
+                                    : "snooze"}
+                                </button>
+                              </Badge>
+                            </div>
+                          );
+                        })}
+                      </CollapsibleContent>
+                    </Collapsible>
                   );
                 })}
               </div>

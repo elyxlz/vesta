@@ -38,6 +38,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   getNotificationHistory,
   getNotificationInterruptRules,
@@ -641,32 +643,34 @@ export const NotificationInterruptRulesCard = forwardRef<
             aria-label="remove field condition"
             onClick={() => removePredicate(index)}
           >
-            <X className="size-3.5" />
+            <X />
           </Button>
         </div>
         <div className="flex items-center gap-1.5">
-          {(["contains", "regex"] as const).map((op) => (
-            <Button
-              key={op}
-              type="button"
-              size="xs"
-              variant={p.op === op ? "secondary" : "ghost"}
-              aria-pressed={p.op === op}
-              onClick={() => updatePredicate(index, { op })}
-            >
-              {op === "contains" ? "is" : "matches"}
-            </Button>
-          ))}
-          <Button
-            type="button"
-            size="xs"
-            variant={p.negate ? "secondary" : "ghost"}
-            aria-pressed={p.negate}
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={p.op}
+            onValueChange={(value) => {
+              if (value)
+                updatePredicate(index, { op: value as "contains" | "regex" });
+            }}
+          >
+            <ToggleGroupItem value="contains">is</ToggleGroupItem>
+            <ToggleGroupItem value="regex">matches</ToggleGroupItem>
+          </ToggleGroup>
+          <Toggle
+            size="sm"
+            variant="outline"
+            pressed={p.negate}
+            onPressedChange={(pressed) =>
+              updatePredicate(index, { negate: pressed })
+            }
             aria-label="negate field condition"
-            onClick={() => updatePredicate(index, { negate: !p.negate })}
           >
             not
-          </Button>
+          </Toggle>
         </div>
         <Input
           aria-label="custom value"
@@ -821,8 +825,8 @@ export const NotificationInterruptRulesCard = forwardRef<
                 onOpenChange={(next) => (next ? setAddOpen(true) : closeAdd())}
               >
                 <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full gap-1.5">
-                    <Plus className="size-4" />
+                  <Button variant="outline" className="w-full">
+                    <Plus data-icon="inline-start" />
                     add rule
                   </Button>
                 </DialogTrigger>
@@ -883,10 +887,10 @@ export const NotificationInterruptRulesCard = forwardRef<
                               type="button"
                               variant="ghost"
                               size="xs"
-                              className="gap-1 text-muted-foreground"
+                              className="text-muted-foreground"
                               onClick={() => addPredicate(preset)}
                             >
-                              <Plus className="size-3.5" />
+                              <Plus data-icon="inline-start" />
                               {preset}
                             </Button>
                           ),
