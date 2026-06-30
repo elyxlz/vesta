@@ -74,21 +74,6 @@ async def test_put_match_predicate_round_trips(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_change_recap_includes_match_conditions(tmp_path):
-    # The recap notification to the agent must describe the rule's match predicates, not render a
-    # targeted rule as a catch-all (regression: it used to read the removed sender/keyword keys).
-    client, config = await _client(tmp_path)
-    try:
-        rule = {"source": "whatsapp", "match": [{"field": "chat_name", "op": "contains", "value": "Bride squad"}], "action": "pool"}
-        await client.put("/config/notification-policy", json={"rules": [rule]})
-        notif = json.loads(next(config.notifications_dir.glob("*.json")).read_text())
-        assert "chat_name" in notif["body"] and "Bride squad" in notif["body"]
-        assert "any -> pool" not in notif["body"]
-    finally:
-        await client.close()
-
-
-@pytest.mark.anyio
 async def test_put_invalid_match_regex_is_400(tmp_path):
     client, config = await _client(tmp_path)
     try:
@@ -101,19 +86,12 @@ async def test_put_invalid_match_regex_is_400(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_put_drops_a_core_notification_so_the_agent_learns(tmp_path):
-    """The policy applies live (no restart), so a user edit would otherwise be invisible to the running
-    agent. PUT drops a pooled source=core notification recapping the change."""
+async def test_put_does_not_notify_the_agent(tmp_path):
+    # Policy edits from the app no longer ping the agent — no core notification is dropped.
     client, config = await _client(tmp_path)
     try:
         await client.put("/config/notification-policy", json={"rules": [{"source": "twitter", "action": "pool"}]})
-        files = list(config.notifications_dir.glob("*.json"))
-        assert len(files) == 1
-        notif = json.loads(files[0].read_text())
-        assert notif["source"] == "core"
-        assert notif["type"] == vm.TYPE_NOTIFICATION_POLICY_CHANGE
-        assert notif["interrupt"] is False  # pooled — not worth preempting the agent
-        assert "twitter" in notif["body"]
+        assert list(config.notifications_dir.glob("*.json")) == []
     finally:
         await client.close()
 
