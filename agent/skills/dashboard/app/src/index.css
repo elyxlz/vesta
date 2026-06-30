@@ -240,3 +240,61 @@ html[data-platform="android"] {
 @utility pb-page {
   padding-bottom: var(--page-padding-x);
 }
+
+@property --scroll-fade-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --scroll-fade-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes scroll-fade-top {
+  from {
+    --scroll-fade-top: 0px;
+  }
+  to {
+    --scroll-fade-top: var(--scroll-fade-size);
+  }
+}
+@keyframes scroll-fade-bottom {
+  from {
+    --scroll-fade-bottom: var(--scroll-fade-size);
+  }
+  to {
+    --scroll-fade-bottom: 0px;
+  }
+}
+
+/* Soft, scroll-aware fade at the top/bottom of a scroll container: the top edge fades only once you've
+   scrolled down, the bottom only while there's more below. No effect when content fits, or where
+   scroll-driven animations aren't supported (the mask stays fully opaque). */
+@utility scroll-fade {
+  --scroll-fade-size: 1.25rem;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--scroll-fade-top),
+    black calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--scroll-fade-top),
+    black calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
+
+  @supports (animation-timeline: scroll()) {
+    animation:
+      scroll-fade-top linear both,
+      scroll-fade-bottom linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range:
+      0 var(--scroll-fade-size),
+      calc(100% - var(--scroll-fade-size)) 100%;
+  }
+}

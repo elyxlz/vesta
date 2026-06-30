@@ -1,7 +1,5 @@
 """Tests for the GET/PUT /config/notification-policy agent API endpoint."""
 
-import json
-
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
