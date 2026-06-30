@@ -24,10 +24,17 @@ Every line MUST be guarded with `running <session> ||` so re-running the block c
 # daemon. Wipe them first so `running` reflects the true live state.
 screen -wipe >/dev/null 2>&1 || true
 
-# True if a LIVE screen session with this exact name is running. The `grep -v Dead`
-# drops any leftover "(Dead ???)" session the wipe didn't clear.
+# True if a LIVE screen session with this exact name is running.
 # Trailing-whitespace match keeps `running whatsapp` false when only `whatsapp-elio` exists.
-running() { screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -qv "Dead"; }
+# Two checks: a matching socket exists AND that socket isn't a "(Dead ???)" corpse.
+# A single `grep -qv "Dead"` would be wrong: on empty input it returns 0 (vacuously
+# "no Dead lines"), so a cold boot with zero screens would falsely report every
+# daemon as live and the guarded launches would all be skipped.
+running() {
+  local line
+  line=$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]")
+  [ -n "$line" ] && ! echo "$line" | grep -q "Dead"
+}
 
 # Skills append guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
