@@ -1,14 +1,5 @@
-import {
-  forwardRef,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { GripVertical, ListFilter, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GripVertical, ListFilter, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,133 +11,15 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import {
-  Field as UIField,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  getNotificationHistory,
   getNotificationInterruptRules,
   setNotificationInterruptRules,
   type FieldPredicate,
-  type NotificationEvent,
   type NotificationInterruptRule,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useLiveNotifications } from "@/hooks/use-live-notifications";
 import { cn } from "@/lib/utils";
 
-function uniqueStrings(values: (string | undefined)[]): string[] {
-  return [...new Set(values.filter((v): v is string => !!v))];
-}
-
-// Stable identity for a notification, to dedupe the REST history against live arrivals.
-function notifKey(n: NotificationEvent): string {
-  return (
-    n.notif_id ||
-    `${n.source}|${n.notif_type ?? ""}|${n.sender ?? ""}|${n.summary}`
-  );
-}
-
-// Core notifications (the agent's own internals) are exempt from rules, so never offer/accept them.
-const CORE_SOURCE = "core";
-const isCore = (source: string) => source.trim().toLowerCase() === CORE_SOURCE;
-
 const SAVE_DEBOUNCE_MS = 500;
-
-// A stable client-side id for a new rule, so the save round-trip doesn't need to swap ids and
-// remount the row being edited. The server keeps any non-empty id it's given.
-function newRuleId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-  return `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-// A field condition being edited: any notification field matched by substring ("is") or regex
-// ("matches"), optionally negated. `sender` and `text` are aliases (the sender preset / keyword preset
-// seed them); a plain field name (chat_name, chat_type, …) targets that concrete extra.
-type DraftPredicate = {
-  field: string;
-  op: "contains" | "regex";
-  value: string;
-  negate: boolean;
-};
-
-// The op + negate pair, folded into one operator dropdown so a condition reads as a sentence
-// ("chat_name is Bride squad" / "chat_type is not group").
-const OPERATORS = [
-  { id: "is", label: "is", op: "contains", negate: false },
-  { id: "is-not", label: "is not", op: "contains", negate: true },
-  { id: "matches", label: "matches", op: "regex", negate: false },
-  { id: "not-matches", label: "doesn't match", op: "regex", negate: true },
-] as const;
-
-function operatorId(p: Pick<DraftPredicate, "op" | "negate">): string {
-  const match = OPERATORS.find((o) => o.op === p.op && o.negate === p.negate);
-  return (match ?? OPERATORS[0]).id;
-}
-
-type Draft = {
-  source: string;
-  type: string;
-  predicates: DraftPredicate[];
-  action: "interrupt" | "pool";
-};
-const EMPTY_DRAFT: Draft = {
-  source: "",
-  type: "",
-  predicates: [],
-  action: "interrupt",
-};
-
-function regexError(pattern: string): string | null {
-  try {
-    new RegExp(pattern);
-    return null;
-  } catch (e) {
-    return (e as Error).message;
-  }
-}
-
-// Compile the draft's field conditions into the rule's `match` predicate list (source/type stay
-// dedicated). Incomplete rows (no field or no value) are dropped.
-function draftToMatch(draft: Draft): FieldPredicate[] {
-  return draft.predicates.flatMap((p) => {
-    const field = p.field.trim();
-    const value = p.value.trim();
-    if (!field || !value) return [];
-    return [{ field, op: p.op, value, ...(p.negate ? { negate: true } : {}) }];
-  });
-}
 
 // One predicate -> a read-only badge. The sender/text aliases render under their friendly names;
 // any other field shows its name with a relation hint (~ regex, "not" when negated).
@@ -161,7 +34,7 @@ function predicateBadge(p: FieldPredicate): { label: string; value: string } {
   return { label: p.field, value: rel ? `${rel} ${p.value}` : p.value };
 }
 
-// The conditions a rule actually matches on (source/type + every predicate), for the read-only summary.
+// The conditions a rule matches on (source/type + every predicate), for the read-only summary.
 function ruleConditions(
   rule: NotificationInterruptRule,
 ): { label: string; value: string }[] {
@@ -172,121 +45,10 @@ function ruleConditions(
   return out;
 }
 
-// The notification value a predicate field reads, approximating the engine for the live preview:
-// the `sender` alias -> the event's sender, `text` -> its summary, anything else -> a structured extra.
-function notifFieldValue(
-  n: NotificationEvent,
-  field: string,
-): string | undefined {
-  if (field === "sender") return n.sender;
-  if (field === "text") return n.summary;
-  return n.fields?.[field];
-}
-
-function predicateMatchesNotif(
-  p: FieldPredicate,
-  n: NotificationEvent,
-): boolean {
-  const candidate = notifFieldValue(n, p.field);
-  let hit = false;
-  if (candidate != null) {
-    if (p.op === "contains") {
-      hit = candidate.toLowerCase().includes(p.value.toLowerCase());
-    } else {
-      try {
-        hit = new RegExp(p.value, "i").test(candidate);
-      } catch {
-        hit = false;
-      }
-    }
-  }
-  return p.negate ? !hit : hit;
-}
-
-// Whether a whole rule matches a notification (source/type exact + all predicates), approximating the
-// engine for the live preview / shadow check.
-function ruleMatchesNotif(
-  rule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
-  n: NotificationEvent,
-): boolean {
-  // source/type match case-insensitively, mirroring the engine's _matches.
-  if (rule.source && n.source.toLowerCase() !== rule.source.toLowerCase())
-    return false;
-  if (
-    rule.type &&
-    (n.notif_type ?? "").toLowerCase() !== rule.type.toLowerCase()
-  )
-    return false;
-  return (rule.match ?? []).every((p) => predicateMatchesNotif(p, n));
-}
-
-// How narrowly a rule matches = its condition count. Used only to place a new rule (the engine is
-// first-match-wins, never specificity-ranked) so a narrow exception lands above the broad rule it refines.
-function specificity(
-  rule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
-): number {
-  return (
-    (rule.source ? 1 : 0) + (rule.type ? 1 : 0) + (rule.match?.length ?? 0)
-  );
-}
-
-// Insert position for a new rule: above the first existing rule that is strictly broader (fewer
-// conditions), else at the end. Matches the skill CLI's _placement_index.
-function placementIndex(
-  rules: NotificationInterruptRule[],
-  newRule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
-): number {
-  const spec = specificity(newRule);
-  const i = rules.findIndex((r) => specificity(r) < spec);
-  return i === -1 ? rules.length : i;
-}
-
-export interface NotificationInterruptRulesHandle {
-  addFromNotification: (seed: { source?: string; type?: string }) => void;
-}
-
-// A labeled field in the add-rule dialog (shadcn Field + FieldLabel), with an "· optional" hint when
-// the condition can be left blank and an optional helper line under the header (label).
-function Field({
-  label,
-  optional,
-  description,
-  children,
-}: {
-  label: string;
-  optional?: boolean;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <UIField className="gap-2">
-      <div className="flex flex-col gap-0.5">
-        <FieldLabel className="font-medium">
-          {label}
-          {optional ? (
-            <span className="font-normal text-muted-foreground/50">
-              {" "}
-              · optional
-            </span>
-          ) : null}
-        </FieldLabel>
-        {description ? (
-          <FieldDescription className="text-xs">{description}</FieldDescription>
-        ) : null}
-      </div>
-      {children}
-    </UIField>
-  );
-}
-
 // Editor for the agent's notification interrupt rules: active rules render as read-only summaries
-// (conditions + a clickable action badge + delete), and a full-width button opens a two-step dialog
-// (match conditions -> action) to add a new one. First match wins; every change auto-saves and
-// applies live. Exposes addFromNotification so the recent-notifications card can seed a rule on click.
-export const NotificationInterruptRulesCard = forwardRef<
-  NotificationInterruptRulesHandle,
-  object
->(function NotificationInterruptRulesCard(_props, ref) {
+// (conditions + a clickable action badge + drag-to-reorder + delete). Rules are authored by asking the
+// agent in chat; this card manages the existing ones. First match wins; every change auto-saves live.
+export function NotificationInterruptRulesCard() {
   const { name: agentName } = useSelectedAgent();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The ruleset awaiting a debounced save, so unmount/agent-switch can flush it instead of dropping it.
@@ -294,34 +56,8 @@ export const NotificationInterruptRulesCard = forwardRef<
   // Last successfully-saved ruleset, so a rejected save can roll the optimistic change back.
   const lastSaved = useRef<NotificationInterruptRule[]>([]);
   const [rules, setRules] = useState<NotificationInterruptRule[] | null>(null);
-  const [historyNotifications, setHistoryNotifications] = useState<
-    NotificationEvent[]
-  >([]);
-  // Live arrivals from the agent socket, so suggestions/facets update as notifications come in without
-  // a manual refresh. Tolerant of no provider (tests): arrivals is [] and the card is REST-only.
-  const { arrivals } = useLiveNotifications();
-  // Suggestions read newest-first. Arrivals are oldest-first (the socket appends), so reverse them to
-  // put the freshest first, then the fetched history; dedupe keeps the first (freshest) per identity.
-  const notifications = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: NotificationEvent[] = [];
-    for (const n of [...[...arrivals].reverse(), ...historyNotifications]) {
-      const key = notifKey(n);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(n);
-    }
-    return merged;
-  }, [arrivals, historyNotifications]);
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  // The add-rule dialog: a two-step wizard (match conditions -> action).
-  const [addOpen, setAddOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2>(1);
-  // The dialog's content element, so the combobox popups portal inside it — otherwise they land in
-  // body, which the dialog marks inert (pointer-events: none) and the options become unclickable.
-  const [dialogEl, setDialogEl] = useState<HTMLElement | null>(null);
   // The rule row currently being dragged, for reordering (null when not dragging).
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
@@ -344,22 +80,6 @@ export const NotificationInterruptRulesCard = forwardRef<
     };
   }, [agentName]);
 
-  // Recent notifications drive the cascading source -> type -> sender suggestions and the custom-field
-  // name/value suggestions. Best-effort: a failure just means no suggestions, never a card error.
-  useEffect(() => {
-    if (!agentName) return;
-    let cancelled = false;
-    setHistoryNotifications([]);
-    getNotificationHistory(agentName)
-      .then((page) => {
-        if (!cancelled) setHistoryNotifications(page.notifications);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [agentName]);
-
   const save = useCallback(
     async (next: NotificationInterruptRule[]) => {
       if (!agentName) return;
@@ -368,8 +88,7 @@ export const NotificationInterruptRulesCard = forwardRef<
         lastSaved.current = next;
         setSaveError(null);
       } catch (e) {
-        // The server rejected the set (e.g. an invalid rule) — roll the optimistic change back to
-        // the last accepted ruleset so a rejected rule never lingers in the list.
+        // The server rejected the set — roll the optimistic change back to the last accepted ruleset.
         setRules(lastSaved.current);
         setSaveError((e as Error).message);
       }
@@ -391,8 +110,7 @@ export const NotificationInterruptRulesCard = forwardRef<
     [save],
   );
 
-  // Flush any debounced edit on unmount or agent switch (e.g. switching settings tabs within the
-  // debounce window unmounts this card via Radix Tabs) so an edit is never silently dropped.
+  // Flush any debounced edit on unmount or agent switch so an edit is never silently dropped.
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -419,69 +137,6 @@ export const NotificationInterruptRulesCard = forwardRef<
   const deleteRule = (index: number) =>
     commit((rules ?? []).filter((_, i) => i !== index));
 
-  // The draft as a rule shape (source/type + compiled match), for the validity, preview, and shadow
-  // checks below. Memoized so the per-keystroke preview work downstream has a stable input.
-  const draftRule = useMemo(
-    () => ({
-      source: draft.source.trim() || undefined,
-      type: draft.type.trim() || undefined,
-      match: draftToMatch(draft),
-    }),
-    [draft],
-  );
-
-  // Require at least one condition: a no-condition rule is a catch-all that would swallow everything.
-  // source/type plus any compiled predicate (sender/keyword/custom all fold into match) count.
-  const draftHasCondition =
-    !!draftRule.source || !!draftRule.type || draftRule.match.length > 0;
-
-  // A "matches" (regex) condition is a regex; surface an invalid pattern inline rather than letting
-  // the server reject it.
-  const hasRegexError = draft.predicates.some(
-    (p) =>
-      p.op === "regex" && p.value.trim() !== "" && regexError(p.value.trim()),
-  );
-
-  // The recent notifications the draft would catch (approximating the engine against the history we
-  // fetched: source/type case-insensitive; predicates over sender/summary/structured fields). Computed
-  // once and reused by the match-count and the shadow check, so the scan runs once per keystroke.
-  const draftHits = useMemo(
-    () =>
-      draftHasCondition && !hasRegexError
-        ? notifications.filter((n) => ruleMatchesNotif(draftRule, n))
-        : null,
-    [draftHasCondition, hasRegexError, notifications, draftRule],
-  );
-  const draftMatchCount = draftHits?.length ?? null;
-
-  // Would the draft be shadowed? At its specificity-placement, if every notification it catches is
-  // already caught by a higher-priority rule above it, first-match-wins means it would never fire.
-  const draftShadowed = useMemo(() => {
-    if (!draftHits || draftHits.length === 0) return false;
-    const above = (rules ?? []).slice(
-      0,
-      placementIndex(rules ?? [], draftRule),
-    );
-    return draftHits.every((n) => above.some((r) => ruleMatchesNotif(r, n)));
-  }, [draftHits, rules, draftRule]);
-
-  const addDraft = () => {
-    if (!draftHasCondition || hasRegexError) return;
-    setSaveError(null);
-    const newRule: NotificationInterruptRule = {
-      id: newRuleId(),
-      action: draft.action,
-      source: draft.source.trim() || undefined,
-      type: draft.type.trim() || undefined,
-      match: draftToMatch(draft),
-    };
-    // Auto-place by specificity so a narrow exception isn't shadowed by a broader rule above it.
-    const next = [...(rules ?? [])];
-    next.splice(placementIndex(next, newRule), 0, newRule);
-    commit(next);
-    setDraft(EMPTY_DRAFT);
-  };
-
   // Drag-to-reorder: move the rule at `from` to `to`, then persist. Order is priority (first match wins).
   const reorderRule = (from: number, to: number) => {
     const current = rules ?? [];
@@ -490,209 +145,6 @@ export const NotificationInterruptRulesCard = forwardRef<
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
     commit(next);
-  };
-
-  // Close the dialog and discard any half-entered draft.
-  const closeAdd = () => {
-    setAddOpen(false);
-    setStep(1);
-    setDraft(EMPTY_DRAFT);
-  };
-
-  // Commit the drafted rule from step 2, then close (addDraft clears the draft itself).
-  const handleAdd = () => {
-    addDraft();
-    setAddOpen(false);
-    setStep(1);
-  };
-
-  const step1Valid = draftHasCondition && !hasRegexError;
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      addFromNotification: (seed) => {
-        // Core notifications can never be targeted by a rule — refuse to seed one.
-        if (seed.source && isCore(seed.source)) return;
-        // Open the add-rule dialog pre-filled from the notification, so the user
-        // reviews the conditions and picks an action instead of a rule being
-        // committed silently. (The dialog only renders once rules have loaded, so
-        // its save still has the real ruleset.)
-        setDraft({
-          ...EMPTY_DRAFT,
-          source: seed.source ?? "",
-          type: seed.type ?? "",
-        });
-        setStep(1);
-        setAddOpen(true);
-      },
-    }),
-    [],
-  );
-
-  // Cascading suggestions: each pick narrows the next. Core is never a rule source. Memoized so typing
-  // in an unrelated dialog field doesn't re-scan the whole history every keystroke.
-  const sourceOptions = useMemo(
-    () =>
-      uniqueStrings(notifications.map((n) => n.source)).filter(
-        (s) => !isCore(s),
-      ),
-    [notifications],
-  );
-  const typeOptions = useMemo(
-    () =>
-      draft.source
-        ? uniqueStrings(
-            notifications
-              .filter((n) => n.source === draft.source)
-              .map((n) => n.notif_type),
-          )
-        : [],
-    [notifications, draft.source],
-  );
-  // Field-condition suggestions: the structured extra fields seen on notifications, scoped to the
-  // picked source when there is one, so the author discovers e.g. `chat_name`. The `sender` and `text`
-  // aliases are offered too (the presets seed them, but a hand-typed field condition can reach them).
-  const fieldScopedNotifs = useMemo(
-    () =>
-      draft.source
-        ? notifications.filter((n) => n.source === draft.source)
-        : notifications,
-    [notifications, draft.source],
-  );
-  // Field options for the native select: the two aliases plus every structured extra seen (scoped to
-  // the picked source). A current value not in the list (e.g. a preset alias) is appended so the
-  // select can render it.
-  const fieldNameOptions = useMemo(
-    () =>
-      uniqueStrings([
-        "sender",
-        "text",
-        ...fieldScopedNotifs.flatMap((n) => Object.keys(n.fields ?? {})),
-      ]),
-    [fieldScopedNotifs],
-  );
-
-  const updatePredicate = (index: number, patch: Partial<DraftPredicate>) =>
-    setDraft((d) => ({
-      ...d,
-      predicates: d.predicates.map((p, i) =>
-        i === index ? { ...p, ...patch } : p,
-      ),
-    }));
-  // Append a field condition. The sender/keyword presets seed the matching alias + op so the common
-  // cases stay one click; "field" starts blank for an arbitrary notification field.
-  const addPredicate = (preset: "sender" | "keyword" | "field") =>
-    setDraft((d) => ({
-      ...d,
-      predicates: [
-        ...d.predicates,
-        preset === "sender"
-          ? { field: "sender", op: "contains", value: "", negate: false }
-          : preset === "keyword"
-            ? { field: "text", op: "regex", value: "", negate: false }
-            : { field: "", op: "contains", value: "", negate: false },
-      ],
-    }));
-  const removePredicate = (index: number) =>
-    setDraft((d) => ({
-      ...d,
-      predicates: d.predicates.filter((_, i) => i !== index),
-    }));
-
-  const renderCombobox = (
-    field: "source" | "type",
-    items: string[],
-    disabled: boolean,
-    onSelect: (value: string) => void,
-  ) => (
-    <Combobox
-      items={items}
-      value={draft[field] || null}
-      onValueChange={(value) =>
-        onSelect(typeof value === "string" ? value : "")
-      }
-      disabled={disabled}
-    >
-      <ComboboxInput
-        aria-label={field}
-        placeholder={`any ${field}`}
-        disabled={disabled}
-        className="w-full"
-      />
-      <ComboboxContent container={dialogEl}>
-        <ComboboxEmpty>no matches</ComboboxEmpty>
-        <ComboboxList>
-          {(item: string) => (
-            <ComboboxItem key={item} value={item}>
-              {item}
-            </ComboboxItem>
-          )}
-        </ComboboxList>
-      </ComboboxContent>
-    </Combobox>
-  );
-
-  // A condition row reading like a sentence: [ field ▾ ] [ operator ▾ ] [ value ] [✕]. Field and
-  // operator are native selects (no modal/portal quirks); value stays a free-text input since values
-  // are arbitrary (a regex, or a string not yet seen). The current field is always in the option list.
-  const renderPredicateRow = (p: DraftPredicate, index: number) => {
-    const fieldOptions = uniqueStrings([p.field, ...fieldNameOptions]).filter(
-      Boolean,
-    );
-    return (
-      <div key={index} className="flex items-center gap-2">
-        <NativeSelect
-          aria-label="condition field"
-          value={p.field}
-          onChange={(e) => updatePredicate(index, { field: e.target.value })}
-          className="min-w-0 flex-1"
-        >
-          <NativeSelectOption value="">field…</NativeSelectOption>
-          {fieldOptions.map((name) => (
-            <NativeSelectOption key={name} value={name}>
-              {name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <NativeSelect
-          aria-label="operator"
-          value={operatorId(p)}
-          onChange={(e) => {
-            const op = OPERATORS.find((o) => o.id === e.target.value);
-            if (op) updatePredicate(index, { op: op.op, negate: op.negate });
-          }}
-          className="shrink-0"
-        >
-          {OPERATORS.map((o) => (
-            <NativeSelectOption key={o.id} value={o.id}>
-              {o.label}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <Input
-          aria-label="custom value"
-          placeholder={p.op === "regex" ? "regex" : "value"}
-          value={p.value}
-          aria-invalid={
-            p.op === "regex" &&
-            p.value.trim() !== "" &&
-            regexError(p.value.trim()) !== null
-          }
-          onChange={(e) => updatePredicate(index, { value: e.target.value })}
-          className="min-w-0 flex-1"
-        />
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="remove field condition"
-          onClick={() => removePredicate(index)}
-        >
-          <X />
-        </Button>
-      </div>
-    );
   };
 
   return (
@@ -818,250 +270,22 @@ export const NotificationInterruptRulesCard = forwardRef<
                 </div>
               ) : null}
 
-              {/* Add a rule via a two-step dialog so the card stays a clean list + one action. */}
-              <Dialog
-                open={addOpen}
-                onOpenChange={(next) => (next ? setAddOpen(true) : closeAdd())}
-              >
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full">
-                    <Plus data-icon="inline-start" />
-                    add rule
-                  </Button>
-                </DialogTrigger>
-                <DialogContent
-                  className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 sm:max-w-[min(56rem,calc(100%-2rem))]"
-                  onOpenAutoFocus={(e) => e.preventDefault()}
-                  onInteractOutside={(event) => {
-                    // Only a real backdrop (overlay) click dismisses this multi-field form; stray
-                    // outside interactions (focus shifts, native control popups) shouldn't lose an
-                    // in-progress rule.
-                    const target = event.detail.originalEvent
-                      .target as HTMLElement | null;
-                    if (!target?.closest('[data-slot="dialog-overlay"]')) {
-                      event.preventDefault();
-                    }
-                  }}
-                >
-                  <DialogHeader>
-                    <DialogTitle>add rule</DialogTitle>
-                    <DialogDescription>
-                      step {step} of 2 ·{" "}
-                      {step === 1
-                        ? "start with a source, then narrow it down if you want."
-                        : "choose what happens when a notification matches."}
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  {step === 1 ? (
-                    <div className="@container min-h-0 overflow-y-auto">
-                      <div className="grid min-h-72 gap-6 @md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] @md:gap-8">
-                        {/* Left column: what the rule is scoped to. */}
-                        <FieldGroup className="gap-6">
-                          {/* Reveal-on-fill: source first, then type. */}
-                          <Field
-                            label="source"
-                            description="which app or service. leave blank to match every source."
-                          >
-                            {renderCombobox(
-                              "source",
-                              sourceOptions,
-                              false,
-                              (value) =>
-                                setDraft((d) => ({
-                                  ...d,
-                                  source: value,
-                                  type: "",
-                                })),
-                            )}
-                            {/* Quick-pick the sources seen so far, without opening the combobox. */}
-                            {sourceOptions.length > 0 ? (
-                              <div className="flex flex-wrap gap-1.5">
-                                {sourceOptions.slice(0, 8).map((s) => (
-                                  <Button
-                                    key={s}
-                                    type="button"
-                                    size="xs"
-                                    variant={
-                                      draft.source === s
-                                        ? "secondary"
-                                        : "outline"
-                                    }
-                                    aria-pressed={draft.source === s}
-                                    onClick={() =>
-                                      setDraft((d) => ({
-                                        ...d,
-                                        source: d.source === s ? "" : s,
-                                        type: "",
-                                      }))
-                                    }
-                                  >
-                                    {s}
-                                  </Button>
-                                ))}
-                              </div>
-                            ) : null}
-                          </Field>
-
-                          {/* Progressive disclosure: type only matters once a source is chosen. */}
-                          {draft.source ? (
-                            <Field
-                              label="type"
-                              optional
-                              description={`kind of ${draft.source} notification, e.g. message or mention.`}
-                            >
-                              {renderCombobox(
-                                "type",
-                                typeOptions,
-                                false,
-                                (value) =>
-                                  setDraft((d) => ({ ...d, type: value })),
-                              )}
-                              {/* Quick-pick the types seen for this source. */}
-                              {typeOptions.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                  {typeOptions.slice(0, 8).map((t) => (
-                                    <Button
-                                      key={t}
-                                      type="button"
-                                      size="xs"
-                                      variant={
-                                        draft.type === t
-                                          ? "secondary"
-                                          : "outline"
-                                      }
-                                      aria-pressed={draft.type === t}
-                                      onClick={() =>
-                                        setDraft((d) => ({
-                                          ...d,
-                                          type: d.type === t ? "" : t,
-                                        }))
-                                      }
-                                    >
-                                      {t}
-                                    </Button>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </Field>
-                          ) : null}
-                        </FieldGroup>
-
-                        {/* Right column: conditions. Wraps below the scope column when narrow. */}
-                        <Field
-                          label="conditions"
-                          optional
-                          description={
-                            draft.predicates.length === 0
-                              ? "add one to match on a sender, a keyword, or any field."
-                              : undefined
-                          }
-                        >
-                          {draft.predicates.length > 0 ? (
-                            // Cap the list so many conditions scroll instead of growing the dialog past
-                            // the viewport; pr keeps the scrollbar off the inputs.
-                            <ScrollArea className="max-h-56">
-                              <div className="flex flex-col gap-2.5 pr-3">
-                                {draft.predicates.map((p, i) =>
-                                  renderPredicateRow(p, i),
-                                )}
-                              </div>
-                            </ScrollArea>
-                          ) : null}
-                          <div className="flex flex-wrap items-center gap-2">
-                            {(["sender", "keyword", "field"] as const).map(
-                              (preset) => (
-                                <Button
-                                  key={preset}
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => addPredicate(preset)}
-                                >
-                                  <Plus data-icon="inline-start" />
-                                  {preset}
-                                </Button>
-                              ),
-                            )}
-                          </div>
-                        </Field>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      {(["interrupt", "pool"] as const).map((action) => {
-                        const selected = draft.action === action;
-                        return (
-                          <button
-                            key={action}
-                            type="button"
-                            aria-pressed={selected}
-                            onClick={() => setDraft((d) => ({ ...d, action }))}
-                            className={cn(
-                              "flex flex-col items-start gap-0.5 rounded-xl border p-3 text-left transition-colors",
-                              selected
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:bg-muted/40",
-                            )}
-                          >
-                            <span className="text-sm font-medium text-foreground">
-                              {action === "interrupt" ? "interrupt" : "snooze"}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {action === "interrupt"
-                                ? "break in right away"
-                                : "wait for a quiet moment"}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <DialogFooter>
-                    {step === 1 ? (
-                      <>
-                        {hasRegexError ? (
-                          <p className="mr-auto min-w-0 self-center truncate text-xs text-destructive">
-                            invalid regex in a condition
-                          </p>
-                        ) : draftShadowed ? (
-                          <p className="mr-auto min-w-0 self-center truncate text-xs text-amber-600 dark:text-amber-500">
-                            a higher-priority rule already catches these
-                          </p>
-                        ) : draftMatchCount !== null ? (
-                          <p className="mr-auto min-w-0 self-center truncate text-xs text-muted-foreground">
-                            {draftMatchCount === 0
-                              ? "no recent notifications match yet"
-                              : `matches ${draftMatchCount} of your recent notifications`}
-                          </p>
-                        ) : null}
-                        <DialogClose asChild>
-                          <Button variant="ghost">cancel</Button>
-                        </DialogClose>
-                        <Button
-                          onClick={() => setStep(2)}
-                          disabled={!step1Valid}
-                        >
-                          next
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button variant="ghost" onClick={() => setStep(1)}>
-                          back
-                        </Button>
-                        <Button onClick={handleAdd}>add rule</Button>
-                      </>
-                    )}
-                  </DialogFooter>
-                  {/* Combobox popups portal into this out-of-flow layer (not the
-                      DialogContent itself, which is a `grid gap-6`) so an opening
-                      dropdown is anchored without adding a grid row that grows the
-                      dialog. Still inside the dialog, so options stay clickable. */}
-                  <div ref={setDialogEl} className="absolute" />
-                </DialogContent>
-              </Dialog>
+              {/* Rules are authored by the agent: ask it in chat instead of a form. */}
+              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-muted/40 p-3">
+                <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {rules.length === 0 ? "No rules yet. " : ""}
+                  To add a rule, just ask {agentName || "the agent"} — e.g.{" "}
+                  <span className="text-foreground">
+                    "don't let Twitter interrupt you"
+                  </span>{" "}
+                  or{" "}
+                  <span className="text-foreground">
+                    "snooze the Bride Squad group chat"
+                  </span>
+                  . To change one, delete it here and ask again.
+                </p>
+              </div>
 
               {saveError ? (
                 <p className="text-xs text-destructive">{saveError}</p>
@@ -1072,4 +296,4 @@ export const NotificationInterruptRulesCard = forwardRef<
       </CardContent>
     </Card>
   );
-});
+}

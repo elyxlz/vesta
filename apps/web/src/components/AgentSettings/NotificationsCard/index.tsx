@@ -31,11 +31,7 @@ function rowKey(event: NotificationEvent): string {
 // (paginated), while "pending" is a live set — seeded from the connect snapshot's on-disk ids, plus
 // notifications that arrive live, minus ones cleared live. No disk-state polling; a reconnect re-sends
 // the snapshot, which re-seeds the set for free.
-export function NotificationsCard({
-  onMakeRule,
-}: {
-  onMakeRule?: (event: NotificationEvent) => void;
-}) {
+export function NotificationsCard() {
   const { name: agentName } = useSelectedAgent();
   const { pendingSeed, arrivals, cleared } = useLiveNotifications();
 
@@ -151,7 +147,6 @@ export function NotificationsCard({
                 event={event}
                 // Pending = received but not yet processed (still on disk per the live pending set).
                 isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
-                onMakeRule={onMakeRule}
               />
             ))}
             {cursor !== null ? (

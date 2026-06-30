@@ -115,57 +115,6 @@ describe("NotificationsCard", () => {
   });
 });
 
-describe("NotificationsCard make-rule", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-  afterEach(cleanup);
-
-  it("offers a make-rule action per notification", async () => {
-    const onMakeRule = vi.fn();
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "twitter",
-          summary:
-            '<notification source="twitter" type="tweet">hi</notification>',
-          notif_type: "tweet",
-          ts: new Date().toISOString(),
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationsCard onMakeRule={onMakeRule} />);
-    await screen.findByText("twitter");
-
-    await userEvent.click(screen.getByRole("button", { name: /make a rule/i }));
-
-    expect(onMakeRule).toHaveBeenCalledTimes(1);
-    expect(onMakeRule.mock.calls[0][0].source).toBe("twitter");
-  });
-
-  it("hides the make-rule action on core notifications", async () => {
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "core",
-          summary:
-            '<notification source="core" type="default_skill_sync">synced</notification>',
-          notif_type: "default_skill_sync",
-          ts: new Date().toISOString(),
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationsCard onMakeRule={vi.fn()} />);
-    await screen.findByText("core");
-
-    expect(screen.queryByRole("button", { name: /make a rule/i })).toBeNull();
-  });
-});
-
 describe("NotificationsCard pending", () => {
   beforeEach(() => {
     vi.restoreAllMocks();

@@ -1,11 +1,7 @@
-import { useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsScrollArea } from "@/components/SettingsScrollArea";
 import { ActionsCard } from "./ActionsCard";
-import {
-  NotificationInterruptRulesCard,
-  type NotificationInterruptRulesHandle,
-} from "./NotificationInterruptRulesCard";
+import { NotificationInterruptRulesCard } from "./NotificationInterruptRulesCard";
 import { NotificationsCard } from "./NotificationsCard";
 import { DefaultRulesCard } from "./DefaultRulesCard";
 import { FilesTab } from "./FilesTab";
@@ -14,8 +10,6 @@ import { ProviderCard } from "./ProviderCard";
 import { SttCard, TtsCard } from "./VoiceSection";
 
 export function AgentSettings() {
-  const rulesRef = useRef<NotificationInterruptRulesHandle>(null);
-
   return (
     <Tabs
       defaultValue="general"
@@ -46,17 +40,10 @@ export function AgentSettings() {
           {/* Bento: a compact rules card beside the wider history it acts on. */}
           <div className="mx-auto grid max-w-7xl gap-4 xl:grid-cols-[24rem_minmax(0,1fr)] xl:items-start">
             <div className="flex flex-col gap-4 xl:sticky xl:top-0">
-              <NotificationInterruptRulesCard ref={rulesRef} />
+              <NotificationInterruptRulesCard />
               <DefaultRulesCard />
             </div>
-            <NotificationsCard
-              onMakeRule={(n) =>
-                rulesRef.current?.addFromNotification({
-                  source: n.source,
-                  type: n.notif_type,
-                })
-              }
-            />
+            <NotificationsCard />
           </div>
         </TabsContent>
 

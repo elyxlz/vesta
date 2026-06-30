@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type NotificationEvent } from "@/api/agents";
@@ -78,20 +76,16 @@ function Disposition({ event }: { event: NotificationEvent }) {
   );
 }
 
-// One notification, as an elegant card row: source · type lead with the disposition + time on the
-// right (a pending dot marks unprocessed ones), the sender sits on a quiet line, and the body text
-// clamps to two lines and expands on demand. The make-rule action sits at the foot.
+// One notification row: source · type lead with the disposition + time on the right (a pending dot
+// marks unprocessed ones), the sender sits on a quiet line, and the body text clamps to two lines and
+// expands on demand.
 export function NotificationRow({
   event,
   isPending,
-  onMakeRule,
 }: {
   event: NotificationEvent;
   isPending: boolean;
-  onMakeRule?: (event: NotificationEvent) => void;
 }) {
-  // Core notifications can't be targeted by a rule, so don't offer the action.
-  const isCore = event.source.trim().toLowerCase() === "core";
   // The backend renders a notification either as plain prose (its `body`) or, when it has
   // no body, as `key=value, …` of its fields — which always starts with a key. So treat
   // the content as structured only when it starts with `key=`: then surface `message` as
@@ -196,19 +190,6 @@ export function NotificationRow({
             </button>
           ) : null}
         </div>
-      ) : null}
-
-      {onMakeRule && !isCore ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          className="h-5 w-[4.5rem] gap-1 self-end px-2 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label="make a rule from this notification"
-          onClick={() => onMakeRule(event)}
-        >
-          <Plus className="size-3" />
-          rule
-        </Button>
       ) : null}
     </Card>
   );
