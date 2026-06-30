@@ -117,8 +117,11 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
             if init_sid:
                 logger.debug(f"[init] session_id={init_sid[:16]}")
             return [], [], init_sid
+        # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it floods the log with no signal.
+        if msg.subtype == "thinking_tokens":
+            return [], [], None
         raw = json.dumps(msg.data, default=str)
-        logger.system(f"[{msg.subtype}] {raw[:500]}")
+        logger.system(f"[{msg.subtype}] {raw[:2000]}")
         return [], [], None
 
     if not isinstance(msg, AssistantMessage):
