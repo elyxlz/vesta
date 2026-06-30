@@ -246,7 +246,7 @@ export interface NotificationInterruptRulesHandle {
 }
 
 // A labeled field in the add-rule dialog (shadcn Field + FieldLabel), with an "· optional" hint when
-// the condition can be left blank and an optional helper line under the control.
+// the condition can be left blank and an optional helper line under the header (label).
 function Field({
   label,
   optional,
@@ -260,19 +260,21 @@ function Field({
 }) {
   return (
     <UIField className="gap-2">
-      <FieldLabel className="font-medium">
-        {label}
-        {optional ? (
-          <span className="font-normal text-muted-foreground/50">
-            {" "}
-            · optional
-          </span>
+      <div className="flex flex-col gap-0.5">
+        <FieldLabel className="font-medium">
+          {label}
+          {optional ? (
+            <span className="font-normal text-muted-foreground/50">
+              {" "}
+              · optional
+            </span>
+          ) : null}
+        </FieldLabel>
+        {description ? (
+          <FieldDescription className="text-xs">{description}</FieldDescription>
         ) : null}
-      </FieldLabel>
+      </div>
       {children}
-      {description ? (
-        <FieldDescription className="text-xs">{description}</FieldDescription>
-      ) : null}
     </UIField>
   );
 }
