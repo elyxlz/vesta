@@ -149,12 +149,55 @@ def test_facets_lists_values_from_notification_history(tmp_path):
     assert set(facets["sender"]) == {"@bob", "Alice"}
 
 
+def test_facets_surface_structured_extra_fields(tmp_path):
+    import json as _json
+
+    from core.events import EventBus
+
+    bus = EventBus(data_dir=tmp_path / "agent" / "data")
+    try:
+        bus.emit(
+            {
+                "type": "notification",
+                "source": "whatsapp",
+                "summary": "x",
+                "notif_type": "message",
+                "sender": "Alice",
+                "fields": {"chat_name": "Bride squad", "chat_type": "group"},
+                "interrupt": True,
+                "decided": "pool",
+                "notif_id": "n1",
+            }
+        )
+        bus.emit(
+            {
+                "type": "notification",
+                "source": "whatsapp",
+                "summary": "x",
+                "notif_type": "message",
+                "sender": "Bob",
+                "fields": {"chat_name": "Work standup", "chat_type": "group"},
+                "interrupt": True,
+                "decided": "pool",
+                "notif_id": "n2",
+            }
+        )
+    finally:
+        bus.close()
+
+    result = _run(tmp_path, "facets")
+    assert result.returncode == 0, result.stderr
+    fields = _json.loads(result.stdout)["fields"]
+    assert set(fields["chat_name"]) == {"Bride squad", "Work standup"}
+    assert fields["chat_type"] == ["group"]  # deduped
+
+
 def test_facets_empty_when_no_history(tmp_path):
     import json as _json
 
     result = _run(tmp_path, "facets")
     assert result.returncode == 0, result.stderr
-    assert _json.loads(result.stdout) == {"source": [], "type": [], "sender": []}
+    assert _json.loads(result.stdout) == {"source": [], "type": [], "sender": [], "fields": {}}
 
 
 def test_add_rejects_core_source(tmp_path):
@@ -167,7 +210,60 @@ def test_add_accepts_keyword_regex(tmp_path):
     result = _run(tmp_path, "add", "--keyword", "invoice|payment", "--action", "interrupt")
     assert result.returncode == 0, result.stderr
     rules = npn.load_rules(_config(tmp_path))
-    assert len(rules) == 1 and rules[0].keyword == "invoice|payment"
+    # --keyword is sugar that compiles to a regex predicate over the body/message text alias.
+    assert len(rules) == 1
+    assert rules[0].match == [npn.FieldPredicate(field="text", op="regex", value="invoice|payment")]
+
+
+def test_add_match_targets_arbitrary_field(tmp_path):
+    result = _run(tmp_path, "add", "--source", "whatsapp", "--match", "chat_name=Bride squad", "--action", "pool")
+    assert result.returncode == 0, result.stderr
+    rules = npn.load_rules(_config(tmp_path))
+    assert rules[0].source == "whatsapp"
+    assert rules[0].match == [npn.FieldPredicate(field="chat_name", op="contains", value="Bride squad")]
+    # And it applies: a message in that group is pooled, a 1:1 is not.
+    group = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "chat_name": "Bride squad", "interrupt": True})
+    dm = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "interrupt": True})
+    assert npn.should_interrupt(group, rules) is False
+    assert npn.should_interrupt(dm, rules) is True
+
+
+def test_add_match_regex_and_negate_ops(tmp_path):
+    _run(tmp_path, "add", "--match", "chat_name~=^proj-", "--match", "chat_type!=group", "--action", "pool")
+    rules = npn.load_rules(_config(tmp_path))
+    assert rules[0].match == [
+        npn.FieldPredicate(field="chat_name", op="regex", value="^proj-"),
+        npn.FieldPredicate(field="chat_type", op="contains", value="group", negate=True),
+    ]
+
+
+def test_add_rejects_invalid_match_regex(tmp_path):
+    result = _run(tmp_path, "add", "--match", "chat_name~=(unclosed", "--action", "pool")
+    assert result.returncode == 1
+    assert npn.load_rules(_config(tmp_path)) == []
+
+
+def test_add_rejects_malformed_match(tmp_path):
+    result = _run(tmp_path, "add", "--match", "no-operator-here", "--action", "pool")
+    assert result.returncode == 1
+    assert npn.load_rules(_config(tmp_path)) == []
+
+
+def test_legacy_rule_on_disk_is_normalized_then_converges(tmp_path):
+    # A rule written by the pre-update CLI (flat sender/keyword keys) must keep working and, once the
+    # file is rewritten by any edit, converge to canonical match shape.
+    policy = tmp_path / "agent" / "data" / "notification_policy.json"
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.write_text('{"rules": [{"id": "old", "source": "whatsapp", "type": null, "sender": "wife", "keyword": null, "action": "interrupt"}]}')
+    rules = npn.load_rules(_config(tmp_path))
+    assert rules[0].match == [npn.FieldPredicate(field="sender", op="contains", value="wife")]
+    # Adding another rule rewrites the file; the legacy one is now canonical.
+    _run(tmp_path, "add", "--source", "twitter", "--action", "pool")
+    import json as _json
+
+    on_disk = _json.loads(policy.read_text())["rules"]
+    assert "sender" not in on_disk[0] and "keyword" not in on_disk[0]
+    assert on_disk[0]["match"] == [{"field": "sender", "op": "contains", "value": "wife", "negate": False}]
 
 
 def test_add_rejects_invalid_keyword_regex(tmp_path):

@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ListFilter, Plus } from "lucide-react";
+import { ListFilter, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +41,7 @@ import {
   getNotificationHistory,
   getNotificationInterruptRules,
   setNotificationInterruptRules,
+  type FieldPredicate,
   type NotificationEvent,
   type NotificationInterruptRule,
 } from "@/api/agents";
@@ -69,21 +70,22 @@ function newRuleId(): string {
   return `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-const FIELDS: {
-  key: "source" | "type" | "sender" | "keyword";
-  label: string;
-}[] = [
-  { key: "source", label: "source" },
-  { key: "type", label: "type" },
-  { key: "sender", label: "sender" },
-  { key: "keyword", label: "keyword" },
-];
+// A custom field condition being edited: any notification field (chat_name, chat_type, …) matched
+// by substring ("is") or regex ("matches"), optionally negated. `sender`/`keyword` are separate
+// ergonomic shortcuts that compile to the same kind of predicate.
+type DraftPredicate = {
+  field: string;
+  op: "contains" | "regex";
+  value: string;
+  negate: boolean;
+};
 
 type Draft = {
   source: string;
   type: string;
   sender: string;
   keyword: string;
+  predicates: DraftPredicate[];
   action: "interrupt" | "pool";
 };
 const EMPTY_DRAFT: Draft = {
@@ -91,17 +93,98 @@ const EMPTY_DRAFT: Draft = {
   type: "",
   sender: "",
   keyword: "",
+  predicates: [],
   action: "interrupt",
 };
 
-// The conditions a rule actually matches on (set fields only), for the read-only summary.
+function regexError(pattern: string): string | null {
+  try {
+    new RegExp(pattern);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+// Compile a draft's shortcuts + custom rows into the rule's `match` predicate list (source/type stay
+// dedicated). sender = substring over the identity alias; keyword = regex over the body/message text.
+function draftToMatch(draft: Draft): FieldPredicate[] {
+  const match: FieldPredicate[] = [];
+  const sender = draft.sender.trim();
+  if (sender) match.push({ field: "sender", op: "contains", value: sender });
+  const keyword = draft.keyword.trim();
+  if (keyword) match.push({ field: "text", op: "regex", value: keyword });
+  for (const p of draft.predicates) {
+    const field = p.field.trim();
+    const value = p.value.trim();
+    if (field && value)
+      match.push({
+        field,
+        op: p.op,
+        value,
+        ...(p.negate ? { negate: true } : {}),
+      });
+  }
+  return match;
+}
+
+// One predicate -> a read-only badge. The sender/text aliases render under their friendly names;
+// any other field shows its name with a relation hint (~ regex, "not" when negated).
+function predicateBadge(p: FieldPredicate): { label: string; value: string } {
+  if (p.field === "sender" && p.op === "contains" && !p.negate)
+    return { label: "sender", value: p.value };
+  if (p.field === "text" && p.op === "regex" && !p.negate)
+    return { label: "keyword", value: p.value };
+  const rel = p.negate
+    ? p.op === "regex"
+      ? "not ~"
+      : "not"
+    : p.op === "regex"
+      ? "~"
+      : "";
+  return { label: p.field, value: rel ? `${rel} ${p.value}` : p.value };
+}
+
+// The conditions a rule actually matches on (source/type + every predicate), for the read-only summary.
 function ruleConditions(
   rule: NotificationInterruptRule,
 ): { label: string; value: string }[] {
-  return FIELDS.flatMap((field) => {
-    const value = rule[field.key];
-    return value ? [{ label: field.label, value }] : [];
-  });
+  const out: { label: string; value: string }[] = [];
+  if (rule.source) out.push({ label: "source", value: rule.source });
+  if (rule.type) out.push({ label: "type", value: rule.type });
+  for (const p of rule.match ?? []) out.push(predicateBadge(p));
+  return out;
+}
+
+// The notification value a predicate field reads, approximating the engine for the live preview:
+// the `sender` alias -> the event's sender, `text` -> its summary, anything else -> a structured extra.
+function notifFieldValue(
+  n: NotificationEvent,
+  field: string,
+): string | undefined {
+  if (field === "sender") return n.sender;
+  if (field === "text") return n.summary;
+  return n.fields?.[field];
+}
+
+function predicateMatchesNotif(
+  p: FieldPredicate,
+  n: NotificationEvent,
+): boolean {
+  const candidate = notifFieldValue(n, p.field);
+  let hit = false;
+  if (candidate != null) {
+    if (p.op === "contains") {
+      hit = candidate.toLowerCase().includes(p.value.toLowerCase());
+    } else {
+      try {
+        hit = new RegExp(p.value, "i").test(candidate);
+      } catch {
+        hit = false;
+      }
+    }
+  }
+  return p.negate ? !hit : hit;
 }
 
 export interface NotificationInterruptRulesHandle {
@@ -180,8 +263,8 @@ export const NotificationInterruptRulesCard = forwardRef<
     };
   }, [agentName]);
 
-  // Recent notifications drive the cascading source -> type -> sender suggestions. Best-effort: a
-  // failure just means no suggestions, never a card error.
+  // Recent notifications drive the cascading source -> type -> sender suggestions and the custom-field
+  // name/value suggestions. Best-effort: a failure just means no suggestions, never a card error.
   useEffect(() => {
     if (!agentName) return;
     let cancelled = false;
@@ -255,43 +338,47 @@ export const NotificationInterruptRulesCard = forwardRef<
   const deleteRule = (index: number) =>
     commit((rules ?? []).filter((_, i) => i !== index));
 
-  // Require at least one condition: a no-condition rule is a catch-all that would swallow everything.
-  const draftHasCondition = FIELDS.some(
-    (field) => draft[field.key].trim() !== "",
+  // A completed custom predicate row (both field and value filled in).
+  const completePredicates = draft.predicates.filter(
+    (p) => p.field.trim() !== "" && p.value.trim() !== "",
   );
 
-  // keyword is a regex; surface an invalid pattern inline rather than letting the server reject it.
-  const keywordRegexError = (() => {
-    const pattern = draft.keyword.trim();
-    if (!pattern) return null;
-    try {
-      new RegExp(pattern);
-      return null;
-    } catch (e) {
-      return (e as Error).message;
-    }
-  })();
+  // Require at least one condition: a no-condition rule is a catch-all that would swallow everything.
+  const draftHasCondition =
+    draft.source.trim() !== "" ||
+    draft.type.trim() !== "" ||
+    draft.sender.trim() !== "" ||
+    draft.keyword.trim() !== "" ||
+    completePredicates.length > 0;
+
+  // keyword + any regex custom predicate are regexes; surface an invalid pattern inline rather than
+  // letting the server reject it.
+  const keywordRegexError = draft.keyword.trim()
+    ? regexError(draft.keyword.trim())
+    : null;
+  const predicateRegexError = draft.predicates.some(
+    (p) =>
+      p.op === "regex" && p.value.trim() !== "" && regexError(p.value.trim()),
+  );
+  const hasRegexError = keywordRegexError !== null || predicateRegexError;
 
   // Live preview: how many recent notifications the drafted conditions would catch, so the rule's
-  // effect is visible before it's added. Approximates the engine (exact source/type/sender, regex
-  // keyword over the summary) against the history we already fetched for suggestions.
+  // effect is visible before it's added. Approximates the engine against the history we already
+  // fetched (exact source/type; predicates over sender/summary/structured fields).
   const draftMatchCount =
-    draftHasCondition && keywordRegexError === null
+    draftHasCondition && !hasRegexError
       ? (() => {
-          const pattern = draft.keyword.trim();
-          const keywordRe = pattern ? new RegExp(pattern, "i") : null;
+          const match = draftToMatch(draft);
           return notifications.filter((n) => {
             if (draft.source && n.source !== draft.source) return false;
             if (draft.type && n.notif_type !== draft.type) return false;
-            if (draft.sender && n.sender !== draft.sender) return false;
-            if (keywordRe && !keywordRe.test(n.summary)) return false;
-            return true;
+            return match.every((p) => predicateMatchesNotif(p, n));
           }).length;
         })()
       : null;
 
   const addDraft = () => {
-    if (!draftHasCondition || keywordRegexError !== null) return;
+    if (!draftHasCondition || hasRegexError) return;
     setSaveError(null);
     commit([
       ...(rules ?? []),
@@ -300,8 +387,7 @@ export const NotificationInterruptRulesCard = forwardRef<
         action: draft.action,
         source: draft.source.trim() || undefined,
         type: draft.type.trim() || undefined,
-        sender: draft.sender.trim() || undefined,
-        keyword: draft.keyword.trim() || undefined,
+        match: draftToMatch(draft),
       },
     ]);
     setDraft(EMPTY_DRAFT);
@@ -321,7 +407,7 @@ export const NotificationInterruptRulesCard = forwardRef<
     setStep(1);
   };
 
-  const step1Valid = draftHasCondition && keywordRegexError === null;
+  const step1Valid = draftHasCondition && !hasRegexError;
 
   useImperativeHandle(
     ref,
@@ -367,6 +453,38 @@ export const NotificationInterruptRulesCard = forwardRef<
         )
       : [];
 
+  // Custom-field suggestions: the structured extra fields (and their values) seen on notifications,
+  // scoped to the picked source when there is one, so the author discovers e.g. `chat_name`.
+  const fieldScopedNotifs = draft.source
+    ? notifications.filter((n) => n.source === draft.source)
+    : notifications;
+  const fieldNameOptions = uniqueStrings(
+    fieldScopedNotifs.flatMap((n) => Object.keys(n.fields ?? {})),
+  );
+  const fieldValueOptions = (field: string) =>
+    field ? uniqueStrings(fieldScopedNotifs.map((n) => n.fields?.[field])) : [];
+
+  const updatePredicate = (index: number, patch: Partial<DraftPredicate>) =>
+    setDraft((d) => ({
+      ...d,
+      predicates: d.predicates.map((p, i) =>
+        i === index ? { ...p, ...patch } : p,
+      ),
+    }));
+  const addPredicate = () =>
+    setDraft((d) => ({
+      ...d,
+      predicates: [
+        ...d.predicates,
+        { field: "", op: "contains", value: "", negate: false },
+      ],
+    }));
+  const removePredicate = (index: number) =>
+    setDraft((d) => ({
+      ...d,
+      predicates: d.predicates.filter((_, i) => i !== index),
+    }));
+
   const renderCombobox = (
     field: "source" | "type" | "sender",
     items: string[],
@@ -399,6 +517,92 @@ export const NotificationInterruptRulesCard = forwardRef<
       </ComboboxContent>
     </Combobox>
   );
+
+  // A custom field-condition row: a free-text field name (suggested from seen fields via a datalist),
+  // an is/matches op toggle, a free-text value (suggested values), a "not" toggle, and remove. Plain
+  // inputs + datalists keep arbitrary field names/values typable while still surfacing what's been seen.
+  const renderPredicateRow = (p: DraftPredicate, index: number) => {
+    const fieldListId = `notif-field-options-${index}`;
+    const valueListId = `notif-value-options-${index}`;
+    const valueOptions = fieldValueOptions(p.field);
+    return (
+      <div
+        key={index}
+        className="flex flex-col gap-1.5 rounded-lg border border-border/60 p-2"
+      >
+        <div className="flex items-center gap-1.5">
+          <Input
+            aria-label="custom field"
+            placeholder="field (e.g. chat_name)"
+            list={fieldNameOptions.length > 0 ? fieldListId : undefined}
+            value={p.field}
+            onChange={(e) => updatePredicate(index, { field: e.target.value })}
+            className="w-full"
+          />
+          {fieldNameOptions.length > 0 ? (
+            <datalist id={fieldListId}>
+              {fieldNameOptions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          ) : null}
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label="remove field condition"
+            onClick={() => removePredicate(index)}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {(["contains", "regex"] as const).map((op) => (
+            <Button
+              key={op}
+              type="button"
+              size="xs"
+              variant={p.op === op ? "secondary" : "ghost"}
+              aria-pressed={p.op === op}
+              onClick={() => updatePredicate(index, { op })}
+            >
+              {op === "contains" ? "is" : "matches"}
+            </Button>
+          ))}
+          <Button
+            type="button"
+            size="xs"
+            variant={p.negate ? "secondary" : "ghost"}
+            aria-pressed={p.negate}
+            aria-label="negate field condition"
+            onClick={() => updatePredicate(index, { negate: !p.negate })}
+          >
+            not
+          </Button>
+        </div>
+        <Input
+          aria-label="custom value"
+          placeholder={p.op === "regex" ? "regex, e.g. ^proj-" : "value"}
+          list={valueOptions.length > 0 ? valueListId : undefined}
+          value={p.value}
+          aria-invalid={
+            p.op === "regex" &&
+            p.value.trim() !== "" &&
+            regexError(p.value.trim()) !== null
+          }
+          onChange={(e) => updatePredicate(index, { value: e.target.value })}
+          className="w-full"
+        />
+        {valueOptions.length > 0 ? (
+          <datalist id={valueListId}>
+            {valueOptions.map((v) => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <Card size="sm">
@@ -445,8 +649,8 @@ export const NotificationInterruptRulesCard = forwardRef<
                               any notification
                             </span>
                           ) : (
-                            conditions.map((condition) => (
-                              <Badge key={condition.label} variant="outline">
+                            conditions.map((condition, i) => (
+                              <Badge key={i} variant="outline">
                                 {condition.label}: {condition.value}
                               </Badge>
                             ))
@@ -568,6 +772,27 @@ export const NotificationInterruptRulesCard = forwardRef<
                           className="w-full"
                         />
                       </Field>
+
+                      {/* General field conditions: target any notification field (chat_name, …). */}
+                      {draft.predicates.length > 0 ? (
+                        <Field label="field conditions" optional>
+                          <div className="flex flex-col gap-2">
+                            {draft.predicates.map((p, i) =>
+                              renderPredicateRow(p, i),
+                            )}
+                          </div>
+                        </Field>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className="self-start gap-1 text-muted-foreground"
+                        onClick={addPredicate}
+                      >
+                        <Plus className="size-3.5" />
+                        add field condition
+                      </Button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
@@ -606,6 +831,10 @@ export const NotificationInterruptRulesCard = forwardRef<
                         {keywordRegexError !== null ? (
                           <p className="mr-auto min-w-0 self-center truncate text-xs text-destructive">
                             invalid keyword regex: {keywordRegexError}
+                          </p>
+                        ) : predicateRegexError ? (
+                          <p className="mr-auto min-w-0 self-center truncate text-xs text-destructive">
+                            invalid field regex
                           </p>
                         ) : draftMatchCount !== null ? (
                           <p className="mr-auto min-w-0 self-center truncate text-xs text-muted-foreground">

@@ -335,12 +335,23 @@ export async function fetchUsage(name: string): Promise<Usage> {
   return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
 }
 
+// One match condition over a notification field. `field` is a concrete notification key (chat_name,
+// chat_type, …) or an alias ("sender" = the identity fields, "text" = body/message). `op` is a
+// case-insensitive substring ("contains") or regex; `negate` inverts it. Mirrors core's FieldPredicate.
+export interface FieldPredicate {
+  field: string;
+  op: "contains" | "regex";
+  value: string;
+  negate?: boolean;
+}
+
 export interface NotificationInterruptRule {
   id: string;
   source?: string | null;
   type?: string | null;
-  sender?: string | null;
-  keyword?: string | null;
+  // All conditions beyond source/type (sender, keyword, and any arbitrary field) are predicates here,
+  // ANDed together. Empty = the rule matches every notification of the given source/type.
+  match?: FieldPredicate[];
   action: "interrupt" | "pool";
 }
 

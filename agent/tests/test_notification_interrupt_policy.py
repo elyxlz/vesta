@@ -101,6 +101,129 @@ def test_invalid_keyword_regex_is_rejected():
         _rule(keyword="(unclosed", action="interrupt")
 
 
+# --- general field predicates (match) ---
+
+
+def _wa(**fields) -> vm.Notification:
+    base = {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message"}
+    base.update(fields)
+    return vm.Notification.model_validate(base)
+
+
+def test_match_targets_a_concrete_extra_field():
+    # The whole point: pool one group chat by its chat_name, which is neither sender nor body.
+    notif = _wa(chat_name="Bride squad", interrupt=True)
+    rule = _rule(source="whatsapp", match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
+    assert npn.should_interrupt(notif, [rule]) is False
+
+
+def test_match_concrete_field_is_substring_and_case_insensitive():
+    notif = _wa(chat_name="The Bride Squad 2024", interrupt=True)
+    rule = _rule(match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
+    assert npn.should_interrupt(notif, [rule]) is False
+
+
+def test_match_does_not_apply_when_field_absent():
+    # A 1:1 message has no chat_name; the group rule must not touch it.
+    notif = _wa(contact_name="Alice", interrupt=True)
+    rule = _rule(match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
+    assert npn.should_interrupt(notif, [rule]) is True
+
+
+def test_match_regex_op_on_concrete_field():
+    rule = _rule(match=[{"field": "chat_name", "op": "regex", "value": "^proj-"}], action="pool")
+    assert npn.should_interrupt(_wa(chat_name="proj-vesta", interrupt=True), [rule]) is False
+    assert npn.should_interrupt(_wa(chat_name="my proj-vesta", interrupt=True), [rule]) is True
+
+
+def test_match_negate_inverts():
+    # interrupt for everything whose chat_name is NOT the snoozed group.
+    rule = _rule(match=[{"field": "chat_name", "value": "bride squad", "negate": True}], action="interrupt")
+    assert npn.should_interrupt(_wa(chat_name="Work standup", interrupt=False), [rule]) is True
+    assert npn.should_interrupt(_wa(chat_name="Bride squad", interrupt=False), [rule]) is False
+
+
+def test_match_negate_on_absent_field_counts_as_not_matching():
+    # No chat_name -> does not contain "x" -> negated predicate holds.
+    rule = _rule(match=[{"field": "chat_name", "value": "x", "negate": True}], action="interrupt")
+    assert npn.should_interrupt(_wa(interrupt=False), [rule]) is True
+
+
+def test_match_coerces_non_string_fields():
+    # is_group is a bool; chat targeting by a bool/int field still works via str-coercion.
+    notif = _wa(is_group=True, interrupt=True)
+    rule = _rule(match=[{"field": "is_group", "value": "true"}], action="pool")
+    assert npn.should_interrupt(notif, [rule]) is False
+
+
+def test_match_predicates_are_anded():
+    notif = _wa(chat_name="Bride squad", is_group=True, interrupt=True)
+    # Both predicates hold -> pool.
+    both = _rule(match=[{"field": "chat_name", "value": "bride"}, {"field": "is_group", "value": "true"}], action="pool")
+    assert npn.should_interrupt(notif, [both]) is False
+    # One predicate fails -> rule does not apply -> static flag.
+    one = _rule(match=[{"field": "chat_name", "value": "bride"}, {"field": "is_group", "value": "false"}], action="pool")
+    assert npn.should_interrupt(notif, [one]) is True
+
+
+def test_match_sender_alias_searches_identity_fields():
+    notif = _wa(contact_name="Alice Smith", interrupt=False)
+    rule = _rule(match=[{"field": "sender", "value": "alice"}], action="interrupt")
+    assert npn.should_interrupt(notif, [rule]) is True
+
+
+def test_match_text_alias_searches_body_and_message():
+    rule = _rule(match=[{"field": "text", "op": "regex", "value": "taxes"}], action="interrupt")
+    assert npn.should_interrupt(_wa(message="ping about taxes", interrupt=False), [rule]) is True
+    assert npn.should_interrupt(_notif(body="taxes due", interrupt=False), [rule]) is True
+
+
+def test_match_invalid_regex_predicate_is_rejected():
+    with pytest.raises(pyd.ValidationError):
+        _rule(match=[{"field": "chat_name", "op": "regex", "value": "(unclosed"}], action="pool")
+
+
+def test_match_blank_field_is_rejected():
+    with pytest.raises(pyd.ValidationError):
+        _rule(match=[{"field": "  ", "value": "x"}], action="pool")
+
+
+def test_match_predicate_forbids_unknown_keys():
+    with pytest.raises(pyd.ValidationError):
+        _rule(match=[{"field": "chat_name", "value": "x", "bogus": 1}], action="pool")
+
+
+# --- legacy sender/keyword normalization into match ---
+
+
+def test_legacy_sender_keyword_normalize_into_match():
+    rule = _rule(source="whatsapp", sender="wife", keyword="urgent", action="interrupt")
+    assert rule.match == [
+        npn.FieldPredicate(field="sender", op="contains", value="wife"),
+        npn.FieldPredicate(field="text", op="regex", value="urgent"),
+    ]
+
+
+def test_legacy_null_sender_keyword_are_dropped_not_predicates():
+    # The pre-update CLI wrote sender/keyword as explicit null on every rule; they must vanish, not
+    # become predicates that match everything.
+    rule = npn.NotificationInterruptRule.model_validate(
+        {"id": "x", "source": "twitter", "type": None, "sender": None, "keyword": None, "action": "pool"}
+    )
+    assert rule.match == []
+
+
+def test_legacy_rule_on_disk_converges_to_canonical_shape_on_save(tmp_path):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    _write_policy(config, {"rules": [{"id": "a", "source": "whatsapp", "sender": "wife", "keyword": None, "action": "interrupt"}]})
+    loaded = npn.load_rules(config)
+    assert loaded[0].match == [npn.FieldPredicate(field="sender", op="contains", value="wife")]
+    npn.save_rules(loaded, config)
+    on_disk = json.loads(npn.policy_path(config).read_text())["rules"][0]
+    assert "sender" not in on_disk and "keyword" not in on_disk
+    assert on_disk["match"] == [{"field": "sender", "op": "contains", "value": "wife", "negate": False}]
+
+
 # --- default overrides ---
 
 
@@ -267,6 +390,37 @@ def test_notif_sender_handle_field():
 def test_notif_sender_none_when_no_identity_field():
     notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet"})
     assert npn.notif_sender(notif) is None
+
+
+# --- notif_facet_fields (discoverability) ---
+
+
+def test_notif_facet_fields_surfaces_structured_extras():
+    notif = vm.Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "message",
+            "contact_name": "Alice",  # identity -> excluded (surfaced as `sender`)
+            "message": "hello there",  # text -> excluded (reachable via keyword)
+            "chat_name": "Bride squad",
+            "chat_type": "group",
+            "is_group": True,  # coerced to "True"
+        }
+    )
+    assert npn.notif_facet_fields(notif) == {"chat_name": "Bride squad", "chat_type": "group", "is_group": "True"}
+
+
+def test_notif_facet_fields_skips_overlong_values():
+    notif = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "x", "type": "y", "blob": "z" * (npn.FACET_VALUE_MAXLEN + 1), "tag": "ok"}
+    )
+    fields = npn.notif_facet_fields(notif)
+    assert "blob" not in fields and fields["tag"] == "ok"
+
+
+def test_notif_facet_fields_empty_without_extras():
+    assert npn.notif_facet_fields(_notif()) == {}
 
 
 # --- core source is not targetable by a rule ---

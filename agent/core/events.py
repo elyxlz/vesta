@@ -77,6 +77,10 @@ class NotificationEvent(_BaseEvent):
     # them as optional). The production emit in monitor_loop always supplies all five.
     notif_type: tp.NotRequired[str]
     sender: tp.NotRequired[str]
+    # The notification's targetable structured extras ({field: value}, e.g. {"chat_name": "Bride squad"}),
+    # so the rule editor + the skill's `facets` can surface what an interrupt rule can match beyond
+    # source/type/sender. NotRequired (events predating it, and notifications with no such extras, omit it).
+    fields: tp.NotRequired[dict[str, str]]
     interrupt: tp.NotRequired[bool]
     decided: tp.NotRequired[tp.Literal["interrupt", "pool"]]
     notif_id: tp.NotRequired[str]

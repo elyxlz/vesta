@@ -30,17 +30,32 @@ Keep this proportionate: tune when there is a real pattern worth fixing, not con
 
 ## How matching works
 
-- A rule matches on any of `source`, `type`, `sender`, `keyword`. Every field you set must match (AND); fields you omit are ignored.
-- `source`/`type` are exact (case-insensitive); `sender` is a case-insensitive substring across the notification's identity fields; `keyword` is a case-insensitive **regex** (`re.search`) across its body/message. A plain word still works as a substring (`urgent`), but you can use full regex: `invoice|payment`, `\$\d+`, `^ALERT`.
+A rule has two dedicated fields (`source` and `type`) plus any number of `match` conditions over the
+notification's other fields. Every field/condition you set must hold (AND); whatever you omit is ignored.
+
+- `source`/`type` are exact (case-insensitive), e.g. `--source whatsapp --type message`.
+- Each `match` condition targets one notification field: `--match 'FIELD<op>VALUE'`. The op picks how it
+  compares (all case-insensitive):
+  - `=` substring, e.g. `--match 'chat_name=Bride squad'`
+  - `~=` regex (`re.search`), e.g. `--match 'chat_name~=^proj-'`, `--match 'subject~=invoice|payment'`
+  - `!=` / `!~=` negate either, e.g. `--match 'chat_type!=group'` (everything that is NOT a group)
+- `FIELD` is any field the notification carries; run `facets` to see what's there (`chat_name`, `chat_type`,
+  `is_group`, `media_type`, and so on). Two aliases search across a source's synonym fields so you needn't
+  know the exact name: `sender` (the identity fields) and `text` (body/message). `--sender X` and
+  `--keyword RE` are shortcuts for `--match 'sender=X'` and `--match 'text~=RE'`.
 - Rules are an ordered list, **first match wins**, so put specific rules before broad ones.
-- A rule with no match fields is a catch-all; only useful as the last rule.
-- Precedence when deciding interrupt vs pool: (1) the first matching rule, then (2) your per-`(source, type)` **default override** if you set one, then (3) the default the source chose. Your internal notifications (`source=core`: greetings, dreamer, proactive checks) are never affected.
-- Prefer a default override to a catch-all rule for "this source usually should not interrupt me": set `outlook -> pool` as the default, then add a sender rule above it for the exceptions. No ordering to get wrong.
+- A rule with no `source`/`type`/`match` is a catch-all; only useful as the last rule.
+- Precedence when deciding interrupt vs pool: (1) the first matching rule, then (2) your per-`(source, type)`
+  **default override** if you set one, then (3) the default the source chose. Your internal notifications
+  (`source=core`: greetings, dreamer, proactive checks) are never affected.
+- Prefer a default override to a catch-all rule for "this source usually should not interrupt me": set
+  `outlook -> pool` as the default, then add a narrower interrupt rule above it for the exceptions.
 
 ## Usage
 
 ```bash
-# See what source/type/sender values exist (from notifications seen so far) so you know what to target
+# See what's targetable (source/type/sender + every structured field like chat_name) from notifications
+# seen so far. Check this first so you target real field names/values.
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py facets
 
 # See the current rules (with ids)
@@ -52,6 +67,15 @@ uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --sourc
 # Let what genuinely matters reach you immediately (put before a broad pool rule)
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --sender "wife" --action interrupt
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source email --keyword urgent --action interrupt
+
+# Snooze one busy group chat by name, while 1:1s and other groups still interrupt (target chat_name)
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_name=Bride squad' --action pool
+
+# Combine conditions (AND): pool only group chats from whatsapp, leaving DMs alone
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_type=group' --action pool
+
+# Negate: interrupt for any chat that is NOT that one group
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
 
 # Remove a rule by id, or clear them all
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py remove <id>

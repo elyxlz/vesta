@@ -61,6 +61,31 @@ async def test_put_then_get_round_trip_and_persist(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_put_match_predicate_round_trips(tmp_path):
+    client, config = await _client(tmp_path)
+    try:
+        rule = {"source": "whatsapp", "match": [{"field": "chat_name", "op": "contains", "value": "Bride squad"}], "action": "pool"}
+        resp = await client.put("/config/notification-policy", json={"rules": [rule]})
+        assert resp.status == 200
+        loaded = npn.load_rules(config)
+        assert loaded[0].match == [npn.FieldPredicate(field="chat_name", op="contains", value="Bride squad")]
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_put_invalid_match_regex_is_400(tmp_path):
+    client, config = await _client(tmp_path)
+    try:
+        rule = {"match": [{"field": "chat_name", "op": "regex", "value": "(unclosed"}], "action": "pool"}
+        resp = await client.put("/config/notification-policy", json={"rules": [rule]})
+        assert resp.status == 400
+        assert npn.load_rules(config) == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
 async def test_put_drops_a_core_notification_so_the_agent_learns(tmp_path):
     """The policy applies live (no restart), so a user edit would otherwise be invisible to the running
     agent. PUT drops a pooled source=core notification recapping the change."""

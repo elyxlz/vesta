@@ -376,8 +376,45 @@ describe("NotificationInterruptRulesCard cascade", () => {
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg[0].keyword).toBe("urgent");
+    // keyword is sugar that compiles to a regex predicate over the body/message text alias.
+    expect(rulesArg[0].match).toEqual([
+      { field: "text", op: "regex", value: "urgent" },
+    ]);
     expect(rulesArg[0].source).toBeUndefined();
+  });
+
+  it("adds a rule targeting a custom field (chat_name)", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [],
+      cursor: null,
+    });
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    await waitFor(() =>
+      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /add field condition/i }),
+    );
+    await userEvent.type(screen.getByLabelText("custom field"), "chat_name");
+    await userEvent.type(screen.getByLabelText("custom value"), "Bride squad");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /add rule/i,
+      }),
+    );
+
+    await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
+    const [, rulesArg] = setSpy.mock.calls[0];
+    expect(rulesArg[0].match).toEqual([
+      { field: "chat_name", op: "contains", value: "Bride squad" },
+    ]);
   });
 
   it("reveals type only after a source is picked", async () => {
