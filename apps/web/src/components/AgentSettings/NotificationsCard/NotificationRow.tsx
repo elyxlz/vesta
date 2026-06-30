@@ -10,7 +10,10 @@ import { cn } from "@/lib/utils";
 // Loading placeholder shaped like a NotificationRow card.
 export function NotificationRowSkeleton() {
   return (
-    <Card size="sm" className="!gap-2.5 px-4 !py-3.5">
+    <Card
+      size="sm"
+      className="!gap-2.5 bg-muted/40 px-4 !py-3.5 shadow-none ring-0"
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Skeleton className="h-4 w-20 rounded-3xl" />
@@ -118,8 +121,9 @@ export function NotificationRow({
     <Card
       size="sm"
       className={cn(
-        "!gap-2.5 px-4 !py-3.5",
-        isPending && "bg-primary/[0.01] ring-2 ring-primary",
+        // Muted, flat surface so the rows don't read as cards-inside-a-card.
+        "!gap-2.5 bg-muted/40 px-4 !py-3.5 shadow-none ring-0",
+        isPending && "bg-primary/5 ring-2 ring-primary",
       )}
     >
       <div className="flex items-start justify-between gap-3">
