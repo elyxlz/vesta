@@ -917,6 +917,32 @@ export const NotificationInterruptRulesCard = forwardRef<
                                 (value) =>
                                   setDraft((d) => ({ ...d, type: value })),
                               )}
+                              {/* Quick-pick the types seen for this source. */}
+                              {typeOptions.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {typeOptions.slice(0, 8).map((t) => (
+                                    <Button
+                                      key={t}
+                                      type="button"
+                                      size="xs"
+                                      variant={
+                                        draft.type === t
+                                          ? "secondary"
+                                          : "outline"
+                                      }
+                                      aria-pressed={draft.type === t}
+                                      onClick={() =>
+                                        setDraft((d) => ({
+                                          ...d,
+                                          type: d.type === t ? "" : t,
+                                        }))
+                                      }
+                                    >
+                                      {t}
+                                    </Button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </Field>
                           ) : null}
                         </FieldGroup>
