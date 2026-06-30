@@ -38,6 +38,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Field as UIField,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -222,8 +227,8 @@ export interface NotificationInterruptRulesHandle {
   addFromNotification: (seed: { source?: string; type?: string }) => void;
 }
 
-// A labeled field row in the add-rule dialog: a small heading above its control, with an "· optional"
-// hint when the condition can be left blank.
+// A labeled field in the add-rule dialog (shadcn Field + FieldLabel), kept compact, with an
+// "· optional" hint when the condition can be left blank.
 function Field({
   label,
   optional,
@@ -234,8 +239,8 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-foreground">
+    <UIField className="gap-1.5">
+      <FieldLabel className="text-xs font-medium text-foreground">
         {label}
         {optional ? (
           <span className="font-normal text-muted-foreground/50">
@@ -243,9 +248,9 @@ function Field({
             · optional
           </span>
         ) : null}
-      </span>
+      </FieldLabel>
       {children}
-    </div>
+    </UIField>
   );
 }
 
@@ -845,7 +850,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </DialogHeader>
 
                   {step === 1 ? (
-                    <div className="flex flex-col gap-3">
+                    <FieldGroup className="gap-3">
                       {/* Reveal-on-fill: source first, then type. Everything else is a field condition. */}
                       <Field label="source">
                         {renderCombobox(
@@ -896,7 +901,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                           ),
                         )}
                       </div>
-                    </div>
+                    </FieldGroup>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
                       {(["interrupt", "pool"] as const).map((action) => {
