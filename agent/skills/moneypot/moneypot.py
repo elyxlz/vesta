@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path.home() / ".moneypot"
-DATA_FILE = DATA_DIR / "data.json"
+# Persistent, gitignored data dir (the vesta platform convention; core stores
+# its state here too). Override with MONEYPOT_DATA for a custom location.
+DATA_FILE = Path(os.environ.get("MONEYPOT_DATA", Path.home() / "agent" / "data" / "moneypot.json"))
+DATA_DIR = DATA_FILE.parent
 
 
 class MoneypotError(ValueError):

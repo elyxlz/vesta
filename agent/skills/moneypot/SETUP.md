@@ -1,6 +1,6 @@
 # Moneypot setup
 
-The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` works immediately and creates `~/.moneypot/data.json` on first write.
+The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 
