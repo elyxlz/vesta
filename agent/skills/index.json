@@ -72,6 +72,10 @@
     "description": "Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon."
   },
   {
+    "name": "moneypot",
+    "description": "Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get the minimum set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise."
+  },
+  {
     "name": "notifications",
     "description": "Manage how incoming notifications affect YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your current work vs. wait in the pool (interrupt rules), and triage the pooled ones when a triage pass hands them to you. The point is your productivity: being preempted by low-value notifications mid-task is costly. Use when you notice unimportant notifications breaking your focus, when the user tells you what should or shouldn't pull you off your work (e.g. \"don't let Twitter interrupt you\", \"always let my wife's messages reach you right away\", \"stay focused on this and hold the low-priority stuff\"), when you want to guard a hard task, when asked what's currently allowed to interrupt you, or when triaging the notifications that piled up while you were busy."
   },
