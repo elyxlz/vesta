@@ -113,7 +113,7 @@ describe("NotificationInterruptRulesCard", () => {
     expect(nextButton.disabled).toBe(true);
   });
 
-  it("blocks an invalid keyword regex and accepts a valid one", async () => {
+  it("blocks an invalid regex condition and accepts a valid one", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
     await waitFor(() =>
@@ -124,13 +124,15 @@ describe("NotificationInterruptRulesCard", () => {
       name: /next/i,
     }) as HTMLButtonElement;
 
-    await userEvent.type(screen.getByLabelText("keyword"), "(unclosed");
-    expect(screen.getByText(/invalid keyword regex/i)).toBeTruthy();
+    // The keyword preset adds a regex condition; type an invalid pattern into its value.
+    await userEvent.click(screen.getByRole("button", { name: "keyword" }));
+    await userEvent.type(screen.getByLabelText("custom value"), "(unclosed");
+    expect(screen.getByText(/invalid regex in a condition/i)).toBeTruthy();
     expect(nextButton.disabled).toBe(true);
 
     // Completing the group makes it a valid regex; the error clears and next re-enables.
-    await userEvent.type(screen.getByLabelText("keyword"), ")");
-    expect(screen.queryByText(/invalid keyword regex/i)).toBeNull();
+    await userEvent.type(screen.getByLabelText("custom value"), ")");
+    expect(screen.queryByText(/invalid regex in a condition/i)).toBeNull();
     expect(nextButton.disabled).toBe(false);
   });
 
@@ -408,7 +410,8 @@ describe("NotificationInterruptRulesCard cascade", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
+    await userEvent.click(screen.getByRole("button", { name: "keyword" }));
+    await userEvent.type(screen.getByLabelText("custom value"), "urgent");
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -418,7 +421,7 @@ describe("NotificationInterruptRulesCard cascade", () => {
 
     await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
     const [, rulesArg] = setSpy.mock.calls[0];
-    // keyword is sugar that compiles to a regex predicate over the body/message text alias.
+    // The keyword preset compiles to a regex predicate over the body/message text alias.
     expect(rulesArg[0].match).toEqual([
       { field: "text", op: "regex", value: "urgent" },
     ]);
@@ -440,9 +443,7 @@ describe("NotificationInterruptRulesCard cascade", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.click(
-      screen.getByRole("button", { name: /add field condition/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "field" }));
     await userEvent.type(screen.getByLabelText("custom field"), "chat_name");
     await userEvent.type(screen.getByLabelText("custom value"), "Bride squad");
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
@@ -477,7 +478,8 @@ describe("NotificationInterruptRulesCard cascade", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
+    await userEvent.click(screen.getByRole("button", { name: "keyword" }));
+    await userEvent.type(screen.getByLabelText("custom value"), "urgent");
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
