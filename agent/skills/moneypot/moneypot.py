@@ -8,7 +8,7 @@ balances and the minimum set of payments to settle up. Multi-currency: each pot
 has a base currency; entries can be in another currency with an exchange rate.
 
 Money is stored as integer minor units (pence/cents) so settle-up is exact with
-no float drift. Stdlib only. Data in ~/.moneypot/data.json.
+no float drift. Stdlib only. Data in ~/agent/data/moneypot.json.
 
 This module is both a CLI (`python3 moneypot.py ...`) and an importable service
 layer (`create_pot`, `add_expense`, `add_transfer`, `balance`, ... raise
@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 # Persistent, gitignored data dir (the vesta platform convention; core stores
@@ -36,6 +36,7 @@ class MoneypotError(ValueError):
 
 
 # ---------- storage ----------
+
 
 def load() -> dict:
     if not DATA_FILE.exists():
@@ -54,7 +55,7 @@ def save(data: dict) -> None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def get_pot(data: dict, pot_id: str) -> dict:
@@ -69,6 +70,7 @@ def _next_entry_id(pot: dict) -> int:
 
 
 # ---------- money helpers ----------
+
 
 def to_cents(s) -> int:
     """Parse a money value ('12', '12.5', '12.50') to integer minor units."""
@@ -174,6 +176,7 @@ def _resolve_split(pot, orig_total, base_total, rate, orig_currency, for_list, s
 
 # ---------- balance engine ----------
 
+
 def compute_nets(pot: dict) -> dict[str, int]:
     """Net per member in cents. Positive = owed money / ahead. Negative = owes."""
     nets = {m: 0 for m in pot["members"]}
@@ -190,25 +193,27 @@ def compute_nets(pot: dict) -> dict[str, int]:
 
 def settle_up(nets: dict[str, int]) -> list[tuple[str, str, int]]:
     """Minimal greedy settle-up: list of (debtor, creditor, cents)."""
-    creditors = sorted(([m, v] for m, v in nets.items() if v > 0), key=lambda x: -x[1])
-    debtors = sorted(([m, -v] for m, v in nets.items() if v < 0), key=lambda x: -x[1])
+    rem: dict[str, int] = dict(nets)
+    creditors: list[str] = sorted((m for m, v in nets.items() if v > 0), key=lambda m: -nets[m])
+    debtors: list[str] = sorted((m for m, v in nets.items() if v < 0), key=lambda m: nets[m])
     txns: list[tuple[str, str, int]] = []
     i = j = 0
     while i < len(debtors) and j < len(creditors):
         d, c = debtors[i], creditors[j]
-        pay = min(d[1], c[1])
+        pay = min(-rem[d], rem[c])
         if pay > 0:
-            txns.append((d[0], c[0], pay))
-        d[1] -= pay
-        c[1] -= pay
-        if d[1] == 0:
+            txns.append((d, c, pay))
+        rem[d] += pay
+        rem[c] -= pay
+        if rem[d] == 0:
             i += 1
-        if c[1] == 0:
+        if rem[c] == 0:
             j += 1
     return txns
 
 
 # ---------- service layer (raises MoneypotError; used by CLI and API) ----------
+
 
 def create_pot(data, pot_id, name=None, currency="GBP", members=None) -> dict:
     if not pot_id or not pot_id.strip():
@@ -250,8 +255,18 @@ def add_expense(data, pot_id, payer, amount, desc="", currency=None, rate=None, 
     r = resolve_rate(orig_currency, base, rate, fetch)
     base_total = convert(orig_total, r)
     split = _resolve_split(pot, orig_total, base_total, r, orig_currency, for_list, split_map)
-    entry = {"id": _next_entry_id(pot), "type": "expense", "payer": payer, "amount": base_total,
-             "currency": orig_currency, "rate": r, "orig_amount": orig_total, "desc": desc or "", "split": split, "ts": _now()}
+    entry = {
+        "id": _next_entry_id(pot),
+        "type": "expense",
+        "payer": payer,
+        "amount": base_total,
+        "currency": orig_currency,
+        "rate": r,
+        "orig_amount": orig_total,
+        "desc": desc or "",
+        "split": split,
+        "ts": _now(),
+    }
     pot["entries"].append(entry)
     return entry
 
@@ -270,8 +285,18 @@ def add_transfer(data, pot_id, sender, recipient, amount, desc="", currency=None
     orig_currency = (currency or base).upper()
     r = resolve_rate(orig_currency, base, rate, fetch)
     base_amt = convert(orig_amt, r)
-    entry = {"id": _next_entry_id(pot), "type": "transfer", "from": sender, "to": recipient, "amount": base_amt,
-             "currency": orig_currency, "rate": r, "orig_amount": orig_amt, "desc": desc or "", "ts": _now()}
+    entry = {
+        "id": _next_entry_id(pot),
+        "type": "transfer",
+        "from": sender,
+        "to": recipient,
+        "amount": base_amt,
+        "currency": orig_currency,
+        "rate": r,
+        "orig_amount": orig_amt,
+        "desc": desc or "",
+        "ts": _now(),
+    }
     pot["entries"].append(entry)
     return entry
 
@@ -293,9 +318,14 @@ def balance(data, pot_id) -> dict:
             paid[e["payer"]] = paid.get(e["payer"], 0) + e["amount"]
     total_spent = sum(e["amount"] for e in pot["entries"] if e["type"] == "expense")
     txns = settle_up(nets)
-    return {"pot": pot_id, "currency": pot["currency"], "total_spent": total_spent,
-            "balances": {m: nets.get(m, 0) for m in pot["members"]}, "paid": paid,
-            "settle_up": [{"from": d, "to": c, "amount": a} for d, c, a in txns]}
+    return {
+        "pot": pot_id,
+        "currency": pot["currency"],
+        "total_spent": total_spent,
+        "balances": {m: nets.get(m, 0) for m in pot["members"]},
+        "paid": paid,
+        "settle_up": [{"from": d, "to": c, "amount": a} for d, c, a in txns],
+    }
 
 
 def contributions(data, pot_id, account) -> dict:
@@ -316,12 +346,18 @@ def contributions(data, pot_id, account) -> dict:
         elif e["type"] == "expense" and e["payer"] in owed_back:
             owed_back[e["payer"]] += e["split"].get(account, 0)
     target = max(contributed.values())
-    return {"pot": pot_id, "currency": pot["currency"], "account": account,
-            "contributed": contributed, "topup_to_match": {m: target - contributed[m] for m in others},
-            "account_owes": {m: owed_back[m] for m in others if owed_back[m] != 0}}
+    return {
+        "pot": pot_id,
+        "currency": pot["currency"],
+        "account": account,
+        "contributed": contributed,
+        "topup_to_match": {m: target - contributed[m] for m in others},
+        "account_owes": {m: owed_back[m] for m in others if owed_back[m] != 0},
+    }
 
 
 # ---------- CLI ----------
+
 
 def _die(msg: str):
     print(f"error: {msg}", file=sys.stderr)
@@ -354,7 +390,15 @@ def cmd_pot_create(args):
 def cmd_pot_list(args):
     data = load()
     if args.json:
-        print(json.dumps([{"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])} for pid, p in data["pots"].items()], indent=2))
+        print(
+            json.dumps(
+                [
+                    {"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])}
+                    for pid, p in data["pots"].items()
+                ],
+                indent=2,
+            )
+        )
         return
     if not data["pots"]:
         print("no pots yet. create one: moneypot pot create <id> --members 'A,B'")
@@ -384,8 +428,18 @@ def cmd_member_add(args):
 
 def cmd_add_expense(args):
     data = load()
-    e = add_expense(data, args.id, args.payer, args.amount, args.desc, args.currency, args.rate, args.fetch,
-                    [m.strip() for m in args.for_.split(",")] if args.for_ else None, _split_map(args.split))
+    e = add_expense(
+        data,
+        args.id,
+        args.payer,
+        args.amount,
+        args.desc,
+        args.currency,
+        args.rate,
+        args.fetch,
+        [m.strip() for m in args.for_.split(",")] if args.for_ else None,
+        _split_map(args.split),
+    )
     save(data)
     pot = data["pots"][args.id]
     base = pot["currency"]

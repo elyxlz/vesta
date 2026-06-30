@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """moneypot HTTP API - a thin JSON wrapper over the moneypot service layer.
 
-Stdlib only. Shares the same ~/.moneypot/data.json as the CLI. Mutations are
+Stdlib only. Shares the same ~/agent/data/moneypot.json as the CLI. Mutations are
 serialized with a lock so concurrent requests don't clobber the file.
 
 Run:  python3 server.py --port 8080
@@ -143,7 +143,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "service": "moneypot"})
         if path == "/pots":
             data = mp.load()
-            return self._send(200, [{"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])} for pid, p in data["pots"].items()])
+            return self._send(
+                200,
+                [
+                    {"id": pid, **{k: v for k, v in p.items() if k != "entries"}, "entries": len(p["entries"])}
+                    for pid, p in data["pots"].items()
+                ],
+            )
         m = re.fullmatch(r"/pots/([^/]+)", path)
         if m:
             data = mp.load()
@@ -177,15 +183,37 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/pots/([^/]+)/expenses", path)
         if m:
             pid = m.group(1)
-            e = _write(lambda d: mp.add_expense(d, pid, b.get("payer"), b.get("amount"), b.get("desc", ""),
-                                                b.get("currency"), b.get("rate"), bool(b.get("fetch")),
-                                                b.get("for"), b.get("split")))
+            e = _write(
+                lambda d: mp.add_expense(
+                    d,
+                    pid,
+                    b.get("payer"),
+                    b.get("amount"),
+                    b.get("desc", ""),
+                    b.get("currency"),
+                    b.get("rate"),
+                    bool(b.get("fetch")),
+                    b.get("for"),
+                    b.get("split"),
+                )
+            )
             return self._send(201, e)
         m = re.fullmatch(r"/pots/([^/]+)/transfers", path)
         if m:
             pid = m.group(1)
-            e = _write(lambda d: mp.add_transfer(d, pid, b.get("from"), b.get("to"), b.get("amount"), b.get("desc", ""),
-                                                 b.get("currency"), b.get("rate"), bool(b.get("fetch"))))
+            e = _write(
+                lambda d: mp.add_transfer(
+                    d,
+                    pid,
+                    b.get("from"),
+                    b.get("to"),
+                    b.get("amount"),
+                    b.get("desc", ""),
+                    b.get("currency"),
+                    b.get("rate"),
+                    bool(b.get("fetch")),
+                )
+            )
             return self._send(201, e)
         self._send(404, {"error": f"no route POST {path}"})
 
@@ -199,9 +227,11 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/pots/([^/]+)", path)
         if m:
             pid = m.group(1)
+
             def _del(d):
                 mp.get_pot(d, pid)
                 del d["pots"][pid]
+
             _write(_del)
             return self._send(200, {"ok": True})
         self._send(404, {"error": f"no route DELETE {path}"})
@@ -212,8 +242,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--api-key", default=os.environ.get("MONEYPOT_API_KEY"),
-                    help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.")
+    ap.add_argument(
+        "--api-key",
+        default=os.environ.get("MONEYPOT_API_KEY"),
+        help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.",
+    )
     args = ap.parse_args()
     API_KEY = args.api_key or None
     AGENT_TOKEN = os.environ.get("AGENT_TOKEN") or None  # also accepted when an app key is set
