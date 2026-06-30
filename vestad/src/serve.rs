@@ -1356,6 +1356,11 @@ pub(crate) struct Settings {
     /// the active channel. On by default; opt out at runtime via PUT /settings/auto-update.
     #[serde(default = "default_true")]
     pub(crate) auto_update: bool,
+    /// Bind the HTTPS API to the LAN (0.0.0.0) instead of loopback only. A binding
+    /// preference like the port file — it lives here, not in the static systemd
+    /// unit, and the daemon reads it at startup. Set via `vestad serve --expose-lan`.
+    #[serde(default)]
+    pub(crate) expose_lan: bool,
 }
 
 // Manual `Default` (not derived) so a fresh install with no settings.json gets
@@ -1369,6 +1374,7 @@ impl Default for Settings {
             agents: HashMap::new(),
             channel: default_channel(),
             auto_update: true,
+            expose_lan: false,
         }
     }
 }
@@ -1518,6 +1524,23 @@ fn save_settings(settings: &Settings) {
     }
 }
 
+/// The persisted LAN-exposure preference (default: loopback only). The daemon
+/// reads this at startup to decide the HTTPS bind address.
+pub(crate) fn expose_lan_setting() -> bool {
+    load_settings().expose_lan
+}
+
+/// Persist the LAN-exposure preference. Returns `true` when the stored value
+/// changed, so the caller can restart the daemon to apply the new bind address.
+pub(crate) fn set_expose_lan(expose: bool) -> bool {
+    let mut settings = load_settings();
+    if settings.expose_lan == expose {
+        return false;
+    }
+    settings.expose_lan = expose;
+    save_settings(&settings);
+    true
+}
 
 const SERVICE_PORT_MIN: u16 = 49152;
 const SERVICE_PORT_MAX: u16 = 65535;
@@ -2616,6 +2639,27 @@ mod tests {
         let s: super::Settings =
             serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
         assert!(!s.auto_update);
+    }
+
+    // --- expose_lan defaults off: a settings.json predating the field must keep the
+    // HTTPS API on loopback, never silently bind a fleet of agents to the LAN ---
+
+    #[test]
+    fn settings_default_keeps_lan_unexposed() {
+        assert!(!super::Settings::default().expose_lan);
+    }
+
+    #[test]
+    fn settings_missing_expose_lan_field_deserializes_false() {
+        let s: super::Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
+        assert!(!s.expose_lan);
+    }
+
+    #[test]
+    fn settings_expose_lan_true_is_honored() {
+        let s: super::Settings =
+            serde_json::from_str(r#"{"expose_lan": true}"#).expect("valid Settings");
+        assert!(s.expose_lan);
     }
 
     // --- user_desired drives vestad's boot-start; a wrong default would silently keep every

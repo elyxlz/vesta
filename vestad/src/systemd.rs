@@ -9,38 +9,7 @@ fn unit_file_path() -> Result<String, String> {
     Ok(format!("{}/.config/systemd/user/vestad.service", home))
 }
 
-/// Build the systemd unit file content. `expose_lan` bakes `--expose-lan` into
-/// the `ExecStart` line so the systemd-managed daemon binds the HTTPS API to the
-/// LAN — the unit is the only persistence for this choice, so it survives
-/// restarts and self-updates (which deliberately don't rewrite the unit).
-fn build_unit_content(vestad_path: &str, working_dir: Option<&str>, expose_lan: bool) -> String {
-    let working_dir_line = match working_dir {
-        Some(dir) => format!("WorkingDirectory={dir}\n"),
-        None => String::new(),
-    };
-    let expose_lan_arg = if expose_lan { " --expose-lan" } else { "" };
-
-    format!(
-        r#"[Unit]
-Description=Vesta API Server
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart={vestad_path} serve --standalone{expose_lan_arg}
-{working_dir_line}Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"#
-    )
-}
-
-/// Install or update the systemd user unit. Returns `true` when the unit was
-/// written (newly installed or changed), `false` when it already matched — the
-/// caller restarts a running daemon only on a real change.
-pub fn ensure_service_installed(expose_lan: bool) -> Result<bool, String> {
+pub fn ensure_service_installed() -> Result<(), String> {
     let vestad_path = std::env::current_exe()
         .map_err(|e| format!("cannot determine binary path: {}", e))?
         .to_str()
@@ -58,11 +27,30 @@ pub fn ensure_service_installed(expose_lan: bool) -> Result<bool, String> {
         None
     };
 
-    let unit_content = build_unit_content(&vestad_path, working_dir.as_deref(), expose_lan);
+    let working_dir_line = match &working_dir {
+        Some(dir) => format!("WorkingDirectory={dir}\n"),
+        None => String::new(),
+    };
+
+    let unit_content = format!(
+        r#"[Unit]
+Description=Vesta API Server
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart={vestad_path} serve --standalone
+{working_dir_line}Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#
+    );
 
     if let Ok(existing) = std::fs::read_to_string(&unit_path) {
         if existing == unit_content {
-            return Ok(false);
+            return Ok(());
         }
         eprintln!("updating systemd service...");
     } else {
@@ -91,7 +79,7 @@ pub fn ensure_service_installed(expose_lan: bool) -> Result<bool, String> {
         eprintln!("warning: loginctl enable-linger failed — vestad may stop on logout");
     }
 
-    Ok(true)
+    Ok(())
 }
 
 pub fn is_active() -> bool {
@@ -220,26 +208,7 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_unit_content, journal_args, SERVICE_NAME};
-
-    #[test]
-    fn unit_content_appends_expose_lan_flag_when_exposing_lan() {
-        let unit = build_unit_content("/usr/bin/vestad", None, true);
-        assert!(
-            unit.contains("ExecStart=/usr/bin/vestad serve --standalone --expose-lan\n"),
-            "ExecStart must carry --expose-lan so the systemd daemon binds the LAN: {unit}"
-        );
-    }
-
-    #[test]
-    fn unit_content_omits_expose_lan_flag_by_default() {
-        let unit = build_unit_content("/usr/bin/vestad", None, false);
-        assert!(
-            unit.contains("ExecStart=/usr/bin/vestad serve --standalone\n"),
-            "default ExecStart stays loopback-only: {unit}"
-        );
-        assert!(!unit.contains("--expose-lan"), "no LAN flag when not exposing: {unit}");
-    }
+    use super::{journal_args, SERVICE_NAME};
 
     #[test]
     fn journal_args_scope_the_vestad_unit_and_forward_follow() {
