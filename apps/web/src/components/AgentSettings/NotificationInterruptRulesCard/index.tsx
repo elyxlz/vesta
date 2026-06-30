@@ -828,7 +828,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="sm:max-w-3xl"
+                  className="sm:max-w-4xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onInteractOutside={(event) => {
                     // Only a real backdrop (overlay) click dismisses this multi-field form; stray
