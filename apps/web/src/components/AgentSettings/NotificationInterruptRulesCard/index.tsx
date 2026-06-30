@@ -283,7 +283,7 @@ export function NotificationInterruptRulesCard() {
                   <span className="text-foreground">
                     "snooze the Bride Squad group chat"
                   </span>
-                  . To change one, delete it here and ask again.
+                  .
                 </p>
               </div>
 
