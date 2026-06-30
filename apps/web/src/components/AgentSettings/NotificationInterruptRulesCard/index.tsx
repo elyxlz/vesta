@@ -894,7 +894,9 @@ export const NotificationInterruptRulesCard = forwardRef<
                         }
                       >
                         {draft.predicates.length > 0 ? (
-                          <div className="flex flex-col gap-2.5">
+                          // Cap the list so many conditions scroll instead of growing the dialog past
+                          // the viewport; the small -mr/pr keeps the scrollbar off the inputs.
+                          <div className="-mr-1 flex max-h-56 flex-col gap-2.5 overflow-y-auto pr-1">
                             {draft.predicates.map((p, i) =>
                               renderPredicateRow(p, i),
                             )}
