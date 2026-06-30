@@ -94,7 +94,9 @@ GET    /pots/{id}/balance
 GET    /pots/{id}/contributions?account=X
 ```
 
-Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route).
+Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
+
+**Public vs private.** By default the API is open. Set an app-level key with `--api-key KEY` (or `MONEYPOT_API_KEY`) to require it on every route except `/health`; callers pass `Authorization: Bearer KEY` or `X-API-Key: KEY`, otherwise 401. This is independent of vestad's own token gating (registering the service without `--public` adds a second layer).
 
 ## Notes
 

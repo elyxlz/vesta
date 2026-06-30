@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,12 @@ from urllib.parse import urlparse, parse_qs
 import moneypot as mp
 
 LOCK = threading.Lock()
+
+# When set (via --api-key or MONEYPOT_API_KEY), every request except /health must
+# present the key as `Authorization: Bearer <key>` or `X-API-Key: <key>`. When
+# unset, the API is open. This is the app-level "public vs private-with-key" toggle,
+# independent of any vestad token gating in front of it.
+API_KEY = None
 
 
 def _read(data, fn):
@@ -63,6 +70,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authed(self) -> bool:
+        """True if the request is allowed: no key configured, or a matching key."""
+        if not API_KEY:
+            return True
+        if urlparse(self.path).path.rstrip("/") in ("/health", ""):
+            return True
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:].strip() == API_KEY:
+            return True
+        return self.headers.get("X-API-Key", "").strip() == API_KEY
+
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
         if not n:
@@ -79,6 +97,8 @@ class Handler(BaseHTTPRequestHandler):
     # -------- routing --------
 
     def do_GET(self):
+        if not self._authed():
+            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_get()
         except mp.MoneypotError as e:
@@ -87,6 +107,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": str(e)})
 
     def do_POST(self):
+        if not self._authed():
+            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_post()
         except mp.MoneypotError as e:
@@ -95,6 +117,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": str(e)})
 
     def do_DELETE(self):
+        if not self._authed():
+            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_delete()
         except mp.MoneypotError as e:
@@ -175,12 +199,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global API_KEY
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--api-key", default=os.environ.get("MONEYPOT_API_KEY"),
+                    help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.")
     args = ap.parse_args()
+    API_KEY = args.api_key or None
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"moneypot API on {args.host}:{args.port}", flush=True)
+    mode = "private (api key required)" if API_KEY else "open (no auth)"
+    print(f"moneypot API on {args.host}:{args.port} - {mode}", flush=True)
     srv.serve_forever()
 
 

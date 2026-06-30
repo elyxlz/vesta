@@ -13,6 +13,17 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
 
    Drop `--public` for a token-gated service (reachable only with `X-Agent-Token`).
 
+   **Private with an app key (recommended):** generate a key and pass it so the API requires it on every route except `/health`:
+
+   ```bash
+   KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+   echo "export MONEYPOT_API_KEY=$KEY" >> ~/.bashrc
+   P=$(~/agent/skills/service/scripts/register-service moneypot --public)
+   screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && MONEYPOT_API_KEY='$KEY' PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
+   ```
+
+   Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`). Omit the key entirely for an open API.
+
 2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
 
    ```bash
