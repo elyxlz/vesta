@@ -44,8 +44,14 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Toggle } from "@/components/ui/toggle";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   getNotificationHistory,
   getNotificationInterruptRules,
@@ -97,6 +103,20 @@ type DraftPredicate = {
   value: string;
   negate: boolean;
 };
+
+// The op + negate pair, folded into one operator dropdown so a condition reads as a sentence
+// ("chat_name is Bride squad" / "chat_type is not group").
+const OPERATORS = [
+  { id: "is", label: "is", op: "contains", negate: false },
+  { id: "is-not", label: "is not", op: "contains", negate: true },
+  { id: "matches", label: "matches", op: "regex", negate: false },
+  { id: "not-matches", label: "doesn't match", op: "regex", negate: true },
+] as const;
+
+function operatorId(p: Pick<DraftPredicate, "op" | "negate">): string {
+  const match = OPERATORS.find((o) => o.op === p.op && o.negate === p.negate);
+  return (match ?? OPERATORS[0]).id;
+}
 
 type Draft = {
   source: string;
@@ -627,96 +647,71 @@ export const NotificationInterruptRulesCard = forwardRef<
     const valueListId = `notif-value-options-${index}`;
     const valueOptions = predicateValueOptions(p.field);
     return (
-      <div
-        key={index}
-        className="flex flex-col gap-4 rounded-2xl border border-border/60 p-4"
-      >
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              field
-            </span>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="remove field condition"
-              onClick={() => removePredicate(index)}
-            >
-              <X />
-            </Button>
-          </div>
-          <Input
-            aria-label="custom field"
-            placeholder="field name, e.g. chat_name"
-            list={fieldNameOptions.length > 0 ? fieldListId : undefined}
-            value={p.field}
-            onChange={(e) => updatePredicate(index, { field: e.target.value })}
-            className="w-full"
-          />
-          {fieldNameOptions.length > 0 ? (
-            <datalist id={fieldListId}>
-              {fieldNameOptions.map((name) => (
-                <option key={name} value={name} />
+      <div key={index} className="flex items-center gap-2">
+        <Input
+          aria-label="custom field"
+          placeholder="field"
+          list={fieldNameOptions.length > 0 ? fieldListId : undefined}
+          value={p.field}
+          onChange={(e) => updatePredicate(index, { field: e.target.value })}
+          className="min-w-0 flex-1"
+        />
+        {fieldNameOptions.length > 0 ? (
+          <datalist id={fieldListId}>
+            {fieldNameOptions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        ) : null}
+        <Select
+          value={operatorId(p)}
+          onValueChange={(id) => {
+            const op = OPERATORS.find((o) => o.id === id);
+            if (op) updatePredicate(index, { op: op.op, negate: op.negate });
+          }}
+        >
+          <SelectTrigger aria-label="operator" className="w-fit shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {OPERATORS.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  {o.label}
+                </SelectItem>
               ))}
-            </datalist>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={p.op}
-            onValueChange={(value) => {
-              if (value)
-                updatePredicate(index, { op: value as "contains" | "regex" });
-            }}
-          >
-            <ToggleGroupItem value="contains">is</ToggleGroupItem>
-            <ToggleGroupItem value="regex">matches</ToggleGroupItem>
-          </ToggleGroup>
-          <Toggle
-            size="sm"
-            variant="outline"
-            pressed={p.negate}
-            onPressedChange={(pressed) =>
-              updatePredicate(index, { negate: pressed })
-            }
-            aria-label="negate field condition"
-          >
-            not
-          </Toggle>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium text-muted-foreground">
-            value
-          </span>
-          <Input
-            aria-label="custom value"
-            placeholder={
-              p.op === "regex" ? "regex, e.g. ^proj-" : "value to match"
-            }
-            list={valueOptions.length > 0 ? valueListId : undefined}
-            value={p.value}
-            aria-invalid={
-              p.op === "regex" &&
-              p.value.trim() !== "" &&
-              regexError(p.value.trim()) !== null
-            }
-            onChange={(e) => updatePredicate(index, { value: e.target.value })}
-            className="w-full"
-          />
-          {valueOptions.length > 0 ? (
-            <datalist id={valueListId}>
-              {valueOptions.map((v) => (
-                <option key={v} value={v} />
-              ))}
-            </datalist>
-          ) : null}
-        </div>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Input
+          aria-label="custom value"
+          placeholder={p.op === "regex" ? "regex" : "value"}
+          list={valueOptions.length > 0 ? valueListId : undefined}
+          value={p.value}
+          aria-invalid={
+            p.op === "regex" &&
+            p.value.trim() !== "" &&
+            regexError(p.value.trim()) !== null
+          }
+          onChange={(e) => updatePredicate(index, { value: e.target.value })}
+          className="min-w-0 flex-1"
+        />
+        {valueOptions.length > 0 ? (
+          <datalist id={valueListId}>
+            {valueOptions.map((v) => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        ) : null}
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="remove field condition"
+          onClick={() => removePredicate(index)}
+        >
+          <X />
+        </Button>
       </div>
     );
   };
@@ -856,7 +851,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="sm:max-w-[460px]"
+                  className="sm:max-w-[520px]"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                 >
                   <DialogHeader>
