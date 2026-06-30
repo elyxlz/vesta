@@ -12,7 +12,7 @@ export function NotificationRowSkeleton() {
   return (
     <Card
       size="sm"
-      className="!gap-2.5 bg-muted/40 px-4 !py-3.5 shadow-none ring-0"
+      className="!gap-2.5 border border-border bg-muted/40 px-4 !py-3.5 shadow-none ring-0"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -121,8 +121,9 @@ export function NotificationRow({
     <Card
       size="sm"
       className={cn(
-        // Muted, flat surface so the rows don't read as cards-inside-a-card.
-        "!gap-2.5 bg-muted/40 px-4 !py-3.5 shadow-none ring-0",
+        // Muted, flat surface (no shadow) with a hairline border to separate rows, so they don't
+        // read as cards-inside-a-card but are still distinct.
+        "!gap-2.5 border border-border bg-muted/40 px-4 !py-3.5 shadow-none ring-0",
         isPending && "bg-primary/5 ring-2 ring-primary",
       )}
     >
