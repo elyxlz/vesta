@@ -828,7 +828,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="sm:max-w-[520px]"
+                  className="sm:max-w-2xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onInteractOutside={(event) => {
                     // Only a real backdrop (overlay) click dismisses this multi-field form; stray
@@ -852,77 +852,86 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </DialogHeader>
 
                   {step === 1 ? (
-                    <FieldGroup className="gap-6 py-1">
-                      {/* Reveal-on-fill: source first, then type. Everything else is a field condition. */}
-                      <Field
-                        label="source"
-                        description="which app or service. leave blank to match every source."
-                      >
-                        {renderCombobox(
-                          "source",
-                          sourceOptions,
-                          false,
-                          (value) =>
-                            setDraft((d) => ({
-                              ...d,
-                              source: value,
-                              type: "",
-                            })),
-                        )}
-                      </Field>
+                    <div className="@container">
+                      <div className="grid gap-6 py-1 @md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] @md:gap-8">
+                        {/* Left column: what the rule is scoped to. */}
+                        <FieldGroup className="gap-6">
+                          {/* Reveal-on-fill: source first, then type. */}
+                          <Field
+                            label="source"
+                            description="which app or service. leave blank to match every source."
+                          >
+                            {renderCombobox(
+                              "source",
+                              sourceOptions,
+                              false,
+                              (value) =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  source: value,
+                                  type: "",
+                                })),
+                            )}
+                          </Field>
 
-                      {/* Progressive disclosure: type only matters once a source is chosen. */}
-                      {draft.source ? (
-                        <Field
-                          label="type"
-                          optional
-                          description={`kind of ${draft.source} notification, e.g. message or mention.`}
-                        >
-                          {renderCombobox("type", typeOptions, false, (value) =>
-                            setDraft((d) => ({ ...d, type: value })),
-                          )}
-                        </Field>
-                      ) : null}
-
-                      {/* Conditions: sender / keyword / any field, all uniform predicates. */}
-                      <Field
-                        label="conditions"
-                        optional
-                        description={
-                          draft.predicates.length === 0
-                            ? "add one to match on a sender, a keyword, or any field."
-                            : undefined
-                        }
-                      >
-                        {draft.predicates.length > 0 ? (
-                          // Cap the list so many conditions scroll instead of growing the dialog past
-                          // the viewport; pr keeps the scrollbar off the inputs.
-                          <ScrollArea className="max-h-56">
-                            <div className="flex flex-col gap-2.5 pr-3">
-                              {draft.predicates.map((p, i) =>
-                                renderPredicateRow(p, i),
+                          {/* Progressive disclosure: type only matters once a source is chosen. */}
+                          {draft.source ? (
+                            <Field
+                              label="type"
+                              optional
+                              description={`kind of ${draft.source} notification, e.g. message or mention.`}
+                            >
+                              {renderCombobox(
+                                "type",
+                                typeOptions,
+                                false,
+                                (value) =>
+                                  setDraft((d) => ({ ...d, type: value })),
                               )}
-                            </div>
-                          </ScrollArea>
-                        ) : null}
-                        <div className="flex flex-wrap items-center gap-2">
-                          {(["sender", "keyword", "field"] as const).map(
-                            (preset) => (
-                              <Button
-                                key={preset}
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => addPredicate(preset)}
-                              >
-                                <Plus data-icon="inline-start" />
-                                {preset}
-                              </Button>
-                            ),
-                          )}
-                        </div>
-                      </Field>
-                    </FieldGroup>
+                            </Field>
+                          ) : null}
+                        </FieldGroup>
+
+                        {/* Right column: conditions. Wraps below the scope column when narrow. */}
+                        <Field
+                          label="conditions"
+                          optional
+                          description={
+                            draft.predicates.length === 0
+                              ? "add one to match on a sender, a keyword, or any field."
+                              : undefined
+                          }
+                        >
+                          {draft.predicates.length > 0 ? (
+                            // Cap the list so many conditions scroll instead of growing the dialog past
+                            // the viewport; pr keeps the scrollbar off the inputs.
+                            <ScrollArea className="max-h-56">
+                              <div className="flex flex-col gap-2.5 pr-3">
+                                {draft.predicates.map((p, i) =>
+                                  renderPredicateRow(p, i),
+                                )}
+                              </div>
+                            </ScrollArea>
+                          ) : null}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(["sender", "keyword", "field"] as const).map(
+                              (preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => addPredicate(preset)}
+                                >
+                                  <Plus data-icon="inline-start" />
+                                  {preset}
+                                </Button>
+                              ),
+                            )}
+                          </div>
+                        </Field>
+                      </div>
+                    </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
                       {(["interrupt", "pool"] as const).map((action) => {
