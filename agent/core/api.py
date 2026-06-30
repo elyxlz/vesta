@@ -396,10 +396,7 @@ def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
             items = validated[key]
             parts.append(f"{label} ({len(items)}): " + ("; ".join(render(item) for item in items) if items else "none"))
     body = " and ".join(parts) if parts else "your notification policy"
-    return (
-        "[The user updated your notification interrupt policy from the app — you didn't make this change; "
-        f"it's already live.] Now: {body}. If any of this is wrong for your focus, raise it with the user."
-    )
+    return f"[The user retuned your notification policy from the app; it's live now.] Now: {body}. Flag anything that's off for your focus."
 
 
 async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
