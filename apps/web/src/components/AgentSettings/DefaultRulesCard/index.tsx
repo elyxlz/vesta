@@ -1,5 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { CornerDownRight, Lock, SlidersHorizontal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChevronRight,
+  CornerDownRight,
+  Lock,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,6 +17,7 @@ import {
   type NotificationStaticDefault,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { cn } from "@/lib/utils";
 import { useLiveNotifications } from "@/hooks/use-live-notifications";
 
 type Disposition = "interrupt" | "pool";
@@ -84,6 +90,49 @@ function buildRows(
   }
   return rows;
 }
+
+const effectiveOf = (row: DefaultRow): Disposition =>
+  row.override ?? row.staticDisposition ?? "pool";
+
+interface SourceGroup {
+  source: string;
+  rows: DefaultRow[];
+}
+
+// Group the flat (source, type) rows under their source, so a source with many types reads as one
+// block instead of repeating its name on every row. Insertion order is preserved (newest source last).
+function groupBySource(rows: DefaultRow[]): SourceGroup[] {
+  const bySource = new Map<string, DefaultRow[]>();
+  for (const row of rows) {
+    const existing = bySource.get(row.source);
+    if (existing) existing.push(row);
+    else bySource.set(row.source, [row]);
+  }
+  return [...bySource.entries()].map(([source, sourceRows]) => ({
+    source,
+    rows: sourceRows,
+  }));
+}
+
+// One-line at-a-glance tally for a collapsed source, e.g. "3 interrupt · 1 snooze".
+function tallyLabel(rows: DefaultRow[]): string {
+  let interrupt = 0;
+  let snooze = 0;
+  for (const row of rows) {
+    if (effectiveOf(row) === "interrupt") interrupt += 1;
+    else snooze += 1;
+  }
+  return [
+    interrupt ? `${interrupt} interrupt` : "",
+    snooze ? `${snooze} snooze` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// Past this many sources or rows the source groups collapse by default, so a noisy fleet stays scannable.
+const DENSE_SOURCES = 6;
+const DENSE_ROWS = 12;
 
 // The defaults the rules layer on top of: the immutable core exemption, and the per-(source, type)
 // fallback applied when no rule matches. The fallback each source chose is editable here — flip it to
@@ -160,7 +209,22 @@ export function DefaultRulesCard() {
     () => mergeLiveDefaults(staticDefaults, arrivals),
     [staticDefaults, arrivals],
   );
-  const rows = buildRows(liveDefaults, overrides);
+  const rows = useMemo(
+    () => buildRows(liveDefaults, overrides),
+    [liveDefaults, overrides],
+  );
+  const groups = useMemo(() => groupBySource(rows), [rows]);
+
+  // Source groups collapse by default once the table is dense; the user can override per-source.
+  const dense = groups.length > DENSE_SOURCES || rows.length > DENSE_ROWS;
+  const [openState, setOpenState] = useState<Record<string, boolean>>({});
+  const isOpen = (source: string) =>
+    source in openState ? openState[source] : !dense;
+  const toggleOpen = (source: string) =>
+    setOpenState((s) => ({ ...s, [source]: !isOpen(source) }));
+  const allOpen = groups.every((g) => isOpen(g.source));
+  const setAllOpen = (open: boolean) =>
+    setOpenState(Object.fromEntries(groups.map((g) => [g.source, open])));
 
   return (
     <Card size="sm">
@@ -183,34 +247,38 @@ export function DefaultRulesCard() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2.5">
             <div className="flex flex-col gap-1">
-              <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                <CornerDownRight className="size-3.5 text-muted-foreground" />
-                fallback behavior
-              </span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                  <CornerDownRight className="size-3.5 text-muted-foreground" />
+                  fallback behavior
+                </span>
+                {dense && !loading && rows.length > 0 ? (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground/70 transition-colors hover:text-foreground"
+                    onClick={() => setAllOpen(!allOpen)}
+                  >
+                    {allOpen ? "collapse all" : "expand all"}
+                  </button>
+                ) : null}
+              </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                how each source behaves when no rule matches. click a badge to
+                how each source behaves when no rule matches. tap a badge to
                 change it.
               </p>
             </div>
             {loading ? (
-              <div className="mx-auto grid min-h-20 w-[98%] grid-cols-[max-content_max-content_minmax(0,1fr)] content-start items-center gap-x-3 gap-y-2">
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  source
-                </span>
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  type
-                </span>
-                <span className="justify-self-end text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  rule
-                </span>
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Fragment key={i}>
-                    <Skeleton className="h-5 w-16 rounded-3xl" />
-                    <Skeleton className="h-5 w-14 rounded-3xl" />
-                    <Skeleton className="h-5 w-16 justify-self-end rounded-3xl" />
-                  </Fragment>
+              <div className="flex min-h-20 flex-col gap-2.5">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="flex flex-col gap-1.5">
+                    <Skeleton className="h-5 w-28 rounded-3xl" />
+                    <div className="flex items-center justify-between pl-5">
+                      <Skeleton className="h-4 w-20 rounded-3xl" />
+                      <Skeleton className="h-5 w-16 rounded-3xl" />
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : rows.length === 0 ? (
@@ -218,59 +286,95 @@ export function DefaultRulesCard() {
                 defaults appear here as notifications arrive.
               </p>
             ) : (
-              <div className="mx-auto grid min-h-20 w-[98%] grid-cols-[max-content_max-content_minmax(0,1fr)] content-start items-center gap-x-3 gap-y-2">
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  source
-                </span>
-                <span className="text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  type
-                </span>
-                <span className="justify-self-end text-[10px] tracking-wide text-muted-foreground/50 uppercase">
-                  rule
-                </span>
-                {rows.map((row) => {
-                  const effective: Disposition =
-                    row.override ?? row.staticDisposition ?? "pool";
+              <div className="flex flex-col gap-2.5">
+                {groups.map((group) => {
+                  const open = isOpen(group.source);
                   return (
-                    <Fragment key={overrideKey(row.source, row.type)}>
-                      <span className="text-sm text-foreground">
-                        {row.source}
-                      </span>
-                      <span className="min-w-0">
-                        {row.type ? (
-                          <Badge variant="secondary">{row.type}</Badge>
-                        ) : (
-                          <span className="text-sm text-muted-foreground/50">
-                            —
+                    <div key={group.source} className="flex flex-col gap-1.5">
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        aria-label={`${group.source}, ${group.rows.length} ${group.rows.length === 1 ? "type" : "types"}, ${open ? "collapse" : "expand"}`}
+                        onClick={() => toggleOpen(group.source)}
+                        className="flex items-center gap-2 text-left"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                            open && "rotate-90",
+                          )}
+                        />
+                        <span className="text-sm font-semibold text-foreground">
+                          {group.source}
+                        </span>
+                        <span className="text-xs text-muted-foreground/50">
+                          {group.rows.length}{" "}
+                          {group.rows.length === 1 ? "type" : "types"}
+                        </span>
+                        {!open ? (
+                          <span className="ml-auto truncate text-xs text-muted-foreground/70">
+                            {tallyLabel(group.rows)}
                           </span>
-                        )}
-                      </span>
-                      <span className="flex items-center gap-1.5 justify-self-end">
-                        <Badge
-                          asChild
-                          variant={
-                            effective === "interrupt" ? "default" : "secondary"
-                          }
-                        >
-                          <button
-                            type="button"
-                            aria-label={`default for ${row.source} ${row.type || "(no type)"}: ${
-                              effective === "interrupt" ? "interrupt" : "snooze"
-                            }, click to toggle`}
-                            onClick={() =>
-                              toggle(
-                                row.source,
-                                row.type,
-                                effective,
-                                row.staticDisposition,
-                              )
-                            }
-                          >
-                            {effective === "interrupt" ? "interrupt" : "snooze"}
-                          </button>
-                        </Badge>
-                      </span>
-                    </Fragment>
+                        ) : null}
+                      </button>
+
+                      {open ? (
+                        <div className="flex flex-col gap-1.5 pl-5">
+                          {group.rows.map((row) => {
+                            const effective = effectiveOf(row);
+                            return (
+                              <div
+                                key={overrideKey(row.source, row.type)}
+                                className="flex items-center gap-2"
+                              >
+                                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                                  {row.type || (
+                                    <span className="text-muted-foreground/50">
+                                      no type
+                                    </span>
+                                  )}
+                                </span>
+                                {row.override ? (
+                                  <span
+                                    className="size-1.5 shrink-0 rounded-full bg-primary/60"
+                                    title="you changed this — tap to inherit again"
+                                  />
+                                ) : null}
+                                <Badge
+                                  asChild
+                                  variant={
+                                    effective === "interrupt"
+                                      ? "default"
+                                      : "secondary"
+                                  }
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={`default for ${row.source} ${row.type || "(no type)"}: ${
+                                      effective === "interrupt"
+                                        ? "interrupt"
+                                        : "snooze"
+                                    }, tap to toggle`}
+                                    onClick={() =>
+                                      toggle(
+                                        row.source,
+                                        row.type,
+                                        effective,
+                                        row.staticDisposition,
+                                      )
+                                    }
+                                  >
+                                    {effective === "interrupt"
+                                      ? "interrupt"
+                                      : "snooze"}
+                                  </button>
+                                </Badge>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
