@@ -158,6 +158,24 @@ def test_parse_sdk_message_returns_session_id_from_init():
     assert texts == []
 
 
+def test_parse_sdk_message_skips_thinking_tokens_system_message():
+    """thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn;
+    parse must drop it without logging so it does not flood the agent log."""
+    from unittest.mock import patch
+
+    from claude_agent_sdk import SystemMessage
+
+    msg = SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5})
+
+    with patch("core.sdk_parsing.logger.system") as mock_system:
+        texts, thinking_blocks, session_id = parse_sdk_message(msg)
+
+    mock_system.assert_not_called()
+    assert texts == []
+    assert thinking_blocks == []
+    assert session_id is None
+
+
 def test_process_message_always_streams():
     """process_message must always pass show_output=True -- regression guard."""
     import ast

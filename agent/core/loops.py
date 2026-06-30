@@ -198,7 +198,7 @@ async def _run_messages_with_interrupts(
                 logger.user(text)
                 state.event_bus.emit({"type": "user", "text": text})
             else:
-                preview = text[:200] + "..." if len(text) > 200 else text
+                preview = text[:1000] + "..." if len(text) > 1000 else text
                 logger.system(preview.replace("\n", " "))
             state.event_bus.set_state("thinking")
             await process_message(text, state=state, config=config, is_user=user)
