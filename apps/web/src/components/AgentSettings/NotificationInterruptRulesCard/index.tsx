@@ -45,13 +45,9 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import {
   getNotificationHistory,
   getNotificationInterruptRules,
@@ -561,6 +557,9 @@ export const NotificationInterruptRulesCard = forwardRef<
         : notifications,
     [notifications, draft.source],
   );
+  // Field options for the native select: the two aliases plus every structured extra seen (scoped to
+  // the picked source). A current value not in the list (e.g. a preset alias) is appended so the
+  // select can render it.
   const fieldNameOptions = useMemo(
     () =>
       uniqueStrings([
@@ -570,14 +569,6 @@ export const NotificationInterruptRulesCard = forwardRef<
       ]),
     [fieldScopedNotifs],
   );
-  // Value suggestions for a field: the `sender` alias reads the event's sender; `text` is free regex
-  // (no suggestions); any concrete field reads its structured-extra values.
-  const predicateValueOptions = (field: string): string[] => {
-    if (field === "sender")
-      return uniqueStrings(fieldScopedNotifs.map((n) => n.sender));
-    if (field === "text" || !field) return [];
-    return uniqueStrings(fieldScopedNotifs.map((n) => n.fields?.[field]));
-  };
 
   const updatePredicate = (index: number, patch: Partial<DraftPredicate>) =>
     setDraft((d) => ({
@@ -639,54 +630,46 @@ export const NotificationInterruptRulesCard = forwardRef<
     </Combobox>
   );
 
-  // A custom field-condition row: a free-text field name (suggested from seen fields via a datalist),
-  // an is/matches op toggle, a free-text value (suggested values), a "not" toggle, and remove. Plain
-  // inputs + datalists keep arbitrary field names/values typable while still surfacing what's been seen.
+  // A condition row reading like a sentence: [ field ▾ ] [ operator ▾ ] [ value ] [✕]. Field and
+  // operator are native selects (no modal/portal quirks); value stays a free-text input since values
+  // are arbitrary (a regex, or a string not yet seen). The current field is always in the option list.
   const renderPredicateRow = (p: DraftPredicate, index: number) => {
-    const fieldListId = `notif-field-options-${index}`;
-    const valueListId = `notif-value-options-${index}`;
-    const valueOptions = predicateValueOptions(p.field);
+    const fieldOptions = uniqueStrings([p.field, ...fieldNameOptions]).filter(
+      Boolean,
+    );
     return (
       <div key={index} className="flex items-center gap-2">
-        <Input
-          aria-label="custom field"
-          placeholder="field"
-          list={fieldNameOptions.length > 0 ? fieldListId : undefined}
+        <NativeSelect
+          aria-label="condition field"
           value={p.field}
           onChange={(e) => updatePredicate(index, { field: e.target.value })}
           className="min-w-0 flex-1"
-        />
-        {fieldNameOptions.length > 0 ? (
-          <datalist id={fieldListId}>
-            {fieldNameOptions.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        ) : null}
-        <Select
+        >
+          <NativeSelectOption value="">field…</NativeSelectOption>
+          {fieldOptions.map((name) => (
+            <NativeSelectOption key={name} value={name}>
+              {name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        <NativeSelect
+          aria-label="operator"
           value={operatorId(p)}
-          onValueChange={(id) => {
-            const op = OPERATORS.find((o) => o.id === id);
+          onChange={(e) => {
+            const op = OPERATORS.find((o) => o.id === e.target.value);
             if (op) updatePredicate(index, { op: op.op, negate: op.negate });
           }}
+          className="shrink-0"
         >
-          <SelectTrigger aria-label="operator" className="w-fit shrink-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {OPERATORS.map((o) => (
-                <SelectItem key={o.id} value={o.id}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+          {OPERATORS.map((o) => (
+            <NativeSelectOption key={o.id} value={o.id}>
+              {o.label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
         <Input
           aria-label="custom value"
           placeholder={p.op === "regex" ? "regex" : "value"}
-          list={valueOptions.length > 0 ? valueListId : undefined}
           value={p.value}
           aria-invalid={
             p.op === "regex" &&
@@ -696,13 +679,6 @@ export const NotificationInterruptRulesCard = forwardRef<
           onChange={(e) => updatePredicate(index, { value: e.target.value })}
           className="min-w-0 flex-1"
         />
-        {valueOptions.length > 0 ? (
-          <datalist id={valueListId}>
-            {valueOptions.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
-        ) : null}
         <Button
           type="button"
           size="icon-xs"
@@ -854,10 +830,9 @@ export const NotificationInterruptRulesCard = forwardRef<
                   className="sm:max-w-[520px]"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onInteractOutside={(event) => {
-                    // Native <datalist> suggestion popups (field/value inputs) live outside the dialog
-                    // DOM; selecting or dismissing one reports body/html as the target, which Radix
-                    // reads as an outside click and would close the dialog mid-edit. Only a real
-                    // backdrop (overlay) click should dismiss.
+                    // Only a real backdrop (overlay) click dismisses this multi-field form; stray
+                    // outside interactions (focus shifts, native control popups) shouldn't lose an
+                    // in-progress rule.
                     const target = event.detail.originalEvent
                       .target as HTMLElement | null;
                     if (!target?.closest('[data-slot="dialog-overlay"]')) {

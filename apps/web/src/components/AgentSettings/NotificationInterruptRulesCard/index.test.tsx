@@ -430,21 +430,32 @@ describe("NotificationInterruptRulesCard cascade", () => {
 
   it("adds a rule targeting a custom field (chat_name)", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
+    // chat_name must be a seen field for the native field select to offer it.
     vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
+      notifications: [
+        {
+          type: "notification",
+          source: "whatsapp",
+          summary: "x",
+          notif_type: "message",
+          fields: { chat_name: "Bride squad" },
+          notif_id: "n1",
+        },
+      ],
       cursor: null,
     });
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
       .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
+    await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
 
     await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
     await userEvent.click(screen.getByRole("button", { name: "field" }));
-    await userEvent.type(screen.getByLabelText("custom field"), "chat_name");
+    await userEvent.selectOptions(
+      screen.getByLabelText("condition field"),
+      "chat_name",
+    );
     await userEvent.type(screen.getByLabelText("custom value"), "Bride squad");
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     await userEvent.click(
