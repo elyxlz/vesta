@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ListFilter, Plus, X } from "lucide-react";
+import { GripVertical, ListFilter, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -187,6 +187,38 @@ function predicateMatchesNotif(
   return p.negate ? !hit : hit;
 }
 
+// Whether a whole rule matches a notification (source/type exact + all predicates), approximating the
+// engine for the live preview / shadow check.
+function ruleMatchesNotif(
+  rule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
+  n: NotificationEvent,
+): boolean {
+  if (rule.source && n.source !== rule.source) return false;
+  if (rule.type && n.notif_type !== rule.type) return false;
+  return (rule.match ?? []).every((p) => predicateMatchesNotif(p, n));
+}
+
+// How narrowly a rule matches = its condition count. Used only to place a new rule (the engine is
+// first-match-wins, never specificity-ranked) so a narrow exception lands above the broad rule it refines.
+function specificity(
+  rule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
+): number {
+  return (
+    (rule.source ? 1 : 0) + (rule.type ? 1 : 0) + (rule.match?.length ?? 0)
+  );
+}
+
+// Insert position for a new rule: above the first existing rule that is strictly broader (fewer
+// conditions), else at the end. Matches the skill CLI's _placement_index.
+function placementIndex(
+  rules: NotificationInterruptRule[],
+  newRule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
+): number {
+  const spec = specificity(newRule);
+  const i = rules.findIndex((r) => specificity(r) < spec);
+  return i === -1 ? rules.length : i;
+}
+
 export interface NotificationInterruptRulesHandle {
   addFromNotification: (seed: { source?: string; type?: string }) => void;
 }
@@ -243,6 +275,8 @@ export const NotificationInterruptRulesCard = forwardRef<
   // The dialog's content element, so the combobox popups portal inside it — otherwise they land in
   // body, which the dialog marks inert (pointer-events: none) and the options become unclickable.
   const [dialogEl, setDialogEl] = useState<HTMLElement | null>(null);
+  // The rule row currently being dragged, for reordering (null when not dragging).
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!agentName) return;
@@ -377,20 +411,49 @@ export const NotificationInterruptRulesCard = forwardRef<
         })()
       : null;
 
+  // Would the draft be shadowed? At its specificity-placement, if every recent notification it catches
+  // is already caught by a higher-priority rule above it, first-match-wins means it would never fire.
+  const draftShadowed = (() => {
+    if (!draftHasCondition || hasRegexError) return false;
+    const draftRule = {
+      source: draft.source.trim() || undefined,
+      type: draft.type.trim() || undefined,
+      match: draftToMatch(draft),
+    };
+    const hits = notifications.filter((n) => ruleMatchesNotif(draftRule, n));
+    if (hits.length === 0) return false;
+    const above = (rules ?? []).slice(
+      0,
+      placementIndex(rules ?? [], draftRule),
+    );
+    return hits.every((n) => above.some((r) => ruleMatchesNotif(r, n)));
+  })();
+
   const addDraft = () => {
     if (!draftHasCondition || hasRegexError) return;
     setSaveError(null);
-    commit([
-      ...(rules ?? []),
-      {
-        id: newRuleId(),
-        action: draft.action,
-        source: draft.source.trim() || undefined,
-        type: draft.type.trim() || undefined,
-        match: draftToMatch(draft),
-      },
-    ]);
+    const newRule: NotificationInterruptRule = {
+      id: newRuleId(),
+      action: draft.action,
+      source: draft.source.trim() || undefined,
+      type: draft.type.trim() || undefined,
+      match: draftToMatch(draft),
+    };
+    // Auto-place by specificity so a narrow exception isn't shadowed by a broader rule above it.
+    const next = [...(rules ?? [])];
+    next.splice(placementIndex(next, newRule), 0, newRule);
+    commit(next);
     setDraft(EMPTY_DRAFT);
+  };
+
+  // Drag-to-reorder: move the rule at `from` to `to`, then persist. Order is priority (first match wins).
+  const reorderRule = (from: number, to: number) => {
+    const current = rules ?? [];
+    if (from === to || from < 0 || to < 0 || from >= current.length) return;
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    commit(next);
   };
 
   // Close the dialog and discard any half-entered draft.
@@ -636,13 +699,48 @@ export const NotificationInterruptRulesCard = forwardRef<
             </div>
           ) : (
             <>
-              {/* Active rules: read-only summaries with a clickable action badge + delete. */}
+              {/* Active rules in priority order (first match wins). Drag to reorder; read-only
+                  summaries with a clickable action badge + delete. */}
               {rules.length > 0 ? (
                 <div className="flex flex-col gap-2">
                   {rules.map((rule, index) => {
                     const conditions = ruleConditions(rule);
+                    const draggable = rules.length > 1;
                     return (
-                      <div key={rule.id} className="flex items-center gap-2">
+                      <div
+                        key={rule.id}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md",
+                          dragIndex !== null &&
+                            dragIndex !== index &&
+                            "outline-dashed outline-1 outline-border/60",
+                        )}
+                        onDragOver={
+                          draggable ? (e) => e.preventDefault() : undefined
+                        }
+                        onDrop={
+                          draggable
+                            ? (e) => {
+                                e.preventDefault();
+                                if (dragIndex !== null)
+                                  reorderRule(dragIndex, index);
+                                setDragIndex(null);
+                              }
+                            : undefined
+                        }
+                      >
+                        {draggable ? (
+                          <button
+                            type="button"
+                            draggable
+                            aria-label="drag to reorder rule"
+                            className="cursor-grab text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+                            onDragStart={() => setDragIndex(index)}
+                            onDragEnd={() => setDragIndex(null)}
+                          >
+                            <GripVertical className="size-3.5" />
+                          </button>
+                        ) : null}
                         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                           {conditions.length === 0 ? (
                             <span className="text-[11px] text-muted-foreground/60">
@@ -835,6 +933,10 @@ export const NotificationInterruptRulesCard = forwardRef<
                         ) : predicateRegexError ? (
                           <p className="mr-auto min-w-0 self-center truncate text-xs text-destructive">
                             invalid field regex
+                          </p>
+                        ) : draftShadowed ? (
+                          <p className="mr-auto min-w-0 self-center truncate text-xs text-amber-600 dark:text-amber-500">
+                            a higher-priority rule already catches these
                           </p>
                         ) : draftMatchCount !== null ? (
                           <p className="mr-auto min-w-0 self-center truncate text-xs text-muted-foreground">

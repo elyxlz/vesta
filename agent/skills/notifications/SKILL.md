@@ -43,7 +43,14 @@ notification's other fields. Every field/condition you set must hold (AND); what
   `is_group`, `media_type`, and so on). Two aliases search across a source's synonym fields so you needn't
   know the exact name: `sender` (the identity fields) and `text` (body/message). `--sender X` and
   `--keyword RE` are shortcuts for `--match 'sender=X'` and `--match 'text~=RE'`.
-- Rules are an ordered list, **first match wins**, so put specific rules before broad ones.
+- Rules are an ordered list, **first match wins**: evaluation runs top to bottom and stops at the first
+  rule that matches, so the top rule has the highest priority. Order is the only precedence; a later,
+  more-specific rule never overrides an earlier, broader one. To OR across different fields, write
+  separate rules (a single rule's conditions are all ANDed).
+- **Placement is handled for you, but you can override it.** `add` auto-places a new rule above any
+  broader rule (one with fewer conditions), so a narrow exception is not shadowed by a broad rule that
+  would match first. Use `--before <id>` / `--after <id>` to place it explicitly, or `move <id>` to
+  reorder later (`--before`/`--after`/`--top`/`--bottom`). `list` shows rules in priority order.
 - A rule with no `source`/`type`/`match` is a catch-all; only useful as the last rule.
 - Precedence when deciding interrupt vs pool: (1) the first matching rule, then (2) your per-`(source, type)`
   **default override** if you set one, then (3) the default the source chose. Your internal notifications
@@ -76,6 +83,12 @@ uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --sourc
 
 # Negate: interrupt for any chat that is NOT that one group
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
+
+# Reorder when precedence matters (first match wins). New rules auto-place above broader ones, but you
+# can force position on add, or move an existing rule by id.
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --action pool --after <id>
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py move <id> --top
+uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py move <id> --before <other-id>
 
 # Remove a rule by id, or clear them all
 uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py remove <id>

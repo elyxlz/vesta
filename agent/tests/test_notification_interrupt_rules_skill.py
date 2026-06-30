@@ -72,10 +72,72 @@ def test_add_catch_all_has_no_conditions(tmp_path):
 
 
 def test_add_preserves_order(tmp_path):
-    _run(tmp_path, "add", "--source", "whatsapp", "--sender", "wife", "--action", "interrupt")
+    # Two equally-specific rules (1 condition each) keep insertion order: the second appends after.
+    _run(tmp_path, "add", "--source", "whatsapp", "--action", "interrupt")
     _run(tmp_path, "add", "--source", "twitter", "--action", "pool")
     rules = npn.load_rules(_config(tmp_path))
     assert [r.action for r in rules] == ["interrupt", "pool"]
+
+
+def _ids(tmp_path):
+    return [r.id for r in npn.load_rules(_config(tmp_path))]
+
+
+def test_add_auto_places_specific_above_broad(tmp_path):
+    # Broad pool rule first, then a narrower interrupt exception: the exception must land ABOVE the
+    # broad rule so first-match-wins reaches it instead of being shadowed.
+    _run(tmp_path, "add", "--source", "whatsapp", "--action", "pool")
+    _run(tmp_path, "add", "--source", "whatsapp", "--sender", "wife", "--action", "interrupt")
+    rules = npn.load_rules(_config(tmp_path))
+    assert [r.action for r in rules] == ["interrupt", "pool"]
+
+
+def test_add_auto_places_broad_below_specific(tmp_path):
+    # Reverse insertion order: a later broad rule still sinks below the existing specific one.
+    _run(tmp_path, "add", "--source", "whatsapp", "--match", "chat_name=Bride squad", "--action", "interrupt")
+    _run(tmp_path, "add", "--source", "whatsapp", "--action", "pool")
+    rules = npn.load_rules(_config(tmp_path))
+    assert [r.action for r in rules] == ["interrupt", "pool"]
+
+
+def test_add_before_and_after_place_explicitly(tmp_path):
+    _run(tmp_path, "add", "--source", "a", "--action", "pool")
+    _run(tmp_path, "add", "--source", "b", "--action", "pool")
+    first, second = _ids(tmp_path)
+    _run(tmp_path, "add", "--source", "c", "--action", "pool", "--before", second)
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["a", "c", "b"]
+    _run(tmp_path, "add", "--source", "d", "--action", "pool", "--after", first)
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["a", "d", "c", "b"]
+
+
+def test_add_before_unknown_id_errors(tmp_path):
+    _run(tmp_path, "add", "--source", "a", "--action", "pool")
+    result = _run(tmp_path, "add", "--source", "b", "--action", "pool", "--before", "nope")
+    assert result.returncode == 1
+    # The rejected add did not write anything.
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["a"]
+
+
+def test_move_top_bottom_before_after(tmp_path):
+    # Three equally-specific rules keep insertion order a, b, c.
+    _run(tmp_path, "add", "--source", "a", "--action", "pool")
+    _run(tmp_path, "add", "--source", "b", "--action", "pool")
+    _run(tmp_path, "add", "--source", "c", "--action", "pool")
+    id_a, id_b, id_c = _ids(tmp_path)
+    _run(tmp_path, "move", id_c, "--top")
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["c", "a", "b"]
+    _run(tmp_path, "move", id_c, "--bottom")
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["a", "b", "c"]
+    _run(tmp_path, "move", id_a, "--after", id_b)
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["b", "a", "c"]
+    _run(tmp_path, "move", id_c, "--before", id_b)
+    assert [r.source for r in npn.load_rules(_config(tmp_path))] == ["c", "b", "a"]
+
+
+def test_move_unknown_id_errors(tmp_path):
+    _run(tmp_path, "add", "--source", "a", "--action", "pool")
+    result = _run(tmp_path, "move", "nope", "--top")
+    assert result.returncode == 1
 
 
 def test_remove_by_id(tmp_path):

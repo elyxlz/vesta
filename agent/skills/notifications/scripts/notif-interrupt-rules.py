@@ -145,7 +145,12 @@ def _render(rules: list[dict[str, object]]) -> str:
 
 
 def cmd_list(_: argparse.Namespace) -> int:
-    print(_render(load_section("rules")))
+    rules = load_section("rules")
+    if rules:
+        # Guidance on stderr so stdout stays pure JSON: the list is the priority order. Top = highest
+        # priority (first match wins); reorder with `move` or `add --before|--after`.
+        print("rules in priority order (first match wins; top = highest priority):", file=sys.stderr)
+    print(_render(rules))
     return 0
 
 
@@ -167,6 +172,36 @@ def _parse_match(spec: str) -> dict[str, object]:
     if op == "regex":
         re.compile(value)  # surfaces re.error -> reported by main()
     return {"field": field, "op": op, "value": value, "negate": opsym.startswith("!")}
+
+
+def _specificity(rule: dict[str, object]) -> int:
+    """How narrowly a rule matches = its condition count (source, type, and each match predicate). Used
+    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked."""
+    count = sum(1 for field in ("source", "type") if rule.get(field) is not None)
+    match = rule.get("match")
+    return count + (len(match) if isinstance(match, list) else 0)
+
+
+def _index_of(rules: list[dict[str, object]], rule_id: str) -> int:
+    for index, rule in enumerate(rules):
+        if rule.get("id") == rule_id:
+            return index
+    raise ValueError(f"no rule with id {rule_id}")
+
+
+def _placement_index(rules: list[dict[str, object]], new_rule: dict[str, object], before: str | None, after: str | None) -> int:
+    """Where to insert a new rule. Explicit --before/--after win; otherwise auto-place by specificity:
+    above the first existing rule that is strictly broader (fewer conditions), so a narrow exception
+    lands ahead of the broad rule it refines instead of being shadowed by it. Touches no other rule."""
+    if before is not None:
+        return _index_of(rules, before)
+    if after is not None:
+        return _index_of(rules, after) + 1
+    spec = _specificity(new_rule)
+    for index, rule in enumerate(rules):
+        if _specificity(rule) < spec:
+            return index
+    return len(rules)
 
 
 def cmd_add(args: argparse.Namespace) -> int:
@@ -194,9 +229,45 @@ def cmd_add(args: argparse.Namespace) -> int:
             return 1
     rule: dict[str, object] = {"id": uuid.uuid4().hex, "source": args.source, "type": args.type, "match": predicates, "action": args.action}
     rules = load_section("rules")
-    rules.append(rule)
+    try:
+        index = _placement_index(rules, rule, args.before, args.after)
+    except ValueError as e:
+        print(f"error: {e} (run `list` to see rule ids)", file=sys.stderr)
+        return 1
+    rules.insert(index, rule)
     save_section("rules", rules)
-    print(f"Added rule {rule['id']}: {_describe_scope(rule)} -> {args.action}. Now {len(rules)} rule(s); applies next tick.")
+    where = "" if index == len(rules) - 1 else f" at position {index + 1} of {len(rules)}"
+    print(f"Added rule {rule['id']}: {_describe_scope(rule)} -> {args.action}{where}. Now {len(rules)} rule(s); applies next tick.")
+    return 0
+
+
+def cmd_move(args: argparse.Namespace) -> int:
+    rules = load_section("rules")
+    try:
+        current = _index_of(rules, args.id)
+    except ValueError as e:
+        print(f"error: {e} (run `list` to see rule ids)", file=sys.stderr)
+        return 1
+    rule = rules.pop(current)
+    rest = rules  # the list without the moved rule; target ids resolve against this
+    try:
+        if args.to_top:
+            target = 0
+        elif args.to_bottom:
+            target = len(rest)
+        elif args.before is not None:
+            target = _index_of(rest, args.before)
+        elif args.after is not None:
+            target = _index_of(rest, args.after) + 1
+        else:
+            print("error: move needs one of --before, --after, --top, --bottom", file=sys.stderr)
+            return 1
+    except ValueError as e:
+        print(f"error: {e} (run `list` to see rule ids)", file=sys.stderr)
+        return 1
+    rest.insert(target, rule)
+    save_section("rules", rest)
+    print(f"Moved rule {args.id} to position {target + 1} of {len(rest)}; applies next tick.")
     return 0
 
 
@@ -338,7 +409,11 @@ def main() -> int:
 
     sub.add_parser("list", help="Print the current ordered ruleset as JSON.")
 
-    add = sub.add_parser("add", help="Append a rule (first matching rule wins, so order matters).")
+    add = sub.add_parser(
+        "add",
+        help="Add a rule. First matching rule wins (top = highest priority). By default a new rule is "
+        "placed above broader rules so a narrow exception is not shadowed; use --before/--after to override.",
+    )
     add.add_argument("--action", choices=ACTIONS, required=True, help="interrupt = preempt the current turn; pool = wait until idle.")
     add.add_argument("--source", help="Exact match on notification source (case-insensitive), e.g. twitter, whatsapp.")
     add.add_argument("--type", help="Exact match on notification type (case-insensitive), e.g. message, tweet.")
@@ -355,6 +430,17 @@ def main() -> int:
         "'!=' not, '!~=' not-regex. Repeatable (all must match). e.g. --match 'chat_name=Bride squad', "
         "--match 'chat_type!=group', --match 'chat_name~=^proj-'. Case-insensitive.",
     )
+    add_pos = add.add_mutually_exclusive_group()
+    add_pos.add_argument("--before", metavar="ID", help="Place the new rule directly above this rule id (higher priority).")
+    add_pos.add_argument("--after", metavar="ID", help="Place the new rule directly below this rule id (lower priority).")
+
+    move = sub.add_parser("move", help="Reorder a rule (first match wins, so position is priority).")
+    move.add_argument("id", help="The rule id to move (see `list`).")
+    move_to = move.add_mutually_exclusive_group(required=True)
+    move_to.add_argument("--before", metavar="ID", help="Move directly above this rule id.")
+    move_to.add_argument("--after", metavar="ID", help="Move directly below this rule id.")
+    move_to.add_argument("--top", dest="to_top", action="store_true", help="Move to the top (highest priority).")
+    move_to.add_argument("--bottom", dest="to_bottom", action="store_true", help="Move to the bottom (lowest priority).")
 
     remove = sub.add_parser("remove", help="Remove a rule by id (see `list`).")
     remove.add_argument("id", help="The rule id to remove.")
@@ -383,6 +469,7 @@ def main() -> int:
     handlers = {
         "list": cmd_list,
         "add": cmd_add,
+        "move": cmd_move,
         "remove": cmd_remove,
         "clear": cmd_clear,
         "facets": cmd_facets,

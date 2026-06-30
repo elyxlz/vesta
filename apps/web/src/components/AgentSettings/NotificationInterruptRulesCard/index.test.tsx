@@ -6,6 +6,7 @@ import {
   cleanup,
   act,
   within,
+  fireEvent,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
@@ -415,6 +416,68 @@ describe("NotificationInterruptRulesCard cascade", () => {
     expect(rulesArg[0].match).toEqual([
       { field: "chat_name", op: "contains", value: "Bride squad" },
     ]);
+  });
+
+  it("auto-places a specific rule above a broader one", async () => {
+    // An existing catch-all rule (0 conditions); the new keyword rule (1 condition) must land above it.
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "broad", action: "pool" },
+    ]);
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [],
+      cursor: null,
+    });
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    await waitFor(() =>
+      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
+    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /add rule/i,
+      }),
+    );
+
+    await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
+    const [, rulesArg] = setSpy.mock.calls[0];
+    // The new, more-specific rule is placed first; the catch-all sinks below it.
+    expect(rulesArg).toHaveLength(2);
+    expect(rulesArg[1].id).toBe("broad");
+    expect(rulesArg[0].match).toEqual([
+      { field: "text", op: "regex", value: "urgent" },
+    ]);
+  });
+
+  it("reorders rules by drag and persists the new order", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "pool" },
+      { id: "b", source: "whatsapp", action: "pool" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    await screen.findByText(/twitter/);
+
+    const handles = screen.getAllByRole("button", {
+      name: /drag to reorder rule/i,
+    });
+    expect(handles).toHaveLength(2);
+    // Drag rule b (index 1) and drop it on rule a's row (index 0): b moves above a.
+    const row0 = handles[0].closest("div")!;
+    fireEvent.dragStart(handles[1]);
+    fireEvent.dragOver(row0);
+    fireEvent.drop(row0);
+
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    const lastCall = setSpy.mock.calls.at(-1)!;
+    expect(lastCall[1].map((r: { id: string }) => r.id)).toEqual(["b", "a"]);
   });
 
   it("reveals type only after a source is picked", async () => {
