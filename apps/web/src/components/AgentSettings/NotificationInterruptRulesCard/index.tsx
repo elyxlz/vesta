@@ -830,7 +830,7 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="gap-4 sm:max-w-4xl"
+                  className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 sm:max-w-4xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onInteractOutside={(event) => {
                     // Only a real backdrop (overlay) click dismisses this multi-field form; stray
@@ -854,8 +854,8 @@ export const NotificationInterruptRulesCard = forwardRef<
                   </DialogHeader>
 
                   {step === 1 ? (
-                    <div className="@container">
-                      <div className="grid gap-6 @md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] @md:gap-8">
+                    <div className="@container min-h-0 overflow-y-auto">
+                      <div className="grid min-h-72 gap-6 @md:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] @md:gap-8">
                         {/* Left column: what the rule is scoped to. */}
                         <FieldGroup className="gap-6">
                           {/* Reveal-on-fill: source first, then type. */}
