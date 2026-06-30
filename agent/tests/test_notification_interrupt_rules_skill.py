@@ -284,8 +284,12 @@ def test_add_match_targets_arbitrary_field(tmp_path):
     assert rules[0].source == "whatsapp"
     assert rules[0].match == [npn.FieldPredicate(field="chat_name", op="contains", value="Bride squad")]
     # And it applies: a message in that group is pooled, a 1:1 is not.
-    group = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "chat_name": "Bride squad", "interrupt": True})
-    dm = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "interrupt": True})
+    group = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "chat_name": "Bride squad", "interrupt": True}
+    )
+    dm = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "interrupt": True}
+    )
     assert npn.should_interrupt(group, rules) is False
     assert npn.should_interrupt(dm, rules) is True
 
@@ -323,7 +327,9 @@ def test_legacy_rule_on_disk_is_normalized_then_converges(tmp_path):
     # file is rewritten by any edit, converge to canonical match shape.
     policy = tmp_path / "agent" / "data" / "notification_policy.json"
     policy.parent.mkdir(parents=True, exist_ok=True)
-    policy.write_text('{"rules": [{"id": "old", "source": "whatsapp", "type": null, "sender": "wife", "keyword": null, "action": "interrupt"}]}')
+    policy.write_text(
+        '{"rules": [{"id": "old", "source": "whatsapp", "type": null, "sender": "wife", "keyword": null, "action": "interrupt"}]}'
+    )
     rules = npn.load_rules(_config(tmp_path))
     assert rules[0].match == [npn.FieldPredicate(field="sender", op="contains", value="wife")]
     # Adding another rule rewrites the file; the legacy one is now canonical.
