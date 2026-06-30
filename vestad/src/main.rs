@@ -54,7 +54,8 @@ enum Command {
         /// Run in foreground without systemd (for CI/dev)
         #[arg(long)]
         standalone: bool,
-        /// Expose the HTTPS API to other devices on your LAN (default: loopback only)
+        /// Bind the HTTPS API to all interfaces so other devices on the LAN can
+        /// connect (default: loopback only). Standalone mode only.
         #[arg(long)]
         expose_lan: bool,
     },
@@ -581,24 +582,16 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
         });
 }
 
-fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
+fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     if port.is_some() || no_tunnel {
         eprintln!("note: --port and --no-tunnel only apply with --standalone");
     }
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
-    let unit_changed = systemd::ensure_service_installed(expose_lan).unwrap_or_else(|e| die(&e));
+    systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
 
     if systemd::is_active() {
-        // A changed unit (e.g. --expose-lan toggled) only takes effect on the
-        // live daemon after a restart, so apply it instead of leaving the user
-        // on a stale binding.
-        if unit_changed {
-            systemd::restart().unwrap_or_else(|e| die(&e));
-            eprintln!("vestad restarted to apply updated configuration.");
-            return;
-        }
         if let Some(pid) = systemd::main_pid() {
             eprintln!("vestad is already running (pid {}).", pid);
         } else {
@@ -688,7 +681,10 @@ fn main() {
             if standalone {
                 run_server_foreground(port, no_tunnel, expose_lan);
             } else {
-                run_server_systemd(port, no_tunnel, expose_lan);
+                if expose_lan {
+                    eprintln!("note: --expose-lan only applies with --standalone");
+                }
+                run_server_systemd(port, no_tunnel);
             }
         }
 
