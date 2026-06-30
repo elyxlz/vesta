@@ -853,6 +853,17 @@ export const NotificationInterruptRulesCard = forwardRef<
                 <DialogContent
                   className="sm:max-w-[520px]"
                   onOpenAutoFocus={(e) => e.preventDefault()}
+                  onInteractOutside={(event) => {
+                    // Native <datalist> suggestion popups (field/value inputs) live outside the dialog
+                    // DOM; selecting or dismissing one reports body/html as the target, which Radix
+                    // reads as an outside click and would close the dialog mid-edit. Only a real
+                    // backdrop (overlay) click should dismiss.
+                    const target = event.detail.originalEvent
+                      .target as HTMLElement | null;
+                    if (!target?.closest('[data-slot="dialog-overlay"]')) {
+                      event.preventDefault();
+                    }
+                  }}
                 >
                   <DialogHeader>
                     <DialogTitle>add rule</DialogTitle>
