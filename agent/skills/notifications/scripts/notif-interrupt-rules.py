@@ -50,6 +50,12 @@ def _load_policy() -> dict[str, object]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _predicate(field: str, op: str, value: str, negate: bool = False) -> dict[str, object]:
+    """The canonical match-predicate shape core's FieldPredicate accepts. One builder so the sender/text
+    alias predicates and parsed --match predicates can't drift in shape."""
+    return {"field": field, "op": op, "value": value, "negate": negate}
+
+
 def _normalize_rule(rule: dict[str, object]) -> dict[str, object]:
     """Fold a legacy flat `sender`/`keyword` rule into the canonical {source, type, match} shape.
 
@@ -63,10 +69,10 @@ def _normalize_rule(rule: dict[str, object]) -> dict[str, object]:
     legacy: list[dict[str, object]] = []
     sender = rule.pop("sender", None)
     if sender is not None:
-        legacy.append({"field": "sender", "op": "contains", "value": sender, "negate": False})
+        legacy.append(_predicate("sender", "contains", sender))
     keyword = rule.pop("keyword", None)
     if keyword is not None:
-        legacy.append({"field": "text", "op": "regex", "value": keyword, "negate": False})
+        legacy.append(_predicate("text", "regex", keyword))
     existing = rule.get("match") or []
     rule["match"] = legacy + (existing if isinstance(existing, list) else [])
     return rule
@@ -173,14 +179,12 @@ def _parse_match(spec: str) -> dict[str, object]:
     op = "regex" if "~" in opsym else "contains"
     if op == "regex":
         re.compile(value)  # surfaces re.error -> reported by main()
-    return {"field": field, "op": op, "value": value, "negate": opsym.startswith("!")}
+    return _predicate(field, op, value, opsym.startswith("!"))
 
 
 def _specificity(rule: dict[str, object]) -> int:
     """How narrowly a rule matches = its condition count (source, type, and each match predicate). Used
-    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked.
-    Mirrored by `specificity`/`placementIndex` in the web rule editor (NotificationInterruptRulesCard);
-    keep the two in step."""
+    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked."""
     count = sum(1 for field in ("source", "type") if rule.get(field) is not None)
     match = rule.get("match")
     return count + (len(match) if isinstance(match, list) else 0)
@@ -217,14 +221,14 @@ def cmd_add(args: argparse.Namespace) -> int:
     # regex over the body/message text).
     predicates: list[dict[str, object]] = []
     if args.sender is not None:
-        predicates.append({"field": "sender", "op": "contains", "value": args.sender, "negate": False})
+        predicates.append(_predicate("sender", "contains", args.sender))
     if args.keyword is not None:
         try:
             re.compile(args.keyword)
         except re.error as e:
             print(f"error: --keyword is a regex and {args.keyword!r} is invalid: {e}", file=sys.stderr)
             return 1
-        predicates.append({"field": "text", "op": "regex", "value": args.keyword, "negate": False})
+        predicates.append(_predicate("text", "regex", args.keyword))
     for spec in args.match or []:
         try:
             predicates.append(_parse_match(spec))
@@ -277,7 +281,7 @@ def cmd_move(args: argparse.Namespace) -> int:
 
 def _describe_scope(rule: dict[str, object]) -> str:
     parts = [f"{field}={rule[field]}" for field in ("source", "type") if rule.get(field) is not None]
-    for pred in rule["match"] if isinstance(rule.get("match"), list) else []:
+    for pred in match if isinstance(match := rule.get("match"), list) else []:
         rel = "matches" if (pred["op"] if "op" in pred else "contains") == "regex" else "contains"
         neg = "not " if pred.get("negate") else ""
         parts.append(f"{pred['field']} {neg}{rel} {pred['value']!r}")
