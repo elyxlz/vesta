@@ -629,12 +629,26 @@ export const NotificationInterruptRulesCard = forwardRef<
     return (
       <div
         key={index}
-        className="flex flex-col gap-2 rounded-xl border border-border/60 p-3"
+        className="flex flex-col gap-4 rounded-2xl border border-border/60 p-4"
       >
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              field
+            </span>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="remove field condition"
+              onClick={() => removePredicate(index)}
+            >
+              <X />
+            </Button>
+          </div>
           <Input
             aria-label="custom field"
-            placeholder="field (e.g. chat_name)"
+            placeholder="field name, e.g. chat_name"
             list={fieldNameOptions.length > 0 ? fieldListId : undefined}
             value={p.field}
             onChange={(e) => updatePredicate(index, { field: e.target.value })}
@@ -647,17 +661,9 @@ export const NotificationInterruptRulesCard = forwardRef<
               ))}
             </datalist>
           ) : null}
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            aria-label="remove field condition"
-            onClick={() => removePredicate(index)}
-          >
-            <X />
-          </Button>
         </div>
-        <div className="flex items-center gap-1.5">
+
+        <div className="flex items-center gap-2">
           <ToggleGroup
             type="single"
             variant="outline"
@@ -683,26 +689,34 @@ export const NotificationInterruptRulesCard = forwardRef<
             not
           </Toggle>
         </div>
-        <Input
-          aria-label="custom value"
-          placeholder={p.op === "regex" ? "regex, e.g. ^proj-" : "value"}
-          list={valueOptions.length > 0 ? valueListId : undefined}
-          value={p.value}
-          aria-invalid={
-            p.op === "regex" &&
-            p.value.trim() !== "" &&
-            regexError(p.value.trim()) !== null
-          }
-          onChange={(e) => updatePredicate(index, { value: e.target.value })}
-          className="w-full"
-        />
-        {valueOptions.length > 0 ? (
-          <datalist id={valueListId}>
-            {valueOptions.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
-        ) : null}
+
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            value
+          </span>
+          <Input
+            aria-label="custom value"
+            placeholder={
+              p.op === "regex" ? "regex, e.g. ^proj-" : "value to match"
+            }
+            list={valueOptions.length > 0 ? valueListId : undefined}
+            value={p.value}
+            aria-invalid={
+              p.op === "regex" &&
+              p.value.trim() !== "" &&
+              regexError(p.value.trim()) !== null
+            }
+            onChange={(e) => updatePredicate(index, { value: e.target.value })}
+            className="w-full"
+          />
+          {valueOptions.length > 0 ? (
+            <datalist id={valueListId}>
+              {valueOptions.map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+          ) : null}
+        </div>
       </div>
     );
   };
