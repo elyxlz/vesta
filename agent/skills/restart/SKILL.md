@@ -24,10 +24,16 @@ Every line MUST be guarded with `running <session> ||` so re-running the block c
 # daemon. Wipe them first so `running` reflects the true live state.
 screen -wipe >/dev/null 2>&1 || true
 
-# True if a LIVE screen session with this exact name is running. The `grep -v Dead`
-# drops any leftover "(Dead ???)" session the wipe didn't clear.
+# True iff a LIVE screen session with this exact name exists: keep the matching
+# lines, drop any "(Dead ???)" corpse, and test that something LIVE remains.
 # Trailing-whitespace match keeps `running whatsapp` false when only `whatsapp-elio` exists.
-running() { screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -qv "Dead"; }
+# Judge by captured output (test -n), never by a pipeline's exit code: the agent's
+# `grep` is ugrep (the Bash tool's shell snapshot shims it), and ugrep's `grep -qv`
+# returns 0 on EMPTY input -- so the obvious `... | grep -qv "Dead"` reports every
+# daemon as live on a cold boot (zero screens) and skips every guarded launch.
+# Filtering with `grep -v "Dead"` (not `grep -q "Dead"` negated) is also existential,
+# so a live session is still seen as running even if a same-name corpse lingers.
+running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -v "Dead")"; }
 
 # Skills append guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
