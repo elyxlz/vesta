@@ -145,13 +145,9 @@ function predicateBadge(p: FieldPredicate): { label: string; value: string } {
     return { label: "sender", value: p.value };
   if (p.field === "text" && p.op === "regex" && !p.negate)
     return { label: "keyword", value: p.value };
-  const rel = p.negate
-    ? p.op === "regex"
-      ? "not ~"
-      : "not"
-    : p.op === "regex"
-      ? "~"
-      : "";
+  const rel = [p.negate ? "not" : "", p.op === "regex" ? "~" : ""]
+    .filter(Boolean)
+    .join(" ");
   return { label: p.field, value: rel ? `${rel} ${p.value}` : p.value };
 }
 
@@ -406,18 +402,21 @@ export const NotificationInterruptRulesCard = forwardRef<
   const deleteRule = (index: number) =>
     commit((rules ?? []).filter((_, i) => i !== index));
 
-  // A completed custom predicate row (both field and value filled in).
-  const completePredicates = draft.predicates.filter(
-    (p) => p.field.trim() !== "" && p.value.trim() !== "",
+  // The draft as a rule shape (source/type + compiled match), for the validity, preview, and shadow
+  // checks below. Memoized so the per-keystroke preview work downstream has a stable input.
+  const draftRule = useMemo(
+    () => ({
+      source: draft.source.trim() || undefined,
+      type: draft.type.trim() || undefined,
+      match: draftToMatch(draft),
+    }),
+    [draft],
   );
 
   // Require at least one condition: a no-condition rule is a catch-all that would swallow everything.
+  // source/type plus any compiled predicate (sender/keyword/custom all fold into match) count.
   const draftHasCondition =
-    draft.source.trim() !== "" ||
-    draft.type.trim() !== "" ||
-    draft.sender.trim() !== "" ||
-    draft.keyword.trim() !== "" ||
-    completePredicates.length > 0;
+    !!draftRule.source || !!draftRule.type || draftRule.match.length > 0;
 
   // keyword + any regex custom predicate are regexes; surface an invalid pattern inline rather than
   // letting the server reject it.
@@ -430,33 +429,28 @@ export const NotificationInterruptRulesCard = forwardRef<
   );
   const hasRegexError = keywordRegexError !== null || predicateRegexError;
 
-  // The draft as a rule shape, for the live preview + shadow check below.
-  const draftRule = {
-    source: draft.source.trim() || undefined,
-    type: draft.type.trim() || undefined,
-    match: draftToMatch(draft),
-  };
+  // The recent notifications the draft would catch (approximating the engine against the history we
+  // fetched: source/type case-insensitive; predicates over sender/summary/structured fields). Computed
+  // once and reused by the match-count and the shadow check, so the scan runs once per keystroke.
+  const draftHits = useMemo(
+    () =>
+      draftHasCondition && !hasRegexError
+        ? notifications.filter((n) => ruleMatchesNotif(draftRule, n))
+        : null,
+    [draftHasCondition, hasRegexError, notifications, draftRule],
+  );
+  const draftMatchCount = draftHits?.length ?? null;
 
-  // Live preview: how many recent notifications the drafted conditions would catch, so the rule's
-  // effect is visible before it's added. Approximates the engine against the history we already
-  // fetched (source/type case-insensitive; predicates over sender/summary/structured fields).
-  const draftMatchCount =
-    draftHasCondition && !hasRegexError
-      ? notifications.filter((n) => ruleMatchesNotif(draftRule, n)).length
-      : null;
-
-  // Would the draft be shadowed? At its specificity-placement, if every recent notification it catches
-  // is already caught by a higher-priority rule above it, first-match-wins means it would never fire.
-  const draftShadowed = (() => {
-    if (!draftHasCondition || hasRegexError) return false;
-    const hits = notifications.filter((n) => ruleMatchesNotif(draftRule, n));
-    if (hits.length === 0) return false;
+  // Would the draft be shadowed? At its specificity-placement, if every notification it catches is
+  // already caught by a higher-priority rule above it, first-match-wins means it would never fire.
+  const draftShadowed = useMemo(() => {
+    if (!draftHits || draftHits.length === 0) return false;
     const above = (rules ?? []).slice(
       0,
       placementIndex(rules ?? [], draftRule),
     );
-    return hits.every((n) => above.some((r) => ruleMatchesNotif(r, n)));
-  })();
+    return draftHits.every((n) => above.some((r) => ruleMatchesNotif(r, n)));
+  }, [draftHits, rules, draftRule]);
 
   const addDraft = () => {
     if (!draftHasCondition || hasRegexError) return;
@@ -523,35 +517,55 @@ export const NotificationInterruptRulesCard = forwardRef<
     [],
   );
 
-  // Cascading suggestions: each pick narrows the next. Core is never a rule source.
-  const sourceOptions = uniqueStrings(
-    notifications.map((n) => n.source),
-  ).filter((s) => !isCore(s));
-  const typeOptions = draft.source
-    ? uniqueStrings(
-        notifications
-          .filter((n) => n.source === draft.source)
-          .map((n) => n.notif_type),
-      )
-    : [];
-  const senderOptions =
-    draft.source && draft.type
-      ? uniqueStrings(
-          notifications
-            .filter(
-              (n) => n.source === draft.source && n.notif_type === draft.type,
-            )
-            .map((n) => n.sender),
-        )
-      : [];
+  // Cascading suggestions: each pick narrows the next. Core is never a rule source. Memoized so typing
+  // in an unrelated dialog field doesn't re-scan the whole history every keystroke.
+  const sourceOptions = useMemo(
+    () =>
+      uniqueStrings(notifications.map((n) => n.source)).filter(
+        (s) => !isCore(s),
+      ),
+    [notifications],
+  );
+  const typeOptions = useMemo(
+    () =>
+      draft.source
+        ? uniqueStrings(
+            notifications
+              .filter((n) => n.source === draft.source)
+              .map((n) => n.notif_type),
+          )
+        : [],
+    [notifications, draft.source],
+  );
+  const senderOptions = useMemo(
+    () =>
+      draft.source && draft.type
+        ? uniqueStrings(
+            notifications
+              .filter(
+                (n) => n.source === draft.source && n.notif_type === draft.type,
+              )
+              .map((n) => n.sender),
+          )
+        : [],
+    [notifications, draft.source, draft.type],
+  );
 
   // Custom-field suggestions: the structured extra fields (and their values) seen on notifications,
   // scoped to the picked source when there is one, so the author discovers e.g. `chat_name`.
-  const fieldScopedNotifs = draft.source
-    ? notifications.filter((n) => n.source === draft.source)
-    : notifications;
-  const fieldNameOptions = uniqueStrings(
-    fieldScopedNotifs.flatMap((n) => Object.keys(n.fields ?? {})),
+  const fieldScopedNotifs = useMemo(
+    () =>
+      draft.source
+        ? notifications.filter((n) => n.source === draft.source)
+        : notifications,
+    [notifications, draft.source],
+  );
+  const fieldNameOptions = useMemo(
+    () =>
+      uniqueStrings(
+        fieldScopedNotifs.flatMap((n) => Object.keys(n.fields ?? {})),
+      ),
+    [fieldScopedNotifs],
   );
   const fieldValueOptions = (field: string) =>
     field ? uniqueStrings(fieldScopedNotifs.map((n) => n.fields?.[field])) : [];

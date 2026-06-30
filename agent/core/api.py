@@ -383,7 +383,7 @@ def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
         conds = [f"{key}={dumped[key]}" for key in ("source", "type") if key in dumped and dumped[key] not in (None, "")]
         # Rules carry their remaining conditions as `match` predicates (sender/keyword were folded into
         # these); defaults have no match key, so this loop is skipped for them.
-        for pred in dumped["match"] if "match" in dumped and isinstance(dumped["match"], list) else []:
+        for pred in dumped["match"] if "match" in dumped else []:
             rel = "matches" if pred["op"] == "regex" else "contains"
             negate = "not " if pred["negate"] else ""
             conds.append(f"{pred['field']} {negate}{rel} {pred['value']!r}")

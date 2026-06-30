@@ -171,15 +171,6 @@ def _field_raw(notif: vm.Notification, field: str) -> object | None:
     return None
 
 
-def _extra_str(notif: vm.Notification, field: str) -> str | None:
-    extra = notif.model_extra
-    if extra is None:
-        return None
-    if field in extra and isinstance(extra[field], str):
-        return extra[field]
-    return None
-
-
 def _field_values(notif: vm.Notification, field: str) -> list[str]:
     """The notification's value(s) for a predicate field: one value for a concrete key, or every
     present synonym for an alias. Coerced to strings; absent fields contribute nothing."""
@@ -234,12 +225,9 @@ def notif_sender(notif: vm.Notification) -> str | None:
 
     Sender is not one field: each source attaches its own (`contact_name`, `handle`, ...), which is
     why the `sender` alias searches across all of `_IDENTITY_FIELDS`. This returns the first one
-    present, so the event log and facets have a single sender value consistent with how rules match."""
-    for field in _IDENTITY_FIELDS:
-        value = _extra_str(notif, field)
-        if value is not None:
-            return value
-    return None
+    present (via the same `sender` alias the matcher uses), so the event log and facets have a single
+    sender value consistent with how rules match."""
+    return next(iter(_field_values(notif, "sender")), None)
 
 
 def _matches(rule: NotificationInterruptRule, notif: vm.Notification) -> bool:

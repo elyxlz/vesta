@@ -178,7 +178,9 @@ def _parse_match(spec: str) -> dict[str, object]:
 
 def _specificity(rule: dict[str, object]) -> int:
     """How narrowly a rule matches = its condition count (source, type, and each match predicate). Used
-    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked."""
+    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked.
+    Mirrored by `specificity`/`placementIndex` in the web rule editor (NotificationInterruptRulesCard);
+    keep the two in step."""
     count = sum(1 for field in ("source", "type") if rule.get(field) is not None)
     match = rule.get("match")
     return count + (len(match) if isinstance(match, list) else 0)
@@ -250,26 +252,26 @@ def cmd_move(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(f"error: {e} (run `list` to see rule ids)", file=sys.stderr)
         return 1
+    # Pull the rule out first, then resolve --before/--after against the remaining list.
     rule = rules.pop(current)
-    rest = rules  # the list without the moved rule; target ids resolve against this
     try:
         if args.to_top:
             target = 0
         elif args.to_bottom:
-            target = len(rest)
+            target = len(rules)
         elif args.before is not None:
-            target = _index_of(rest, args.before)
+            target = _index_of(rules, args.before)
         elif args.after is not None:
-            target = _index_of(rest, args.after) + 1
+            target = _index_of(rules, args.after) + 1
         else:
             print("error: move needs one of --before, --after, --top, --bottom", file=sys.stderr)
             return 1
     except ValueError as e:
         print(f"error: {e} (run `list` to see rule ids)", file=sys.stderr)
         return 1
-    rest.insert(target, rule)
-    save_section("rules", rest)
-    print(f"Moved rule {args.id} to position {target + 1} of {len(rest)}; applies next tick.")
+    rules.insert(target, rule)
+    save_section("rules", rules)
+    print(f"Moved rule {args.id} to position {target + 1} of {len(rules)}; applies next tick.")
     return 0
 
 

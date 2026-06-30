@@ -18,6 +18,11 @@ type Disposition = "interrupt" | "pool";
 
 const CORE_SOURCE = "core";
 
+// Lowercased to match the engine, which compares (source, type) case-insensitively — so an override
+// stored as "Outlook" and a static default observed as "outlook" resolve to the same row.
+const overrideKey = (source: string, type: string) =>
+  `${source.toLowerCase()}␟${type.toLowerCase()}`;
+
 // Fold live notification arrivals into the fetched static defaults so a new (source, type) appears as
 // soon as it arrives, no manual refresh. A notification's own `interrupt` flag is its static baseline
 // (what static-defaults aggregates server-side); the newest arrival per pair wins and overrides the
@@ -26,17 +31,18 @@ function mergeLiveDefaults(
   base: NotificationStaticDefault[],
   arrivals: NotificationEvent[],
 ): NotificationStaticDefault[] {
-  const byKey = new Map(
-    base.map((d) => [`${d.source.toLowerCase()}␟${d.type.toLowerCase()}`, d]),
-  );
+  const byKey = new Map(base.map((d) => [overrideKey(d.source, d.type), d]));
   // Arrivals are oldest-first (the socket appends), so iterate in order and let the latest write win
   // per (source, type) — its interrupt flag is the freshest static baseline, overriding the server one.
   for (const a of arrivals) {
     if (a.source.toLowerCase() === CORE_SOURCE || a.interrupt === undefined)
       continue;
     const type = a.notif_type ?? "";
-    const key = `${a.source.toLowerCase()}␟${type.toLowerCase()}`;
-    byKey.set(key, { source: a.source, type, interrupt: a.interrupt });
+    byKey.set(overrideKey(a.source, type), {
+      source: a.source,
+      type,
+      interrupt: a.interrupt,
+    });
   }
   return [...byKey.values()];
 }
@@ -47,11 +53,6 @@ interface DefaultRow {
   staticDisposition: Disposition | null;
   override: Disposition | null;
 }
-
-// Lowercased to match the engine, which compares (source, type) case-insensitively — so an override
-// stored as "Outlook" and a static default observed as "outlook" resolve to the same row.
-const overrideKey = (source: string, type: string) =>
-  `${source.toLowerCase()}␟${type.toLowerCase()}`;
 
 // One row per (source, type) the agent has seen, plus any override targeting a (source, type) not in
 // history. The effective disposition is the user's override if set, otherwise the source's static
