@@ -48,6 +48,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   getNotificationHistory,
   getNotificationInterruptRules,
@@ -895,12 +896,14 @@ export const NotificationInterruptRulesCard = forwardRef<
                       >
                         {draft.predicates.length > 0 ? (
                           // Cap the list so many conditions scroll instead of growing the dialog past
-                          // the viewport; the small -mr/pr keeps the scrollbar off the inputs.
-                          <div className="-mr-1 flex max-h-56 flex-col gap-2.5 overflow-y-auto pr-1">
-                            {draft.predicates.map((p, i) =>
-                              renderPredicateRow(p, i),
-                            )}
-                          </div>
+                          // the viewport; pr keeps the scrollbar off the inputs.
+                          <ScrollArea className="max-h-56">
+                            <div className="flex flex-col gap-2.5 pr-3">
+                              {draft.predicates.map((p, i) =>
+                                renderPredicateRow(p, i),
+                              )}
+                            </div>
+                          </ScrollArea>
                         ) : null}
                         <div className="flex flex-wrap items-center gap-2">
                           {(["sender", "keyword", "field"] as const).map(
