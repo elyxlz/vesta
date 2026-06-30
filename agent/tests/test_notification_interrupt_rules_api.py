@@ -74,6 +74,21 @@ async def test_put_match_predicate_round_trips(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_policy_change_recap_includes_match_conditions(tmp_path):
+    # The recap notification to the agent must describe the rule's match predicates, not render a
+    # targeted rule as a catch-all (regression: it used to read the removed sender/keyword keys).
+    client, config = await _client(tmp_path)
+    try:
+        rule = {"source": "whatsapp", "match": [{"field": "chat_name", "op": "contains", "value": "Bride squad"}], "action": "pool"}
+        await client.put("/config/notification-policy", json={"rules": [rule]})
+        notif = json.loads(next(config.notifications_dir.glob("*.json")).read_text())
+        assert "chat_name" in notif["body"] and "Bride squad" in notif["body"]
+        assert "any -> pool" not in notif["body"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
 async def test_put_invalid_match_regex_is_400(tmp_path):
     client, config = await _client(tmp_path)
     try:

@@ -380,11 +380,15 @@ def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
 
     def render(item: pyd.BaseModel) -> str:
         dumped = item.model_dump()
-        conds = ", ".join(
-            f"{key}={dumped[key]}" for key in ("source", "type", "sender", "keyword") if key in dumped and dumped[key] not in (None, "")
-        )
+        conds = [f"{key}={dumped[key]}" for key in ("source", "type") if key in dumped and dumped[key] not in (None, "")]
+        # Rules carry their remaining conditions as `match` predicates (sender/keyword were folded into
+        # these); defaults have no match key, so this loop is skipped for them.
+        for pred in dumped["match"] if "match" in dumped and isinstance(dumped["match"], list) else []:
+            rel = "matches" if pred["op"] == "regex" else "contains"
+            negate = "not " if pred["negate"] else ""
+            conds.append(f"{pred['field']} {negate}{rel} {pred['value']!r}")
         action = dumped["action"] if "action" in dumped else "?"
-        return f"{conds or 'any'} -> {action}"
+        return f"{', '.join(conds) or 'any'} -> {action}"
 
     parts: list[str] = []
     for key, label in (("rules", "interrupt rules"), ("defaults", "default overrides")):

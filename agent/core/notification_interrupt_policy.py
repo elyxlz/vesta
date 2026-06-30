@@ -219,6 +219,10 @@ def notif_facet_fields(notif: vm.Notification) -> dict[str, str]:
     for key, raw in extra.items():
         if key in _FACET_EXCLUDE:
             continue
+        # Scalars only: a list/dict extra would str() to a Python repr ("['a', 'b']"), a nonsense rule
+        # target. str/bool/int/float/datetime render to a real matchable token; anything else is skipped.
+        if not isinstance(raw, (str, bool, int, float, dt.datetime)):
+            continue
         value = _coerce(raw)
         if value is not None and value != "" and len(value) <= FACET_VALUE_MAXLEN:
             fields[key] = value

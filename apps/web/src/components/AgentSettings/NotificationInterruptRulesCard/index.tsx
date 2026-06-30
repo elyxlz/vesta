@@ -203,8 +203,14 @@ function ruleMatchesNotif(
   rule: Pick<NotificationInterruptRule, "source" | "type" | "match">,
   n: NotificationEvent,
 ): boolean {
-  if (rule.source && n.source !== rule.source) return false;
-  if (rule.type && n.notif_type !== rule.type) return false;
+  // source/type match case-insensitively, mirroring the engine's _matches.
+  if (rule.source && n.source.toLowerCase() !== rule.source.toLowerCase())
+    return false;
+  if (
+    rule.type &&
+    (n.notif_type ?? "").toLowerCase() !== rule.type.toLowerCase()
+  )
+    return false;
   return (rule.match ?? []).every((p) => predicateMatchesNotif(p, n));
 }
 
@@ -281,11 +287,12 @@ export const NotificationInterruptRulesCard = forwardRef<
   // Live arrivals from the agent socket, so suggestions/facets update as notifications come in without
   // a manual refresh. Tolerant of no provider (tests): arrivals is [] and the card is REST-only.
   const { arrivals } = useLiveNotifications();
-  // Live arrivals first (most recent), then the fetched history, deduped — suggestions read newest-first.
+  // Suggestions read newest-first. Arrivals are oldest-first (the socket appends), so reverse them to
+  // put the freshest first, then the fetched history; dedupe keeps the first (freshest) per identity.
   const notifications = useMemo(() => {
     const seen = new Set<string>();
     const merged: NotificationEvent[] = [];
-    for (const n of [...arrivals, ...historyNotifications]) {
+    for (const n of [...[...arrivals].reverse(), ...historyNotifications]) {
       const key = notifKey(n);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -423,30 +430,25 @@ export const NotificationInterruptRulesCard = forwardRef<
   );
   const hasRegexError = keywordRegexError !== null || predicateRegexError;
 
+  // The draft as a rule shape, for the live preview + shadow check below.
+  const draftRule = {
+    source: draft.source.trim() || undefined,
+    type: draft.type.trim() || undefined,
+    match: draftToMatch(draft),
+  };
+
   // Live preview: how many recent notifications the drafted conditions would catch, so the rule's
   // effect is visible before it's added. Approximates the engine against the history we already
-  // fetched (exact source/type; predicates over sender/summary/structured fields).
+  // fetched (source/type case-insensitive; predicates over sender/summary/structured fields).
   const draftMatchCount =
     draftHasCondition && !hasRegexError
-      ? (() => {
-          const match = draftToMatch(draft);
-          return notifications.filter((n) => {
-            if (draft.source && n.source !== draft.source) return false;
-            if (draft.type && n.notif_type !== draft.type) return false;
-            return match.every((p) => predicateMatchesNotif(p, n));
-          }).length;
-        })()
+      ? notifications.filter((n) => ruleMatchesNotif(draftRule, n)).length
       : null;
 
   // Would the draft be shadowed? At its specificity-placement, if every recent notification it catches
   // is already caught by a higher-priority rule above it, first-match-wins means it would never fire.
   const draftShadowed = (() => {
     if (!draftHasCondition || hasRegexError) return false;
-    const draftRule = {
-      source: draft.source.trim() || undefined,
-      type: draft.type.trim() || undefined,
-      match: draftToMatch(draft),
-    };
     const hits = notifications.filter((n) => ruleMatchesNotif(draftRule, n));
     if (hits.length === 0) return false;
     const above = (rules ?? []).slice(

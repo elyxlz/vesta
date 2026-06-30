@@ -29,21 +29,15 @@ function mergeLiveDefaults(
   const byKey = new Map(
     base.map((d) => [`${d.source.toLowerCase()}␟${d.type.toLowerCase()}`, d]),
   );
-  // Arrivals are newest-first; keep the first (newest) seen per pair.
-  const fromArrivals = new Map<string, NotificationStaticDefault>();
+  // Arrivals are oldest-first (the socket appends), so iterate in order and let the latest write win
+  // per (source, type) — its interrupt flag is the freshest static baseline, overriding the server one.
   for (const a of arrivals) {
     if (a.source.toLowerCase() === CORE_SOURCE || a.interrupt === undefined)
       continue;
     const type = a.notif_type ?? "";
     const key = `${a.source.toLowerCase()}␟${type.toLowerCase()}`;
-    if (!fromArrivals.has(key))
-      fromArrivals.set(key, {
-        source: a.source,
-        type,
-        interrupt: a.interrupt,
-      });
+    byKey.set(key, { source: a.source, type, interrupt: a.interrupt });
   }
-  for (const [key, d] of fromArrivals) byKey.set(key, d);
   return [...byKey.values()];
 }
 

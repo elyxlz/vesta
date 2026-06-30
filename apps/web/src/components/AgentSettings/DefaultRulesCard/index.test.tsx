@@ -63,6 +63,34 @@ describe("DefaultRulesCard", () => {
     ).toBeTruthy();
   });
 
+  it("lets the newest arrival win the baseline for a (source, type)", async () => {
+    // Arrivals are oldest-first; a later interrupt=false must override an earlier interrupt=true.
+    vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([]);
+    liveState.arrivals = [
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: true,
+        notif_id: "old",
+      },
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "x",
+        notif_type: "message",
+        interrupt: false,
+        notif_id: "new",
+      },
+    ];
+    render(<DefaultRulesCard />);
+    // The newest (interrupt=false) baseline wins -> shown as snooze, not interrupt.
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    expect(screen.getByText("snooze")).toBeTruthy();
+    expect(screen.queryByText("interrupt")).toBeNull();
+  });
+
   it("shows a placeholder when there are no defaults yet", async () => {
     vi.spyOn(api, "getNotificationStaticDefaults").mockResolvedValue([]);
     render(<DefaultRulesCard />);

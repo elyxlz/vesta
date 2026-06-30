@@ -423,6 +423,14 @@ def test_notif_facet_fields_empty_without_extras():
     assert npn.notif_facet_fields(_notif()) == {}
 
 
+def test_notif_facet_fields_skips_non_scalar_values():
+    # A list/dict extra would str() to a Python repr — not a real rule target — so it must be skipped.
+    notif = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "x", "type": "y", "labels": ["a", "b"], "meta": {"k": "v"}, "tag": "ok"}
+    )
+    assert npn.notif_facet_fields(notif) == {"tag": "ok"}
+
+
 # --- core source is not targetable by a rule ---
 
 

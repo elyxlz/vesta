@@ -167,7 +167,9 @@ def _parse_match(spec: str) -> dict[str, object]:
     if not field:
         raise ValueError(f"--match field is empty: {spec!r}")
     opsym = matched.group("op")
-    value = matched.group("value")
+    # Strip surrounding whitespace so `--match 'chat_name= Bride squad'` matches the same as the web
+    # (which trims), instead of silently storing a leading-space value that never matches.
+    value = matched.group("value").strip()
     op = "regex" if "~" in opsym else "contains"
     if op == "regex":
         re.compile(value)  # surfaces re.error -> reported by main()

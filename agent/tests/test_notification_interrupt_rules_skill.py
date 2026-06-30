@@ -299,6 +299,13 @@ def test_add_match_regex_and_negate_ops(tmp_path):
     ]
 
 
+def test_add_match_trims_value_whitespace(tmp_path):
+    # A stray space after '=' must not become part of the value (web trims; CLI must match).
+    _run(tmp_path, "add", "--match", "chat_name= Bride squad ", "--action", "pool")
+    rules = npn.load_rules(_config(tmp_path))
+    assert rules[0].match == [npn.FieldPredicate(field="chat_name", op="contains", value="Bride squad")]
+
+
 def test_add_rejects_invalid_match_regex(tmp_path):
     result = _run(tmp_path, "add", "--match", "chat_name~=(unclosed", "--action", "pool")
     assert result.returncode == 1
