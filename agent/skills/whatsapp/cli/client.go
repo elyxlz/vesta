@@ -15,6 +15,7 @@ import (
 
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	waCompanionReg "go.mau.fi/whatsmeow/proto/waCompanionReg"
 	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -93,6 +94,12 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	waStore.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(2048)
 	waStore.DeviceProps.HistorySyncConfig.RecentSyncDaysLimit = proto.Uint32(730)
 	waStore.DeviceProps.HistorySyncConfig.SupportGroupHistory = proto.Bool(true)
+
+	// Ban-avoidance (#6): present as a real Chrome-on-Linux client instead of
+	// whatsmeow's giveaway default Os="whatsmeow"/PlatformType=UNKNOWN. Fixes the
+	// lazy fingerprint tell; not sufficient alone (behaviour dominates).
+	waStore.SetOSInfo("Linux", waStore.GetWAVersion())
+	waStore.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 
 	client := whatsmeow.NewClient(deviceStore, logger)
 	if client == nil {

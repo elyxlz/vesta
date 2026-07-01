@@ -24,6 +24,10 @@ from .loops import (
 )
 from .default_skills import default_skill_sync_turn
 from .migrations import pending_migration_turns
+from .whatsmeow_freshness import check_whatsmeow_freshness
+
+# Strong refs to fire-and-forget boot tasks so they aren't GC'd mid-flight.
+_BOOT_TASKS: set[asyncio.Task[None]] = set()
 
 
 async def input_handler(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State) -> None:
@@ -262,6 +266,12 @@ async def async_main() -> bool:
     seed_path = config.data_dir / "seed-context.md"
     if config.seed_context and not seed_path.exists():
         seed_path.write_text(config.seed_context)
+
+    # Best-effort, non-blocking: notify if the whatsapp skill's whatsmeow has drifted
+    # behind upstream HEAD (ban-resistance). Owned via _BOOT_TASKS; never raises.
+    _freshness = asyncio.create_task(check_whatsmeow_freshness(config))
+    _BOOT_TASKS.add(_freshness)
+    _freshness.add_done_callback(_BOOT_TASKS.discard)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
