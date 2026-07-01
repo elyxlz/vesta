@@ -213,7 +213,14 @@ If this vesta is hosted, the non-secret `referral_code` is read from the
 and sent at `onboard verify-send`, so a completed invite credits this account (you
 earn 50% of their first month). Unset → it still works, just no reward (a
 self-hosted operator can set it to an admin-issued code). The CLI handles the code;
-you never touch it. Override for testing with `onboard verify-send --referral <code>`.
+you never touch it.
+
+**If your code ever changes, remember the new one.** The box default is fixed at
+setup, but codes can change (the owner gets a fresh one, or theirs is reissued). If
+the owner ever gives you an updated referral code, **store it in your memory** and
+pass it with `onboard verify-send --referral <code>` from then on. The override wins
+over the box default, so a changed code keeps crediting the owner instead of a stale
+one. Only ever use a code the owner gave you; never invent one.
 
 ## Caveats
 
