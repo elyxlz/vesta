@@ -56,9 +56,10 @@ WhatsApp now natively supports two accounts on a single device (Android and iPho
 3. Each account has separate chats, notifications, and settings
 
 **iPhone (WhatsApp 25.11.3+):**
-1. Open WhatsApp > Settings > tap the arrow next to your name > **Add Account**
-2. Enter your new number and verify via SMS
-3. Tap your profile icon to switch between accounts
+1. WhatsApp gates this feature by rollout and it's currently never visible in Settings by default, so first open this deeplink on the iPhone to activate it: `https://wa.me/settings?showAddAccountTooltip=true`. It opens WhatsApp Settings with the **Add Account** option surfaced.
+2. Tap the arrow next to your name > **Add Account**
+3. Enter your new number and verify via SMS
+4. Tap your profile icon to switch between accounts
 
 ### Option B: Work Profile (Android)
 
