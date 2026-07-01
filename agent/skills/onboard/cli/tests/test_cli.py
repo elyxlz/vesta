@@ -7,6 +7,7 @@ import json
 import pytest
 
 from onboard_cli import cli as cli_mod
+from onboard_cli import referral_store
 from onboard_cli import state as state_mod
 from onboard_cli.client import OnboardError
 
@@ -18,6 +19,9 @@ def _tmp_state(tmp_path, monkeypatch):
     """Point the session store at a throwaway dir so tests don't touch ~/.config."""
     monkeypatch.setattr(state_mod, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(state_mod, "_STATE_FILE", tmp_path / "sessions.json")
+    # Same for the shared referral file (written by the account skill): point it at
+    # a throwaway path, absent by default, so tests never touch ~/.config.
+    monkeypatch.setattr(referral_store, "PATH", tmp_path / "referral_code")
 
 
 def _run(argv, capsys):
@@ -110,8 +114,8 @@ def test_verify_send_records_intent_then_sends(capsys, monkeypatch):
     assert calls["send"] == E
 
 
-def test_verify_send_sends_referral_code_from_env(capsys, monkeypatch):
-    monkeypatch.setenv("VESTA_CLOUD_REFERRAL_CODE", "abc123")
+def test_verify_send_sends_referral_code_from_shared_file(capsys, monkeypatch):
+    referral_store.PATH.write_text("abc123\n")
     calls: dict[str, object] = {}
 
     def _create(self, email, code=None):

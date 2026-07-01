@@ -276,7 +276,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_send = sub.add_parser("verify-send", help="Email the buyer a 6-digit sign-in code.")
     p_send.add_argument("--email", required=True, help="The buyer's email.")
-    p_send.add_argument("--referral", help="Override the referral code (defaults to $VESTA_CLOUD_REFERRAL_CODE).")
+    p_send.add_argument("--referral", help="Override the referral code (defaults to the one set with `vesta-cloud-account set-referral`).")
 
     p_verify = sub.add_parser("verify", help="Verify the code the buyer reads back.")
     p_verify.add_argument("--email", required=True)

@@ -196,8 +196,10 @@ same command; don't restart the whole flow or drop the person.
 
 The cases you'll actually hit, and the move for each:
 
-- `invalid referral code` (a bad `--referral` you passed): re-run
-  `onboard verify-send` **without** `--referral` so it uses this box's own code.
+- `invalid referral code`: your code changed or was reissued. Re-run
+  `vesta-cloud-account referral` to fetch the current one, `vesta-cloud-account
+  set-referral --code <code>` it, then re-run `onboard verify-send`, and mention
+  to the owner that their referral code changed.
 - `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
   **without** `--code`.
 - `price ... below the $24 floor`: re-quote at or above $24 and re-run.
@@ -206,21 +208,28 @@ The cases you'll actually hit, and the move for each:
 - `rate limited`: too many attempts from here today. Tell them you'll pick it back
   up later, and continue then.
 
-## Referral attribution (automatic)
+## Referral attribution
 
-If this vesta is hosted, the non-secret `referral_code` is read from the
-`VESTA_CLOUD_REFERRAL_CODE` environment variable (injected by the control plane)
-and sent at `onboard verify-send`, so a completed invite credits this account (you
-earn 50% of their first month). Unset → it still works, just no reward (a
-self-hosted operator can set it to an admin-issued code). The CLI handles the code;
-you never touch it.
+A completed invite only credits this account (you earn 50% of their first month)
+if `onboard verify-send` sends a referral code with it. That code is not yours to
+know or store; it lives with the `account` skill, which is the source of truth
+for it (the control plane issues it, not this box). So:
 
-**If your code ever changes, remember the new one.** The box default is fixed at
-setup, but codes can change (the owner gets a fresh one, or theirs is reissued). If
-the owner ever gives you an updated referral code, **store it in your memory** and
-pass it with `onboard verify-send --referral <code>` from then on. The override wins
-over the box default, so a changed code keeps crediting the owner instead of a stale
-one. Only ever use a code the owner gave you; never invent one.
+1. **Set it up once.** Run `vesta-cloud-account referral` to get this box's code,
+   then `vesta-cloud-account set-referral --code <code>` to hand it to this skill.
+   From then on `onboard verify-send` picks it up automatically; you don't pass it
+   each time.
+2. **If the box isn't cloud-managed**, `vesta-cloud-account referral` comes back
+   `{"error": "not_hosted", ...}`. Ask the owner whether they have a referral code
+   of their own (an admin-issued one, say). If they do, `set-referral` it. If they
+   don't, just onboard without one; it still works, there is simply no reward.
+3. **If a signup ever fails with `invalid referral code`** (see **Handling
+   errors**), the code was reissued or expired. Re-run `vesta-cloud-account
+   referral` to fetch the current one, `set-referral` it, retry the signup, and
+   tell the owner their referral code changed.
+
+Only ever set a code the owner (or `vesta-cloud-account referral`) actually gave
+you; never invent one.
 
 ## Caveats
 

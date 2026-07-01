@@ -1,17 +1,20 @@
 """Configuration for the onboard CLI.
 
-Everything is read from the environment:
+Most of it is read from the environment:
 
-* the control-plane base URL (`VESTA_CLOUD_CONTROL_URL`) and the non-secret
-  referral code (`VESTA_CLOUD_REFERRAL_CODE`, injected by the control plane on
-  managed boxes) that attributes a completed signup to this account;
+* the control-plane base URL (`VESTA_CLOUD_CONTROL_URL`);
 * how to reach **this box's vestad** over the loopback (`VESTAD_PORT`) to read
   reference data (personalities / models) for the create-agent step. Onboarding
   itself is public (issue #79): the account pre-create needs no server-identity
   token, so a self-hosted box can onboard too.
 
-The ONE bit of on-disk state is the buyer's short onboarding session token (see
-`state.py`) — needed because the agent drives the flow across separate CLI
+The non-secret referral code that attributes a completed signup to this account
+is the one exception: it comes from the shared on-disk file the `account` skill
+writes (see `referral_store.py`), not the environment, so a changed/reissued
+code takes effect without redeploying the box.
+
+The other bit of on-disk state is the buyer's short onboarding session token
+(see `state.py`) — needed because the agent drives the flow across separate CLI
 invocations.
 """
 
@@ -20,6 +23,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
+from . import referral_store
 
 # Production control plane. Override with VESTA_CLOUD_CONTROL_URL for
 # staging/testing (the control plane injects it into managed boxes).
@@ -57,9 +62,9 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         base = os.environ.get("VESTA_CLOUD_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
-        # Non-secret per-account attribution id, injected by the control plane on
-        # managed boxes; absent (or admin-set) on self-hosted ones.
-        ref = os.environ.get("VESTA_CLOUD_REFERRAL_CODE", "").strip() or None
+        # Non-secret per-account attribution id, set by `vesta-cloud-account
+        # set-referral`; absent (or admin-set) on self-hosted boxes.
+        ref = referral_store.get_referral_code()
         # vestad listens on the loopback with a self-signed cert (see the account /
         # voice skills); the agent reaches it at https://localhost:<port> to read
         # reference data (personalities / models) for the create-agent step.
