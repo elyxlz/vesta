@@ -42,7 +42,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("x")  # pre-marked, not run
-    (config.core_prompts_dir / "first_start_setup.md").write_text("welcome, run setup")
+    (config.core_prompts_dir / "birth.md").write_text("welcome, run setup")
     state = _authed_state()
 
     turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="first_start", first_start=True)

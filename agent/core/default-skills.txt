@@ -1,4 +1,5 @@
 account
+birth
 browser
 claude-code
 dashboard
