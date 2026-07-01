@@ -94,6 +94,6 @@ Once WhatsApp is registered with the new number, follow the main SETUP.md to aut
 
 **WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. You must be able to receive a text at the registered number when this happens. Don't discard the SIM after setup.
 
-**Let the number settle in.** Use the new number for a few days of normal manual messaging before connecting it to Vesta, and keep usage conversational rather than bulk.
+**Make the first message an incoming one.** Before Vesta sends anything from the new account, message the new number from your own personal phone first, so its first interaction is receiving a message rather than sending one.
 
 **Number recycling.** If your prepaid number expires, the carrier will eventually reassign it. The new owner could register WhatsApp with that number, permanently disconnecting your agent.
