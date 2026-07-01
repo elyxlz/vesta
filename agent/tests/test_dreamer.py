@@ -198,7 +198,6 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
         timestamp=dt.datetime(2025, 1, 1),
         source="telegram",
         type="message",
-        interrupt=True,
         body="urgent user message",
     )
     notif_file.write_text(notif.model_dump_json())

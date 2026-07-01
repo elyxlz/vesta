@@ -50,16 +50,14 @@ type StoreMessageParams struct {
 }
 
 type NotifContext struct {
-	NotifDir          string
-	ChatName          string
-	ContactName       string
-	ContactPhone      string
-	Instance          string
-	ContactSaved      bool
-	IsDirectChat      bool
-	Sender            string
-	Interrupt         bool
-	InterruptExplicit bool
+	NotifDir     string
+	ChatName     string
+	ContactName  string
+	ContactPhone string
+	Instance     string
+	ContactSaved bool
+	IsDirectChat bool
+	Sender       string
 }
 
 type MediaInfo struct {

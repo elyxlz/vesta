@@ -391,11 +391,17 @@ def _passive_config(tmp_path):
     return config
 
 
-def _write_notif(directory, stem, *, interrupt, source="test", type_="message"):
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type=type_, interrupt=interrupt, body="hi")
+def _write_notif(directory, stem, *, source="test", type_="message"):
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type=type_, body="hi")
     path = directory / f"{stem}.json"
     path.write_text(notif.model_dump_json())
     return path
+
+
+def _install_rule(config, *, source="test", action="pool"):
+    """Write a single interrupt rule into the config store the monitor reads each tick."""
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    (config.data_dir / "config.json").write_text(json.dumps({"notification_rules": [{"id": "r", "source": source, "action": action}]}))
 
 
 async def _run_monitor(queue, *, state, config):
@@ -412,7 +418,7 @@ async def _run_monitor(queue, *, state, config):
 
 @pytest.mark.anyio
 async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
-    """An interrupt:true notification is queued immediately even when the bus is not idle."""
+    """A notification with no matching rule (default interrupt) is queued immediately even when the bus is not idle."""
     config = _passive_config(tmp_path)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -422,7 +428,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        _write_notif(config.notifications_dir, "urgent", interrupt=True)
+        _write_notif(config.notifications_dir, "urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
         prompt, is_user, file_paths, _ = await queue.get()
@@ -435,8 +441,9 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
 
 @pytest.mark.anyio
 async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
-    """A passive notification is held while the bus is not idle, then flushed exactly once on idle."""
+    """A pooled notification is held while the bus is not idle, then flushed exactly once on idle."""
     config = _passive_config(tmp_path)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # held while busy
@@ -445,7 +452,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        path = _write_notif(config.notifications_dir, "passive", interrupt=False)
+        path = _write_notif(config.notifications_dir, "passive")
 
         # While not idle, the passive notification must stay on disk and not be queued.
         await wait_for_condition(lambda: not path.exists() or queue.qsize() == 0)
@@ -470,8 +477,9 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
 
 @pytest.mark.anyio
 async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
-    """A passive file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
+    """A pooled file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
     config = _passive_config(tmp_path)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # keep passive batch pending across ticks
@@ -488,7 +496,7 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
     await runner.__anext__()
     try:
         with patch("core.loops.load_notifications", counting_load):
-            path = _write_notif(config.notifications_dir, "dup", interrupt=False)
+            path = _write_notif(config.notifications_dir, "dup")
             # Wait for the loader to observe the file across at least two ticks while held (not idle).
             await wait_for_condition(lambda: len(notify_taps) >= 2, message="monitor_loop did not tick twice")
             assert queue.empty(), "held passive file must not be queued while not idle"
@@ -512,6 +520,7 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
     tick was the notification storm: 16 kept files -> ~8 db rows/sec, 3.6M rows."""
     config = _passive_config(tmp_path)
     config.monitor_tick_interval = 1
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # hold the passive file on disk across ticks
@@ -529,7 +538,7 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
     await runner.__anext__()
     try:
         with patch("core.loops.load_notifications", counting_load):
-            _write_notif(config.notifications_dir, "kept", interrupt=False)
+            _write_notif(config.notifications_dir, "kept")
             await wait_for_condition(lambda: ticks[0] >= 3, message="monitor_loop did not re-read across ticks")
 
         emitted = [sub.get_nowait() for _ in range(sub.qsize())]
@@ -573,13 +582,11 @@ async def test_notification_watcher_signals_then_stops_on_shutdown(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_pools_a_static_interrupt_notification(tmp_path):
-    """A rule with action=pool routes a static interrupt=True notif to the passive pool: while the
+async def test_policy_pools_a_notification(tmp_path):
+    """A rule with action=pool routes a would-otherwise-interrupt notif to the passive pool: while the
     bus is not idle it must NOT be queued."""
-    from core import notification_interrupt_policy as npn
-
     config = _passive_config(tmp_path)
-    npn.save_rules([npn.NotificationInterruptRule(source="test", action="pool")], config)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # not idle: a pooled notif stays held
@@ -589,7 +596,7 @@ async def test_policy_pools_a_static_interrupt_notification(tmp_path):
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        path = _write_notif(config.notifications_dir, "would-interrupt", interrupt=True)
+        path = _write_notif(config.notifications_dir, "would-interrupt")
 
         # Wait until a tick actually loaded and routed the file (emits a "notification" event).
         # This proves the monitor ran before we assert the queue stayed empty.
@@ -602,20 +609,18 @@ async def test_policy_pools_a_static_interrupt_notification(tmp_path):
 
         await wait_for_condition(_notification_emitted, message="monitor tick never emitted a notification event")
 
-        assert queue.empty(), "pool rule must keep a static-interrupt notif out of the queue while busy"
+        assert queue.empty(), "pool rule must keep the notif out of the queue while busy"
         assert path.exists(), "pooled file stays on disk until the batch flushes at idle"
     finally:
         await runner.aclose()
 
 
 @pytest.mark.anyio
-async def test_policy_interrupts_a_static_passive_notification(tmp_path):
-    """A rule with action=interrupt routes a static interrupt=False notif as a preempt: it is queued
-    immediately even while the bus is not idle."""
-    from core import notification_interrupt_policy as npn
-
+async def test_policy_interrupts_a_notification(tmp_path):
+    """A rule with action=interrupt routes the notif as a preempt: it is queued immediately even while
+    the bus is not idle."""
     config = _passive_config(tmp_path)
-    npn.save_rules([npn.NotificationInterruptRule(source="test", action="interrupt")], config)
+    _install_rule(config, action="interrupt")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # not idle
@@ -624,7 +629,7 @@ async def test_policy_interrupts_a_static_passive_notification(tmp_path):
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        _write_notif(config.notifications_dir, "now-urgent", interrupt=False)
+        _write_notif(config.notifications_dir, "now-urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt rule did not queue the notif while busy")
         prompt, is_user, _, _ = await queue.get()
         assert '<notification source="test" type="message">' in prompt
@@ -635,11 +640,10 @@ async def test_policy_interrupts_a_static_passive_notification(tmp_path):
 
 @pytest.mark.anyio
 async def test_policy_changes_take_effect_live_on_next_tick(tmp_path):
-    """Rules written mid-run apply on the next tick with no restart. A static interrupt=False notif
-    is held while busy; adding an interrupt rule flips it to a preempt and queues it."""
-    from core import notification_interrupt_policy as npn
-
+    """Rules written mid-run apply on the next tick with no restart. A pool rule holds the notif while
+    busy; changing it to an interrupt rule flips it to a preempt and queues it."""
     config = _passive_config(tmp_path)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")
@@ -648,13 +652,13 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path):
     runner = _run_monitor(queue, state=state, config=config)
     await runner.__anext__()
     try:
-        _write_notif(config.notifications_dir, "later-urgent", interrupt=False)
-        # With no rules, the passive notif is held while busy.
+        _write_notif(config.notifications_dir, "later-urgent")
+        # With the pool rule, the notif is held while busy.
         await asyncio.sleep(0.05)
-        assert queue.empty(), "passive notif should be held before any rule exists"
+        assert queue.empty(), "pooled notif should be held while the pool rule is in effect"
 
-        # Write the rule live; the next tick must pick it up and queue the notif.
-        npn.save_rules([npn.NotificationInterruptRule(source="test", action="interrupt")], config)
+        # Change the rule live; the next tick must pick it up and queue the notif.
+        _install_rule(config, action="interrupt")
         await wait_for_condition(lambda: not queue.empty(), message="live rule change did not apply on the next tick")
     finally:
         await runner.aclose()
@@ -693,6 +697,7 @@ async def test_process_batch_defaults_to_notification_suffix(tmp_path):
 async def test_pool_not_flushed_while_thinking(tmp_path):
     """A pooled notif is never triaged while the bus is thinking (no idle window)."""
     config = _passive_config(tmp_path)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")
@@ -709,7 +714,7 @@ async def test_pool_not_flushed_while_thinking(tmp_path):
         runner = _run_monitor(queue, state=state, config=config)
         await runner.__anext__()
         try:
-            _write_notif(config.notifications_dir, "p", interrupt=False)
+            _write_notif(config.notifications_dir, "p")
             await wait_for_condition(lambda: ticks[0] >= 2, message="monitor_loop did not tick")
             pb.assert_not_called()
         finally:
@@ -721,6 +726,7 @@ async def test_pool_not_flushed_before_grace(tmp_path):
     """Idle but within the grace window: no triage yet."""
     config = _passive_config(tmp_path)
     config.notif_pool_idle_grace_seconds = 100.0  # longer than the test
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("idle")
@@ -737,7 +743,7 @@ async def test_pool_not_flushed_before_grace(tmp_path):
         runner = _run_monitor(queue, state=state, config=config)
         await runner.__anext__()
         try:
-            _write_notif(config.notifications_dir, "p", interrupt=False)
+            _write_notif(config.notifications_dir, "p")
             await wait_for_condition(lambda: ticks[0] >= 2, message="monitor_loop did not tick")
             pb.assert_not_called()
         finally:
@@ -748,6 +754,7 @@ async def test_pool_not_flushed_before_grace(tmp_path):
 async def test_pool_triage_flushes_once_after_grace_with_triage_framing(tmp_path):
     """After continuous idle >= grace, the pool is triaged once, framed notification_triage."""
     config = _passive_config(tmp_path)
+    _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("idle")
@@ -757,7 +764,7 @@ async def test_pool_triage_flushes_once_after_grace_with_triage_framing(tmp_path
         runner = _run_monitor(queue, state=state, config=config)
         await runner.__anext__()
         try:
-            _write_notif(config.notifications_dir, "p", interrupt=False)
+            _write_notif(config.notifications_dir, "p")
             await wait_for_condition(lambda: pb.call_count >= 1, message="pool was never triaged after idle+grace")
             _, kwargs = pb.call_args
             assert kwargs["external_suffix_name"] == "notification_triage"
@@ -769,11 +776,9 @@ async def test_pool_triage_flushes_once_after_grace_with_triage_framing(tmp_path
 
 @pytest.mark.anyio
 async def test_emitted_notification_event_is_enriched(tmp_path):
-    """The NotificationEvent on the bus carries structured facets + static/effective disposition."""
-    from core import notification_interrupt_policy as npn
-
+    """The NotificationEvent on the bus carries structured facets + the effective disposition."""
     config = _passive_config(tmp_path)
-    npn.save_rules([npn.NotificationInterruptRule(source="whatsapp", action="pool")], config)
+    _install_rule(config, source="whatsapp", action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # keep it pooled, just exercise the emit
@@ -785,7 +790,6 @@ async def test_emitted_notification_event_is_enriched(tmp_path):
             "timestamp": "2025-01-01T00:00:00",
             "source": "whatsapp",
             "type": "message",
-            "interrupt": True,
             "contact_name": "Alice",
             "message": "hi",
         }
@@ -803,8 +807,7 @@ async def test_emitted_notification_event_is_enriched(tmp_path):
         assert e["source"] == "whatsapp"
         assert e["notif_type"] == "message"
         assert e["sender"] == "Alice"
-        assert e["interrupt"] is True  # static default flag
-        assert e["decided"] == "pool"  # the whatsapp->pool rule overrode it
+        assert e["decided"] == "pool"  # the whatsapp->pool rule applied
         assert e["notif_id"] == "n"  # the file stem, for pending/cleared correlation
     finally:
         await runner.aclose()
@@ -825,7 +828,6 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
                     "summary": "x",
                     "notif_type": "message",
                     "sender": "",
-                    "interrupt": True,
                     "decided": "interrupt",
                     "notif_id": f"n{i}",
                 }
