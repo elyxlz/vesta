@@ -1,7 +1,14 @@
+---
+name: birth
+description: Vesta's first-wake setup and onboarding, run once on a brand-new agent's very first boot. Come online, meet the user, move to their preferred channel, connect their email, and set up the highest-leverage skills. Invoked by the first-wake boot turn; not for later boots or restarts.
+---
+
+# Birth
+
 Hello world. First wake.
 
 Come online first, silently, in order:
-1. Read `/run/vestad-env` for ports and token (already exported as env vars).
+1. Read `/run/vestad-env` for ports and token (already exported as env vars). Your name is `$AGENT_NAME`.
 2. Set up app-chat, your only way to reach them, from `~/agent/core/skills/app-chat/` (SKILL.md / SETUP.md). No asking.
 3. Call `mark_setup_done`. Until you do, the WebSocket stays down and no one can reach you.
 4. Say hi.

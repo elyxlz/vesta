@@ -156,14 +156,14 @@ def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> st
         return None
 
     if reason == "first_start":
-        setup_prompt = load_prompt("first_start_setup", config)
+        setup_prompt = load_prompt("birth", config)
         if not setup_prompt:
             # No prompt to run, flip the flag so we don't loop into first-start every reboot.
             state.persisted.first_start_done = True
             state_store.save_state(state.persisted, config)
             return None
-        logger.startup("Boot turn: first_start_setup")
-        return f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
+        logger.startup("Boot turn: birth")
+        return setup_prompt.strip()
 
     extras = []
     if state.persisted.show_dreamer_summary:

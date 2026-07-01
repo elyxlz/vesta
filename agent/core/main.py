@@ -125,7 +125,7 @@ async def run_vesta(
 
     # Bind the HTTP/WS server on every boot, including first start. vestad reaches
     # GET/PUT /config over this port to read auth state and deliver credentials, so a
-    # fresh unauthenticated agent must be reachable before the first_start_setup
+    # fresh unauthenticated agent must be reachable before the birth
     # conversation (which itself needs a provider) can run.
     state.ws_runner = await start_ws_server(state.event_bus, config, state)
     logger.init(f"WebSocket server started on port {config.ws_port}")
