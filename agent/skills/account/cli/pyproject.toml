@@ -1,7 +1,7 @@
 [project]
-name = "account"
+name = "vesta-cloud-account"
 version = "0.1.0"
-description = "Vesta account CLI — read this box's hosting plan and facilitate billing changes via a server-identity token (issue #20)"
+description = "vesta-cloud account CLI: read this box's hosting plan, referral code + earnings, and facilitate billing changes via a server-identity token"
 readme = {text = "", content-type = "text/plain"}
 authors = [
     { name = "elyxlz" }
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-account = "account_cli.cli:main"
+vesta-cloud-account = "account_cli.cli:main"
 
 [dependency-groups]
 dev = [

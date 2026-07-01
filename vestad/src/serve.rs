@@ -311,7 +311,7 @@ async fn info() -> Json<serde_json::Value> {
 /// for the on-box agent (issue #20).
 ///
 /// Agent-token authenticated (the agent proves itself with its `X-Agent-Token`);
-/// vestad then signs `{ sub: SERVER_ID, typ: "server-identity" }` with its
+/// vestad then signs `{ sub: VESTA_CLOUD_SERVER_ID, typ: "server-identity" }` with its
 /// `api_key` and hands it back. The agent carries this to the control plane's
 /// `/api/account/*` to read its plan or open a billing portal. vestad makes NO
 /// network call — it only signs locally; the agent does the talking. The
@@ -320,8 +320,8 @@ async fn account_token_handler(State(state): State<SharedState>) -> axum::respon
     if !crate::is_cloud_managed() {
         return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
     }
-    let Ok(server_id) = std::env::var("SERVER_ID") else {
-        // Managed but SERVER_ID not seeded — an older cloud-init. Nothing to mint.
+    let Ok(server_id) = std::env::var("VESTA_CLOUD_SERVER_ID") else {
+        // Managed but VESTA_CLOUD_SERVER_ID not seeded — nothing to mint.
         return err_response(StatusCode::NOT_FOUND, "no server identity available").into_response();
     };
     let token = crate::jwt::create_server_identity_token(&state.api_key, &server_id);

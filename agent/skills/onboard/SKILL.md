@@ -185,13 +185,51 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 # { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
-## Referral attribution (automatic)
+### Handling errors
 
-If this vesta is hosted, the non-secret `referral_code` is read from the
-`VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
-completed invite credits this account (you earn 50% of their first month). Unset
-(self-hosted) → it still works, just no reward. The CLI handles the code; you never
-touch it. Override for testing with `--referral <code>`.
+Every command prints JSON. On a failure it is
+`{ "error": "<short code>", "message": "<what went wrong and what to do next>" }`
+(some add a hint, e.g. `floor_usd`). The **`message` is written for you**: read it,
+do what it says, then relay a friendly version to the person and keep the flow
+going. A failed step is recoverable, so fix the one thing it names and re-run that
+same command; don't restart the whole flow or drop the person.
+
+The cases you'll actually hit, and the move for each:
+
+- `invalid referral code`: your code changed or was reissued. Re-run
+  `vesta-cloud-account referral` to fetch the current one, `vesta-cloud-account
+  set-referral --code <code>` it, then re-run `onboard verify-send`, and mention
+  to the owner that their referral code changed.
+- `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
+  **without** `--code`.
+- `price ... below the $24 floor`: re-quote at or above $24 and re-run.
+- `already provisioned`: they already have a vesta. Send them `onboard links` to
+  sign in; do not onboard them again.
+- `rate limited`: too many attempts from here today. Tell them you'll pick it back
+  up later, and continue then.
+
+## Referral attribution
+
+A completed invite only credits this account (you earn 50% of their first month)
+if `onboard verify-send` sends a referral code with it. That code is not yours to
+know or store; it lives with the `account` skill, which is the source of truth
+for it (the control plane issues it, not this box). So:
+
+1. **Set it up once.** Run `vesta-cloud-account referral` to get this box's code,
+   then `vesta-cloud-account set-referral --code <code>` to hand it to this skill.
+   From then on `onboard verify-send` picks it up automatically; you don't pass it
+   each time.
+2. **If the box isn't cloud-managed**, `vesta-cloud-account referral` comes back
+   `{"error": "not_hosted", ...}`. Ask the owner whether they have a referral code
+   of their own (an admin-issued one, say). If they do, `set-referral` it. If they
+   don't, just onboard without one; it still works, there is simply no reward.
+3. **If a signup ever fails with `invalid referral code`** (see **Handling
+   errors**), the code was reissued or expired. Re-run `vesta-cloud-account
+   referral` to fetch the current one, `set-referral` it, retry the signup, and
+   tell the owner their referral code changed.
+
+Only ever set a code the owner (or `vesta-cloud-account referral`) actually gave
+you; never invent one.
 
 ## Caveats
 
@@ -206,7 +244,7 @@ touch it. Override for testing with `--referral <code>`.
 - **Don't break character into a brochure.** The exclusivity only works if you hold
   the frame: link the marketing page (`onboard links`) instead of reciting features.
 - The control-plane base URL defaults to `https://vesta.run/api`; override with
-  `VESTA_CONTROL_URL`.
+  `VESTA_CLOUD_CONTROL_URL` (the control plane injects it into managed boxes).
 
 ## Preference
 

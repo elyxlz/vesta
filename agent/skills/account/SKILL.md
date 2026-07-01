@@ -3,7 +3,7 @@ name: account
 description: Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices).
 ---
 
-# account, CLI: `account`
+# account, CLI: `vesta-cloud-account`
 
 Lets you, the owner's own vesta, answer questions about **this** box's hosting
 plan and help the owner manage their subscription, without ever holding their
@@ -20,9 +20,9 @@ only. The `api_key` itself never reaches you.
 
 So:
 
-- **Reading the plan is free.** `account plan` just works on a hosted box.
+- **Reading the plan is free.** `vesta-cloud-account plan` just works on a hosted box.
 - **Changes are facilitated, never automatic.** You cannot upgrade, cancel, or
-  move money yourself. `account manage` returns a **Stripe-hosted link**; the
+  move money yourself. `vesta-cloud-account manage` returns a **Stripe-hosted link**; the
   owner opens it and confirms the change in Stripe's own UI. You *initiate*, the
   human *authorizes*.
 
@@ -40,13 +40,15 @@ Invoke when the **owner** asks about *their own* hosting:
 
 ## Skip
 
-Self-hosted boxes have no plan (`account plan` says so). Buying a vesta for someone else is `onboard`; paying an external invoice or third party is `stripe-pay`.
+Self-hosted boxes have no plan (`vesta-cloud-account plan` says so). Buying a vesta for someone else is `onboard`; paying an external invoice or third party is `stripe-pay`.
 
 ## Commands
 
 ```
-account plan      # this box's plan, price, status, renewal date (a read)
-account manage    # a secure Stripe link to upgrade / cancel / change payment
+vesta-cloud-account plan          # this box's plan, price, status, renewal date (a read)
+vesta-cloud-account manage        # a secure Stripe link to upgrade / cancel / change payment
+vesta-cloud-account referral      # this box's referral code, credit earned, invites completed
+vesta-cloud-account set-referral  # set/clear the code the onboard skill uses
 ```
 
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}`
@@ -55,19 +57,36 @@ unreachable, 1 unexpected.
 
 ## How to use it in conversation
 
-- **Plan questions:** run `account plan`, then tell them plainly the plan, the
+- **Plan questions:** run `vesta-cloud-account plan`, then tell them plainly the plan, the
   monthly price (`price_usd`), whether it is `active`, and when it renews
   (`renews_at`). Do not read raw JSON at them; summarize.
-- **Any change (upgrade, cancel, card):** run `account manage`, give them the
+- **Any change (upgrade, cancel, card):** run `vesta-cloud-account manage`, give them the
   `url`, and say something like "here is your billing page, you can upgrade,
   change your card, or cancel from there." Then stop. **Do not claim** you
   upgraded or cancelled anything; you did not. They confirm it on that page.
-- If `account plan` returns an error that this is not a hosted box, tell them
+- If `vesta-cloud-account plan` returns an error that this is not a hosted box, tell them
   they are self-hosted and there is no Vesta plan to manage.
+
+## Referral code
+
+If the owner asks about their referral code, invites, or earnings, run
+`vesta-cloud-account referral` and read back `referral_code` and
+`invites_completed` plainly; convert `referral_credit_cents` to a dollar figure
+yourself rather than reading raw cents at them. If it comes back
+`{"error": "not_hosted", ...}`, this box has no vesta-issued code; follow the
+`message` it returns.
+
+The `onboard` skill (the flow that invites someone new) needs this box's code to
+credit the owner for a completed invite. Run
+`vesta-cloud-account set-referral --code <code>` once so `onboard` picks it up
+automatically from then on; there is no need to pass it every time. If the
+owner's code is ever reissued or changes, re-run `set-referral` with the new one.
+`vesta-cloud-account set-referral --clear` removes it (e.g. moving to a fresh code
+or clearing a mistaken one).
 
 ## Honesty
 
 Never imply you charged a card, changed a plan, or cancelled an account. You only
 ever *read* the plan and *hand over a link*. If the owner asks "did it go
 through", tell them to check the page or their email. You can re-run
-`account plan` to read the current state, but you do not process the change.
+`vesta-cloud-account plan` to read the current state, but you do not process the change.

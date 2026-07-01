@@ -56,27 +56,22 @@ def _require_token(email: str, hint: str = "run `onboard verify` first") -> str:
 
 def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
-    # Invite-only: web signup is disabled, so the control plane only sends a code
-    # to an email that already has an account. Pre-create it first, authenticated
-    # as THIS introducing vesta via a server-identity token minted from our own
-    # vestad (a self-hosted box can't mint one, so it can't walk anyone in).
-    identity = client.mint_identity_token()
-    created = client.create_account(email, identity)
-    if "error" in created:
-        raise _Invalid(created)  # e.g. our vesta isn't active, or a bad email
+    # Public onboarding (issue #79): record the invitee's pending intent, attributed
+    # to our referral code, then send their OTP. The account is created when they
+    # verify (below). Self-hosted boxes can onboard too, no server-identity gate.
+    code = (args.referral.strip() if getattr(args, "referral", None) else None) or cfg.referral_code
+    resp = client.create_account(email, code)
+    if "error" in resp:
+        raise _Invalid(resp)  # e.g. a malformed email
     client.send_otp(email)
-    _print(
-        {
-            "sent": True,
-            "email": email,
-            "account": "created" if ("created" in created and created["created"]) else "existing",
-        }
-    )
+    _print({"sent": True, "email": email, "code_applied": bool(resp.get("code_applied"))})
     return 0
 
 
 def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     email = _email(args)
+    # Verifying the OTP is what actually CREATES the invitee's account (issue #79:
+    # creation is deferred from verify-send to here) and returns their session token.
     token = client.verify_otp(email, args.code.strip())
     if not token:
         raise _Invalid({"error": "wrong or expired code — ask them to re-read it (or resend)"})
@@ -101,7 +96,6 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     result = client.checkout(
         token=token,
         plan=PLAN,
-        referral_code=args.referral or cfg.referral_code,
         price=price,
         code=(args.code.strip() if args.code else None),
     )
@@ -282,6 +276,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_send = sub.add_parser("verify-send", help="Email the buyer a 6-digit sign-in code.")
     p_send.add_argument("--email", required=True, help="The buyer's email.")
+    p_send.add_argument("--referral", help="Override the referral code (defaults to the one set with `vesta-cloud-account set-referral`).")
 
     p_verify = sub.add_parser("verify", help="Verify the code the buyer reads back.")
     p_verify.add_argument("--email", required=True)
@@ -291,7 +286,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_checkout.add_argument("--email", required=True)
     p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $24 floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
-    p_checkout.add_argument("--referral", help="Override the referral code (defaults to $VESTA_REFERRAL_CODE).")
 
     p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")
     p_status.add_argument("--email", required=True)

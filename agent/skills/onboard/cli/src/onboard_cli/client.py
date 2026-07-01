@@ -45,30 +45,6 @@ class Client:
     def _url(self, path: str) -> str:
         return f"{self._cfg.base_url}{path}"
 
-    # --- vestad: mint THIS (introducing) vesta's server-identity token -------
-
-    def mint_identity_token(self) -> str:
-        """POST <vestad>/agents/<name>/account-token -> our server-identity token.
-
-        Agent-token authed; vestad signs it locally with the box's `api_key` (a
-        pure crypto op, no network). Only a cloud-managed (hosted) box can mint
-        one, so this doubles as the invite-only gate: a self-hosted box (no
-        VESTAD_PORT / AGENT_TOKEN) can't mint a token, so it can't walk anyone in.
-        """
-        cfg = self._cfg
-        if not cfg.vestad_base or not cfg.agent_name:
-            raise OnboardError("not running inside an agent container (no VESTAD_PORT/AGENT_NAME) — only a hosted vesta can onboard")
-        if not cfg.agent_token:
-            raise OnboardError("missing AGENT_TOKEN — cannot authenticate to vestad")
-        url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
-        data = self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
-        token = data["token"] if "token" in data else None
-        if not token:
-            # A non-cloud-managed box answers 404 {error}; surface it verbatim.
-            error = data["error"] if "error" in data else ""
-            raise OnboardError(error or "vestad did not return a server-identity token")
-        return token
-
     # --- vestad: read-only reference data over the loopback ------------------
 
     def _vestad_get(self, path: str) -> Any:
@@ -106,15 +82,18 @@ class Client:
 
     # --- control plane: account pre-create (authed as THIS vesta) ------------
 
-    def create_account(self, email: str, identity_token: str) -> dict[str, Any]:
-        """POST /onboard/account -> {created, email}.
+    def create_account(self, email: str, code: str | None = None) -> dict[str, Any]:
+        """POST /onboard/account -> {ok, email, code_applied}.
 
-        Pre-creates the invitee's account so the control plane will send them a
-        code (web signup is disabled — invite-only). Bearer is our server-identity
-        token. Idempotent: an existing email returns {created: false}. A 4xx body
-        carries a structured {error} (e.g. our vesta isn't active) to surface.
+        Public (issue #79): no server-identity token. Records a pending onboard
+        intent and, when `code` is given, attributes it; the account itself is
+        created when the invitee verifies their OTP. An unknown/revoked code never
+        blocks signup (code_applied:false). A 4xx body carries {error} to surface.
         """
-        return self._json(self._post("/onboard/account", json={"email": email}, headers=self._auth(identity_token)))
+        body: dict[str, Any] = {"email": email}
+        if code:
+            body["code"] = code
+        return self._json(self._post("/onboard/account", json=body))
 
     # --- control plane: auth -------------------------------------------------
 
@@ -152,20 +131,20 @@ class Client:
         *,
         token: str,
         plan: str,
-        referral_code: str | None,
         price: float | None,
         code: str | None,
     ) -> dict[str, Any]:
-        """POST /onboard/checkout -> {url, subdomain, server_id}. Auto-assigns the subdomain."""
+        """POST /onboard/checkout -> {url, subdomain, server_id}. Auto-assigns the subdomain.
+
+        Referral attribution no longer rides checkout (issue #79): it is bound at
+        account-create from the buyer's signup code, so no X-Vesta-Referral header.
+        """
         body: dict[str, Any] = {"plan": plan}
         if price is not None:
             body["price"] = price  # negotiated monthly USD; floor enforced server-side
         if code:
             body["code"] = code  # discount code; unknown -> {"error": "invalid code"}
-        headers = self._auth(token)
-        if referral_code:
-            headers["X-Vesta-Referral"] = referral_code
-        return self._json(self._post("/onboard/checkout", json=body, headers=headers))
+        return self._json(self._post("/onboard/checkout", json=body, headers=self._auth(token)))
 
     def me(self, token: str) -> dict[str, Any]:
         """GET /me -> {user, server}. `server` is null until checkout reserves one."""
