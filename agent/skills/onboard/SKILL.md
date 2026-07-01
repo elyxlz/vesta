@@ -188,10 +188,11 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 ## Referral attribution (automatic)
 
 If this vesta is hosted, the non-secret `referral_code` is read from the
-`VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
-completed invite credits this account (you earn 50% of their first month). Unset
-(self-hosted) → it still works, just no reward. The CLI handles the code; you never
-touch it. Override for testing with `--referral <code>`.
+`VESTA_CLOUD_REFERRAL_CODE` environment variable (injected by the control plane)
+and sent at `onboard verify-send`, so a completed invite credits this account (you
+earn 50% of their first month). Unset → it still works, just no reward (a
+self-hosted operator can set it to an admin-issued code). The CLI handles the code;
+you never touch it. Override for testing with `onboard verify-send --referral <code>`.
 
 ## Caveats
 
@@ -206,7 +207,7 @@ touch it. Override for testing with `--referral <code>`.
 - **Don't break character into a brochure.** The exclusivity only works if you hold
   the frame: link the marketing page (`onboard links`) instead of reciting features.
 - The control-plane base URL defaults to `https://vesta.run/api`; override with
-  `VESTA_CONTROL_URL`.
+  `VESTA_CLOUD_CONTROL_URL` (the control plane injects it into managed boxes).
 
 ## Preference
 

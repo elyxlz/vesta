@@ -71,12 +71,13 @@ def test_presets_lists_live_reference_data(capsys, monkeypatch):
 
 
 def _mock_precreate(monkeypatch, result=None):
-    """Stub the mint + account pre-create that `verify-send` now does first."""
-    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", lambda self: "IDTOK")
+    """Stub the public account pre-create that `verify-send` does first (issue #79)."""
     monkeypatch.setattr(
         cli_mod.Client,
         "create_account",
-        lambda self, email, tok: result if result is not None else {"created": True, "email": email},
+        lambda self, email, code=None: result
+        if result is not None
+        else {"ok": True, "email": email, "code_applied": bool(code)},
     )
 
 
@@ -90,24 +91,40 @@ def test_verify_stores_session(capsys, monkeypatch):
     assert state_mod.token_for(E) == "SESS"
 
 
-def test_verify_send_precreates_account_then_sends(capsys, monkeypatch):
+def test_verify_send_records_intent_then_sends(capsys, monkeypatch):
     calls: dict[str, object] = {}
 
-    def _create(self, email, tok):
-        calls["create"] = (email, tok)
-        return {"created": True, "email": email}
+    def _create(self, email, code=None):
+        calls["create"] = (email, code)
+        return {"ok": True, "email": email, "code_applied": bool(code)}
 
     def _send(self, email):
         calls["send"] = email
         return {"success": True}
 
-    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", lambda self: "IDTOK")
     monkeypatch.setattr(cli_mod.Client, "create_account", _create)
     monkeypatch.setattr(cli_mod.Client, "send_otp", _send)
     rc, data = _run(["verify-send", "--email", E], capsys)
-    assert rc == 0 and data["sent"] is True and data["account"] == "created"
-    assert calls["create"] == (E, "IDTOK")  # pre-create authed with our identity token
-    assert calls["send"] == E  # and only THEN the code is sent
+    assert rc == 0 and data["sent"] is True
+    # No referral code in the env here, so the intent is recorded with code=None,
+    # and the OTP is only sent after the intent is recorded.
+    assert calls["create"] == (E, None)
+    assert calls["send"] == E
+
+
+def test_verify_send_sends_referral_code_from_env(capsys, monkeypatch):
+    monkeypatch.setenv("VESTA_CLOUD_REFERRAL_CODE", "abc123")
+    calls: dict[str, object] = {}
+
+    def _create(self, email, code=None):
+        calls["code"] = code
+        return {"ok": True, "email": email, "code_applied": bool(code)}
+
+    monkeypatch.setattr(cli_mod.Client, "create_account", _create)
+    monkeypatch.setattr(cli_mod.Client, "send_otp", lambda self, email: {"success": True})
+    rc, data = _run(["verify-send", "--email", E], capsys)
+    assert rc == 0 and data["code_applied"] is True
+    assert calls["code"] == "abc123"
 
 
 def test_verify_send_surfaces_precreate_error_without_sending(capsys, monkeypatch):
@@ -121,13 +138,14 @@ def test_verify_send_surfaces_precreate_error_without_sending(capsys, monkeypatc
     assert rc == 2 and data["error"] == "unauthenticated"
 
 
-def test_verify_send_non_hosted_box_exits_3(capsys, monkeypatch):
-    def _no_mint(self):
-        raise OnboardError("no VESTAD_PORT/AGENT_NAME — only a hosted vesta can onboard")
-
-    monkeypatch.setattr(cli_mod.Client, "mint_identity_token", _no_mint)
+def test_verify_send_self_hosted_still_onboards(capsys, monkeypatch):
+    # No server-identity gate anymore (issue #79): a box with no VESTAD_PORT /
+    # AGENT_TOKEN can still onboard through the public endpoint. create_account +
+    # send_otp both run and it exits 0.
+    _mock_precreate(monkeypatch)
+    monkeypatch.setattr(cli_mod.Client, "send_otp", lambda self, email: {"success": True})
     rc, data = _run(["verify-send", "--email", E], capsys)
-    assert rc == 3 and "only a hosted vesta can onboard" in data["error"]
+    assert rc == 0 and data["sent"] is True
 
 
 def test_verify_rejects_bad_code(capsys, monkeypatch):
@@ -147,21 +165,20 @@ def test_checkout_requires_verification(capsys):
     assert rc == 2 and "not verified" in data["error"]
 
 
-def test_checkout_forwards_price_code_referral(capsys, monkeypatch):
+def test_checkout_forwards_price_and_code_no_referral(capsys, monkeypatch):
     _verified()
     captured = {}
 
-    def fake_checkout(self, *, token, plan, referral_code, price, code):
-        captured.update(token=token, plan=plan, referral_code=referral_code, price=price, code=code)
+    # checkout no longer takes/sends a referral (issue #79): attribution is bound
+    # at account-create, so its signature has no referral_code and no X-Vesta-Referral.
+    def fake_checkout(self, *, token, plan, price, code):
+        captured.update(token=token, plan=plan, price=price, code=code)
         return {"url": "https://checkout.stripe.com/x", "subdomain": "ada", "server_id": "srv1"}
 
     monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
-    rc, data = _run(
-        ["checkout", "--email", E, "--price", "200", "--code", " friend50 ", "--referral", "ref_x"],
-        capsys,
-    )
+    rc, data = _run(["checkout", "--email", E, "--price", "200", "--code", " friend50 "], capsys)
     assert rc == 0 and data["url"].startswith("https://checkout.stripe.com/")
-    assert captured == {"token": "TOK", "plan": "pro", "referral_code": "ref_x", "price": 200.0, "code": "friend50"}
+    assert captured == {"token": "TOK", "plan": "pro", "price": 200.0, "code": "friend50"}
     # server_id is stashed for later steps but kept out of the agent-facing output.
     assert state_mod.load(E)["server_id"] == "srv1"
     assert "server_id" not in data
