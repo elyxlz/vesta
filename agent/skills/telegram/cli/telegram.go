@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -254,6 +255,58 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 }
 
+// --- Telegram MarkdownV2 rendering -----------------------------------------
+//
+// Outbound messages are sent as MarkdownV2. Telegram's legacy "Markdown" mode
+// silently drops the underscores in a matched pair like `cs_live_...` (it reads
+// them as italics), which corrupted the Stripe Checkout links handed to users
+// -> a dead pay page. MarkdownV2 has the same hazard, so we ESCAPE every
+// reserved character in literal text. Explicit `[label](url)` links are kept
+// intact (label escaped; url only needs `)`/`\` escaped) so the onboard skill
+// can hand out a real, clickable pay link whose Stripe session id survives
+// byte-for-byte. Text that isn't a recognised link is still escaped, so a bare
+// URL survives verbatim (Telegram auto-links it) -- worst case a link renders
+// unlabelled, never corrupted.
+
+// mdV2Escaper backslash-escapes every MarkdownV2 reserved character in a run of
+// literal text. Backslash is listed first so we never double-escape our own
+// escapes.
+var mdV2Escaper = strings.NewReplacer(
+	"\\", "\\\\",
+	"_", "\\_", "*", "\\*", "[", "\\[", "]", "\\]",
+	"(", "\\(", ")", "\\)", "~", "\\~", "`", "\\`",
+	">", "\\>", "#", "\\#", "+", "\\+", "-", "\\-",
+	"=", "\\=", "|", "\\|", "{", "\\{", "}", "\\}",
+	".", "\\.", "!", "\\!",
+)
+
+// mdV2LinkURLEscaper escapes the only two characters reserved inside a
+// MarkdownV2 `(...)` link destination.
+var mdV2LinkURLEscaper = strings.NewReplacer("\\", "\\\\", ")", "\\)")
+
+// mdLinkRe matches a Markdown inline link `[label](http(s)://url)` with a plain
+// label and a whitespace/paren-free URL -- the shape the skills emit.
+var mdLinkRe = regexp.MustCompile(`\[([^\[\]]*)\]\((https?://[^\s)]+)\)`)
+
+// toMarkdownV2 renders an agent message as safe Telegram MarkdownV2: literal
+// text is fully escaped (so a URL's underscores can never parse as italics)
+// while explicit [label](url) links are preserved with their URL byte-for-byte.
+func toMarkdownV2(text string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range mdLinkRe.FindAllStringSubmatchIndex(text, -1) {
+		b.WriteString(mdV2Escaper.Replace(text[last:m[0]]))
+		b.WriteString("[")
+		b.WriteString(mdV2Escaper.Replace(text[m[2]:m[3]]))
+		b.WriteString("](")
+		b.WriteString(mdV2LinkURLEscaper.Replace(text[m[4]:m[5]]))
+		b.WriteString(")")
+		last = m[1]
+	}
+	b.WriteString(mdV2Escaper.Replace(text[last:]))
+	return b.String()
+}
+
 func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, error) {
 	// Split long messages
 	if len(text) > MaxMessageLength {
@@ -264,11 +317,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 			if len(chunks) > 1 {
 				prefix = fmt.Sprintf("(%d/%d) ", i+1, len(chunks))
 			}
-			msg := tgbotapi.NewMessage(recipientID, prefix+chunk)
-			msg.ParseMode = "Markdown"
+			msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(prefix+chunk))
+			msg.ParseMode = "MarkdownV2"
 			sent, err := tc.bot.Send(msg)
 			if err != nil {
-				// Retry without parse mode
+				// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+				msg.Text = prefix + chunk
 				msg.ParseMode = ""
 				sent, err = tc.bot.Send(msg)
 				if err != nil {
@@ -285,11 +339,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 		return lastID, nil
 	}
 
-	msg := tgbotapi.NewMessage(recipientID, text)
-	msg.ParseMode = "Markdown"
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
-		// Retry without parse mode
+		// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = tc.bot.Send(msg)
 		if err != nil {
@@ -453,8 +508,8 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 	if len(text) > MaxMessageLength {
 		return 0, fmt.Errorf("message too long: %d chars (max %d for a message with buttons/reply)", len(text), MaxMessageLength)
 	}
-	msg := tgbotapi.NewMessage(recipientID, text)
-	msg.ParseMode = "Markdown"
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
 	if replyTo != 0 {
 		msg.ReplyToMessageID = int(replyTo)
 	}
@@ -463,6 +518,7 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 	}
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = tc.bot.Send(msg)
 		if err != nil {
@@ -480,18 +536,20 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 // This is the core of the "dynamic UI": update a status line, swap a menu, mark a choice taken.
 func (tc *TelegramClient) EditMessage(chatID, messageID int64, text, buttons string) error {
 	if kb, ok := parseInlineKeyboard(buttons); ok {
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, int(messageID), text, kb)
-		edit.ParseMode = "Markdown"
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, int(messageID), toMarkdownV2(text), kb)
+		edit.ParseMode = "MarkdownV2"
 		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
 			edit.ParseMode = ""
 			if _, err = tc.bot.Send(edit); err != nil {
 				return fmt.Errorf("failed to edit message: %v", err)
 			}
 		}
 	} else {
-		edit := tgbotapi.NewEditMessageText(chatID, int(messageID), text)
-		edit.ParseMode = "Markdown"
+		edit := tgbotapi.NewEditMessageText(chatID, int(messageID), toMarkdownV2(text))
+		edit.ParseMode = "MarkdownV2"
 		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
 			edit.ParseMode = ""
 			if _, err = tc.bot.Send(edit); err != nil {
 				return fmt.Errorf("failed to edit message: %v", err)
