@@ -11,6 +11,7 @@ import {
 import { AppSidebar } from "@/components/app-sidebar"
 import { Shell, useShellRef } from "@/components/shell"
 import { SiteHeader } from "@/components/site-header"
+import { Toaster } from "@/components/ui/sonner"
 import { getAgentName, waitForAuth } from "@/lib/parent-bridge"
 import { config, type PageConfig } from "./config"
 
@@ -101,6 +102,7 @@ function DashboardContent() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      <Toaster position="bottom-right" />
     </TooltipProvider>
   )
 }
