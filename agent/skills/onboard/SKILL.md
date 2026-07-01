@@ -185,6 +185,27 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 # { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
+### Handling errors
+
+Every command prints JSON. On a failure it is
+`{ "error": "<short code>", "message": "<what went wrong and what to do next>" }`
+(some add a hint, e.g. `floor_usd`). The **`message` is written for you**: read it,
+do what it says, then relay a friendly version to the person and keep the flow
+going. A failed step is recoverable, so fix the one thing it names and re-run that
+same command; don't restart the whole flow or drop the person.
+
+The cases you'll actually hit, and the move for each:
+
+- `invalid referral code` (a bad `--referral` you passed): re-run
+  `onboard verify-send` **without** `--referral` so it uses this box's own code.
+- `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
+  **without** `--code`.
+- `price ... below the $24 floor`: re-quote at or above $24 and re-run.
+- `already provisioned`: they already have a vesta. Send them `onboard links` to
+  sign in; do not onboard them again.
+- `rate limited`: too many attempts from here today. Tell them you'll pick it back
+  up later, and continue then.
+
 ## Referral attribution (automatic)
 
 If this vesta is hosted, the non-secret `referral_code` is read from the
