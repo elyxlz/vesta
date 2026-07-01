@@ -75,9 +75,7 @@ def _mock_precreate(monkeypatch, result=None):
     monkeypatch.setattr(
         cli_mod.Client,
         "create_account",
-        lambda self, email, code=None: result
-        if result is not None
-        else {"ok": True, "email": email, "code_applied": bool(code)},
+        lambda self, email, code=None: result if result is not None else {"ok": True, "email": email, "code_applied": bool(code)},
     )
 
 
