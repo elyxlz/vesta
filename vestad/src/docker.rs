@@ -964,6 +964,18 @@ pub fn write_agent_env_file(
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
+    // vesta-cloud managed vars the agent's skills read: the referral code the
+    // onboard skill attributes signups with, and the control-plane base URL the
+    // account/onboard skills call. Both come from vestad's own env (the cloud-init
+    // managed.conf drop-in); absent on self-hosted boxes.
+    append_optional(
+        "VESTA_CLOUD_REFERRAL_CODE",
+        std::env::var("VESTA_CLOUD_REFERRAL_CODE").ok().as_deref(),
+    );
+    append_optional(
+        "VESTA_CLOUD_CONTROL_URL",
+        std::env::var("VESTA_CLOUD_CONTROL_URL").ok().as_deref(),
+    );
     // The env carries only identity; the agent owns model/provider/personality, timezone, and provider
     // auth in its config store (preferences) and .credentials.json (Claude OAuth blob).
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
@@ -2307,6 +2319,40 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
         assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
+    }
+
+    #[test]
+    fn write_agent_env_file_forwards_vesta_cloud_vars_when_set() {
+        // The cloud-init managed drop-in sets these on vestad's process; the agent
+        // env file must forward them so the on-box skills (onboard, account) read
+        // them. No other test touches these vars, so setting them here is race-safe.
+        std::env::set_var("VESTA_CLOUD_REFERRAL_CODE", "ref_abc123");
+        std::env::set_var("VESTA_CLOUD_CONTROL_URL", "https://staging.vesta.run/api");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTA_CLOUD_REFERRAL_CODE=ref_abc123"),
+            "referral code forwarded: {content}"
+        );
+        assert!(
+            content.contains("export VESTA_CLOUD_CONTROL_URL=https://staging.vesta.run/api"),
+            "control url forwarded: {content}"
+        );
+        std::env::remove_var("VESTA_CLOUD_REFERRAL_CODE");
+        std::env::remove_var("VESTA_CLOUD_CONTROL_URL");
+
+        // When unset, no stray line is written (append_optional skips None).
+        let path2 = write_agent_env_file(&cfg, "agent2", 3, "tok2").expect("write env file 2");
+        let content2 = std::fs::read_to_string(&path2).expect("read env file 2");
+        assert!(!content2.contains("VESTA_CLOUD_REFERRAL_CODE"), "absent when unset: {content2}");
+        assert!(!content2.contains("VESTA_CLOUD_CONTROL_URL"), "absent when unset: {content2}");
     }
 
     #[test]
