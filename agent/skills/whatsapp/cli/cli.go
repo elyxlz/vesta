@@ -76,33 +76,6 @@ func extractSkipSenders() map[string]bool {
 	return result
 }
 
-// extractInterruptSenders parses --interrupt-senders into an allowlist of phones
-// that should interrupt the agent. The returned `explicit` flag is true whenever
-// the flag was provided, so callers can distinguish "no flag → leave interrupt
-// field absent and let the agent's default apply" from "flag present → write an
-// explicit interrupt boolean per notification". A literal value of "none"
-// (case-insensitive) yields an empty allowlist with noInterrupt=true, meaning
-// no sender should interrupt.
-func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInterrupt bool) {
-	allowlist = make(map[string]bool)
-	val, found := lookupFlag("interrupt-senders")
-	if !found {
-		return allowlist, false, false
-	}
-	explicit = true
-	if strings.EqualFold(strings.TrimSpace(val), "none") {
-		noInterrupt = true
-		return allowlist, explicit, noInterrupt
-	}
-	for _, phone := range strings.Split(val, ",") {
-		phone = strings.TrimSpace(phone)
-		if phone != "" {
-			allowlist[phone] = true
-		}
-	}
-	return allowlist, explicit, noInterrupt
-}
-
 // stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
 // directory for the default instance, a named subdirectory otherwise).
 func stateDataDir() string {
@@ -197,8 +170,7 @@ func runServe(logger waLog.Logger) {
 		}
 	}
 
-	interruptAllow, interruptExplicit, noInterrupt := extractInterruptSenders()
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), interruptAllow, interruptExplicit, noInterrupt, logger)
+	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -267,11 +239,11 @@ func stripGlobalFlags(args []string) []string {
 			skip = false
 			continue
 		}
-		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" || arg == "--interrupt-senders" {
+		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || arg == "--no-notifications" || strings.HasPrefix(arg, "--skip-senders=") || strings.HasPrefix(arg, "--interrupt-senders=") {
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || arg == "--no-notifications" || strings.HasPrefix(arg, "--skip-senders=") {
 			continue
 		}
 		filtered = append(filtered, arg)

@@ -336,17 +336,12 @@ enum Toggle {
 
 #[derive(Subcommand)]
 enum NotificationsAction {
-    /// Print the whole policy (rules + default overrides) as JSON
+    /// Print the notification rules as JSON
     Show,
     /// Manage the ordered interrupt ruleset (first matching rule wins, so order matters)
     Rules {
         #[command(subcommand)]
         action: RulesAction,
-    },
-    /// Manage per-(source, type) default overrides, consulted when no rule matches
-    Defaults {
-        #[command(subcommand)]
-        action: DefaultsAction,
     },
 }
 
@@ -381,33 +376,6 @@ enum RulesAction {
     Clear,
 }
 
-#[derive(Subcommand)]
-enum DefaultsAction {
-    /// Print the per-(source, type) default overrides as JSON
-    List,
-    /// Override a (source, type) default disposition, used when no rule matches
-    Set {
-        /// The notification source, e.g. outlook, twitter
-        #[arg(long)]
-        source: String,
-        /// The notification type to scope to (omit to target the source's no-type notifications)
-        #[arg(long, default_value = "")]
-        r#type: String,
-        /// interrupt = preempt the agent's current turn; pool = wait until idle
-        #[arg(long)]
-        action: PolicyAction,
-    },
-    /// Remove a default override so the source's own default applies again
-    Clear {
-        /// The notification source
-        #[arg(long)]
-        source: String,
-        /// The notification type (must match the override you set)
-        #[arg(long, default_value = "")]
-        r#type: String,
-    },
-}
-
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum PolicyAction {
     Interrupt,
@@ -423,15 +391,20 @@ impl PolicyAction {
     }
 }
 
-/// The `rules`/`defaults` array from a policy response, cloned (empty if absent or not an array).
-fn policy_section(policy: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
-    policy[key].as_array().cloned().unwrap_or_default()
+/// A fresh 32-hex-char rule id from the system CSPRNG. The server assigns one to rules missing it,
+/// but the CLI stamps its own so the id is stable/printable before the round-trip.
+fn new_rule_id() -> String {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 16];
+    ring::rand::SystemRandom::new().fill(&mut bytes).expect("system CSPRNG");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Build a new interrupt rule from the match flags + action. Unset match fields are omitted (the
-/// engine defaults them to null); the server assigns the id on save.
+/// Build a new interrupt rule from the match flags + action, stamped with a client-side id. Unset
+/// match fields are omitted (the engine folds `sender`/`keyword` into match predicates itself).
 fn build_rule(action: PolicyAction, source: Option<String>, r#type: Option<String>, sender: Option<String>, keyword: Option<String>) -> serde_json::Value {
     let mut rule = serde_json::Map::new();
+    rule.insert("id".into(), new_rule_id().into());
     for (field, value) in [("source", source), ("type", r#type), ("sender", sender), ("keyword", keyword)] {
         if let Some(v) = value {
             rule.insert(field.into(), v.into());
@@ -445,31 +418,6 @@ fn build_rule(action: PolicyAction, source: Option<String>, r#type: Option<Strin
 fn remove_rule(rules: &[serde_json::Value], id: &str) -> Option<Vec<serde_json::Value>> {
     let kept: Vec<serde_json::Value> = rules.iter().filter(|rule| rule["id"].as_str() != Some(id)).cloned().collect();
     (kept.len() != rules.len()).then_some(kept)
-}
-
-/// True when a default override targets exactly this (source, type), matched case-insensitively to
-/// mirror the engine's `_default_override`.
-fn default_targets(entry: &serde_json::Value, source: &str, r#type: &str) -> bool {
-    entry["source"].as_str().unwrap_or("").eq_ignore_ascii_case(source)
-        && entry["type"].as_str().unwrap_or("").eq_ignore_ascii_case(r#type)
-}
-
-/// Replace any existing override for this exact (source, type), then append the new one.
-fn upsert_default(defaults: &[serde_json::Value], source: &str, r#type: &str, action: PolicyAction) -> Vec<serde_json::Value> {
-    let mut kept: Vec<serde_json::Value> = defaults.iter().filter(|entry| !default_targets(entry, source, r#type)).cloned().collect();
-    kept.push(serde_json::json!({ "source": source, "type": r#type, "action": action.as_str() }));
-    kept
-}
-
-/// Drop the override for this exact (source, type); None if none matched.
-fn remove_default(defaults: &[serde_json::Value], source: &str, r#type: &str) -> Option<Vec<serde_json::Value>> {
-    let kept: Vec<serde_json::Value> = defaults.iter().filter(|entry| !default_targets(entry, source, r#type)).cloned().collect();
-    (kept.len() != defaults.len()).then_some(kept)
-}
-
-/// "source/type", or just "source" when the type is the empty (no-type) bucket.
-fn default_scope(source: &str, r#type: &str) -> String {
-    if r#type.is_empty() { source.to_string() } else { format!("{source}/{type}") }
 }
 
 /// Pretty-print a JSON list, or an explanatory line on stderr when it's empty.
@@ -1276,65 +1224,43 @@ fn run(cli: Cli) {
 
         Command::Notifications { name, action } => {
             let c = get_client(host_ref, token_ref);
+            let fetch_rules = || {
+                c.get_notification_rules(&name)
+                    .unwrap_or_else(|e| platform::die(&e))
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            };
             match action {
                 NotificationsAction::Show => {
-                    let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                    println!("{}", serde_json::to_string_pretty(&policy).unwrap_or_else(|_| policy.to_string()));
+                    let rules = serde_json::Value::Array(fetch_rules());
+                    println!("{}", serde_json::to_string_pretty(&rules).unwrap_or_else(|_| rules.to_string()));
                 }
                 NotificationsAction::Rules { action } => match action {
                     RulesAction::List => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        print_json_list(&policy_section(&policy, "rules"), "no rules. every notification keeps its own default.");
+                        print_json_list(&fetch_rules(), "no rules. every notification interrupts the agent (the default).");
                     }
                     RulesAction::Add { action, source, r#type, sender, keyword } => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        let mut rules = policy_section(&policy, "rules");
+                        let mut rules = fetch_rules();
                         rules.push(build_rule(action, source, r#type, sender, keyword));
-                        let saved = c
-                            .put_notification_policy(&name, &serde_json::json!({ "rules": rules }))
+                        let count = rules.len();
+                        c.set_notification_rules(&name, &serde_json::Value::Array(rules))
                             .unwrap_or_else(|e| platform::die(&e));
-                        let count = policy_section(&saved, "rules").len();
                         eprintln!("added rule. now {count} rule(s); applies on the agent's next tick.");
                     }
-                    RulesAction::Remove { id } => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        match remove_rule(&policy_section(&policy, "rules"), &id) {
-                            None => platform::die(&format!("no rule with id {id}")),
-                            Some(kept) => {
-                                c.put_notification_policy(&name, &serde_json::json!({ "rules": kept }))
-                                    .unwrap_or_else(|e| platform::die(&e));
-                                eprintln!("removed rule {id}. now {} rule(s); applies on the agent's next tick.", kept.len());
-                            }
+                    RulesAction::Remove { id } => match remove_rule(&fetch_rules(), &id) {
+                        None => platform::die(&format!("no rule with id {id}")),
+                        Some(kept) => {
+                            let count = kept.len();
+                            c.set_notification_rules(&name, &serde_json::Value::Array(kept))
+                                .unwrap_or_else(|e| platform::die(&e));
+                            eprintln!("removed rule {id}. now {count} rule(s); applies on the agent's next tick.");
                         }
-                    }
+                    },
                     RulesAction::Clear => {
-                        c.put_notification_policy(&name, &serde_json::json!({ "rules": [] }))
+                        c.set_notification_rules(&name, &serde_json::json!([]))
                             .unwrap_or_else(|e| platform::die(&e));
                         eprintln!("cleared all rules; applies on the agent's next tick.");
-                    }
-                },
-                NotificationsAction::Defaults { action } => match action {
-                    DefaultsAction::List => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        print_json_list(&policy_section(&policy, "defaults"), "no default overrides. each source keeps the default it chose.");
-                    }
-                    DefaultsAction::Set { source, r#type, action } => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        let updated = upsert_default(&policy_section(&policy, "defaults"), &source, &r#type, action);
-                        c.put_notification_policy(&name, &serde_json::json!({ "defaults": updated }))
-                            .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("set default for {} -> {}; applies on the agent's next tick.", default_scope(&source, &r#type), action.as_str());
-                    }
-                    DefaultsAction::Clear { source, r#type } => {
-                        let policy = c.get_notification_policy(&name).unwrap_or_else(|e| platform::die(&e));
-                        match remove_default(&policy_section(&policy, "defaults"), &source, &r#type) {
-                            None => platform::die(&format!("no default override for {}", default_scope(&source, &r#type))),
-                            Some(kept) => {
-                                c.put_notification_policy(&name, &serde_json::json!({ "defaults": kept }))
-                                    .unwrap_or_else(|e| platform::die(&e));
-                                eprintln!("cleared default override for {}; the source's own default applies again.", default_scope(&source, &r#type));
-                            }
-                        }
                     }
                 },
             }
@@ -1758,26 +1684,27 @@ mod tests {
     }
 
     #[test]
-    fn policy_section_extracts_or_empties() {
-        let policy = serde_json::json!({ "rules": [{ "id": "a" }], "defaults": [] });
-        assert_eq!(policy_section(&policy, "rules").len(), 1);
-        assert!(policy_section(&policy, "defaults").is_empty());
-        // Absent or wrong-typed section -> empty, never a panic.
-        assert!(policy_section(&serde_json::json!({}), "rules").is_empty());
-        assert!(policy_section(&serde_json::json!({ "rules": 5 }), "rules").is_empty());
-    }
-
-    #[test]
-    fn build_rule_omits_unset_fields() {
+    fn build_rule_omits_unset_fields_and_stamps_id() {
         let rule = build_rule(PolicyAction::Pool, Some("twitter".into()), None, None, Some("ad|spam".into()));
         assert_eq!(rule["source"], "twitter");
         assert_eq!(rule["keyword"], "ad|spam");
         assert_eq!(rule["action"], "pool");
-        // Unset match fields are omitted entirely (engine forbids unknown keys but defaults these to null).
+        // Unset match fields are omitted entirely (the engine folds sender/keyword into predicates itself).
         assert!(rule.get("type").is_none());
         assert!(rule.get("sender").is_none());
-        // No id: the server assigns it on save.
-        assert!(rule.get("id").is_none());
+        // The CLI stamps a 32-hex-char id so it's stable before the round-trip.
+        let id = rule["id"].as_str().expect("id is a string");
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn new_rule_id_is_unique_32_hex() {
+        let first = new_rule_id();
+        let second = new_rule_id();
+        assert_eq!(first.len(), 32);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -1785,32 +1712,5 @@ mod tests {
         let rules = vec![serde_json::json!({ "id": "a" }), serde_json::json!({ "id": "b" })];
         assert_eq!(remove_rule(&rules, "a").unwrap(), vec![serde_json::json!({ "id": "b" })]);
         assert!(remove_rule(&rules, "missing").is_none());
-    }
-
-    #[test]
-    fn upsert_default_replaces_same_source_type_case_insensitively() {
-        let defaults = vec![serde_json::json!({ "source": "Outlook", "type": "Message", "action": "interrupt" })];
-        let updated = upsert_default(&defaults, "outlook", "message", PolicyAction::Pool);
-        assert_eq!(updated, vec![serde_json::json!({ "source": "outlook", "type": "message", "action": "pool" })]);
-    }
-
-    #[test]
-    fn upsert_default_keeps_distinct_entries() {
-        let defaults = vec![serde_json::json!({ "source": "outlook", "type": "message", "action": "pool" })];
-        let updated = upsert_default(&defaults, "twitter", "", PolicyAction::Interrupt);
-        assert_eq!(updated.len(), 2);
-    }
-
-    #[test]
-    fn remove_default_reports_missing() {
-        let defaults = vec![serde_json::json!({ "source": "outlook", "type": "message", "action": "pool" })];
-        assert!(remove_default(&defaults, "outlook", "message").unwrap().is_empty());
-        assert!(remove_default(&defaults, "outlook", "other").is_none());
-    }
-
-    #[test]
-    fn default_scope_drops_empty_type() {
-        assert_eq!(default_scope("outlook", ""), "outlook");
-        assert_eq!(default_scope("outlook", "message"), "outlook/message");
     }
 }

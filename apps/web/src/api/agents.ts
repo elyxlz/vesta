@@ -355,32 +355,29 @@ export interface NotificationInterruptRule {
   action: "interrupt" | "pool";
 }
 
-/// Read the agent's ordered notification interrupt ruleset from the policy (GET /config/notification-policy).
+/// Read the agent's ordered notification interrupt ruleset from its config (GET /config).
 export async function getNotificationInterruptRules(
   name: string,
 ): Promise<NotificationInterruptRule[]> {
-  const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
-  );
-  return resp.rules;
+  const resp = await apiJson<{
+    notification_rules?: NotificationInterruptRule[];
+  }>(`/agents/${encodeURIComponent(name)}/config`);
+  return resp.notification_rules ?? [];
 }
 
-/// Replace the ruleset section of the policy (PUT /config/notification-policy with {rules}; the defaults
-/// section is left untouched). Live — the agent applies it on its next tick, no restart. Returns the
-/// saved rules (ids assigned).
+/// Replace the ruleset on the agent's config (PUT /config with {notification_rules}). Live — the agent
+/// applies it on its next tick, no restart. Rule ids are generated client-side, so the saved rules are
+/// exactly what was sent.
 export async function setNotificationInterruptRules(
   name: string,
   rules: NotificationInterruptRule[],
 ): Promise<NotificationInterruptRule[]> {
-  const resp = await apiJson<{ rules: NotificationInterruptRule[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rules }),
-    },
-  );
-  return resp.rules;
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notification_rules: rules }),
+  });
+  return rules;
 }
 
 /// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
@@ -402,56 +399,4 @@ export async function getNotificationHistory(
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
   return { notifications: items, cursor: resp.cursor };
-}
-
-/// The static interrupt fallback per source/type, aggregated server-side over the whole history in
-/// one query (GET /notifications/static-defaults) — the default applied when no rule matches.
-export interface NotificationStaticDefault {
-  source: string;
-  type: string;
-  interrupt: boolean;
-}
-
-export async function getNotificationStaticDefaults(
-  name: string,
-): Promise<NotificationStaticDefault[]> {
-  const resp = await apiJson<{ defaults: NotificationStaticDefault[] }>(
-    `/agents/${encodeURIComponent(name)}/notifications/static-defaults`,
-  );
-  return resp.defaults;
-}
-
-/// A user override of a source's static default, keyed by exact (source, type). Consulted after the
-/// rules and before the source's static flag. Lives in the `defaults` section of the policy
-/// (GET/PUT /config/notification-policy).
-export interface NotificationDefaultOverride {
-  source: string;
-  type: string;
-  action: "interrupt" | "pool";
-}
-
-export async function getNotificationDefaultOverrides(
-  name: string,
-): Promise<NotificationDefaultOverride[]> {
-  const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
-  );
-  return resp.defaults;
-}
-
-/// Replace the defaults section of the policy (PUT /config/notification-policy with {defaults}; the rules
-/// section is left untouched). Live — applied on the agent's next tick, no restart.
-export async function setNotificationDefaultOverrides(
-  name: string,
-  defaults: NotificationDefaultOverride[],
-): Promise<NotificationDefaultOverride[]> {
-  const resp = await apiJson<{ defaults: NotificationDefaultOverride[] }>(
-    `/agents/${encodeURIComponent(name)}/config/notification-policy`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ defaults }),
-    },
-  );
-  return resp.defaults;
 }

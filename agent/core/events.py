@@ -69,19 +69,17 @@ class NotificationEvent(_BaseEvent):
     source: str
     summary: str
     # Structured facets for the notifications history view + rule-editor suggestions. `sender` is ""
-    # when the source attached no identity field. `interrupt` is the static default (no-rule
-    # baseline); `decided` is what actually happened given the rules at arrival. `notif_id` is the
-    # notification file's stem, used to tell whether it's still pending (file on disk) or cleared.
-    # NotRequired because events predating the enrichment (and any non-monitor emitter) lack them;
-    # readers already tolerate their absence (the SQL reader guards with IS NOT NULL, the web treats
-    # them as optional). The production emit in monitor_loop always supplies all five.
+    # when the source attached no identity field. `decided` is what actually happened given the rules
+    # at arrival. `notif_id` is the notification file's stem, used to tell whether it's still pending
+    # (file on disk) or cleared. NotRequired because events predating the enrichment (and any
+    # non-monitor emitter) lack them; readers already tolerate their absence. The production emit in
+    # monitor_loop always supplies them.
     notif_type: tp.NotRequired[str]
     sender: tp.NotRequired[str]
     # The notification's targetable structured extras ({field: value}, e.g. {"chat_name": "Bride squad"}),
     # so the rule editor + the skill's `facets` can surface what an interrupt rule can match beyond
     # source/type/sender. NotRequired (events predating it, and notifications with no such extras, omit it).
     fields: tp.NotRequired[dict[str, str]]
-    interrupt: tp.NotRequired[bool]
     decided: tp.NotRequired[tp.Literal["interrupt", "pool"]]
     notif_id: tp.NotRequired[str]
 
@@ -371,42 +369,6 @@ class EventBus:
         if channel == "notifications":
             return self._page((_NOTIFICATION_CONDITION, "id < ?"), (cursor,), limit)
         return self._page(("id < ?",), (cursor,), limit)
-
-    def notification_static_defaults(self) -> list[dict[str, object]]:
-        """The static interrupt fallback for each (source, type) the agent has received.
-
-        One aggregating query over the whole history — picks the latest event per (source, type) so
-        a source whose default changed reflects its current value. `core` is exempt (rules never
-        apply) and excluded; events predating the enriched `interrupt` field are skipped. Replaces
-        client-side paging of the entire notification history. Short-lived read connection so it can
-        run off the event loop (see _page)."""
-        if not self._db_path:
-            return []
-        # Deferred import: models imports EventBus, so a module-level import here would be circular.
-        from . import models as vm
-
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
-        try:
-            rows = conn.execute(
-                """
-                SELECT json_extract(data, '$.source') AS source,
-                       json_extract(data, '$.notif_type') AS notif_type,
-                       json_extract(data, '$.interrupt') AS interrupt
-                FROM events
-                WHERE id IN (
-                    SELECT MAX(id) FROM events
-                    WHERE json_extract(data, '$.type') = 'notification'
-                      AND json_extract(data, '$.source') != ?
-                      AND json_extract(data, '$.interrupt') IS NOT NULL
-                    GROUP BY json_extract(data, '$.source'), json_extract(data, '$.notif_type')
-                )
-                ORDER BY source, notif_type
-                """,
-                (vm.CORE_SOURCE,),
-            ).fetchall()
-        finally:
-            conn.close()
-        return [{"source": source, "type": notif_type or "", "interrupt": bool(interrupt)} for source, notif_type, interrupt in rows]
 
     def search(self, query: str, *, limit: int = 20) -> list[StreamEvent]:
         """Full-text search over events, returning the matching events in the same shape as recent()

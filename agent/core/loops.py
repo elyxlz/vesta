@@ -13,6 +13,7 @@ from watchfiles import awatch, Change
 
 from . import models as vm
 from . import logger
+from . import config as cfg
 from . import notification_interrupt_policy
 from . import state_store
 from . import vestad_client
@@ -31,7 +32,7 @@ from .helpers import load_prompt, build_restart_context
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState
 
-from .models import CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
+from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
 
 def _now() -> dt.datetime:
@@ -56,14 +57,26 @@ def _load_notification_files(directory: pl.Path) -> list[tuple[pl.Path, str]]:
     return results
 
 
-def drop_core_notification(*, type_: str, body: str, interrupt: bool, config: vm.VestaConfig, name: str | None = None) -> pl.Path:
-    """Write a `source=core` notification file. `name` is the filename stem; defaults to type+millisecond timestamp for natural ordering."""
-    notif = vm.Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, interrupt=interrupt, body=body)
+def drop_core_notification(*, type_: str, body: str, config: vm.VestaConfig, name: str | None = None) -> pl.Path:
+    """Write a `source=core` notification file. `name` is the filename stem; defaults to type+millisecond timestamp for natural ordering.
+
+    Core notifications are exempt from the user's rules; monitor_loop derives their disposition from
+    the type (see CORE_POOL_TYPES)."""
+    notif = vm.Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, body=body)
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     stem = name if name is not None else f"{type_}-{int(time.time() * 1000)}"
     path = config.notifications_dir / f"{stem}.json"
     path.write_text(notif.model_dump_json())
     return path
+
+
+def _notif_interrupts(notif: vm.Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]) -> bool:
+    """True if the notification preempts the current turn. Core notifications are exempt from the user's
+    rules — their disposition is control-flow, derived from the type (CORE_POOL_TYPES); everything else
+    goes through the ruleset (first match wins, default interrupt)."""
+    if notif.source == CORE_SOURCE:
+        return notif.type not in CORE_POOL_TYPES
+    return notification_interrupt_policy.should_interrupt(notif, rules)
 
 
 async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
@@ -399,7 +412,7 @@ def check_proactive_task(*, config: vm.VestaConfig) -> None:
     if not prompt:
         return
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
-    drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, interrupt=False, config=config)
+    drop_core_notification(type_=TYPE_PROACTIVE_CHECK, body=prompt, config=config)
 
 
 DREAMER_CATCHUP_HOURS = 6
@@ -423,7 +436,7 @@ def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
-    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, interrupt=True, config=config)
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config)
     logger.dreamer("Dreamer notification dropped")
 
 
@@ -497,14 +510,14 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
             notifications = await load_notifications(config=config)
-            rules, defaults = await asyncio.to_thread(notification_interrupt_policy.load_policy, config)
+            rules = await asyncio.to_thread(cfg.load_notification_rules, config)
             fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
-            decisions = [(n, notification_interrupt_policy.should_interrupt(n, rules, defaults)) for n in fresh]
+            decisions = [(n, _notif_interrupts(n, rules)) for n in fresh]
             interrupt_notifs = [n for n, hot in decisions if hot]
             new_passive = [n for n, hot in decisions if not hot]
 
             # Emit each genuinely-new notification to the bus exactly once, enriched with structured
-            # facets + the static/effective interrupt disposition for the history view. load_notifications
+            # facets + the effective interrupt disposition for the history view. load_notifications
             # re-reads every file each tick, so files kept on disk (e.g. deferred while
             # unauthenticated) must not re-emit — that was the notification storm.
             for notif, hot in decisions:
@@ -516,7 +529,6 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                         "notif_type": notif.type,
                         "sender": notification_interrupt_policy.notif_sender(notif) or "",
                         "fields": notification_interrupt_policy.notif_facet_fields(notif),
-                        "interrupt": notif.interrupt,
                         "decided": "interrupt" if hot else "pool",
                         "notif_id": pl.Path(notif.file_path).stem if notif.file_path else "",
                     }

@@ -49,15 +49,13 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 }
 
 // buildNotifContext assembles the NotifContext shared by message and reaction
-// notifications, resolving the per-sender interrupt decision in one place.
+// notifications.
 func (wac *WhatsAppClient) buildNotifContext(chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
-	interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatName: chatName,
 		ContactName: contactName, ContactPhone: contactPhone,
 		Instance: wac.instance, ContactSaved: contactSaved,
 		IsDirectChat: isDirectChat, Sender: senderDisplay,
-		Interrupt: interrupt, InterruptExplicit: interruptExplicit,
 	}
 }
 

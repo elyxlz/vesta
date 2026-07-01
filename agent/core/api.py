@@ -5,18 +5,17 @@ Routes:
   - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
   - GET  /usage                normalized, provider-agnostic plan usage
   - GET  /status               operational readiness: {authed, setup_complete} (vestad polls this)
-  - GET  /config               prefs only (personality, timezone, seed_context, operational)
-  - PUT  /config               update prefs (provider is set via /provider)
+  - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
+  - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
   - GET  /provider             active provider (configured fields) + derived {authed}
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
-  - GET  /config/notification-policy   the policy: {rules, defaults} (ordered ruleset + per-(source, type) overrides)
-  - PUT  /config/notification-policy   replace either/both sections; body {rules?, defaults?} (LIVE — applies next tick)
-  Writes don't restart; the caller applies them with one restart afterwards. The
-  notification endpoint is LIVE — applied on the next monitor tick, no restart.
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
+
+  Prefs writes apply on the caller's next restart; notification_rules apply live (monitor_loop
+  re-reads them from the store each tick), so the rules editor and the skill need no restart.
 """
 
 import asyncio
@@ -26,18 +25,16 @@ import logging
 import typing as tp
 import sqlite3
 import weakref
-from collections.abc import Callable
 
 import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
-from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
+from .config import VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
-from . import notification_interrupt_policy
 
 
 logger = logging.getLogger("vesta.api")
@@ -198,17 +195,20 @@ async def _usage_handler(request: web.Request) -> web.Response:
 
 
 async def _config_get_handler(request: web.Request) -> web.Response:
-    """Prefs only (personality, timezone, seed_context, operational), secrets redacted. The provider
-    is its own resource at GET /provider."""
+    """Prefs + notification_rules (secrets redacted). The provider is its own resource at GET /provider.
+    notification_rules is overlaid from the store, not the boot-time config, so it reflects live edits
+    (the skill relies on this read-modify-write to append/remove rules without a restart)."""
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
+    data["notification_rules"] = [rule.model_dump() for rule in load_notification_rules(config)]
     return web.json_response(data)
 
 
 async def _config_put_handler(request: web.Request) -> web.Response:
-    """Update prefs (personality, timezone, seed_context). The provider is set via /provider, not here.
-    Applied by the next restart (callers write, then restart once)."""
+    """Update prefs (personality, timezone, seed_context) and/or notification_rules. The provider is set
+    via /provider, not here. Prefs apply on the caller's next restart; notification_rules apply live
+    (monitor_loop re-reads them from the store each tick), so a rules-only write needs no restart."""
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
@@ -353,64 +353,6 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# The notification policy is one file with two live-edited sections: an ordered interrupt `rules` list
-# and per-(source, type) `defaults` overrides. One endpoint serves both. A PUT replaces only the
-# sections present in the body, so the rules card and the defaults card each write independently
-# without clobbering the other (save_* is a read-modify-write that preserves the untouched section).
-# Unlike the other /config writes, this is LIVE — monitor_loop picks the change up on the next tick.
-_POLICY_SECTIONS: dict[str, tuple[type[pyd.BaseModel], Callable[[list[tp.Any], VestaConfig], list[tp.Any]]]] = {
-    "rules": (notification_interrupt_policy.NotificationInterruptRule, notification_interrupt_policy.save_rules),
-    "defaults": (notification_interrupt_policy.NotificationDefault, notification_interrupt_policy.save_defaults),
-}
-
-
-def _policy_response(config: VestaConfig) -> web.Response:
-    rules, defaults = notification_interrupt_policy.load_policy(config)
-    return web.json_response({"rules": [rule.model_dump() for rule in rules], "defaults": [default.model_dump() for default in defaults]})
-
-
-async def _config_notification_policy_get_handler(request: web.Request) -> web.Response:
-    config: VestaConfig = request.app["config"]
-    return await asyncio.to_thread(_policy_response, config)
-
-
-async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
-    config: VestaConfig = request.app["config"]
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, TypeError):
-        return web.json_response({"error": "invalid json body"}, status=400)
-    if not isinstance(data, dict):
-        return web.json_response({"error": "body must be an object with 'rules' and/or 'defaults' lists"}, status=400)
-    present = {key: data[key] for key in _POLICY_SECTIONS if key in data}
-    if not present or any(not isinstance(value, list) for value in present.values()):
-        return web.json_response({"error": "body must contain at least one of 'rules'/'defaults' as a list"}, status=400)
-    # Validate every present section before saving any, so a malformed 'defaults' can't land a partial
-    # write that already persisted 'rules'.
-    validated: dict[str, list[pyd.BaseModel]] = {}
-    for key, value in present.items():
-        model_cls, _save = _POLICY_SECTIONS[key]
-        try:
-            validated[key] = [model_cls.model_validate(item) for item in value]
-        except pyd.ValidationError as e:
-            return web.json_response({"error": f"invalid {key}: {e.errors(include_url=False)}"}, status=400)
-    try:
-        for key, items in validated.items():
-            _model_cls, save = _POLICY_SECTIONS[key]
-            await asyncio.to_thread(save, items, config)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write notification policy: {e}"}, status=500)
-    return await asyncio.to_thread(_policy_response, config)
-
-
-async def _notifications_static_defaults_handler(request: web.Request) -> web.Response:
-    """The static interrupt fallback per (source, type), aggregated in one query over the whole
-    history. The defaults card uses this instead of paging every notification page client-side."""
-    event_bus: EventBus = request.app["event_bus"]
-    defaults = await asyncio.to_thread(event_bus.notification_static_defaults)
-    return web.json_response({"defaults": defaults})
-
-
 async def _memory_get_handler(request: web.Request) -> web.Response:
     """Return current contents of MEMORY.md."""
     config: VestaConfig = request.app["config"]
@@ -476,9 +418,6 @@ async def start_ws_server(
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
-    app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
-    app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
-    app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

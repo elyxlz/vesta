@@ -52,55 +52,48 @@ notification's other fields. Every field/condition you set must hold (AND); what
   would match first. Use `--before <id>` / `--after <id>` to place it explicitly, or `move <id>` to
   reorder later (`--before`/`--after`/`--top`/`--bottom`). `list` shows rules in priority order.
 - A rule with no `source`/`type`/`match` is a catch-all; only useful as the last rule.
-- Precedence when deciding interrupt vs pool: (1) the first matching rule, then (2) your per-`(source, type)`
-  **default override** if you set one, then (3) the default the source chose. Your internal notifications
-  (`source=core`: greetings, dreamer, proactive checks) are never affected.
-- Prefer a default override to a catch-all rule for "this source usually should not interrupt me": set
-  `outlook -> pool` as the default, then add a narrower interrupt rule above it for the exceptions.
+- Deciding interrupt vs pool: the first matching rule wins; with **no matching rule the notification
+  interrupts** (that is the default). Your internal notifications (`source=core`: greetings, dreamer,
+  proactive checks) are never affected by rules.
+- To make a source usually not interrupt you, add a broad `--source X --action pool` rule and put the
+  exceptions (narrower interrupt rules) above it. `add` auto-places narrower rules above broader ones,
+  so this usually happens for you; use `move`/`--before`/`--after` if you need to fix the order.
 
 ## Usage
 
 ```bash
 # See what's targetable (source/type/sender + every structured field like chat_name) from notifications
 # seen so far. Check this first so you target real field names/values.
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py facets
+notifications facets
 
-# See the current rules (with ids)
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py list
+# See the current rules (with ids), in priority order
+notifications list
 
 # Pool low-value distractions so they wait until you are idle
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source twitter --action pool
+notifications add --source twitter --action pool
 
-# Let what genuinely matters reach you immediately (put before a broad pool rule)
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --sender "wife" --action interrupt
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source email --keyword urgent --action interrupt
+# Let what genuinely matters reach you immediately (auto-placed above broader pool rules)
+notifications add --source whatsapp --sender "wife" --action interrupt
+notifications add --source email --keyword urgent --action interrupt
 
 # Snooze one busy group chat by name, while 1:1s and other groups still interrupt (target chat_name)
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_name=Bride squad' --action pool
+notifications add --source whatsapp --match 'chat_name=Bride squad' --action pool
 
 # Combine conditions (AND): pool only group chats from whatsapp, leaving DMs alone
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_type=group' --action pool
+notifications add --source whatsapp --match 'chat_type=group' --action pool
 
 # Negate: interrupt for any chat that is NOT that one group
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
+notifications add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
 
 # Reorder when precedence matters (first match wins). New rules auto-place above broader ones, but you
 # can force position on add, or move an existing rule by id.
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py add --source whatsapp --action pool --after <id>
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py move <id> --top
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py move <id> --before <other-id>
+notifications add --source whatsapp --action pool --after <id>
+notifications move <id> --top
+notifications move <id> --before <other-id>
 
 # Remove a rule by id, or clear them all
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py remove <id>
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py clear
-
-# Change a source's default (used when no rule matches), instead of a catch-all rule. Toggle-only:
-# you can only flip the default of a (source, type) you have actually received (see `facets`); you
-# cannot invent a fallback for a pair you've never seen.
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py set-default --source outlook --action pool
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py set-default --source outlook --type calendar --action interrupt
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py list-defaults
-uv run ~/agent/skills/notifications/scripts/notif-interrupt-rules.py clear-default --source outlook
+notifications remove <id>
+notifications clear
 ```
 
 ## Guarding a hard task

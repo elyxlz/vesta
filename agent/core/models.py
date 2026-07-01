@@ -11,6 +11,7 @@ from claude_agent_sdk import ClaudeSDKClient
 
 from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config, migrate_legacy_config_to_store
 from .events import EventBus
+from .notification_interrupt_policy import CORE_SOURCE
 from .provider import ProviderStatus
 from .state_store import PersistedState
 
@@ -22,17 +23,20 @@ __all__ = [
     "OpenRouterConfig",
     "Provider",
     "PersistedState",
+    "CORE_SOURCE",
     "load_config",
     "migrate_legacy_config_to_store",
 ]
-
-CORE_SOURCE = "core"
 
 # Notification `type` values for the `source=core` notifications that remain notifications (periodic
 # control-flow). Boot-time control-flow (greeting, migrations, skill-sync, config issues) is delivered
 # as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
+
+# Core notifications are exempt from the user's rules; loops.py derives their disposition from the type.
+# Types listed here pool (wait for idle); every other core type interrupts.
+CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK})
 
 
 class QueuedTurn(tp.NamedTuple):
@@ -110,7 +114,6 @@ class Notification(pyd.BaseModel):
     timestamp: dt.datetime
     source: str
     type: str
-    interrupt: bool = True
     body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
@@ -127,7 +130,7 @@ class Notification(pyd.BaseModel):
         """
         if self.body is not None:
             return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
-        data = self.model_dump(exclude={"file_path", "type", "source", "interrupt", "body"})
+        data = self.model_dump(exclude={"file_path", "type", "source", "body"})
         parts = []
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:

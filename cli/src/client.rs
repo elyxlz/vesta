@@ -706,16 +706,22 @@ impl Client {
         consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
     }
 
-    /// The agent's notification policy ({rules, defaults}), proxied from its GET /config/notification-policy.
-    pub fn get_notification_policy(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/config/notification-policy"))?)
+    /// The agent's notification interrupt rules, read from its GET /config (the `notification_rules`
+    /// array; empty when absent). Everything is a rule now — a notification with no matching rule interrupts.
+    pub fn get_notification_rules(&self, name: &str) -> Result<serde_json::Value, String> {
+        let config: serde_json::Value = read_json(self.get(&format!("/agents/{name}/config"))?)?;
+        match config["notification_rules"].as_array() {
+            Some(rules) => Ok(serde_json::Value::Array(rules.clone())),
+            None => Ok(serde_json::Value::Array(vec![])),
+        }
     }
 
-    /// Replace one or both policy sections (PUT /config/notification-policy with {rules?, defaults?}); the
-    /// section left out is preserved. Live — the agent applies it on its next monitor tick, no restart.
-    /// Returns the saved policy.
-    pub fn put_notification_policy(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        read_json(self.put_json(&format!("/agents/{name}/config/notification-policy"), body)?)
+    /// Replace the agent's notification rules (PUT /config with {notification_rules}); the server assigns
+    /// ids to any missing one and stores rules canonically. Live — applied on the agent's next monitor
+    /// tick, no restart. Ignores the `{ok: true}` body.
+    pub fn set_notification_rules(&self, name: &str, rules: &serde_json::Value) -> Result<(), String> {
+        self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "notification_rules": rules }))?;
+        Ok(())
     }
 }
 
