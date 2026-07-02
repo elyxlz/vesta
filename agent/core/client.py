@@ -122,8 +122,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     try:
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
     except TimeoutError:
+        # No results_outstanding increment: delivery is unknown, and this raise ends in a
+        # restart (run_one -> graceful_shutdown), which rebuilds the session and resets the count.
         await attempt_interrupt(state, config=config, reason="Query timeout")
         raise
+    state.results_outstanding += 1
     diagnostics.touch_activity(state, "query_sent")
 
     responses: list[str] = []
@@ -176,14 +179,25 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if interrupt_task and interrupt_task in done:
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
-                # Cancelling anext_task finalizes response_iter, so drain leftover
-                # messages with a fresh iterator to keep the stream clean.
-                # Emit any text so it's not lost.
+                # Cancelling anext_task finalizes response_iter, so drain leftover messages with
+                # fresh iterators (each ends at a ResultMessage) until every outstanding query has
+                # delivered its result. Emit any text so it's not lost. If the CLI winds down slower
+                # than the window, stop waiting — results_outstanding stays above zero and the next
+                # turn resyncs by skipping the stale result instead of terminating on it.
                 try:
-                    drain = client.receive_response().__aiter__()
-                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
-                        texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
-                        _render(texts, thinking_blocks)
+                    while state.results_outstanding > 0:
+                        drain = client.receive_response().__aiter__()
+                        drained_any = False
+                        while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
+                            drained_any = True
+                            texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
+                            _render(texts, thinking_blocks)
+                            if isinstance(leftover, ResultMessage):
+                                state.results_outstanding -= 1
+                        if not drained_any:
+                            # The iterator ended without delivering anything: the stream is closed
+                            # or has gone quiet — retrying would spin, not drain.
+                            break
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 break
@@ -205,6 +219,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 for block in thinking_blocks:
                     _emit_thinking(block)
             text = "\n".join(texts) if texts else None
+            if isinstance(msg, ResultMessage):
+                # Unconditional bookkeeping: every consumed result settles one outstanding query,
+                # whichever branch below ends up handling the message.
+                state.results_outstanding -= 1
             # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
             # so a terminal auth/billing failure surfaces through the SDK either as the assistant
             # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
@@ -220,6 +238,14 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 state.provider_status = observed_provider_failure(state.provider_status)
                 await attempt_interrupt(state, config=config, reason="Provider auth lost")
                 break
+            if isinstance(msg, ResultMessage) and state.results_outstanding > 0:
+                # A stale result from an abandoned turn whose wind-down outlived the interrupt
+                # drain. This query's own result is still coming: resync with a fresh iterator
+                # (this one terminates after any result) instead of letting the stale one end
+                # the turn — which would desync every later turn by one.
+                logger.client(f"Consumed stale result from an abandoned turn ({state.results_outstanding} still outstanding)")
+                response_iter = client.receive_response().__aiter__()
+                continue
             if not text:
                 continue
             responses.append(text)

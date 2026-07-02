@@ -85,6 +85,12 @@ class State:
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
+    # Queries sent to the SDK whose ResultMessage hasn't been consumed yet. converse ends a turn only
+    # when a ResultMessage brings this to 0: an interrupted turn whose wind-down outlives the drain
+    # window leaves its result in the shared stream, and without this bookkeeping the next turn would
+    # terminate on that stale result — desyncing every later turn by one (the agent looks hung, and
+    # each new user message flushes the previous turn's output). Reset when the SDK session is rebuilt.
+    results_outstanding: int = 0
     compacting: bool = False
     # True while a non-interruptible turn (a boot turn) is being processed. process_batch consults
     # this before firing client.interrupt(), so a concurrent interrupt notification queues and waits

@@ -366,6 +366,8 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
         try:
             async with ClaudeSDKClient(options=options) as client:
                 state.client = client
+                # Fresh subprocess, fresh stream: no query of the old session can deliver here.
+                state.results_outstanding = 0
                 logger.client("Client session started")
 
                 try:

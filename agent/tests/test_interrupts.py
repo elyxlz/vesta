@@ -844,3 +844,46 @@ async def test_drain_timeout_does_not_block_forever():
     elapsed = time.monotonic() - t0
 
     assert elapsed < 8.0, f"converse took {elapsed:.1f}s — drain blocked too long"
+
+
+@pytest.mark.anyio
+async def test_late_result_after_drain_timeout_does_not_desync_next_turn():
+    """Reproduces the stream desync from the 2026-07-02 logs: a turn is interrupted but the
+    CLI winds down slower than the drain window, so the turn's tail (including its
+    ResultMessage) lands in the stream after converse abandoned it. The next converse must
+    still deliver ITS OWN response — a stale ResultMessage from the abandoned turn must not
+    terminate the new turn instantly (which leaves every subsequent turn off by one: the
+    agent looks hung, and each new user message flushes the previous turn's output)."""
+    from claude_agent_sdk import TextBlock, ToolUseBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
+
+    state.interrupt_event = asyncio.Event()
+
+    async def sim_conv1():
+        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
+        # Handshake: converse received the tool message, now interrupt it. The queue stays
+        # empty through the drain window — the CLI is "still thinking" and winds down late.
+        await wait_for_condition(lambda: len(consumed) >= 1, message="converse never consumed the tool message")
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+
+    asyncio.create_task(sim_conv1())
+    with patch("core.client._INTERRUPT_DRAIN_TIMEOUT_S", 0.05):
+        await converse("update whatsmeow", state=state, config=config, show_output=True)
+
+    # The CLI finishes the abandoned turn late: its tail + ResultMessage arrive after the
+    # drain gave up. Then the next turn's real response follows on the same stream.
+    await message_queue.put(_assistant_msg([TextBlock("late tail of the abandoned turn")]))
+    await message_queue.put(_result_msg())
+    await message_queue.put(_assistant_msg([TextBlock("fresh response")]))
+    await message_queue.put(_result_msg())
+
+    state.interrupt_event = None
+    responses = await converse("eta?", state=state, config=config, show_output=True)
+
+    assert any("fresh response" in r for r in responses), (
+        f"conv 2 must sync to its own result, not terminate on the abandoned turn's stale ResultMessage; got responses={responses}"
+    )
