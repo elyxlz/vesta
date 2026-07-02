@@ -4,7 +4,7 @@
 # dependencies = ["plexapi==4.18.0"]
 # ///
 """
-plex — CLI for querying a Plex Media Server (library, search, files).
+plex: CLI for querying a Plex Media Server (library, search, files).
 
 Config (first found wins):
   1. env PLEX_URL + PLEX_TOKEN

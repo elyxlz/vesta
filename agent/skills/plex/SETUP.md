@@ -1,4 +1,4 @@
-# Plex skill — setup
+# Plex skill setup
 
 The CLI needs the Plex server address and an auth token.
 
@@ -46,5 +46,5 @@ Should list the libraries. If it errors on connection, check the URL/port is rea
 
 ## Notes
 
-- The token is a credential — keep it in `~/.plex/config.json` (chmod 600) or `~/.bashrc`, never in MEMORY.md or a shared/committed file.
+- The token is a credential, keep it in `~/.plex/config.json` (chmod 600) or `~/.bashrc`, never in MEMORY.md or a shared/committed file.
 - First run installs `plexapi` via uv automatically.

@@ -97,7 +97,7 @@
   },
   {
     "name": "plex",
-    "description": "Query the household Plex Media Server \u2014 list libraries, search for a title, check whether the library already has a movie/show, see recently added, and get a file's path/resolution/size. Use when asked \"do we have X on plex\", \"what's in the library\", \"is X downloaded\", or to verify a download landed. Read-only."
+    "description": "Query the household Plex Media Server: list libraries, search for a title, check whether the library already has a movie/show, see recently added, and get a file's path/resolution/size. Use when asked \"do we have X on plex\", \"what's in the library\", \"is X downloaded\", or to verify a download landed. Read-only."
   },
   {
     "name": "proactive-check",

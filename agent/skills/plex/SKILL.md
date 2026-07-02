@@ -1,13 +1,13 @@
 ---
 name: plex
-description: Query the household Plex Media Server — list libraries, search for a title, check whether the library already has a movie/show, see recently added, and get a file's path/resolution/size. Use when asked "do we have X on plex", "what's in the library", "is X downloaded", or to verify a download landed. Read-only.
+description: Query the household Plex Media Server: list libraries, search for a title, check whether the library already has a movie/show, see recently added, and get a file's path/resolution/size. Use when asked "do we have X on plex", "what's in the library", "is X downloaded", or to verify a download landed. Read-only.
 ---
 
 # Plex
 
 CLI for the household Plex Media Server. Read-only: it reads the library, it does not add, edit, or delete anything.
 
-This is the reliable way to answer "do we already have this?" — it reads Plex's own catalogue, which reflects what's actually on disk and playable, including files added outside the torrent client.
+This is the reliable way to answer "do we already have this?". It reads Plex's own catalogue, which reflects what's actually on disk and playable, including files added outside the torrent client.
 
 ## Setup
 
