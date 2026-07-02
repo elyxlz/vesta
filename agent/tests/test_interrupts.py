@@ -961,3 +961,63 @@ async def test_interrupt_drain_total_budget_bounds_a_chatty_wind_down():
     await sim_task
 
     assert elapsed < 2.0, f"the drain must respect its total budget; took {elapsed:.1f}s"
+
+
+@pytest.mark.anyio
+async def test_unprompted_continuation_result_does_not_end_the_next_turn():
+    """The CLI runs self-initiated turns (background-task continuations) ending in ResultMessages no
+    query ever counted (verified against CLI 2.1.187). One buffered ahead of the next turn must not
+    terminate that turn: a result this early cannot be the turn's own (a real result needs an API
+    round trip), so converse confirms with a bounded peek and keeps reading its actual response."""
+    from claude_agent_sdk import TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
+
+    # The continuation's block is already buffered when the user's next message arrives.
+    await message_queue.put(_assistant_msg([TextBlock("background task completed")]))
+    await message_queue.put(_result_msg())
+
+    async def sim_real_turn():
+        # The real turn streams shortly after (well inside the confirmation window).
+        await asyncio.sleep(0.2)
+        await message_queue.put(_assistant_msg([TextBlock("actual reply")]))
+        await message_queue.put(_result_msg())
+
+    sim_task = asyncio.create_task(sim_real_turn())
+    with patch("core.client._EARLY_RESULT_SUSPECT_S", 1.0), patch("core.client._EARLY_RESULT_CONFIRM_S", 2.0):
+        responses = await converse("hello", state=state, config=config, show_output=True)
+    await sim_task
+
+    assert any("actual reply" in r for r in responses), (
+        f"the turn must survive the unprompted continuation result and return its own reply; got responses={responses}"
+    )
+    assert not any("background task completed" in r for r in responses), (
+        f"the continuation's content must not be attributed to this turn; got responses={responses}"
+    )
+    assert any(t == "background task completed" for t, _ in emitted), "the continuation's text must still be shown"
+
+
+@pytest.mark.anyio
+async def test_early_result_with_nothing_following_ends_the_turn():
+    """The confirmation peek is bounded: when a suspiciously early result is followed by silence,
+    it really was the turn's own (a very fast turn) and converse ends instead of hanging."""
+    import time
+
+    from claude_agent_sdk import TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
+
+    await message_queue.put(_assistant_msg([TextBlock("quick reply")]))
+    await message_queue.put(_result_msg())
+
+    t0 = time.monotonic()
+    with patch("core.client._EARLY_RESULT_SUSPECT_S", 1.0), patch("core.client._EARLY_RESULT_CONFIRM_S", 0.2):
+        responses = await converse("hi", state=state, config=config, show_output=True)
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 3.0, f"the confirmation peek must be bounded; converse took {elapsed:.1f}s"
+    assert any("quick reply" in r for r in responses), f"a genuinely fast turn must keep its reply; got responses={responses}"

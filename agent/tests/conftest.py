@@ -30,3 +30,13 @@ def state():
     s = vm.State()
     s.shutdown_event = asyncio.Event()
     return s
+
+
+@pytest.fixture(autouse=True)
+def _no_early_result_suspicion(monkeypatch):
+    # Mocked turns complete in milliseconds, which converse would treat as a suspiciously early
+    # result (production turns need an API round trip) and pay the confirmation wait on every
+    # test. Disable the suspicion window by default; tests exercising it patch it back on.
+    import core.client
+
+    monkeypatch.setattr(core.client, "_EARLY_RESULT_SUSPECT_S", 0.0)

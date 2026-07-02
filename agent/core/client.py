@@ -112,6 +112,13 @@ _INTERRUPT_DRAIN_TOTAL_S = 15.0
 # even when results_outstanding disagrees — a phantom count (a query whose result never comes) must
 # not make converse skip the real result and hang to response_timeout.
 _STALE_RESULT_WINDOW_S = 30.0
+# The mirror case: the CLI runs self-initiated turns (background-task continuations) that end with
+# ResultMessages no query ever counted (verified against CLI 2.1.187 — the continuation turn's
+# init/result are indistinguishable from a queried turn's). A result consumed this early into a
+# turn cannot be the turn's own (a real result needs an API round trip), so converse treats it as
+# an uncounted turn's buffered result and confirms with a bounded peek before ending the turn.
+_EARLY_RESULT_SUSPECT_S = 1.0
+_EARLY_RESULT_CONFIRM_S = 3.0  # how long to wait for the real turn to follow a suspect result
 
 
 async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
@@ -173,6 +180,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     watchdog_stop = asyncio.Event()
     watchdog_task = asyncio.create_task(diagnostics.sdk_watchdog(state, stop=watchdog_stop))
 
+    # True while confirming a suspiciously early result (see _EARLY_RESULT_SUSPECT_S): the next
+    # wait is bounded by the confirmation window, and silence ends the turn instead of raising.
+    confirming_early_result = False
     try:
         while True:
             anext_task = asyncio.create_task(anext(response_iter, _STOP))
@@ -180,10 +190,15 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if interrupt_task and not interrupt_task.done():
                 waitables.add(interrupt_task)
 
-            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+            wait_timeout = _EARLY_RESULT_CONFIRM_S if confirming_early_result else config.response_timeout
+            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout)
 
             if not done:
                 await _cancel_task(anext_task)
+                if confirming_early_result:
+                    # Nothing followed the suspect result within the confirmation window: it really
+                    # was this turn's own (a very fast turn), so end normally.
+                    break
                 await attempt_interrupt(state, config=config, reason="Response timeout")
                 raise TimeoutError
 
@@ -226,6 +241,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             diagnostics.touch_activity(state, "sdk_message")
             msg = tp.cast(Message, result)
+            if confirming_early_result:
+                # A message followed the suspect result, confirming it was NOT this turn's own: the
+                # content consumed before it belonged to an uncounted CLI-initiated turn. This turn
+                # starts here — drop the misattributed responses (they were already emitted/shown).
+                confirming_early_result = False
+                responses.clear()
             if isinstance(msg, AssistantMessage):
                 state.compacting = False
             texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
@@ -281,6 +302,16 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                     "treating it as this turn's end and resetting the count"
                 )
                 state.results_outstanding = 0
+                continue
+            if isinstance(msg, ResultMessage) and time.monotonic() - turn_started < _EARLY_RESULT_SUSPECT_S:
+                # The count says this turn is settled, but a real result needs an API round trip —
+                # one landing this fast was buffered before the query, i.e. it belongs to a turn the
+                # counter never saw (a CLI-initiated background continuation; verified these end in
+                # results indistinguishable from a queried turn's). Peek for the real turn instead
+                # of ending on it: if nothing follows within the confirmation window, it was ours.
+                logger.client("Result arrived suspiciously early; confirming it is this turn's own before ending")
+                confirming_early_result = True
+                response_iter = client.receive_response().__aiter__()
                 continue
             if not text:
                 continue
