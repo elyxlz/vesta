@@ -126,6 +126,9 @@ def run(ctx: GoogleContext):
                         notifications.write_notification(
                             ctx.notif_dir,
                             "email",
+                            # Email pools by default (calendar reminders keep interrupting); the user adds
+                            # interrupt rules for the senders/keywords that should reach them right away.
+                            interrupt=False,
                             sender=sender,
                             subject=subject,
                             preview=clean_preview(snippet)[:200],

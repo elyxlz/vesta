@@ -163,6 +163,9 @@ def run(ctx: MicrosoftContext):
                         notifications.write_notification(
                             ctx.notif_dir,
                             "email",
+                            # Email pools by default (calendar reminders keep interrupting); the user adds
+                            # interrupt rules for the senders/keywords that should reach them right away.
+                            interrupt=False,
                             sender=display_name,
                             subject=email["subject"] if "subject" in email else None,
                             preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],

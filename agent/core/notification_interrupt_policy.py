@@ -2,7 +2,10 @@
 
 An ordered ruleset decides whether an incoming notification preempts the agent's current turn
 (`interrupt`) or waits in the passive pool until the agent is idle (`pool`). First matching rule wins;
-with no match the notification interrupts (the default). The ruleset lives on the agent config
+with no match the decision falls back to the notification's own `interrupt` flag — the default the
+producing skill ships for its own notifications (whatsapp/chat interrupt, email/finance pool), so a
+fresh agent with no rules already behaves sensibly. The user's rules exist to override those defaults.
+The ruleset lives on the agent config
 (`VestaConfig.notification_rules`); both the user (PUT /config) and the agent (the notifications skill,
 via the same config API) edit it, and monitor_loop reads it from the config store each tick, so edits
 apply live with no restart.
@@ -218,9 +221,10 @@ def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
 def should_interrupt(notif: "vm.Notification", rules: list[NotificationInterruptRule]) -> bool:
     """True -> preempt the agent's current turn; False -> pool until idle.
 
-    First matching rule wins; with no match the notification interrupts (the default). Core
-    notifications never reach here: loops.py decides their disposition from the type."""
+    First matching rule wins; with no match the notification's own `interrupt` flag (the producing
+    skill's default) decides. Core notifications never reach here: loops.py decides their disposition
+    from the type."""
     for rule in rules:
         if _matches(rule, notif):
             return rule.action == "interrupt"
-    return True
+    return notif.interrupt
