@@ -52,9 +52,10 @@ notification's other fields. Every field/condition you set must hold (AND); what
   would match first. Use `--before <id>` / `--after <id>` to place it explicitly, or `move <id>` to
   reorder later (`--before`/`--after`/`--top`/`--bottom`). `list` shows rules in priority order.
 - A rule with no `source`/`type`/`match` is a catch-all; only useful as the last rule.
-- Deciding interrupt vs pool: the first matching rule wins; with **no matching rule the notification
-  interrupts** (that is the default). Your internal notifications (`source=core`: greetings, dreamer,
-  proactive checks) are never affected by rules.
+- Deciding interrupt vs pool: the first matching rule wins; with **no matching rule the notification's
+  own default decides**. Each skill ships a sensible default for its notifications (whatsapp/chat
+  interrupt, email/finance pool), and your rules exist to override those defaults. Your internal
+  notifications (`source=core`: greetings, dreamer, proactive checks) are never affected by rules.
 - To make a source usually not interrupt you, add a broad `--source X --action pool` rule and put the
   exceptions (narrower interrupt rules) above it. `add` auto-places narrower rules above broader ones,
   so this usually happens for you; use `move`/`--before`/`--after` if you need to fix the order.

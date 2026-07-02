@@ -582,6 +582,9 @@ def _poll_cycle(config: Config, state: dict) -> None:
         message = f'Liked "{track_name}" by {artist_name} (genres: {genre_str})'
         notification = {
             "type": "spotify",
+            # A new liked song is ambient, low-value info, so it pools by default rather than preempting
+            # the agent's current work; the user can add an interrupt rule if they want it sooner.
+            "interrupt": False,
             "timestamp": now,
             "message": message,
             "data": {

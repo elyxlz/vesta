@@ -114,6 +114,9 @@ class Notification(pyd.BaseModel):
     timestamp: dt.datetime
     source: str
     type: str
+    # The producing skill's default disposition, used when no user rule matches (True -> interrupt,
+    # False -> pool). See notification_interrupt_policy.should_interrupt.
+    interrupt: bool = True
     body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
@@ -130,7 +133,7 @@ class Notification(pyd.BaseModel):
         """
         if self.body is not None:
             return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
-        data = self.model_dump(exclude={"file_path", "type", "source", "body"})
+        data = self.model_dump(exclude={"file_path", "type", "source", "body", "interrupt"})
         parts = []
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:
