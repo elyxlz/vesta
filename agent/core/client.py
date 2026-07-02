@@ -3,6 +3,7 @@
 import asyncio
 import datetime as dt
 import os
+import time
 import typing as tp
 
 import aiohttp
@@ -101,7 +102,16 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
 
 _STOP = object()
 
-_INTERRUPT_DRAIN_TIMEOUT_S = 5.0  # cap the post-interrupt drain so a stalled stream can't block forever
+_INTERRUPT_DRAIN_TIMEOUT_S = 5.0  # cap each post-interrupt drain read so a stalled stream can't block forever
+# Total budget for the post-interrupt drain across all outstanding results. Without it, a chatty
+# wind-down (messages arriving steadily under the per-read cap) could hold the interrupting user's
+# new turn hostage for the full wind-down of every outstanding query.
+_INTERRUPT_DRAIN_TOTAL_S = 15.0
+# A stale result from an abandoned turn sits in the buffer and surfaces within moments of the next
+# query. A result arriving later than this into a live turn is therefore trusted as the turn's own
+# even when results_outstanding disagrees — a phantom count (a query whose result never comes) must
+# not make converse skip the real result and hang to response_timeout.
+_STALE_RESULT_WINDOW_S = 30.0
 
 
 async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
@@ -128,6 +138,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         raise
     state.results_outstanding += 1
     diagnostics.touch_activity(state, "query_sent")
+    turn_started = time.monotonic()
 
     responses: list[str] = []
 
@@ -182,20 +193,27 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 # Cancelling anext_task finalizes response_iter, so drain leftover messages with
                 # fresh iterators (each ends at a ResultMessage) until every outstanding query has
                 # delivered its result. Emit any text so it's not lost. If the CLI winds down slower
-                # than the window, stop waiting — results_outstanding stays above zero and the next
+                # than the budget, stop waiting — results_outstanding stays above zero and the next
                 # turn resyncs by skipping the stale result instead of terminating on it.
+                drain_deadline = time.monotonic() + _INTERRUPT_DRAIN_TOTAL_S
                 try:
                     while state.results_outstanding > 0:
                         drain = client.receive_response().__aiter__()
                         drained_any = False
-                        while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
-                            drained_any = True
+                        while True:
+                            remaining = drain_deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError  # total drain budget spent; the interrupting turn must start
+                            leftover = await asyncio.wait_for(anext(drain, None), timeout=min(_INTERRUPT_DRAIN_TIMEOUT_S, remaining))
+                            if leftover is None:
+                                break
                             texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
                             _render(texts, thinking_blocks)
                             if isinstance(leftover, ResultMessage):
-                                state.results_outstanding -= 1
+                                state.results_outstanding = max(0, state.results_outstanding - 1)
+                                drained_any = True
                         if not drained_any:
-                            # The iterator ended without delivering anything: the stream is closed
+                            # The iterator ended without delivering a result: the stream is closed
                             # or has gone quiet — retrying would spin, not drain.
                             break
                 except (TimeoutError, StopAsyncIteration):
@@ -219,10 +237,15 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 for block in thinking_blocks:
                     _emit_thinking(block)
             text = "\n".join(texts) if texts else None
+            # An earlier query's result still owed means content arriving now is an abandoned turn's
+            # late tail, not this turn's reply. Checked before the result decrement below so the
+            # boundary is consistent: everything up to and including the stale result is tail.
+            stale_tail = state.results_outstanding > 1
             if isinstance(msg, ResultMessage):
-                # Unconditional bookkeeping: every consumed result settles one outstanding query,
-                # whichever branch below ends up handling the message.
-                state.results_outstanding -= 1
+                # Bookkeeping for every consumed result, whichever branch below handles the message.
+                # Clamped: an unprompted result (e.g. a CLI-initiated background continuation) must
+                # not push the count negative and corrupt later turns' accounting.
+                state.results_outstanding = max(0, state.results_outstanding - 1)
             # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
             # so a terminal auth/billing failure surfaces through the SDK either as the assistant
             # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
@@ -239,14 +262,36 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 await attempt_interrupt(state, config=config, reason="Provider auth lost")
                 break
             if isinstance(msg, ResultMessage) and state.results_outstanding > 0:
-                # A stale result from an abandoned turn whose wind-down outlived the interrupt
-                # drain. This query's own result is still coming: resync with a fresh iterator
-                # (this one terminates after any result) instead of letting the stale one end
-                # the turn — which would desync every later turn by one.
-                logger.client(f"Consumed stale result from an abandoned turn ({state.results_outstanding} still outstanding)")
-                response_iter = client.receive_response().__aiter__()
+                turn_age = time.monotonic() - turn_started
+                if turn_age < _STALE_RESULT_WINDOW_S:
+                    # A stale result from an abandoned turn whose wind-down outlived the interrupt
+                    # drain. This query's own result is still coming: resync with a fresh iterator
+                    # (this one terminates after any result) instead of letting the stale one end
+                    # the turn — which would desync every later turn by one.
+                    logger.client(f"Consumed stale result from an abandoned turn ({state.results_outstanding} still outstanding)")
+                    response_iter = client.receive_response().__aiter__()
+                    continue
+                # The count says more results are owed, but stale results surface within moments of
+                # the query — one landing this deep into a live turn is almost certainly the turn's
+                # own, and the count is phantom (an abandoned query whose result never came).
+                # Trust the stream over the count: end the turn here and hard-reset the bookkeeping,
+                # instead of skipping the real result and hanging to response_timeout.
+                logger.warning(
+                    f"Result arrived {turn_age:.0f}s into the turn with {state.results_outstanding} still outstanding; "
+                    "treating it as this turn's end and resetting the count"
+                )
+                state.results_outstanding = 0
                 continue
             if not text:
+                continue
+            if stale_tail:
+                # An abandoned turn's late output: show it (it's real work, and losing it hides what
+                # the agent did) but don't attribute it to this turn — appending it to responses
+                # would present it as the reply to the new message and feed the dash correction.
+                if show_output:
+                    filtered = sdk_parsing.filter_tool_lines(text)
+                    if filtered:
+                        _emit(filtered)
                 continue
             responses.append(text)
             if not show_output:
@@ -306,9 +351,16 @@ async def compact_session(*, state: vm.State) -> None:
     assert state.client is not None
     client = state.client
     await client.query("/compact")
+    # /compact is a query like any other: count it, so a compaction that outlives the timeout
+    # leaves results_outstanding above zero and the next turn resyncs past the late compact
+    # result instead of terminating on it (the restart that normally follows can fail — see
+    # compact_then_restart_if_requested's fallback — so the counter must not assume it).
+    state.results_outstanding += 1
 
     async def _drain() -> None:
         async for msg in client.receive_response():
+            if isinstance(msg, ResultMessage):
+                state.results_outstanding = max(0, state.results_outstanding - 1)
             if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
                 logger.client("Compaction boundary reached")
 

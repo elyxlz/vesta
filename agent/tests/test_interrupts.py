@@ -870,9 +870,10 @@ async def test_late_result_after_drain_timeout_does_not_desync_next_turn():
         assert state.interrupt_event is not None
         state.interrupt_event.set()
 
-    asyncio.create_task(sim_conv1())
+    sim_task = asyncio.create_task(sim_conv1())
     with patch("core.client._INTERRUPT_DRAIN_TIMEOUT_S", 0.05):
         await converse("update whatsmeow", state=state, config=config, show_output=True)
+    await sim_task
 
     # The CLI finishes the abandoned turn late: its tail + ResultMessage arrive after the
     # drain gave up. Then the next turn's real response follows on the same stream.
@@ -887,3 +888,76 @@ async def test_late_result_after_drain_timeout_does_not_desync_next_turn():
     assert any("fresh response" in r for r in responses), (
         f"conv 2 must sync to its own result, not terminate on the abandoned turn's stale ResultMessage; got responses={responses}"
     )
+    assert not any("late tail" in r for r in responses), (
+        f"the abandoned turn's late tail must not be attributed to conv 2's responses; got responses={responses}"
+    )
+    assert any(t == "late tail of the abandoned turn" for t, _ in emitted), "the late tail must still be emitted (shown), just not attributed"
+
+
+@pytest.mark.anyio
+async def test_phantom_outstanding_result_ends_the_turn_instead_of_hanging():
+    """A results_outstanding count whose result never comes (an abandoned query the CLI dropped)
+    must not make converse skip the live turn's own result and hang to response_timeout: past the
+    stale-result window, the stream is trusted over the count and the bookkeeping is reset."""
+    import time
+
+    from claude_agent_sdk import TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
+    state.results_outstanding = 1  # phantom: no result for this will ever arrive
+
+    async def sim():
+        # Past the (patched) stale window, so the result must be trusted as the live turn's own.
+        await asyncio.sleep(0.2)
+        await message_queue.put(_assistant_msg([TextBlock("real answer")]))
+        await message_queue.put(_result_msg())
+
+    sim_task = asyncio.create_task(sim())
+    t0 = time.monotonic()
+    with patch("core.client._STALE_RESULT_WINDOW_S", 0.05):
+        await converse("hello", state=state, config=config, show_output=True)
+    elapsed = time.monotonic() - t0
+    await sim_task
+
+    assert elapsed < 5.0, f"converse hung {elapsed:.1f}s on a phantom outstanding count"
+    assert state.results_outstanding == 0, "a phantom count must be hard-reset when the stream is trusted over it"
+    assert any(t == "real answer" for t, _ in emitted), "the live turn's text must still be shown"
+
+
+@pytest.mark.anyio
+async def test_interrupt_drain_total_budget_bounds_a_chatty_wind_down():
+    """The post-interrupt drain is bounded overall, not just per read: a wind-down streaming
+    messages steadily (each inside the per-read cap) while more than one result is outstanding
+    must not hold the interrupting user's new turn hostage."""
+    import time
+
+    from claude_agent_sdk import TextBlock, ToolUseBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
+    state.results_outstanding = 1  # a prior abandoned turn is still owed a result
+    state.interrupt_event = asyncio.Event()
+    feeding = True
+
+    async def sim():
+        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
+        await wait_for_condition(lambda: len(consumed) >= 1, message="converse never consumed the tool message")
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+        # Chatty wind-down: messages keep arriving inside the per-read cap, never a result.
+        while feeding:
+            await message_queue.put(_assistant_msg([TextBlock("still winding down")]))
+            await asyncio.sleep(0.05)
+
+    sim_task = asyncio.create_task(sim())
+    t0 = time.monotonic()
+    with patch("core.client._INTERRUPT_DRAIN_TIMEOUT_S", 0.5), patch("core.client._INTERRUPT_DRAIN_TOTAL_S", 0.3):
+        await converse("guarded", state=state, config=config, show_output=True)
+    elapsed = time.monotonic() - t0
+    feeding = False
+    await sim_task
+
+    assert elapsed < 2.0, f"the drain must respect its total budget; took {elapsed:.1f}s"
