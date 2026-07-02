@@ -214,6 +214,26 @@ The cases you'll actually hit, and the move for each:
 - `rate limited`: too many attempts from here today. Tell them you'll pick it back
   up later, and continue then.
 
+### If the Stripe page won't load ("something went wrong")
+
+Usually the link arrived **changed**, not that Stripe or the payment is broken. A
+checkout url is exact: it carries the `cs_live_...` session id plus a long `#...`
+fragment, and if a single character is missing or altered (a dropped underscore, a
+cut `#...` tail, a smart quote, a trailing space or a line break) Stripe loads a
+broken page that says `something went wrong` or `ID not set`. Verify the link is
+identical on both ends before assuming anything else is wrong:
+
+- **You:** compare what you sent against the exact `url` the last `onboard checkout`
+  printed, character for character. Re-send it as a Markdown link (`[Complete your
+  payment](<url>)`) so no chat formatting can eat the underscores, and never retype
+  it by hand.
+- **Them:** ask them to open the link straight from your message (not a retyped or
+  auto-previewed copy), in a normal browser tab, and confirm it starts with
+  `https://checkout.stripe.com/c/pay/cs_live_` with the whole `#...` tail present.
+
+Only once the link is confirmed byte for byte identical and it still fails is it
+not the link: tell the owner so they can check the payment setup.
+
 ## Referral attribution
 
 A completed invite only credits this account (you earn 50% of their first month)
