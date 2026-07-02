@@ -219,8 +219,8 @@ The cases you'll actually hit, and the move for each:
 The link arrived changed. A checkout url must be exact (the `cs_live_...` id and
 the whole `#...` tail); one altered character breaks it. Check both ends: you
 re-send it as a Markdown link matching the exact `onboard checkout` output, never
-retyped; they open it straight from your message in a real browser tab. Only if it
-is byte for byte identical and still fails is it not the link.
+retyped; they confirm the link they opened matches it exactly. Only if it is byte
+for byte identical and still fails is it not the link.
 
 ## Referral attribution
 
