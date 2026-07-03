@@ -51,16 +51,18 @@ export function HostAccessCard() {
     };
   }, [agentName]);
 
-  const save = async (next: HostMount[]) => {
-    if (!agentName) return;
+  const save = async (next: HostMount[]): Promise<boolean> => {
+    if (!agentName) return false;
     setSaving(true);
     setSaveError(null);
     try {
       const result = await setAgentMounts(agentName, next);
       setMounts(result.mounts);
       setRestartHint(result.restartRequired);
+      return true;
     } catch (e) {
       setSaveError(errorMessage(e, "failed to update host access"));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -74,10 +76,12 @@ export function HostAccessCard() {
       container_path: containerPath.trim() || path,
       writable,
     };
-    void save([...mounts, next]).then(() => {
-      setHostPath("");
-      setContainerPath("");
-      setWritable(false);
+    void save([...mounts, next]).then((ok) => {
+      if (ok) {
+        setHostPath("");
+        setContainerPath("");
+        setWritable(false);
+      }
     });
   };
 
