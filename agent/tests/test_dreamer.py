@@ -1,7 +1,6 @@
 """Tests for nightly dreamer/memory scheduling."""
 
 import asyncio
-import contextlib
 import datetime as dt
 import json
 import typing as tp
@@ -10,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import core.models as vm
+from conftest import consuming
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, ResultMessage, SystemMessage
 from wait_util import wait_for_condition
 
@@ -129,8 +129,6 @@ async def _run_with_compaction_stream(state, config, action, *, pre_tokens):
 
     The stream waits for compact_session to open its turn (the real CLI only responds after the
     /compact query), then yields the boundary and the turn-closing ResultMessage."""
-    from core.client import consume_stream
-
     state.persisted.session_id = state.persisted.session_id or "sess-compact"
     client = AsyncMock()
 
@@ -144,13 +142,8 @@ async def _run_with_compaction_stream(state, config, action, *, pre_tokens):
 
     client.receive_messages = MagicMock(side_effect=lambda: stream())
     state.client = tp.cast(ClaudeSDKClient, client)
-    consumer = asyncio.create_task(consume_stream(state=state, config=config))
-    try:
+    async with consuming(state, config):
         await asyncio.wait_for(action(), timeout=5.0)
-    finally:
-        consumer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
     return client
 
 

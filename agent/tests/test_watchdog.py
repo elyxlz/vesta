@@ -1,13 +1,13 @@
-"""Tests for SDK activity watchdog, tool duration tracking, and hang diagnostics."""
+"""Tests for turn liveness notes, tool duration tracking, and hang diagnostics."""
 
 import asyncio
-import contextlib
 import time
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
+from conftest import consuming, make_stream_harness, result_msg
 from core.client import converse
 from wait_util import wait_for_condition
 from core.diagnostics import (
@@ -120,21 +120,19 @@ def _quiet_turn(quiet_s: float) -> vm.TurnSignals:
 
 def test_liveness_notes_once_per_interval(captured_notes, state):
     turn = _quiet_turn(25)
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
+    note_turn_liveness(state, turn=turn)
 
     assert len([n for n in captured_notes if "quiet for 20s" in n]) == 1, f"one note per interval, got: {captured_notes}"
 
 
 def test_liveness_notes_again_each_interval(captured_notes, state):
     turn = _quiet_turn(25)
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
     turn.last_visible_at = time.monotonic() - 45
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
 
     quiet_notes = [n for n in captured_notes if "quiet" in n]
     assert len(quiet_notes) == 2 and "20s" in quiet_notes[0] and "40s" in quiet_notes[1], f"expected 20s then 40s, got: {captured_notes}"
@@ -142,15 +140,14 @@ def test_liveness_notes_again_each_interval(captured_notes, state):
 
 def test_liveness_resets_when_output_lands(captured_notes, state):
     turn = _quiet_turn(25)
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
     turn.last_visible_at = time.monotonic()  # output emitted
-    note_turn_liveness(state, turn=turn, noted_at=noted)
-    assert noted == set()
+    note_turn_liveness(state, turn=turn)
+    assert turn.quiet_noted_bucket == 0 and not turn.quiet_escalated
 
     turn.last_visible_at = time.monotonic() - 25
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
 
     assert len([n for n in captured_notes if "quiet for 20s" in n]) == 2, f"expected a re-note after output, got: {captured_notes}"
 
@@ -163,9 +160,8 @@ def test_liveness_reports_thinking_with_token_count(captured_notes, captured_war
     turn = _quiet_turn(325)
     turn.thinking_tokens = 2340
     turn.thinking_tokens_at = time.monotonic() - 5
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
 
     thinking_notes = [n for n in captured_notes if "Thinking for 320s" in n and "2,340 tokens" in n]
     assert len(thinking_notes) == 1, f"expected a token-count note, got: {captured_notes}"
@@ -180,11 +176,10 @@ def test_liveness_escalates_dead_air_once_past_escalation(captured_warnings, cap
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
     turn = _quiet_turn(305)  # no thinking_tokens ever seen
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
     turn.last_visible_at = time.monotonic() - 325  # next interval, still dead air
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
 
     warnings_seen = [w for w in captured_warnings if "no stream activity for 300s" in w]
     assert len(warnings_seen) == 1, f"expected exactly one warning, got: {captured_warnings}"
@@ -205,9 +200,8 @@ def test_liveness_stays_debug_while_tool_runs(captured_warnings, captured_notes,
     queue = state.event_bus.subscribe()
     state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="sleep 180", started_at=time.monotonic() - 305)
     turn = _quiet_turn(305)
-    noted: set[int] = set()
 
-    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn)
 
     assert [n for n in captured_notes if "quiet" in n or "Thinking" in n] == [], f"expected no notes mid-tool, got: {captured_notes}"
     assert captured_warnings == [], f"expected no warnings mid-tool, got: {captured_warnings}"
@@ -216,59 +210,34 @@ def test_liveness_stays_debug_while_tool_runs(captured_warnings, captured_notes,
 
 
 @pytest.mark.anyio
-async def test_converse_notes_thinking_while_waiting(monkeypatch):
+async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch):
     """End to end through the wait loop: the first thinking_tokens tick logs "Thinking..." once,
     the counter stays fresh while producing no visible output, and the interval note reports it."""
     import core.client as client_mod
     import core.diagnostics as diagnostics_mod
-    from claude_agent_sdk import ResultMessage, SystemMessage
-    from core.client import consume_stream
+    from claude_agent_sdk import SystemMessage
 
-    # client.py and diagnostics.py share the core.logger module, so one capture sees both
-    # the first-tick "Thinking..." and the interval notes.
-    client_notes: list[str] = []
-    monkeypatch.setattr(client_mod.logger, "client", lambda msg: client_notes.append(str(msg)))
     monkeypatch.setattr(client_mod, "_SILENCE_POLL_S", 0.02)
     monkeypatch.setattr(diagnostics_mod, "_QUIET_NOTE_INTERVAL_S", 0.01)
 
-    state = vm.State()
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
-
-    q: asyncio.Queue = asyncio.Queue()
-
-    async def stream():
-        while True:
-            yield await q.get()
-
-    mock_client.receive_messages = MagicMock(side_effect=lambda: stream())
-    consumer = asyncio.create_task(consume_stream(state=state, config=config))
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
 
     async def think_then_finish():
-        await q.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
-        await q.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 624, "estimated_tokens_delta": 5}))
+        await message_queue.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
+        await message_queue.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 624, "estimated_tokens_delta": 5}))
         await wait_for_condition(
-            lambda: any("Thinking for" in n and "624 tokens" in n for n in client_notes),
+            lambda: any("Thinking for" in n and "624 tokens" in n for n in captured_notes),
             message="no thinking note during quiet stretch",
         )
-        result = MagicMock(spec=ResultMessage)
-        result.content = []
-        await q.put(result)
+        await message_queue.put(result_msg())
 
-    thinker = asyncio.create_task(think_then_finish())
-    try:
+    async with consuming(state, config):
+        thinker = asyncio.create_task(think_then_finish())
         await asyncio.wait_for(converse("test", state=state, config=config, show_output=False), timeout=5.0)
         await thinker
-    finally:
-        consumer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
 
-    assert client_notes.count("Thinking...") == 1, f"first tick must log Thinking... exactly once, got: {client_notes}"
-    assert any("Thinking for" in n for n in client_notes), f"expected an interval note, got: {client_notes}"
+    assert captured_notes.count("Thinking...") == 1, f"first tick must log Thinking... exactly once, got: {captured_notes}"
+    assert any("Thinking for" in n for n in captured_notes), f"expected an interval note, got: {captured_notes}"
 
 
 # --- Tool duration tracking via hooks ---
@@ -326,12 +295,11 @@ async def test_tool_failure_hook_cleans_up():
     assert state.last_sdk_activity_label == "tool_fail:Bash"
 
 
-# --- converse() watchdog integration ---
+# --- converse() liveness integration ---
 
 
 async def _run_converse_with_consumer(state, config, messages):
     """Drive one converse() turn with the real stream consumer fed from `messages`."""
-    from core.client import consume_stream
 
     async def stream():
         for msg in messages:
@@ -340,19 +308,13 @@ async def _run_converse_with_consumer(state, config, messages):
 
     assert state.client is not None
     state.client.receive_messages = MagicMock(side_effect=lambda: stream())
-    consumer = asyncio.create_task(consume_stream(state=state, config=config))
-    try:
+    async with consuming(state, config):
         await converse("test", state=state, config=config, show_output=False)
-    finally:
-        consumer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
 
 
 @pytest.mark.anyio
 async def test_converse_touches_activity_on_messages():
     """The stream consumer updates last_sdk_activity when SDK messages arrive."""
-    from claude_agent_sdk import ResultMessage
 
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
@@ -367,9 +329,7 @@ async def test_converse_touches_activity_on_messages():
         msg = MagicMock()
         msg.content = []
         messages.append(msg)
-    result = MagicMock(spec=ResultMessage)
-    result.content = []
-    messages.append(result)
+    messages.append(result_msg())
 
     await _run_converse_with_consumer(state, config, messages)
 
@@ -379,7 +339,6 @@ async def test_converse_touches_activity_on_messages():
 @pytest.mark.anyio
 async def test_converse_clears_active_tools_on_start():
     """converse clears stale active_tools from prior calls."""
-    from claude_agent_sdk import ResultMessage
 
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
@@ -390,9 +349,6 @@ async def test_converse_clears_active_tools_on_start():
     mock_client.interrupt = AsyncMock()
     state.client = mock_client
 
-    result = MagicMock(spec=ResultMessage)
-    result.content = []
-
-    await _run_converse_with_consumer(state, config, [result])
+    await _run_converse_with_consumer(state, config, [result_msg()])
 
     assert "stale" not in state.active_tools

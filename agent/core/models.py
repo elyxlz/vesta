@@ -79,12 +79,16 @@ class TurnSignals:
     done: asyncio.Event = dc.field(default_factory=asyncio.Event)
     error: Exception | None = None
     last_message_at: float = dc.field(default_factory=time.monotonic)
-    # Liveness for the turn's wait loop: the CLI streams a thinking_tokens counter while the
-    # model reasons (tracked here, never logged per-delta), and last_visible_at marks the last
-    # output the user could see (query sent, text, or thinking emitted).
+    # Liveness for the turn's wait loop (owned by diagnostics.note_turn_liveness /
+    # note_thinking_tick): the CLI streams a thinking_tokens counter while the model reasons
+    # (tracked here, never logged per-delta), last_visible_at marks the last output the user
+    # could see (query sent, text, or thinking emitted), and the quiet_* pair rate-limits the
+    # notes to one per interval with a single escalation per quiet stretch.
     thinking_tokens: int = 0
     thinking_tokens_at: float | None = None
     last_visible_at: float = dc.field(default_factory=time.monotonic)
+    quiet_noted_bucket: int = 0
+    quiet_escalated: bool = False
 
 
 @dc.dataclass

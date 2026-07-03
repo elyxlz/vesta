@@ -56,6 +56,17 @@ def build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
 
+def thinking_tokens_estimate(msg: Message) -> int | None:
+    """The CLI streams SystemMessage(subtype="thinking_tokens") counters throughout extended
+    thinking. Return the running token estimate, or None for any other message (or a payload
+    without the expected int field)."""
+    if not isinstance(msg, SystemMessage) or msg.subtype != "thinking_tokens":
+        return None
+    if isinstance(msg.data, dict) and "estimated_tokens" in msg.data and isinstance(msg.data["estimated_tokens"], int):
+        return msg.data["estimated_tokens"]
+    return None
+
+
 def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
@@ -117,8 +128,12 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
             if init_sid:
                 logger.debug(f"[init] session_id={init_sid[:16]}")
             return [], [], init_sid
-        # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it floods the log with no signal.
+        # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
+        # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
         if msg.subtype == "thinking_tokens":
+            return [], [], None
+        if msg.subtype == "compact_boundary":
+            logger.client("Compaction boundary reached")
             return [], [], None
         raw = json.dumps(msg.data, default=str)
         logger.system(f"[{msg.subtype}] {raw[:2000]}")

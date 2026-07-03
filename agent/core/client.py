@@ -13,7 +13,6 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     Message,
     ResultMessage,
-    SystemMessage,
     ThinkingBlock,
 )
 from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
@@ -72,11 +71,10 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
-        # The SDK didn't ack the interrupt within the window. Log + emit but
-        # don't SIGTERM the whole process: in practice this fires more often
-        # during heavy thinking or a long-running tool than during a real hang,
-        # and the watchdog in core/diagnostics.py SIGTERMs if the SDK is
-        # genuinely stuck idle past its higher threshold.
+        # The SDK didn't ack the interrupt within the window. Log + emit but don't kill the
+        # process: in practice this fires more often during heavy thinking or a long-running
+        # tool than during a real hang, and converse's response-timeout path already ends a
+        # genuinely dead turn (TimeoutError -> restart).
         diag = diagnostics.format_hang_diagnostics(state)
         msg = f"SDK interrupt timed out | reason={reason} | {diag}"
         logger.warning(msg)
@@ -150,17 +148,11 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
         turn.last_message_at = time.monotonic()
     if isinstance(msg, AssistantMessage):
         state.compacting = False
-    if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
-        logger.client("Compaction boundary reached")
-    # The CLI streams a thinking_tokens counter while the model reasons (dozens per turn, dropped
-    # from the log by parse_sdk_message). Track it on the open turn so the wait loop's liveness
-    # notes can say "thinking, ~N tokens" instead of guessing what the quiet means.
-    if turn and isinstance(msg, SystemMessage) and msg.subtype == "thinking_tokens":
-        if isinstance(msg.data, dict) and "estimated_tokens" in msg.data and isinstance(msg.data["estimated_tokens"], int):
-            if turn.thinking_tokens_at is None:
-                logger.client("Thinking...")
-            turn.thinking_tokens = msg.data["estimated_tokens"]
-            turn.thinking_tokens_at = time.monotonic()
+    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
+    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
+    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
+    if turn and thinking_estimate is not None:
+        diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
     texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
@@ -253,14 +245,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
     done_task = asyncio.create_task(turn.done.wait())
-    noted_silence: set[int] = set()
+    waitables: set[asyncio.Task[tp.Any]] = {done_task}
+    if interrupt_task:
+        waitables.add(interrupt_task)
 
     try:
         while True:
-            waitables: set[asyncio.Task[tp.Any]] = {done_task}
-            if interrupt_task and not interrupt_task.done():
-                waitables.add(interrupt_task)
-
             # Same silence budget as the old per-message wait: measured from the last stream
             # message (the consumer touches last_message_at), so quiet stretches still time out.
             # Wake at least every _SILENCE_POLL_S so long thinking gets liveness notes.
@@ -272,7 +262,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 if time.monotonic() - turn.last_message_at >= config.response_timeout:
                     await attempt_interrupt(state, config=config, reason="Response timeout")
                     raise TimeoutError
-                diagnostics.note_turn_liveness(state, turn=turn, noted_at=noted_silence)
+                diagnostics.note_turn_liveness(state, turn=turn)
                 continue
 
             if done_task in done:
