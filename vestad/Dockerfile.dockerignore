@@ -22,4 +22,3 @@ agent/**/__pycache__/
 agent/**/*.pyc
 agent/**/*.egg-info/
 agent/skills/generate-index.py
-agent/skills/index.json

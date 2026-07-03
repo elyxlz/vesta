@@ -18,7 +18,7 @@ fn collect_embed_inputs(path: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let p = entry.path();
         let name = entry.file_name();
-        if name == "__pycache__" || name == ".venv" || name == "node_modules" {
+        if name == "__pycache__" || name == ".venv" || name == "node_modules" || name == "generate-index.py" {
             continue;
         }
         if p.is_dir() {

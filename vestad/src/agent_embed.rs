@@ -7,6 +7,9 @@ use rust_embed::RustEmbed;
 // outside these globs and are never shipped.
 #[include = "core/**/*"]
 #[include = "skills/**/*"]
+// generate-index.py is dev tooling (CI index regen): not shipped in the image, so it
+// must not be in the workspace snapshot either or every fresh attach shows it deleted.
+#[exclude = "skills/generate-index.py"]
 #[include = "MEMORY.md"]
 #[include = ".gitignore"]
 #[exclude = "**/__pycache__/*"]
