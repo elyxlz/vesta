@@ -1,36 +1,26 @@
-"""Exercises the REAL upstream-sync shell scripts against real git repos.
+"""Exercises the REAL agent-branch box flow against local git repos (no network).
 
-These tests run the actual scripts (`narrow-sparse-checkout.sh`, `skills-install`,
-`reanchor.sh`) rather than reimplementing their commands, so the scripts themselves
-are under test and can't silently drift from their behaviour. No Docker, no network:
-a local repo on disk stands in for "upstream".
-
-The scenarios pin the assumptions that the upstream-sync flow relies on and that
-broke in production: sparse-cone scoping, idempotency, skills-install error/revert
-paths, and the no-common-ancestor re-anchor (including a committed-core divergence,
-which is the exact failure that put `agent/core/` onto an agent's branch).
+Fixtures build a stand-in published branch with the REAL publish script, then drive the
+REAL attach.sh / skills-install / skills-remove scripts plus the documented raw porcelain
+(checkpoint + fetch + rebase) in a fake $HOME, pinning the assumptions the fleet relies
+on: worktree-safe attach, version-pinned rebase, cone scoping (engine and uninstalled
+skills stay off disk), offline installs, downgrades, and the legacy-migration spine.
 """
 
-import json
 import os
+import pathlib as pl
 import shutil
 import subprocess
-import pathlib as pl
 
 import pytest
 
 AGENT_ROOT = pl.Path(__file__).resolve().parents[1]
-NARROW = AGENT_ROOT / "skills/upstream-sync/scripts/narrow-sparse-checkout.sh"
-SYNC = AGENT_ROOT / "skills/upstream-sync/scripts/sync.sh"
-STATUS = AGENT_ROOT / "skills/upstream-sync/scripts/status.sh"
+REPO_ROOT = AGENT_ROOT.parent
+PUBLISH = REPO_ROOT / "tools/publish-agent-branch.sh"
+ATTACH = AGENT_ROOT / "core/skills/upstream-sync/scripts/attach.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
-
-
-def _registry(names):
-    return json.dumps([{"name": n} for n in sorted(names)], indent=2) + "\n"
-
-
-NARROW_HEADER = ["/agent/", "!/agent/core/", "!/agent/pyproject.toml", "!/agent/uv.lock", "!/agent/skills/*/", "/.gitignore"]
+SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
+BRANCH = "agent-workspace"
 
 BASE_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -39,11 +29,11 @@ BASE_ENV = {
     "GIT_AUTHOR_EMAIL": "t@t",
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@t",
+    "GIT_EDITOR": "true",
 }
 
-# These drive real git repos on disk (local clones share object storage via
-# alternates), so they must not be parallelised against each other if xdist is
-# ever added. CI runs pytest serially today.
+# These drive real git repos on disk, so they must not be parallelised against each
+# other if xdist is ever added. CI runs pytest serially today.
 pytestmark = pytest.mark.skipif(shutil.which("git") is None or shutil.which("tar") is None, reason="git and tar required")
 
 
@@ -63,393 +53,222 @@ def _git(args, cwd, extra_env=None):
     return r.stdout
 
 
-def _merge_base(home):
-    return subprocess.run(["git", "merge-base", "HEAD", "FETCH_HEAD"], cwd=str(home), env=_env(home), capture_output=True, text=True)
-
-
 def _run(script, home, args=(), extra_env=None):
     return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True)
 
 
-def _sparse(home):
-    return (home / ".git" / "info" / "sparse-checkout").read_text()
+def _publish_fixture(tmp_path, versions=("0.1.170",)):
+    """Build origin.git carrying the agent branch with one snapshot per version.
+    Returns (origin_path, checkout_path)."""
+    origin = tmp_path / "origin.git"
+    _git(["init", "--bare", str(origin)], tmp_path)
+    src = tmp_path / "checkout"
+    src.mkdir()
+    _git(["init", "-b", "master"], src)
+    _git(["remote", "add", "origin", str(origin)], src)
+    for version in versions:
+        _write_monorepo_content(src, version)
+        _git(["add", "-A"], src)
+        _git(["commit", "-m", f"release {version}"], src)
+        r = subprocess.run(["bash", str(PUBLISH), "HEAD"], cwd=str(src), env=_env(src), capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    return origin, src
 
 
-def _write_sparse(home, lines):
-    (home / ".git" / "info").mkdir(parents=True, exist_ok=True)
-    (home / ".git" / "info" / "sparse-checkout").write_text("\n".join(lines) + "\n")
+def _memory_template(version):
+    # Realistic shape: a version-touched header far from the tail agents append to,
+    # so a template bump and a local note merge cleanly (as they do in real MEMORY.md).
+    return f"# memory template {version}\n\n## About\n\nstable section\n\n## Notes\n\n"
 
 
-def make_upstream(path, skills):
-    """A stand-in upstream repo on branch `main`."""
-    path.mkdir(parents=True)
-    _git(["init", "-q", "-b", "main"], path)
-    (path / "agent" / "core").mkdir(parents=True)
-    (path / "agent" / "core" / "x.py").write_text("UPSTREAM CORE\n")
-    (path / "agent" / "MEMORY.md").write_text("# upstream template\n")
-    (path / "agent" / "settings.txt").write_text("UPSTREAM SETTINGS\n")
-    (path / ".gitignore").write_text("*.log\n")
-    sk = path / "agent" / "skills"
-    sk.mkdir(parents=True)
-    for name in skills:
-        (sk / name).mkdir()
-        (sk / name / "SKILL.md").write_text(f"# upstream {name}\n")
-    (sk / "index.json").write_text(_registry(skills))
-    _git(["add", "-A"], path)
-    _git(["commit", "-q", "-m", "upstream"], path)
-    return "main"
+def _write_monorepo_content(src, version):
+    (src / "agent/core").mkdir(parents=True, exist_ok=True)
+    (src / "agent/core/pyproject.toml").write_text(f'[project]\nname = "vesta"\nversion = "{version}"\n')
+    (src / "agent/core/loops.py").write_text(f"# core at {version}\n")
+    for skill in ("tasks", "dream", "whatsapp"):
+        d = src / "agent/skills" / skill
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
+    (src / "agent/MEMORY.md").write_text(_memory_template(version))
+    (src / "agent/.gitignore").write_text("data/\nlogs/\n")
+    core_scripts = src / "agent/core/skills/upstream-sync/scripts"
+    core_scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy(ATTACH, core_scripts / "attach.sh")
 
 
-def _upstream_skill_names(path):
-    sk = path / "agent" / "skills"
-    return [p.name for p in sk.iterdir() if p.is_dir() and (p / "SKILL.md").exists()]
+def _fresh_box(tmp_path, origin, version="0.1.170", skills=("tasks", "dream")):
+    """A fake $HOME as the image ships it: snapshot content on disk, no .git."""
+    home = tmp_path / "home"
+    (home / "agent/core").mkdir(parents=True)
+    (home / "agent/core/pyproject.toml").write_text(f'[project]\nname = "vesta"\nversion = "{version}"\n')
+    (home / "agent/core/loops.py").write_text(f"# core at {version}\n")
+    for skill in skills:
+        d = home / "agent/skills" / skill
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
+    (home / "agent/MEMORY.md").write_text(_memory_template(version))
+    (home / "agent/.gitignore").write_text("data/\nlogs/\n")
+    # The image ships the core skills on disk; skills-install shells out to attach.sh
+    # at its ~-anchored path.
+    core_scripts = home / "agent/core/skills/upstream-sync/scripts"
+    core_scripts.mkdir(parents=True)
+    shutil.copy(ATTACH, core_scripts / "attach.sh")
+    return home
 
 
-def add_upstream_skill(path, name, body):
-    (path / "agent" / "skills" / name).mkdir(parents=True)
-    (path / "agent" / "skills" / name / "SKILL.md").write_text(body)
-    (path / "agent" / "skills" / "index.json").write_text(_registry(_upstream_skill_names(path)))
-    _git(["add", "-A"], path)
-    _git(["commit", "-q", "-m", f"add {name}"], path)
+def _box_env(origin):
+    return {"VESTA_UPSTREAM_REF": BRANCH, "AGENT_NAME": "testbox", "VESTA_UPSTREAM_URL": str(origin)}
 
 
-def add_upstream_file(path, rel, content, msg):
-    p = path / rel
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
-    _git(["add", "-A"], path)
-    _git(["commit", "-q", "-m", msg], path)
+def _attach(home, origin):
+    return _run(ATTACH, home, extra_env=_box_env(origin))
 
 
-def make_synced_agent(home, upstream, *, cone_includes, broad=False):
-    """Agent created by cloning upstream: shares history (steady-state)."""
-    _git(["clone", "-q", "-b", "main", str(upstream), str(home)], home.parent)
-    _git(["checkout", "-q", "-b", "agent"], home)
-    _git(["sparse-checkout", "init", "--no-cone"], home)
-    if broad:
-        _write_sparse(home, ["/agent/", "/.gitignore"])
-    else:
-        _write_sparse(home, NARROW_HEADER + [f"/agent/skills/{n}/" for n in cone_includes])
-    _git(["sparse-checkout", "reapply"], home)
+def test_fresh_attach_is_clean_and_never_touches_worktree(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    marker = home / "agent/skills/tasks/SKILL.md"
+    before = marker.read_text()
+    r = _attach(home, origin)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert marker.read_text() == before
+    assert _git(["status", "--porcelain"], home, _box_env(origin)) == ""
+    assert not (home / "agent/skills/whatsapp").exists()  # not installed -> off disk
 
 
-def make_synthetic_agent(home, upstream, *, installed, self_authored=(), memory, core_content=None):
-    """Agent created by `git init` with its own commits: NO shared history with upstream."""
-    home.mkdir(parents=True, exist_ok=True)
-    _git(["init", "-q", "-b", "agent"], home)
-    (home / "agent").mkdir(parents=True, exist_ok=True)
-    (home / "agent" / "MEMORY.md").write_text(memory)
-    (home / ".gitignore").write_text("local-ignore\n")
-    sk = home / "agent" / "skills"
-    sk.mkdir(parents=True)
-    for name in list(installed) + list(self_authored):
-        (sk / name).mkdir(parents=True, exist_ok=True)
-        (sk / name / "SKILL.md").write_text(f"# LOCAL {name}\n")
-    (sk / "index.json").write_text(_registry(list(installed) + list(self_authored)))
-    if core_content is not None:
-        (home / "agent" / "core").mkdir(parents=True, exist_ok=True)
-        (home / "agent" / "core" / "x.py").write_text(core_content)
-    _git(["add", "-A"], home)
-    _git(["commit", "-q", "-m", "agent baseline"], home)
-    _git(["sparse-checkout", "init", "--no-cone"], home)
-    _write_sparse(home, NARROW_HEADER + [f"/agent/skills/{n}/" for n in list(installed) + list(self_authored)])
-    _git(["sparse-checkout", "reapply"], home)
-    _git(["remote", "add", "origin", str(upstream)], home)
+def test_attach_is_idempotent(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    assert _attach(home, origin).returncode == 0
+    assert _git(["status", "--porcelain"], home, _box_env(origin)) == ""
 
 
-# A committed agent/.gitignore the image ships and upstream also tracks. sync must NOT edit it
-# (else the one-sided edit conflicts on every no-shared-history first sync); managed-mount
-# ignores go to the repo-local .git/info/exclude instead.
-AGENT_GITIGNORE = "# agent ignores\n*.log\nnode_modules/\n"
+def test_attach_fails_loudly_when_snapshot_missing(tmp_path):
+    origin, _ = _publish_fixture(tmp_path, versions=("0.1.170",))
+    home = _fresh_box(tmp_path, origin, version="0.1.999")  # no agent-v0.1.999 published
+    r = _attach(home, origin)
+    assert r.returncode == 3
+    assert not (home / ".git" / "HEAD").exists() or "agent-v0.1.999" in r.stderr
 
 
-def make_first_start_agent(home, upstream, *, installed, memory):
-    """Real first start: `git init`, NO baseline commit, and the vestad-managed mounts
-    (agent/core, pyproject.toml, uv.lock) baked onto disk untracked and outside the sparse
-    cone. The first `git add` the repo ever sees is sync.sh's own checkpoint, so if sync
-    stages before gitignoring those paths, `git add` exits 1 on the out-of-cone files."""
-    home.mkdir(parents=True, exist_ok=True)
-    _git(["init", "-q", "-b", "agent"], home)
-    (home / "agent").mkdir(parents=True, exist_ok=True)
-    (home / "agent" / "MEMORY.md").write_text(memory)
-    (home / "agent" / ".gitignore").write_text(AGENT_GITIGNORE)
-    (home / ".gitignore").write_text("local-ignore\n")
-    sk = home / "agent" / "skills"
-    sk.mkdir(parents=True)
-    for name in installed:
-        (sk / name).mkdir(parents=True, exist_ok=True)
-        (sk / name / "SKILL.md").write_text(f"# LOCAL {name}\n")
-    (sk / "index.json").write_text(_registry(list(installed)))
-    (home / "agent" / "core").mkdir(parents=True, exist_ok=True)
-    (home / "agent" / "core" / "x.py").write_text("MOUNTED CORE\n")
-    (home / "agent" / "pyproject.toml").write_text("[project]\nname = 'agent'\n")
-    (home / "agent" / "uv.lock").write_text("lock\n")
-    _git(["sparse-checkout", "init", "--no-cone"], home)
-    _write_sparse(home, NARROW_HEADER + [f"/agent/skills/{n}/" for n in installed])
-    _git(["sparse-checkout", "reapply"], home)
-    _git(["remote", "add", "origin", str(upstream)], home)
+def test_sync_rebases_local_changes_onto_new_snapshot(tmp_path):
+    origin, src = _publish_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "my personal notes\n")
+    env = _box_env(origin)
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "checkpoint"], home, env)
+    # Simulate the upgrade: the core mount now runs 0.1.171. Core is mount-owned and
+    # out of cone, so this disk change is invisible to git; nothing to commit.
+    (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
+    _git(["fetch", "origin"], home, env)
+    _git(["rebase", "agent-v0.1.171"], home, env)
+    assert "my personal notes" in memory.read_text()
+    assert "0.1.171" in (home / "agent/skills/tasks/SKILL.md").read_text()  # upstream moved
+    delta = _git(["log", "--format=%s", "agent-v0.1.171..HEAD"], home, env).splitlines()
+    assert delta and all(s == "checkpoint" for s in delta)  # my changes on top
 
 
-def place_skills_install(home):
-    dst = home / "agent" / "skills" / "skills-registry" / "scripts" / "skills-install"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(SKILLS_INSTALL, dst)
-    dst.chmod(0o755)
-    return dst
+def test_sync_conflict_stops_and_continues(tmp_path):
+    origin, _ = _publish_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    env = _box_env(origin)
+    (home / "agent/skills/tasks/SKILL.md").write_text("mine\n")  # conflicts with 0.1.171's edit
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "checkpoint"], home, env)
+    _git(["fetch", "origin"], home, env)
+    r = subprocess.run(["git", "rebase", "agent-v0.1.171"], cwd=str(home), env=_env(home, env), capture_output=True, text=True)
+    assert r.returncode != 0  # conflict markers on disk now
+    (home / "agent/skills/tasks/SKILL.md").write_text("both sides survive\n")
+    _git(["add", "agent/skills/tasks/SKILL.md"], home, env)
+    _git(["rebase", "--continue"], home, env)
+    assert "both sides survive" in (home / "agent/skills/tasks/SKILL.md").read_text()
 
 
-def _synced(tmp_path, *, skills=None, cone=None, broad=False):
-    """Upstream repo + a clone-based agent sharing its history; returns (upstream, home)."""
-    up = tmp_path / "up"
-    make_upstream(up, skills or ["alpha"])
-    home = tmp_path / "agent"
-    make_synced_agent(home, up, cone_includes=cone or ["alpha"], broad=broad)
-    return up, home
-
-
-# --- narrow-sparse-checkout.sh ------------------------------------------------
-
-
-def test_narrow_is_idempotent(tmp_path):
-    up, home = _synced(tmp_path, broad=True)
-
-    first = _run(NARROW, home)
-    assert first.returncode == 0, first.stderr
-    assert "!/agent/skills/*/" in _sparse(home)
-    assert "/agent/skills/alpha/" in _sparse(home)
-    assert "pre-op snapshot" in _git(["log", "--oneline"], home)
-
-    second = _run(NARROW, home)
-    assert second.returncode == 0
-    assert "already narrow" in second.stdout
-
-
-def test_narrowed_cone_keeps_new_upstream_skill_off_disk(tmp_path):
-    up, home = _synced(tmp_path, broad=True)
-
-    assert _run(NARROW, home).returncode == 0
-
-    add_upstream_skill(up, "newone", "# newone\n")
-    _git(["fetch", "origin", "main"], home)
-    _git(["merge", "FETCH_HEAD", "--no-edit"], home)
-
-    assert not (home / "agent" / "skills" / "newone").exists()
-    assert "agent/skills/newone/SKILL.md" in _git(["ls-files"], home)
-    assert (home / "agent" / "skills" / "alpha").exists()
-
-
-def test_narrow_errors_when_sparse_not_initialised(tmp_path):
-    home = tmp_path / "agent"
-    home.mkdir()
-    _git(["init", "-q", "-b", "agent"], home)
-    (home / "agent").mkdir()
-    (home / "agent" / "x").write_text("x\n")
-    _git(["add", "-A"], home)
-    _git(["commit", "-q", "-m", "x"], home)
-
-    r = _run(NARROW, home)
-    assert r.returncode == 1
-    assert "not initialised" in r.stderr
-
-
-# --- skills-install -----------------------------------------------------------
-
-
-def _install_agent(tmp_path, upstream_skills=("alpha",)):
-    up = tmp_path / "up"
-    make_upstream(up, list(upstream_skills))
-    home = tmp_path / "agent"
-    _git(["clone", "-q", "-b", "main", str(up), str(home)], home.parent)
-    _git(["checkout", "-q", "-b", "agent"], home)
-    place_skills_install(home)
-    _git(["add", "-A"], home)
-    _git(["commit", "-q", "-m", "scripts"], home)
-    _git(["sparse-checkout", "init", "--no-cone"], home)
-    _write_sparse(home, NARROW_HEADER + ["/agent/skills/alpha/", "/agent/skills/skills-registry/"])
-    _git(["sparse-checkout", "reapply"], home)
-    return up, home, home / "agent" / "skills" / "skills-registry" / "scripts" / "skills-install"
-
-
-def test_skills_install_already_installed_is_noop(tmp_path):
-    _up, home, script = _install_agent(tmp_path)
-    r = _run(script, home, args=["alpha"], extra_env={"VESTA_UPSTREAM_REF": "main"})
+def test_install_is_offline_and_remove_drops_dir(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    shutil.rmtree(origin)  # sever the "network": install must still work from local history
+    r = _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=_box_env(origin))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (home / "agent/skills/whatsapp/SKILL.md").exists()
+    r = _run(SKILLS_REMOVE, home, args=("whatsapp",), extra_env=_box_env(origin))
     assert r.returncode == 0
-    assert "already installed" in r.stdout
+    assert not (home / "agent/skills/whatsapp").exists()
 
 
-def test_skills_install_pulls_skill_from_upstream(tmp_path):
-    up, home, script = _install_agent(tmp_path)
-    add_upstream_skill(up, "extra", "# extra\n")
-
-    assert not (home / "agent" / "skills" / "extra").exists()
-    r = _run(script, home, args=["extra"], extra_env={"VESTA_UPSTREAM_REF": "main"})
-    assert r.returncode == 0, r.stderr
-    assert (home / "agent" / "skills" / "extra" / "SKILL.md").read_text() == "# extra\n"
-    assert "/agent/skills/extra/" in _sparse(home)
-
-
-def test_skills_install_unknown_skill_errors_and_reverts(tmp_path):
-    _up, home, script = _install_agent(tmp_path)
-    r = _run(script, home, args=["bogus"], extra_env={"VESTA_UPSTREAM_REF": "main"})
+def test_install_unknown_skill_errors_and_reverts_cone(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    cone_before = _git(["sparse-checkout", "list"], home, _box_env(origin))
+    r = _run(SKILLS_INSTALL, home, args=("nope",), extra_env=_box_env(origin))
     assert r.returncode == 1
-    assert "not found" in r.stderr
-    assert "/agent/skills/bogus/" not in _sparse(home)
-    assert not (home / "agent" / "skills" / "bogus").exists()
+    assert _git(["sparse-checkout", "list"], home, _box_env(origin)) == cone_before
 
 
-def test_skills_install_without_upstream_ref_errors_and_reverts(tmp_path):
-    up, home, script = _install_agent(tmp_path)
-    add_upstream_skill(up, "extra", "# extra\n")
-    r = _run(script, home, args=["extra"])  # no VESTA_UPSTREAM_REF
-    assert r.returncode == 1
-    assert "VESTA_UPSTREAM_REF" in r.stderr
-    assert "/agent/skills/extra/" not in _sparse(home)
+def test_managed_cone_never_materializes_or_stages_core(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    env = _box_env(origin)
+    # core/ exists on disk (the mount provides it) but is out of cone: status ignores it,
+    # add -A stages nothing under it.
+    (home / "agent/core/loops.py").write_text("# mount content, newer\n")
+    assert "agent/core" not in _git(["status", "--porcelain"], home, env)
+    _git(["add", "-A"], home, env)
+    staged = _git(["diff", "--cached", "--name-only"], home, env)
+    assert "agent/core" not in staged
 
 
-# --- sync.sh ------------------------------------------------------------------
-
-MAIN = {"VESTA_UPSTREAM_REF": "main"}
-
-
-def test_sync_up_to_date(tmp_path):
-    _up, home = _synced(tmp_path)
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-    assert "up to date" in r.stdout.lower()
-
-
-def test_sync_clean_merge_pulls_content(tmp_path):
-    up, home = _synced(tmp_path)
-    add_upstream_file(up, "agent/settings.txt", "UPSTREAM SETTINGS v2\n", "bump settings")
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-    assert (home / "agent" / "settings.txt").read_text() == "UPSTREAM SETTINGS v2\n"
+def test_unmanaged_box_pulls_core_updates_through_the_same_rebase(tmp_path):
+    origin, _ = _publish_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path, origin)
+    assert _attach(home, origin).returncode == 0
+    env = _box_env(origin)
+    _git(["sparse-checkout", "add", "agent/core"], home, env)
+    _git(["fetch", "origin"], home, env)
+    _git(["rebase", "agent-v0.1.171"], home, env)
+    assert "0.1.171" in (home / "agent/core/loops.py").read_text()
+    assert "0.1.171" in (home / "agent/core/pyproject.toml").read_text()
 
 
-def test_sync_keeps_index_json_as_full_registry(tmp_path):
-    up, home = _synced(tmp_path, skills=["alpha", "zeta"])  # only alpha on disk
-    add_upstream_skill(up, "newreg", "# newreg\n")  # registry grows upstream
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-
-    names = {s["name"] for s in json.loads((home / "agent" / "skills" / "index.json").read_text())}
-    assert names == {"alpha", "zeta", "newreg"}, "index.json must stay the full upstream registry"
-    # ...but the uninstalled skills are not on disk (sparse worktree).
-    assert not (home / "agent" / "skills" / "newreg").exists()
-    assert not (home / "agent" / "skills" / "zeta").exists()
-
-
-def test_sync_no_common_ancestor_surfaces_real_conflicts(tmp_path):
-    """No shared history (recreated repo): sync merges with --allow-unrelated-histories
-    and only genuinely different owned files conflict, no hardcoded preserve list."""
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synthetic_agent(home, up, installed=["alpha"], memory="# MY MEMORY\n")
-    _git(["fetch", "origin", "main"], home)
-    assert _merge_base(home).returncode != 0  # unrelated histories
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 2, r.stdout + r.stderr  # real conflicts surface
-    assert "MEMORY.md" in r.stdout
-
-    for rel in _git(["diff", "--name-only", "--diff-filter=U"], home).split():
-        _git(["checkout", "--theirs", "--", rel], home)
-        _git(["add", "--", rel], home)
-    r2 = _run(SYNC, home, extra_env=MAIN)
-    assert r2.returncode == 0, r2.stderr
+def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
+    origin, _ = _publish_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path, origin, version="0.1.171")
+    assert _attach(home, origin).returncode == 0
+    env = _box_env(origin)
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "keep me\n")
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "checkpoint"], home, env)
+    _git(["rebase", "--onto", "agent-v0.1.170", "agent-v0.1.171"], home, env)
+    assert "keep me" in memory.read_text()
+    assert "0.1.170" in (home / "agent/skills/tasks/SKILL.md").read_text()
 
 
-def test_sync_first_start_with_managed_paths_on_disk(tmp_path):
-    """Regression: on a fresh `git init` agent the vestad-managed mounts (agent/core,
-    pyproject.toml, uv.lock) are on disk, untracked and outside the sparse cone. sync must
-    gitignore them BEFORE its first `git add`, or `git add agent/` exits 1 on the out-of-cone
-    files and (under set -e) the very first sync aborts. Owned files that differ from upstream
-    must still surface as ordinary conflicts (exit 2), not a crash.
-
-    sync must ignore the mounts via the repo-local .git/info/exclude, NOT by editing the
-    committed agent/.gitignore: a one-sided edit to a file upstream also tracks conflicts on
-    every no-shared-history first sync, so agent/.gitignore must merge cleanly."""
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    add_upstream_file(up, "agent/.gitignore", AGENT_GITIGNORE, "add agent gitignore")
-    home = tmp_path / "agent"
-    make_first_start_agent(home, up, installed=["alpha"], memory="# MY MEMORY\n")
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 2, r.stdout + r.stderr  # real conflicts, not an exit-1 crash
-    assert "outside of your sparse-checkout" not in (r.stdout + r.stderr)
-    assert "agent/.gitignore" not in r.stdout  # untouched file merges clean, no conflict
-    assert (home / "agent" / "core" / "x.py").read_text() == "MOUNTED CORE\n"  # mount untouched
-    assert "agent/core" not in _git(["ls-files"], home)  # never tracked
-    assert "agent/core" not in _git(["status", "--short"], home)  # ignored, no noise
-    assert (home / "agent" / ".gitignore").read_text() == AGENT_GITIGNORE  # committed file unchanged
-    assert "agent/core" in (home / ".git" / "info" / "exclude").read_text()  # ignored locally instead
-
-
-def test_sync_untracks_vestad_managed_core(tmp_path):
-    """An agent that tracked agent/core has it dropped from tracking on sync, and stays
-    gitignored (no noise)."""
-    up, home = _synced(tmp_path)  # a clone, so core is tracked
-    assert "agent/core/x.py" in _git(["ls-files"], home)
-    add_upstream_file(up, "agent/core/x.py", "UPSTREAM CORE v2\n", "bump core")
-
-    r = _run(SYNC, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "agent/core/x.py" not in _git(["ls-files"], home)  # no longer tracked
-    assert "agent/core" not in _git(["status", "--short"], home)  # gitignored, no noise
-
-
-def test_sync_quiet_against_read_only_core(tmp_path):
-    """The real bind-mount case: agent/core is a read-only directory on disk. sync merges a
-    core-less copy of upstream, so git never touches core, no read-only error even when
-    upstream changed core."""
-    up, home = _synced(tmp_path)
-    core_dir = home / "agent" / "core"
-    core_dir.mkdir(parents=True, exist_ok=True)
-    (core_dir / "x.py").write_text("MOUNTED CORE\n")
-    add_upstream_file(up, "agent/core/x.py", "UPSTREAM CORE v2\n", "bump core")
-
-    os.chmod(core_dir, 0o555)
-    try:
-        r = _run(SYNC, home, extra_env=MAIN)
-    finally:
-        os.chmod(core_dir, 0o755)
-
-    assert r.returncode == 0, r.stdout + r.stderr
-    blob = r.stdout + r.stderr
-    assert "Read-only file system" not in blob
-    assert "Permission denied" not in blob
-    assert "unable to unlink" not in blob
-    assert (core_dir / "x.py").read_text() == "MOUNTED CORE\n"  # untouched
-    assert "agent/core/x.py" not in _git(["ls-files"], home)  # not tracked
-
-
-def test_status_reports_behind_ahead_and_changes(tmp_path):
-    up, home = _synced(tmp_path)
-    (home / "agent" / "MEMORY.md").write_text("# mine\n")
-    _git(["add", "-A"], home)
-    _git(["commit", "-q", "-m", "mine"], home)
-    add_upstream_file(up, "agent/settings.txt", "v2\n", "up settings")
-
-    r = _run(STATUS, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-    assert "behind: 1" in r.stdout
-    assert "ahead: 1" in r.stdout
-    assert "incoming" in r.stdout.lower()
-    assert "agent/MEMORY.md" in r.stdout  # your change
-    assert "settings.txt" not in r.stdout.split("your changes")[-1]  # not mislabelled as yours
-
-
-def test_status_reports_no_shared_history(tmp_path):
-    up = tmp_path / "up"
-    make_upstream(up, ["alpha"])
-    home = tmp_path / "agent"
-    make_synthetic_agent(home, up, installed=["alpha"], memory="x\n")
-
-    r = _run(STATUS, home, extra_env=MAIN)
-    assert r.returncode == 0, r.stderr
-    assert "no shared history" in r.stdout.lower()
+def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
+    origin, _ = _publish_fixture(tmp_path)
+    home = _fresh_box(tmp_path, origin)
+    env = _box_env(origin)
+    # Fabricate the legacy shape: a repo with old no-cone patterns and stray engine files.
+    _git(["init", "-b", "testbox"], home, env)
+    (home / ".git/info").mkdir(parents=True, exist_ok=True)
+    (home / ".git/info/sparse-checkout").write_text("/agent/\n!/agent/core/\n!/agent/skills/*/\n")
+    (home / "agent/pyproject.toml").write_text("stale\n")
+    (home / "agent/MEMORY.md").write_text("# memory template 0.1.170\nmy personal notes\n")
+    assert _attach(home, origin).returncode == 4
+    # Documented migration spine:
+    (home / ".git").rename(home / ".git-legacy")
+    (home / "agent/pyproject.toml").unlink()
+    assert _attach(home, origin).returncode == 0
+    status = _git(["status", "--porcelain"], home, env)
+    assert "agent/MEMORY.md" in status  # personalization surfaced, not lost
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "migrated: local customizations"], home, env)
+    assert "my personal notes" in (home / "agent/MEMORY.md").read_text()

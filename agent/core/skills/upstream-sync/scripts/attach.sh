@@ -18,7 +18,9 @@ TAG="agent-v$VERSION"
 
 if [ -d .git ]; then
   # Legacy shape: the pre-branch workspace used hand-built no-cone sparse patterns.
-  if [ -f .git/info/sparse-checkout ] && grep -q '^!' .git/info/sparse-checkout 2>/dev/null; then
+  # Cone-mode files also carry '!' lines, so key on the cone config: an attached
+  # workspace always has core.sparseCheckoutCone=true, a legacy one never does.
+  if [ -f .git/info/sparse-checkout ] && [ "$(git config --get core.sparseCheckoutCone || true)" != "true" ] && grep -q '^!' .git/info/sparse-checkout 2>/dev/null; then
     echo "legacy workspace detected: follow the migration flow in SKILL.md" >&2
     exit 4
   fi
@@ -36,6 +38,10 @@ git config remote.origin.fetch "+refs/heads/$REF:refs/remotes/origin/$REF"
 git config --add remote.origin.fetch '+refs/tags/agent-v*:refs/tags/agent-v*'
 git config user.name "$NAME"
 git config user.email "$NAME@vesta"
+# The read-only core mount provides out-of-cone files on disk; without this, git
+# clears their skip-worktree bit (present = "user wants it back") and mount content
+# starts leaking into status and add -A.
+git config sparse.expectFilesOutsideOfPatterns true
 
 git fetch origin
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
@@ -50,4 +56,8 @@ if ! git rev-parse -q --verify HEAD >/dev/null; then
   git update-ref "refs/heads/$NAME" "$TAG"
   git reset --mixed   # load index from the snapshot; worktree untouched
 fi
+# The branch's root .gitignore (ignore everything but agent/) keeps $HOME noise out of
+# git status. The image doesn't ship it; materialize it when absent - creating a file
+# that doesn't exist clobbers nothing.
+[ -f .gitignore ] || git checkout -- .gitignore 2>/dev/null || true
 echo "attached: branch $NAME on $TAG"

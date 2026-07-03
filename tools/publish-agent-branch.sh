@@ -71,7 +71,11 @@ else
   find "$WORK" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
 fi
 
-rsync -a --delete --exclude=.git "$STAGE/" "$WORK/"
+# --ignore-times: the staged tree carries git-archive mtimes (the source commit's
+# timestamp), which can equal the fresh checkout's mtime to the second while sizes
+# match (e.g. only a version string changed) — rsync's quick-check would silently
+# skip those files and publish a stale tree.
+rsync -a --ignore-times --delete --exclude=.git "$STAGE/" "$WORK/"
 git -C "$WORK" add -A
 if git -C "$WORK" diff --cached --quiet 2>/dev/null && git -C "$WORK" rev-parse -q --verify HEAD >/dev/null; then
   echo "publish: no content change for v$VERSION; nothing to do"

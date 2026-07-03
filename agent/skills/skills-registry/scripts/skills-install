@@ -11,8 +11,9 @@ if [ -d "$DEST" ]; then
     exit 0
 fi
 
-# Self-init a virgin workspace (no-op when already attached).
-bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
+# Self-init a virgin workspace. Skipped when already attached: attach fetches, and
+# installs from local history must stay offline.
+[ -d .git ] || bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
 
 git sparse-checkout add "$DEST"
 if [ ! -d "$DEST" ]; then
