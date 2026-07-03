@@ -4,6 +4,10 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "upstream-sync",
+    "description": "Sync your workspace with the published agent branch after an upgrade; install core updates on unmanaged boxes; resolve rebase conflicts; one-time legacy migration."
+  },
+  {
     "name": "account",
     "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
   },
@@ -154,10 +158,6 @@
   {
     "name": "upstream-pr",
     "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
-  },
-  {
-    "name": "upstream-sync",
-    "description": "Sync local agent code with upstream vesta: updates, merges, conflicts."
   },
   {
     "name": "video-use",
