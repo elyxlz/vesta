@@ -10,7 +10,7 @@ from . import models as vm
 from . import state_store
 from . import vestad_client
 from .api import start_ws_server
-from .upgrade_sync import vesta_version
+from .upstream_sync import vesta_version
 
 
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:

@@ -23,7 +23,7 @@ from .loops import (
 )
 from .default_skills import default_skill_sync_turn
 from .migrations import pending_migration_turns
-from .upgrade_sync import upgrade_sync_turn, vesta_version
+from .upstream_sync import upstream_sync_turn, vesta_version
 
 
 async def input_handler(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State) -> None:
@@ -193,7 +193,7 @@ def collect_boot_turns(
     reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification."""
     turns: list[str] = []
     turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
-    sync_turn = upgrade_sync_turn(state=state, config=config, first_start=first_start)
+    sync_turn = upstream_sync_turn(state=state, config=config, first_start=first_start)
     if sync_turn is not None:
         turns.append(sync_turn)
     skill_sync = default_skill_sync_turn(config=config, first_start=first_start)

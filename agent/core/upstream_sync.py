@@ -35,7 +35,7 @@ def vesta_version(config: vm.VestaConfig) -> str:
         return UNKNOWN_VERSION
 
 
-def upgrade_sync_turn(*, state: vm.State, config: vm.VestaConfig, first_start: bool) -> str | None:
+def upstream_sync_turn(*, state: vm.State, config: vm.VestaConfig, first_start: bool) -> str | None:
     """Boot-turn body telling the agent to sync onto this version's snapshot, or None.
 
     First start pre-marks the running version (fresh image is already current). An
