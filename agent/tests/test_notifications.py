@@ -283,14 +283,14 @@ def test_format_for_display_strips_timestamp_microseconds():
 def test_batch_includes_reply_hint(payload, expected_substr):
     notif = vm.Notification.model_validate(payload)
     formatted = format_notification_batch([notif])
-    assert "→ Reply using" in formatted
+    assert "Reply using" in formatted
     assert expected_substr in formatted
 
 
 def test_batch_no_hint_for_unknown_source():
     notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     formatted = format_notification_batch([notif])
-    assert "→ Reply using" not in formatted
+    assert "Reply using" not in formatted
 
 
 def test_batch_no_hint_for_non_message_type():
@@ -298,7 +298,7 @@ def test_batch_no_hint_for_non_message_type():
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
     )
     formatted = format_notification_batch([notif])
-    assert "→ Reply using" not in formatted
+    assert "Reply using" not in formatted
 
 
 # --- process_batch ---

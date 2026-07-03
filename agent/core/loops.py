@@ -110,7 +110,7 @@ def _format_one(notif: vm.Notification) -> str:
     body = notif.format_for_display()
     if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return body
-    hint = f"\n→ Reply using the `{notif.source}` skill."
+    hint = f"\n[Reply using the `{notif.source}` skill]"
     return body.replace("</notification>", f"{hint}\n</notification>")
 
 

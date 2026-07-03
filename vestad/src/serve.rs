@@ -747,8 +747,8 @@ fn rename_notification_payload(old_name: &str, new_name: &str, epoch_secs: u64) 
         "new_name": new_name,
         "message": format!(
             "you have been renamed from '{old_name}' to '{new_name}'. \
-             AGENT_NAME is now '{new_name}'. update your MEMORY.md and any prompt files \
-             under ~/agent/prompts/ that reference your old name."
+             AGENT_NAME is now '{new_name}'. update your MEMORY.md and anything else \
+             that references your old name."
         ),
     }))
 }
