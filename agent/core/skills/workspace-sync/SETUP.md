@@ -16,7 +16,7 @@ bash ~/agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
 ## Unmanaged core (only if created with `--no-manage-core-code`)
 
 If your core is not a read-only mount, it lives in your workspace instead. Add it to your
-cone once, so later workspace syncs update core alongside your skills:
+cone once, so later workspace syncs include core alongside your skills:
 
 ```bash
 git sparse-checkout add agent/core        # once, ever

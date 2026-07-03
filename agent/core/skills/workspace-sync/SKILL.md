@@ -1,16 +1,16 @@
 ---
 name: workspace-sync
-description: Bring your workspace up to date after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn or when the user asks to update.
+description: Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn or when the user asks to sync.
 ---
 
 # Workspace Sync
 
 Your workspace (`~`) is a git repository. Vesta's daemon serves its stock contents for the
 version you run: one commit per release, tagged `agent-vX.Y.Z`, fetched as a bundle over
-the local machine (no internet involved). When Vesta upgrades, the core you run updates by
-itself (it is a read-only mount), but the rest of your workspace (skills, MEMORY.md,
+the local machine (no internet involved). When Vesta upgrades, the core you run changes with
+it (it is a read-only mount), but the rest of your workspace (skills, MEMORY.md,
 prompts, etc) stays as it was. Syncing closes that gap: rebase onto the tag matching the version
-you now run, so you take every stock update while everything you changed or added yourself
+you now run, so you take every stock change while everything you changed or added yourself
 stays on top. To contribute changes back to the Vesta project, see
 `~/agent/skills/upstream-pr/SKILL.md`.
 
@@ -33,7 +33,7 @@ git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running 
   `git rebase --skip`. Don't hunt for conflict markers that aren't there.
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
 - Then call `mark_workspace_synced`. If the rebase brought changes, call `restart_vesta`
-  (after marking) so updated skills load.
+  (after marking) so the new skills load.
 
 ## Status
 

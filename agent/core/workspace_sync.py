@@ -54,8 +54,8 @@ def workspace_sync_turn(*, state: vm.State, config: vm.VestaConfig, first_start:
     return (
         "[Workspace sync]\n\n"
         f"Vesta was upgraded (now v{running}). Read `~/agent/core/skills/workspace-sync/SKILL.md` "
-        f"and follow it to bring your home files up to date with this version: rebase your changes "
+        f"and follow it to sync your workspace to this version: rebase your changes "
         f"onto `agent-v{running}`, resolving any conflicts. Then call `mark_workspace_synced`. "
-        "If the rebase brought changes, call `restart_vesta` afterward so updated skills load; "
+        "If the rebase brought changes, call `restart_vesta` afterward so the new skills load; "
         "if it was a no-op, no restart is needed. If it fails, tell the user what blocked it."
     )
