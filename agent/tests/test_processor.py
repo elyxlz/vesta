@@ -199,6 +199,53 @@ async def test_client_cleared_on_cancellation(tmp_path):
     assert state.client is None
 
 
+# --- Intentional restart mid-notification-turn: drop the file so it isn't re-delivered ---
+
+
+@pytest.mark.anyio
+async def test_notification_dropped_before_intentional_restart(tmp_path):
+    """A notification turn that ends with the agent calling restart_vesta must delete the
+    notification file before the restart, so it isn't re-delivered on the next boot.
+
+    At-least-once keeps the file until the turn completes (crash recovery), but an intentional
+    restart mid-turn means the notification was handled — dropping it here avoids the duplicate the
+    SIGTERM-beats-cleanup race would otherwise produce."""
+    from core.tools import _vesta_tools
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    notif_file = config.notifications_dir / "whatsapp-123.json"
+    notif_file.write_text("{}")
+
+    state = vm.State()
+    subscriber = state.event_bus.subscribe()
+
+    async def side_effect(msg, *, state, config, is_user):
+        # Mid-turn: the loop has exposed the in-flight notification; the agent handles it and
+        # asks to restart. The restart tool must drop the file here, not leave it for the loop's
+        # post-turn cleanup that the SIGTERM would beat.
+        assert state.in_flight_notification_paths == [str(notif_file)]
+        restart = next(t.handler for t in _vesta_tools(state, config) if t.name == "restart_vesta")
+        await restart({})
+
+    with patch("core.vestad_client.request_restart", new_callable=AsyncMock, return_value=True):
+        state, _, _ = await _run_processor_test(
+            tmp_path,
+            message_side_effect=side_effect,
+            pre_state=state,
+            initial_queue=[vm.QueuedTurn("<notification/>", False, [str(notif_file)])],
+        )
+
+    assert not notif_file.exists(), "handled notification must be gone before the restart, not re-delivered"
+    assert state.in_flight_notification_paths == []
+
+    drained = []
+    while not subscriber.empty():
+        drained.append(subscriber.get_nowait())
+    cleared = [e for e in drained if e["type"] == "notification_cleared"]
+    assert [e["notif_id"] for e in cleared] == ["whatsapp-123"], "clients must be told the notification cleared"
+
+
 # --- Em/en dash correction in process_message ---
 
 
