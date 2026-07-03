@@ -1,7 +1,11 @@
 import { create } from "zustand";
 
 export type OnboardingStep =
-  "name" | "provider" | "creating" | "personality" | "done";
+  | "name"
+  | "provider"
+  | "creating"
+  | "personality"
+  | "done";
 
 interface OnboardingState {
   step: OnboardingStep | null;
