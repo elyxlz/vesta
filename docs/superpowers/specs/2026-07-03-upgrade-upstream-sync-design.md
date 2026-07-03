@@ -1,7 +1,9 @@
 # Upgrade-driven sync, core-skill tooling, engine consolidation, agent-branch distribution
 
 **Date:** 2026-07-03
-**Status:** Draft — pending user approval
+**Status:** Parts 1–3 implemented. Part 4's github-branch distribution is superseded by
+`2026-07-03-vestad-local-workspace-distribution.md` (the workspace remote ships with vestad;
+boxes sync from a local bundle over the loopback, never from github).
 
 ## Goal
 
