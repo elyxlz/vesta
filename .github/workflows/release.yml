@@ -52,7 +52,7 @@ jobs:
       - name: Compute new version
         id: bump
         run: |
-          CURRENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          CURRENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           IFS='.' read -r major minor patch_v <<< "$CURRENT"
           case "${{ inputs.bump }}" in
             patch) NEW="${major}.${minor}.$((patch_v + 1))" ;;
@@ -69,7 +69,7 @@ jobs:
           CURRENT: ${{ steps.bump.outputs.current }}
           NEW: ${{ steps.bump.outputs.new }}
         run: |
-          sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/pyproject.toml
+          sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/core/pyproject.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml

@@ -10,6 +10,7 @@ from . import models as vm
 from . import state_store
 from . import vestad_client
 from .api import start_ws_server
+from .workspace_sync import vesta_version
 
 
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
@@ -66,6 +67,20 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         return {"content": [{"type": "text", "text": f"applied: {name}"}]}
 
     @tool(
+        "mark_workspace_synced",
+        "Call once the workspace sync completed: the workspace was rebased onto this version's snapshot "
+        "(agent-v<version>) and any conflicts are resolved. Records the synced version; without this call "
+        "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
+        {},
+    )
+    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        version = vesta_version(config)
+        state.persisted.last_synced_version = version
+        state_store.save_state(state.persisted, config)
+        logger.startup(f"Workspace sync marked complete by agent at v{version}")
+        return {"content": [{"type": "text", "text": f"synced: {version}"}]}
+
+    @tool(
         "mark_dreamer_complete",
         "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, then (once this turn ends) compacts the conversation and restarts the agent, which resumes the compacted session — so you come back with a clean but continuous context rather than a blank slate.",
         {},
@@ -83,7 +98,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
         return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_dreamer_complete]
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:

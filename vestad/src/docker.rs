@@ -95,13 +95,27 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
 pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
-pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
+// INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
+// checkout of the workspace snapshot, and a mount puts a file/dir on disk that the
+// snapshot does not contain -- so git reports it as untracked ("?? path") noise on every
+// box unless it is kept out of git status one of two ways:
+//   - a directory: never listed in the sparse cone (agent/core), so it stays out of cone.
+//   - a file: gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
+// Adding a new /root/agent/ mount without doing this dirties every box's tree. The
+// workspace attach integration test (vestad/tests/server/workspace.rs) asserts a clean
+// tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 10] = [
+    let steps: [String; 11] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
+        // The venv must live outside the read-only core mount (uv would default to
+        // /root/agent/core/.venv, inside it).
+        "export UV_PROJECT_ENVIRONMENT=/root/agent/.venv".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
+        // LEGACY(remove-when: fleet converged to vestad-served workspaces — the workspace
+        // branch never tracks .claude, so migrated workspaces cannot hit this):
         // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
         // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
         // If the git workspace tracks .claude, a `git sparse-checkout reapply` (run by skills-install
@@ -121,7 +135,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        "uv sync --frozen --project /root/agent".into(),
+        // LEGACY(remove-when: unmanaged boxes have pulled a post-engine-move snapshot):
+        // unmanaged boxes keep the old layout (pyproject at /root/agent) until they rebase
+        // onto an agent-v* snapshot; tolerate both so they never crash-loop.
+        "if [ -f /root/agent/core/pyproject.toml ]; then uv sync --frozen --project /root/agent/core; else uv sync --frozen --project /root/agent; fi".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
         // core entries are linked last so they win any name collision. Reset
@@ -129,7 +146,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
         "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
-        "cd /root/agent && exec uv run --frozen python -m core.main".into(),
+        "cd /root/agent && if [ -f core/pyproject.toml ]; then exec uv run --frozen --project core python -m core.main; else exec uv run --frozen python -m core.main; fi".into(),
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
@@ -888,30 +905,6 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
-/// Compute the upstream ref the agent should sync against.
-///
-/// Dev builds: vestad's current git branch, re-evaluated on every call so that
-/// branch renames / checkouts take effect without a vestad restart.
-/// Release builds: the binary's version tag (`vX.Y.Z`).
-pub fn detect_upstream_ref() -> Option<String> {
-    if cfg!(debug_assertions) {
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-        if branch.is_empty() || branch == "HEAD" {
-            return None;
-        }
-        Some(branch)
-    } else {
-        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
-    }
-}
-
 /// Validate that the config and agents directories exist, are writable, and have
 /// no stale entries (e.g. directories where files should be). Fails fast with a
 /// clear error instead of producing cryptic permission errors later.
@@ -980,7 +973,6 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
-    append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
@@ -1051,10 +1043,9 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
+/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
-    let upstream_ref = detect_upstream_ref();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -1067,7 +1058,10 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
             .lines()
             .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
+                // LEGACY(remove-when: no agent env file carries VESTA_UPSTREAM_REF or
+                // VESTA_WORKSPACE_REF): the workspace ref moved out of env entirely (boxes
+                // fetch a bundle from vestad; no branch name needed) - strip stale keys.
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_WORKSPACE_REF=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
                     return None; // re-appended below with the current values
                 }
                 if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
@@ -1082,9 +1076,6 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
-        }
-        if let Some(upstream) = &upstream_ref {
-            new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
@@ -1443,9 +1434,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     let constitution_mount = format!("{}:{}:ro,z", constitution_path.display(), CONSTITUTION_MOUNT_DEST);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
-    let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
-    let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
+    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), CORE_MOUNT_DEST);
 
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
@@ -1454,7 +1443,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
 
     let mut binds = vec![env_mount, constitution_mount];
     if manage_core_code {
-        binds.extend([core_mount, pyproject_mount, lock_mount]);
+        binds.push(core_mount);
     }
 
     let mut device_requests = None;
@@ -2307,6 +2296,33 @@ mod tests {
     }
 
     #[test]
+    fn entrypoint_pins_venv_and_tolerates_both_engine_layouts() {
+        // The venv must live outside the read-only core mount, and the sync/launch steps
+        // must handle both the new layout (pyproject in core/) and the legacy root layout
+        // so unmanaged boxes never crash-loop before their first workspace sync.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("UV_PROJECT_ENVIRONMENT=/root/agent/.venv"), "entrypoint must pin the venv outside core: {script}");
+        assert!(script.contains("--project /root/agent/core"), "entrypoint must sync the core project when present: {script}");
+        assert!(script.contains("python -m core.main"), "entrypoint must launch core.main: {script}");
+    }
+
+    #[test]
+    fn mounts_have_core_code_accepts_legacy_and_single_mount_shapes() {
+        let mount_with_dest = |dest: &str| bollard::models::MountPoint { destination: Some(dest.to_string()), ..Default::default() };
+        let single = vec![mount_with_dest(CORE_MOUNT_DEST)];
+        let legacy = vec![
+            mount_with_dest(CORE_MOUNT_DEST),
+            mount_with_dest("/root/agent/pyproject.toml"),
+            mount_with_dest("/root/agent/uv.lock"),
+        ];
+        let none = vec![mount_with_dest(ENV_MOUNT_DEST)];
+        assert!(mounts_have_core_code(&single));
+        assert!(mounts_have_core_code(&legacy));
+        assert!(!mounts_have_core_code(&none));
+    }
+
+    #[test]
     fn guard_alive_rejects_terminal_states_and_passes_live_through() {
         // The two terminal states map to their standard errors with the exact agent-facing
         // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
@@ -2862,18 +2878,14 @@ mod tests {
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
         std::fs::create_dir_all(code_dir.path().join("core")).unwrap();
-        std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
-        std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("pyproject.toml"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("uv.lock"), "").unwrap();
 
         let src_core = code_dir.path().join("core");
-        let pyproject = code_dir.path().join("pyproject.toml");
-        let uv_lock = code_dir.path().join("uv.lock");
 
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
-            (pyproject.to_str().unwrap(), MOUNT_DESTS[2]),
-            (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
         ];
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;

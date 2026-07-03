@@ -22,4 +22,7 @@ agent/**/__pycache__/
 agent/**/*.pyc
 agent/**/*.egg-info/
 agent/skills/generate-index.py
-agent/skills/index.json
+# Dev-only tool configs the box never runs (ruff.toml DOES ship — see agent_embed.rs).
+agent/pytest.ini
+agent/ty.toml
+agent/.hypothesis/

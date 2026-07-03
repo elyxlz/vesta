@@ -157,4 +157,4 @@ curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dash
 *   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
 *   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
 *   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
-*   **Wrong or missing shadcn styles?** Shared UI components are updated via upstream sync. Check that the latest release tag has been merged.
+*   **Wrong or missing shadcn styles?** Shared UI components are updated via workspace sync. Check that the latest release tag has been merged.

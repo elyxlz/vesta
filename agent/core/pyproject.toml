@@ -29,26 +29,3 @@ dev = [
     "hypothesis>=6.155.7",
     "ty>=0.0.56",
 ]
-
-[tool.pytest.ini_options]
-python_files = ["test_*.py", "*_test.py"]
-testpaths = ["tests"]
-pythonpath = [".", "skills"]
-# Per-test hard timeout: a hung async test fails fast instead of hanging CI until the job timeout.
-timeout = 120
-
-
-[tool.ty.src]
-include = ["core", "tests"]
-
-[tool.ty.environment]
-extra-paths = ["skills", "core/skills/app-chat/cli/src"]
-
-[tool.ruff]
-line-length = 144
-indent-width = 4
-target-version = "py312"
-
-[tool.ruff.lint]
-ignore = ["E402", "E702", "E731", "UP008", "E712"]
-extend-select = ["UP"]

@@ -1,67 +1,25 @@
 #!/usr/bin/env bash
+# Install a skill: add its directory to the sparse-checkout cone. Instant and offline -
+# the content is already in the local branch history from the last sync/attach.
 set -euo pipefail
-
 SKILL_NAME="${1:?Usage: skills-install <skill-name>}"
-SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-DEST="$SKILLS_DIR/$SKILL_NAME"
+cd ~
+DEST="agent/skills/$SKILL_NAME"
 
 if [ -d "$DEST" ]; then
     echo "Skill '$SKILL_NAME' is already installed."
     exit 0
 fi
 
-echo "Installing '$SKILL_NAME' via sparse checkout..."
+# Self-init a virgin workspace. Skipped when already attached: attach fetches, and
+# installs from local history must stay offline.
+[ -d .git ] || bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 
-REPO_ROOT="$(git -C ~ rev-parse --show-toplevel)"
-SPARSE_FILE="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)/info/sparse-checkout"
-INCLUDE="/agent/skills/$SKILL_NAME/"
-
-if [ ! -f "$SPARSE_FILE" ]; then
-    echo "Error: sparse-checkout is not initialised ($SPARSE_FILE missing). Run upstream-sync SETUP first." >&2
-    exit 1
-fi
-
-# SETUP.md initialises sparse-checkout with `!/agent/skills/*/` so uninstalled skills
-# stay off disk. We append a re-include line after that exclude (later patterns win),
-# managing the file directly rather than via `sparse-checkout add` so the revert below
-# is an exact line removal, not a fragile re-parse of `sparse-checkout list`.
-added_include=0
-revert_include() {
-    [ "$added_include" -eq 1 ] || return 0
-    if grep -vFx "$INCLUDE" "$SPARSE_FILE" > "$SPARSE_FILE.tmp"; then
-        mv "$SPARSE_FILE.tmp" "$SPARSE_FILE"
-    else
-        rm -f "$SPARSE_FILE.tmp"
-    fi
-    git -C "$REPO_ROOT" sparse-checkout reapply || true
-}
-
-if ! grep -qFx "$INCLUDE" "$SPARSE_FILE"; then
-    printf '%s\n' "$INCLUDE" >> "$SPARSE_FILE"
-    added_include=1
-fi
-git -C "$REPO_ROOT" sparse-checkout reapply
-
-# If the skill is already in the local tree, reapply materialised it. Otherwise pull
-# it from upstream.
+git sparse-checkout add "$DEST"
 if [ ! -d "$DEST" ]; then
-    UPSTREAM_REF="${VESTA_UPSTREAM_REF:-}"
-    if [ -z "$UPSTREAM_REF" ]; then
-        revert_include
-        echo "Error: VESTA_UPSTREAM_REF is unset; cannot fetch '$SKILL_NAME'." >&2
-        exit 1
-    fi
-    if ! git -C "$REPO_ROOT" fetch --depth 1 origin "$UPSTREAM_REF"; then
-        revert_include
-        echo "Error: failed to fetch upstream ref '$UPSTREAM_REF'." >&2
-        exit 1
-    fi
-    git -C "$REPO_ROOT" checkout FETCH_HEAD -- "agent/skills/$SKILL_NAME" 2>/dev/null || true
-fi
-
-if [ ! -d "$DEST" ]; then
-    revert_include
-    echo "Error: skill '$SKILL_NAME' not found in registry." >&2
+    # Unknown skill: drop the dead cone entry again.
+    git sparse-checkout list | grep -vx "$DEST" | git sparse-checkout set --cone --stdin
+    echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
     exit 1
 fi
 

@@ -47,7 +47,7 @@ run_in() {
 
 # ── version-check ─────────────────────────────────────────────
 section "version-check"
-AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
 VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
 CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
@@ -80,12 +80,12 @@ elif ! command -v uv >/dev/null 2>&1; then
 else
   (
     cd agent
-    cp uv.lock uv.lock.before
-    uv lock >/dev/null 2>&1 && diff -q uv.lock.before uv.lock >/dev/null
+    cp core/uv.lock core/uv.lock.before
+    uv lock --project core >/dev/null 2>&1 && diff -q core/uv.lock.before core/uv.lock >/dev/null
     status=$?
-    mv uv.lock.before uv.lock
+    mv core/uv.lock.before core/uv.lock
     exit $status
-  ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock' and commit"
+  ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock --project core' and commit"
 fi
 
 # ── skills-index-check ────────────────────────────────────────

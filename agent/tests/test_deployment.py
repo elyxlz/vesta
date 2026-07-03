@@ -14,7 +14,6 @@ def test_deployment_structure():
 
     expected_skills = [
         "tasks",
-        "upstream-sync",
         "upstream-pr",
         "dream",
         "what-day",
@@ -30,6 +29,10 @@ def test_deployment_structure():
     ]
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
+
+    core_skills_dir = source_root / "core" / "skills"
+    for skill_name in ("app-chat", "workspace-sync"):
+        assert (core_skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing"
 
     for skill_name in ("tasks",):
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"

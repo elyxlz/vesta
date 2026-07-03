@@ -42,16 +42,19 @@ EOF
 check_agent() {
   (
     cd agent
-    uv run ruff check
-    uv run ruff format --check
-    uv sync
+    # The engine project lives at core/ (published to boxes); dev-tool configs
+    # (ruff.toml, pytest.ini, ty.toml) live here and are never published.
+    export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
+    uv run --project core ruff check
+    uv run --project core ruff format --check
+    uv sync --project core
     for tool in skills/*/cli/; do
       if [ -f "$tool/pyproject.toml" ]; then
         uv pip install -e "$tool"
       fi
     done
-    uv run ty check
-    uv run pytest tests/ -v
+    uv run --project core ty check
+    uv run --project core pytest tests/ -v
   )
 }
 

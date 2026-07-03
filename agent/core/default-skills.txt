@@ -16,6 +16,5 @@ skills-registry
 tasks
 timezone
 upstream-pr
-upstream-sync
 voice
 what-day

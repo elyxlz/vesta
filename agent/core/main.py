@@ -5,7 +5,6 @@ import errno
 import os
 import signal
 import sys
-import tomllib
 import types
 import typing as tp
 
@@ -24,6 +23,7 @@ from .loops import (
 )
 from .default_skills import default_skill_sync_turn
 from .migrations import pending_migration_turns
+from .workspace_sync import workspace_sync_turn, vesta_version
 
 
 async def input_handler(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State) -> None:
@@ -188,11 +188,14 @@ def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | No
 def collect_boot_turns(
     *, state: vm.State, config: vm.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
-    """Boot-time control-flow as ordered prompt bodies: migrations, then default-skill sync, then
-    config issues, then the greeting last — converge first, orient and reach out last. Each is
-    delivered as a boot turn (immediate, non-interruptible), not a notification."""
+    """Boot-time control-flow as ordered prompt bodies: migrations, then workspace sync, then
+    default-skill sync, then config issues, then the greeting last — converge first, orient and
+    reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification."""
     turns: list[str] = []
     turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
+    sync_turn = workspace_sync_turn(state=state, config=config, first_start=first_start)
+    if sync_turn is not None:
+        turns.append(sync_turn)
     skill_sync = default_skill_sync_turn(config=config, first_start=first_start)
     if skill_sync is not None:
         turns.append(skill_sync)
@@ -235,19 +238,6 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 
 
-def _vesta_version(*, config: vm.VestaConfig) -> str:
-    """Version of the code actually running, read from the bind-mounted pyproject.toml (re-extracted
-    on upgrade, so it tracks the running core). Best-effort: never block startup over a version label."""
-    pyproject = config.agent_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return "unknown"
-    try:
-        return tomllib.loads(pyproject.read_text())["project"]["version"]
-    except (tomllib.TOMLDecodeError, KeyError, OSError) as e:
-        logger.init(f"could not read version: {e}")
-        return "unknown"
-
-
 async def async_main() -> bool:
     config, config_issues = vm.load_config()
     logger.init("Config:")
@@ -264,7 +254,7 @@ async def async_main() -> bool:
         seed_path.write_text(config.seed_context)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
-    logger.init(f"{config.agent_name} starting on vesta v{_vesta_version(config=config)}")
+    logger.init(f"{config.agent_name} starting on vesta v{vesta_version(config)}")
 
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done

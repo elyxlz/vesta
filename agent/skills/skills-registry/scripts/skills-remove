@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Uninstall a skill: drop its directory from the sparse-checkout cone. Files leave the
+# disk; the content stays in history and reinstalling is instant.
+set -euo pipefail
+SKILL_NAME="${1:?Usage: skills-remove <skill-name>}"
+cd ~
+DEST="agent/skills/$SKILL_NAME"
+if ! git sparse-checkout list 2>/dev/null | grep -qx "$DEST"; then
+    echo "Skill '$SKILL_NAME' is not installed."
+    exit 0
+fi
+git sparse-checkout list | grep -vx "$DEST" | git sparse-checkout set --cone --stdin
+echo "Removed '$SKILL_NAME'. Restart Vesta to deactivate it."

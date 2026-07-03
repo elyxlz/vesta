@@ -79,7 +79,7 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 ### 5. Upstream
 
-Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op; don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
+Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it. Note in the summary what was filed (or that it was a no-op, and why).
 
 **Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. `upstream-pr` authenticates via a GitHub App (`uv run ~/agent/skills/upstream-pr/pr.py --token-only`), which is INDEPENDENT of the `gh` CLI's stored token. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
 
