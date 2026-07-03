@@ -2520,15 +2520,20 @@ pub async fn run_server(cfg: ServerConfig) {
     // replaces the code dir, so reconcile must restart running agents to reload the new core (and
     // re-bind their now-detached core mount).
     let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
-    match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
-        Err(e) => tracing::error!(error = %e, "failed to ensure agent code"),
-        Ok(code_dir) => {
-            if let Err(e) = crate::workspace::ensure_workspace(&env_config.config_dir, &code_dir) {
-                // Boxes can't sync without the bundle, but vestad must still serve
-                // (agents run fine between syncs). Loud, not fatal.
-                tracing::error!(error = %e, "workspace build failed; agent workspace sync will be unavailable");
-            }
+    let code_dir = match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to extract embedded agent code — aborting startup");
+            std::process::exit(1);
         }
+    };
+    // The workspace bundle is how every box attaches, syncs, and installs skills, so a vestad
+    // that can't build it is not serviceable. A build failure (git missing, disk error) aborts
+    // startup with a clear error rather than serving a half-broken daemon whose boxes silently
+    // fail to sync.
+    if let Err(e) = crate::workspace::ensure_workspace(&env_config.config_dir, &code_dir) {
+        tracing::error!(error = %e, "workspace bundle build failed — aborting startup");
+        std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port, expose_lan, lan_url));
