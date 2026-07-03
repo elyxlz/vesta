@@ -13,6 +13,7 @@ from pathlib import Path
 
 from core.events import (
     AssistantEvent,
+    ChatDeltaEvent,
     ChatEvent,
     ErrorEvent,
     EventBus,
@@ -39,6 +40,7 @@ _STREAM_FIXTURES: list[tp.Any] = [
     ThinkingEvent(type="thinking", ts="2026-01-01T00:00:00Z", text="hmm", signature="sig"),
     ThinkingDeltaEvent(type="thinking_delta", ts="2026-01-01T00:00:00Z", text="hm"),
     ChatEvent(type="chat", ts="2026-01-01T00:00:00Z", text="yo"),
+    ChatDeltaEvent(type="chat_delta", ts="2026-01-01T00:00:00Z", text="y", reset=False),
     ToolStartEvent(type="tool_start", ts="2026-01-01T00:00:00Z", tool="Bash", input="ls", subagent=False),
     ToolEndEvent(type="tool_end", ts="2026-01-01T00:00:00Z", tool="Bash", subagent=False),
     ErrorEvent(type="error", ts="2026-01-01T00:00:00Z", text="oops"),
@@ -112,9 +114,11 @@ def test_eventbus_roundtrip_all_types(tmp_path):
     """Emit each persistable event type, read back, verify the type tag survives."""
     bus = EventBus(data_dir=tmp_path)
 
-    # `status`, `notification_cleared`, and `thinking_delta` are transient live signals,
-    # intentionally not persisted (see EventBus.emit).
-    persistable = [event for event in _STREAM_FIXTURES if event["type"] not in ("status", "notification_cleared", "thinking_delta")]
+    # `status`, `notification_cleared`, and the streaming previews (`thinking_delta`,
+    # `chat_delta`) are transient live signals, intentionally not persisted (see EventBus.emit).
+    persistable = [
+        event for event in _STREAM_FIXTURES if event["type"] not in ("status", "notification_cleared", "thinking_delta", "chat_delta")
+    ]
     for event in persistable:
         bus.emit(event)
 

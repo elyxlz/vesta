@@ -118,6 +118,16 @@ class ChatEvent(_BaseEvent):
     text: str
 
 
+class ChatDeltaEvent(_BaseEvent):
+    type: tp.Literal["chat_delta"]
+    # One live chunk of the reply the agent is currently typing into `app-chat send` (extracted
+    # from the streaming tool input, see stream_preview.py). Broadcast-only, like thinking_delta:
+    # the real ChatEvent that follows is the record. reset=True replaces the accumulated draft
+    # (a chained second send restarted the preview) instead of appending.
+    text: str
+    reset: bool
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -132,6 +142,7 @@ type StreamEvent = (
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
+    | ChatDeltaEvent
 )
 
 
@@ -261,10 +272,10 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        # status (activity flips), notification_cleared (pending deltas), and thinking_delta
-        # (streaming preview chunks) are live-only signals with no place in history — broadcast
-        # them but don't persist.
-        if event["type"] not in ("status", "notification_cleared", "thinking_delta") and self._conn:
+        # status (activity flips), notification_cleared (pending deltas), and the streaming
+        # preview chunks (thinking_delta, chat_delta) are live-only signals with no place in
+        # history — broadcast them but don't persist.
+        if event["type"] not in ("status", "notification_cleared", "thinking_delta", "chat_delta") and self._conn:
             # Event-logging is best-effort: a failed history write must NEVER crash the
             # agent loop. Without this guard, a transient "database is locked" (the db
             # held by a long maintenance op past the busy timeout) propagated out of emit

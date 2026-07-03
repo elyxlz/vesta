@@ -610,6 +610,71 @@ async def test_thinking_deltas_stream_live_and_stay_out_of_the_turn():
 
 
 @pytest.mark.anyio
+async def test_chat_reply_preview_streams_from_bash_tool_input():
+    """The reply being typed into `app-chat send -m "..."` streams as chat_delta chunks while
+    the tool input forms; a chained second send resets the draft."""
+    import json as _json
+
+    from claude_agent_sdk import StreamEvent, TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_stream_harness()
+    deltas: list[tuple[str, bool]] = []
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "chat_delta":
+            deltas.append((event["text"], event["reset"]))
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit
+
+    def stream_event(event):
+        return StreamEvent(uuid="u", session_id="s", event=event)
+
+    full_input = _json.dumps({"command": 'app-chat send -m "hey, on it"; app-chat send -m "brb"'})
+    async with _consuming(state, config):
+        # The tool input streams mid-turn (a turn must be open for the preview to attach).
+        conv = asyncio.create_task(converse("test", state=state, config=config, show_output=True))
+        await wait_for_condition(lambda: mock_client.query.await_count >= 1, message="query never sent")
+        await message_queue.put(
+            stream_event(
+                {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}}
+            )
+        )
+        for start in range(0, len(full_input), 7):
+            await message_queue.put(
+                stream_event(
+                    {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {"type": "input_json_delta", "partial_json": full_input[start : start + 7]},
+                    }
+                )
+            )
+        await message_queue.put(stream_event({"type": "content_block_stop", "index": 1}))
+        await message_queue.put(_assistant_msg([TextBlock("sent")]))
+        await message_queue.put(_result_msg())
+        await conv
+
+    assert deltas, "no chat_delta emitted"
+    # Replay the draft the way a client would: append, or replace on reset.
+    draft = ""
+    saw_reset = False
+    for text, reset in deltas:
+        saw_reset = saw_reset or reset
+        draft = text if reset else draft + text
+    assert draft == "brb", f"final draft wrong: {draft!r}"
+    assert saw_reset, "chained send must reset the draft"
+    first_draft = ""
+    for text, reset in deltas:
+        if reset:
+            break
+        first_draft += text
+    assert first_draft == "hey, on it", f"first send preview wrong: {first_draft!r}"
+
+
+@pytest.mark.anyio
 async def test_converse_exits_promptly_on_interrupt_event():
     """converse interrupts and returns within the bounded grace even when the interrupted turn's
     ResultMessage never arrives (the CLI wind-down outliving the grace is the #958 seed)."""

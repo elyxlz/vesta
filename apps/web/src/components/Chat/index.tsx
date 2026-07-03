@@ -46,6 +46,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const {
     messages,
     liveThinking,
+    liveReply,
     isTyping,
     connected,
     historyLoaded,
@@ -139,6 +140,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           hasMore={hasMore}
           chatMessages={chatMessages}
           liveThinking={liveThinking}
+          liveReply={liveReply}
           connected={connected}
           historyLoaded={historyLoaded}
           agentName={name}

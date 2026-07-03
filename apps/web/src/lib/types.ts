@@ -36,6 +36,9 @@ export type VestaEvent =
   // history): accumulate for display, drop the buffer when the complete `thinking` event arrives.
   | (BaseEvent & { type: "thinking_delta"; text: string })
   | (BaseEvent & { type: "chat"; text: string })
+  // Live chunk of the reply the agent is typing into `app-chat send`. Broadcast-only preview:
+  // append to the draft (or replace it when reset), drop it when the real chat event arrives.
+  | (BaseEvent & { type: "chat_delta"; text: string; reset: boolean })
   | (BaseEvent & {
       type: "tool_start";
       tool: string;

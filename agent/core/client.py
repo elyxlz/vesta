@@ -26,6 +26,7 @@ from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, is_
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
+from . import stream_preview
 from .helpers import get_constitution_path, get_memory_path
 from .tools import build_vesta_tools_server
 
@@ -139,25 +140,48 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
 
 
 def _dispatch_stream_delta(msg: StreamEvent, *, state: vm.State, turn: vm.TurnSignals | None) -> None:
-    """Broadcast an extended-thinking chunk as a live thinking_delta event.
+    """Broadcast streaming previews: extended-thinking chunks as thinking_delta, and the reply
+    the agent is typing into `app-chat send` as chat_delta (extracted live from the Bash tool
+    input, see stream_preview.py).
 
-    Partial stream events are a display-only preview: the complete AssistantMessage that follows
-    carries the authoritative block (emitted + persisted as usual), so deltas are never logged or
-    stored. Sub-agent streams (parent_tool_use_id set) are skipped — their interleaved chunks
-    belong to no visible thinking block."""
+    Partial stream events are a display-only preview: the complete AssistantMessage / ChatEvent
+    that follows is the record, so deltas are never logged or stored. Sub-agent streams
+    (parent_tool_use_id set) are skipped — their interleaved chunks belong to no visible block."""
     if msg.parent_tool_use_id is not None:
         return
     if turn and not turn.show_output:
         return
     event = msg.event
+    if event["type"] == "content_block_start" and turn:
+        block = event["content_block"]
+        if block["type"] == "tool_use" and block["name"] == "Bash":
+            turn.preview_block = event["index"]
+            turn.preview_raw = ""
+            turn.preview_sent = ""
+        return
+    if event["type"] == "content_block_stop" and turn and event["index"] == turn.preview_block:
+        turn.preview_block = None
+        return
     if event["type"] != "content_block_delta":
         return
     delta = event["delta"]
-    if delta["type"] != "thinking_delta":
+    if delta["type"] == "thinking_delta":
+        chunk = delta["thinking"]
+        if chunk:
+            state.event_bus.emit({"type": "thinking_delta", "text": chunk})
         return
-    chunk = delta["thinking"]
-    if chunk:
-        state.event_bus.emit({"type": "thinking_delta", "text": chunk})
+    if delta["type"] != "input_json_delta" or not turn or event["index"] != turn.preview_block:
+        return
+    turn.preview_raw += delta["partial_json"]
+    message = stream_preview.extract_chat_preview(turn.preview_raw)
+    if message is None or message == turn.preview_sent:
+        return
+    if message.startswith(turn.preview_sent):
+        state.event_bus.emit({"type": "chat_delta", "text": message[len(turn.preview_sent) :], "reset": False})
+    else:
+        # A chained second `app-chat send` restarted the preview; replace the draft.
+        state.event_bus.emit({"type": "chat_delta", "text": message, "reset": True})
+    turn.preview_sent = message
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaConfig) -> None:

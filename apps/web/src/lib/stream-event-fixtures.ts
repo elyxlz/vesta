@@ -36,6 +36,12 @@ export const streamEventFixtures = {
       "text": "yo"
     },
     {
+      "type": "chat_delta",
+      "ts": "2026-01-01T00:00:00Z",
+      "text": "y",
+      "reset": false
+    },
+    {
       "type": "tool_start",
       "ts": "2026-01-01T00:00:00Z",
       "tool": "Bash",

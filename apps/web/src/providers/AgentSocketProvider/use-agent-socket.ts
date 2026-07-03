@@ -47,6 +47,9 @@ export function useAgentSocketState({
   // Live preview of the in-progress extended-thinking block, accumulated from thinking_delta
   // events. Cleared when the turn's visible output lands (the complete block is the record).
   const [liveThinking, setLiveThinking] = useState("");
+  // Live draft of the reply the agent is typing into `app-chat send`, accumulated from
+  // chat_delta events. Replaced by the real chat bubble the moment it arrives.
+  const [liveReply, setLiveReply] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -63,6 +66,8 @@ export function useAgentSocketState({
   const liveThinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const liveReplyRef = useRef("");
+  const liveReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
   const cursorRef = useRef<number | null>(null);
   const onAssistantMessageRef = useRef(onAssistantMessage);
@@ -91,6 +96,24 @@ export function useAgentSocketState({
     }
     liveThinkingRef.current = "";
     setLiveThinking("");
+  }, []);
+
+  const appendLiveReply = useCallback((text: string, reset: boolean) => {
+    liveReplyRef.current = reset ? text : liveReplyRef.current + text;
+    if (liveReplyTimerRef.current) return;
+    liveReplyTimerRef.current = setTimeout(() => {
+      liveReplyTimerRef.current = null;
+      setLiveReply(liveReplyRef.current);
+    }, 150);
+  }, []);
+
+  const clearLiveReply = useCallback(() => {
+    if (liveReplyTimerRef.current) {
+      clearTimeout(liveReplyTimerRef.current);
+      liveReplyTimerRef.current = null;
+    }
+    liveReplyRef.current = "";
+    setLiveReply("");
   }, []);
 
   const flushQueue = useCallback(() => {
@@ -134,11 +157,16 @@ export function useAgentSocketState({
   }, [flushQueue]);
 
   const enqueueChatMessage = useCallback(
-    (event: VestaEvent) => {
+    (event: VestaEvent, opts?: { immediate: boolean }) => {
       chatQueueRef.current.push(event);
+      if (opts?.immediate) {
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        flushQueue();
+        return;
+      }
       drainQueue();
     },
-    [drainQueue],
+    [drainQueue, flushQueue],
   );
 
   useEffect(() => {
@@ -158,6 +186,7 @@ export function useAgentSocketState({
       pendingEchoesRef.current = [];
       resetTyping();
       clearLiveThinking();
+      clearLiveReply();
     };
 
     resetConnection();
@@ -190,6 +219,10 @@ export function useAgentSocketState({
             appendLiveThinking(event.text);
             return;
           }
+          if (event.type === "chat_delta") {
+            appendLiveReply(event.text, event.reset);
+            return;
+          }
           // The turn's visible output (or the finished block itself) supersedes the preview.
           if (
             event.type === "thinking" ||
@@ -200,7 +233,11 @@ export function useAgentSocketState({
             clearLiveThinking();
           }
           if (event.type === "chat") {
-            enqueueChatMessage(event);
+            // A streamed draft already showed this reply forming; the typing-pacing
+            // simulation would only delay the committed bubble behind its own preview.
+            const hadDraft = liveReplyRef.current !== "";
+            clearLiveReply();
+            enqueueChatMessage(event, { immediate: hadDraft });
           } else {
             setMessages((prev) => capTail([...prev, event]));
           }
@@ -224,8 +261,16 @@ export function useAgentSocketState({
       setConnected(false);
       resetTyping();
       clearLiveThinking();
+      clearLiveReply();
     };
-  }, [active, name, appendLiveThinking, clearLiveThinking]);
+  }, [
+    active,
+    name,
+    appendLiveThinking,
+    clearLiveThinking,
+    appendLiveReply,
+    clearLiveReply,
+  ]);
 
   const sendEvent = useCallback((event: object): boolean => {
     const ws = wsRef.current?.current();
@@ -278,6 +323,7 @@ export function useAgentSocketState({
     messages,
     agentState,
     liveThinking,
+    liveReply,
     isTyping,
     connected,
     historyLoaded,

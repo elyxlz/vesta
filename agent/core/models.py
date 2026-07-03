@@ -79,6 +79,11 @@ class TurnSignals:
     done: asyncio.Event = dc.field(default_factory=asyncio.Event)
     error: Exception | None = None
     last_message_at: float = dc.field(default_factory=time.monotonic)
+    # Live chat-reply preview (stream_preview.py): the Bash tool_use block being watched, its
+    # accumulated partial input JSON, and the preview text already broadcast as chat_delta.
+    preview_block: int | None = None
+    preview_raw: str = ""
+    preview_sent: str = ""
 
 
 @dc.dataclass

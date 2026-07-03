@@ -13,6 +13,7 @@ import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
+import { Markdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
@@ -51,6 +52,7 @@ interface ChatMessageAreaProps {
   notAuthenticated: boolean;
   isTyping: boolean;
   liveThinking: string;
+  liveReply: string;
   isMobile: boolean;
 }
 
@@ -121,6 +123,7 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   liveThinking,
+  liveReply,
   isMobile,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
@@ -321,7 +324,16 @@ export function ChatMessageArea({
                         </div>
                       </div>
                     )}
-                    {isTyping && (
+                    {liveReply && (
+                      <div className="mt-2 flex justify-start">
+                        <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-secondary/70 px-3.5 py-2.5 text-secondary-foreground/90">
+                          <div className="min-w-0 break-words">
+                            <Markdown>{liveReply}</Markdown>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {isTyping && !liveReply && (
                       <div className="flex justify-start mt-2">
                         <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
                           <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
