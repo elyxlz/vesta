@@ -18,6 +18,7 @@ node_modules/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
 .tox/
 
 # Runtime data (local research, session state, secrets)

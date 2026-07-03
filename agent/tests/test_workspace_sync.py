@@ -76,6 +76,7 @@ def _write_content(content, version):
         (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
     (content / "MEMORY.md").write_text(_memory_template(version))
     (content / ".gitignore").write_text((AGENT_ROOT / ".gitignore").read_text())
+    (content / "ruff.toml").write_text("line-length = 144\n")  # box needs it (formatting); ships in the snapshot
     core_scripts = content / "core/skills/workspace-sync/scripts"
     core_scripts.mkdir(parents=True, exist_ok=True)
     shutil.copy(ATTACH, core_scripts / "attach.sh")
@@ -107,6 +108,7 @@ def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream")):
     (home / "agent/MEMORY.md").write_text(_memory_template(version))
     (home / "agent/.gitignore").write_text((AGENT_ROOT / ".gitignore").read_text())
     (home / "agent/constitution.md").write_text("# user rules\n")  # bind-mounted read-only on real boxes
+    (home / "agent/ruff.toml").write_text("line-length = 144\n")  # shipped in the image; tracked, must stay clean
     # The image ships the core skills on disk; skills-install and the sync flow shell out
     # to attach.sh / fetch-workspace.sh at their ~-anchored paths.
     core_scripts = home / "agent/core/skills/workspace-sync/scripts"
