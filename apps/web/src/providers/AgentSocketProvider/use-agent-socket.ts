@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState, InputMethod } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
 import {
@@ -29,6 +29,90 @@ function typingDelay(charCount: number): number {
   return raw + Math.floor(Math.random() * variance * 2) - variance;
 }
 
+// Reveal speed for streamed previews: fraction of the backlog revealed per animation frame,
+// with a floor so short backlogs still type steadily (~60cps at 60fps). Proportional catch-up
+// keeps the draft close to the wire without the chunk-at-a-time jumps of raw delta cadence.
+const REVEAL_BACKLOG_FRACTION = 0.08;
+const REVEAL_MIN_CHARS_PER_FRAME = 1;
+
+/** Streamed-text smoother: chunks append to a buffer, an rAF loop reveals the buffer
+ * incrementally so the preview reads as continuous typing regardless of chunk cadence.
+ * Returns the revealed text plus a stable controls object (safe in effect deps — the
+ * text updates per frame, the controls never change identity). */
+function useStreamedText(): [
+  string,
+  {
+    append: (chunk: string, reset?: boolean) => void;
+    clear: () => void;
+    hasBuffered: () => boolean;
+  },
+] {
+  const [text, setText] = useState("");
+  const bufferRef = useRef("");
+  const revealedRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+
+  const schedule = useCallback(() => {
+    if (frameRef.current !== null) return;
+    const tick = () => {
+      frameRef.current = null;
+      const backlog = bufferRef.current.length - revealedRef.current;
+      if (backlog <= 0) return;
+      const step = Math.max(
+        REVEAL_MIN_CHARS_PER_FRAME,
+        Math.ceil(backlog * REVEAL_BACKLOG_FRACTION),
+      );
+      revealedRef.current = Math.min(
+        bufferRef.current.length,
+        revealedRef.current + step,
+      );
+      setText(bufferRef.current.slice(0, revealedRef.current));
+      if (revealedRef.current < bufferRef.current.length) {
+        frameRef.current = requestAnimationFrame(tick);
+      }
+    };
+    frameRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  const append = useCallback(
+    (chunk: string, reset = false) => {
+      if (reset) {
+        bufferRef.current = chunk;
+        revealedRef.current = 0;
+      } else {
+        bufferRef.current += chunk;
+      }
+      schedule();
+    },
+    [schedule],
+  );
+
+  const clear = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    bufferRef.current = "";
+    revealedRef.current = 0;
+    setText("");
+  }, []);
+
+  // Whether anything has streamed in (buffered, not necessarily revealed yet).
+  const hasBuffered = useCallback(() => bufferRef.current !== "", []);
+
+  useEffect(() => {
+    return () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    };
+  }, []);
+
+  const controls = useMemo(
+    () => ({ append, clear, hasBuffered }),
+    [append, clear, hasBuffered],
+  );
+  return [text, controls];
+}
+
 interface UseAgentSocketOptions {
   name: string | null;
   active: boolean;
@@ -44,12 +128,11 @@ export function useAgentSocketState({
 }: UseAgentSocketOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
-  // Live preview of the in-progress extended-thinking block, accumulated from thinking_delta
-  // events. Cleared when the turn's visible output lands (the complete block is the record).
-  const [liveThinking, setLiveThinking] = useState("");
-  // Live draft of the reply the agent is typing into `app-chat send`, accumulated from
-  // chat_delta events. Replaced by the real chat bubble the moment it arrives.
-  const [liveReply, setLiveReply] = useState("");
+  // Live preview of the in-progress extended-thinking block (thinking_delta events), and the
+  // draft of the reply the agent is typing into `app-chat send` (chat_delta events). Both are
+  // smoothed by useStreamedText and cleared when the turn's visible output lands.
+  const [liveThinking, thinkingStream] = useStreamedText();
+  const [liveReply, replyStream] = useStreamedText();
   const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -62,12 +145,6 @@ export function useAgentSocketState({
   const loadingMoreRef = useRef(false);
 
   const wsRef = useRef<ReconnectingWsHandle | null>(null);
-  const liveThinkingRef = useRef("");
-  const liveThinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const liveReplyRef = useRef("");
-  const liveReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
   const cursorRef = useRef<number | null>(null);
   const onAssistantMessageRef = useRef(onAssistantMessage);
@@ -77,44 +154,6 @@ export function useAgentSocketState({
   const chatQueueRef = useRef<VestaEvent[]>([]);
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Deltas arrive many times a second; batch them into one state update per frame-ish tick so
-  // a long thinking stretch doesn't re-render the chat per chunk.
-  const appendLiveThinking = useCallback((text: string) => {
-    liveThinkingRef.current += text;
-    if (liveThinkingTimerRef.current) return;
-    liveThinkingTimerRef.current = setTimeout(() => {
-      liveThinkingTimerRef.current = null;
-      setLiveThinking(liveThinkingRef.current);
-    }, 150);
-  }, []);
-
-  const clearLiveThinking = useCallback(() => {
-    if (liveThinkingTimerRef.current) {
-      clearTimeout(liveThinkingTimerRef.current);
-      liveThinkingTimerRef.current = null;
-    }
-    liveThinkingRef.current = "";
-    setLiveThinking("");
-  }, []);
-
-  const appendLiveReply = useCallback((text: string, reset: boolean) => {
-    liveReplyRef.current = reset ? text : liveReplyRef.current + text;
-    if (liveReplyTimerRef.current) return;
-    liveReplyTimerRef.current = setTimeout(() => {
-      liveReplyTimerRef.current = null;
-      setLiveReply(liveReplyRef.current);
-    }, 150);
-  }, []);
-
-  const clearLiveReply = useCallback(() => {
-    if (liveReplyTimerRef.current) {
-      clearTimeout(liveReplyTimerRef.current);
-      liveReplyTimerRef.current = null;
-    }
-    liveReplyRef.current = "";
-    setLiveReply("");
-  }, []);
 
   const flushQueue = useCallback(() => {
     for (const event of chatQueueRef.current) {
@@ -185,8 +224,8 @@ export function useAgentSocketState({
       cursorRef.current = null;
       pendingEchoesRef.current = [];
       resetTyping();
-      clearLiveThinking();
-      clearLiveReply();
+      thinkingStream.clear();
+      replyStream.clear();
     };
 
     resetConnection();
@@ -216,11 +255,11 @@ export function useAgentSocketState({
             }
           }
           if (event.type === "thinking_delta") {
-            appendLiveThinking(event.text);
+            thinkingStream.append(event.text);
             return;
           }
           if (event.type === "chat_delta") {
-            appendLiveReply(event.text, event.reset);
+            replyStream.append(event.text, event.reset);
             return;
           }
           // The turn's visible output (or the finished block itself) supersedes the preview.
@@ -230,13 +269,13 @@ export function useAgentSocketState({
             event.type === "chat" ||
             (event.type === "status" && event.state === "idle")
           ) {
-            clearLiveThinking();
+            thinkingStream.clear();
           }
           if (event.type === "chat") {
             // A streamed draft already showed this reply forming; the typing-pacing
             // simulation would only delay the committed bubble behind its own preview.
-            const hadDraft = liveReplyRef.current !== "";
-            clearLiveReply();
+            const hadDraft = replyStream.hasBuffered();
+            replyStream.clear();
             enqueueChatMessage(event, { immediate: hadDraft });
           } else {
             setMessages((prev) => capTail([...prev, event]));
@@ -260,17 +299,10 @@ export function useAgentSocketState({
       wsRef.current = null;
       setConnected(false);
       resetTyping();
-      clearLiveThinking();
-      clearLiveReply();
+      thinkingStream.clear();
+      replyStream.clear();
     };
-  }, [
-    active,
-    name,
-    appendLiveThinking,
-    clearLiveThinking,
-    appendLiveReply,
-    clearLiveReply,
-  ]);
+  }, [active, name, thinkingStream, replyStream]);
 
   const sendEvent = useCallback((event: object): boolean => {
     const ws = wsRef.current?.current();
