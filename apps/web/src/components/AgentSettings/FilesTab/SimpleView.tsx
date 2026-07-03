@@ -131,65 +131,93 @@ function MindCard({
   onShowDreams: () => void;
 }) {
   return (
-    <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
-      <button
-        type="button"
-        onClick={onSelectMemory}
-        className={cn(
-          "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
-          memorySelected
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <BookOpen className="size-4 shrink-0 text-muted-foreground" />
-        <span className="flex min-w-0 flex-col">
-          <span className="font-medium">memory</span>
-          <span className="text-[11px] text-muted-foreground">
-            what vesta remembers about you
-          </span>
-        </span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onSelectConstitution}
-        className={cn(
-          "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
-          constitutionSelected
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <ScrollText className="size-4 shrink-0 text-muted-foreground" />
-        <span className="flex min-w-0 flex-col">
-          <span className="font-medium">constitution</span>
-          <span className="text-[11px] text-muted-foreground">
-            the directives you set that vesta follows
-          </span>
-        </span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onShowDreams}
-        className={cn(
-          "flex w-full items-center gap-2.5 px-4 py-3 text-left text-sm transition-colors",
-          dreamsActive
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <Moon className="size-4 text-muted-foreground" />
-        <span className="font-medium">dreams</span>
-        {dreamCount > 0 && (
-          <span className="text-[10px] text-muted-foreground/60">
-            {dreamCount}
-          </span>
-        )}
-        <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground/60" />
-      </button>
+    <Card size="sm" className="shrink-0">
+      <CardContent className="flex flex-col gap-1.5">
+        <HubRow
+          onClick={onSelectMemory}
+          selected={memorySelected}
+          iconClass="bg-amber-500/12 text-amber-600 dark:text-amber-400"
+          icon={<BookOpen className="size-[18px]" />}
+          title="memory"
+          description="what vesta remembers about you"
+        />
+        <HubRow
+          onClick={onSelectConstitution}
+          selected={constitutionSelected}
+          iconClass="bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+          icon={<ScrollText className="size-[18px]" />}
+          title="constitution"
+          description="the directives you set that vesta follows"
+        />
+        <HubRow
+          onClick={onShowDreams}
+          selected={dreamsActive}
+          iconClass="bg-indigo-500/12 text-indigo-500 dark:text-indigo-400"
+          icon={<Moon className="size-[18px]" />}
+          title="dreams"
+          description="nightly reflections on the day"
+          trailing={
+            <div className="flex items-center gap-1.5">
+              {dreamCount > 0 && (
+                <span className="text-[11px] text-muted-foreground">
+                  {dreamCount}
+                </span>
+              )}
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
+            </div>
+          }
+        />
+      </CardContent>
     </Card>
+  );
+}
+
+// A soft, tappable "cell" inside a hub card: a tinted icon square, a title,
+// an optional secondary line, and optional trailing content.
+function HubRow({
+  icon,
+  iconClass,
+  title,
+  description,
+  trailing,
+  selected = false,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  iconClass: string;
+  title: string;
+  description?: string;
+  trailing?: React.ReactNode;
+  selected?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
+        selected ? "bg-muted" : "bg-muted/40 hover:bg-muted/70 active:bg-muted",
+      )}
+    >
+      <span
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-[10px]",
+          iconClass,
+        )}
+      >
+        {icon}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-sm font-medium leading-tight">{title}</span>
+        {description ? (
+          <span className="truncate text-[11px] text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
+      </span>
+      {trailing}
+    </button>
   );
 }
 
@@ -249,7 +277,7 @@ function SkillsCard({
         )}
       </CardHeader>
 
-      <CardContent className="flex-1 min-h-0 overflow-auto !px-0">
+      <CardContent className="flex flex-1 min-h-0 flex-col gap-1.5 overflow-auto">
         {inSkillView && activeSkill ? (
           activeSkill.mdFiles.length === 0 ? (
             <EmptyRow>no markdown files</EmptyRow>
@@ -258,6 +286,7 @@ function SkillsCard({
               <Row
                 key={file.path}
                 icon={<FileText className="size-4" />}
+                iconClass="bg-muted text-muted-foreground"
                 label={file.name}
                 selected={selected === file.path}
                 onClick={() => onSelect(file.path)}
@@ -271,6 +300,7 @@ function SkillsCard({
             <Row
               key={skill.path}
               icon={<Wand2 className="size-4" />}
+              iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
               label={skill.name}
               hasChevron
               selected={
@@ -287,12 +317,14 @@ function SkillsCard({
 
 function Row({
   icon,
+  iconClass,
   label,
   hasChevron = false,
   selected,
   onClick,
 }: {
   icon: React.ReactNode;
+  iconClass: string;
   label: string;
   hasChevron?: boolean;
   selected: boolean;
@@ -303,13 +335,18 @@ function Row({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-2.5 text-left text-sm transition-colors last:border-b-0",
-        selected
-          ? "bg-muted text-foreground"
-          : "hover:bg-muted/60 active:bg-muted",
+        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors",
+        selected ? "bg-muted" : "bg-muted/40 hover:bg-muted/70 active:bg-muted",
       )}
     >
-      <span className="text-muted-foreground">{icon}</span>
+      <span
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-[9px]",
+          iconClass,
+        )}
+      >
+        {icon}
+      </span>
       <span className="flex-1 truncate">{label}</span>
       {hasChevron && (
         <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
