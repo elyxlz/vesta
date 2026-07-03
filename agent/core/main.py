@@ -236,9 +236,9 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 
 def _vesta_version(*, config: vm.VestaConfig) -> str:
-    """Version of the code actually running, read from the bind-mounted pyproject.toml (re-extracted
-    on upgrade, so it tracks the running core). Best-effort: never block startup over a version label."""
-    pyproject = config.agent_dir / "pyproject.toml"
+    """Version of the code actually running, read from the pyproject.toml inside the bind-mounted core
+    (re-extracted on upgrade, so it tracks the running core). Best-effort: never block startup over a version label."""
+    pyproject = config.agent_dir / "core" / "pyproject.toml"
     if not pyproject.exists():
         return "unknown"
     try:

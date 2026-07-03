@@ -67,7 +67,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - Docker container on a host managed by **vestad** (a Rust daemon). Host networking, so `localhost` reaches the host. vestad runs the container lifecycle (create, rebuild, backup), proxies app/CLI traffic to the agent, and handles service registration.
 - Runs as **root**: home `/root`, working dir `/root/agent`. Paths written `~/agent/...` (here and in skills) are `/root/agent/...`; the Read/Edit tools need the absolute form.
 - `/run/vestad-env` holds env vars injected by vestad (read it to see what's available).
-- On rebuild (`vestad update`), by default `agent/core/`, `agent/pyproject.toml`, `agent/uv.lock` are replaced from the new image and everything else persists (depends on agent config).
+- On rebuild (`vestad update`), by default `agent/core/` (the engine, including its `pyproject.toml` and `uv.lock`) is replaced from the new image and everything else persists (depends on agent config).
 - This is [agent_name]'s computer: install things, reorganize, customize however needed.
 
 ### Environment
