@@ -2854,7 +2854,12 @@ mod tests {
         let binds: Vec<String> = mounts.iter()
             .map(|(src, dst)| format!("{}:{}:ro,z", src, dst))
             .collect();
+        create_test_container_with_binds_async(docker, tc, binds, cmd, network, restart).await;
+    }
 
+    /// Like `create_test_container_async`, but takes fully-assembled bind strings instead of
+    /// hardcoding `:ro,z` — needed to exercise a writable grant via `crate::mounts::bind_string`.
+    async fn create_test_container_with_binds_async(docker: &Docker, tc: &TestContainer, binds: Vec<String>, cmd: Vec<String>, network: &str, restart: &str) {
         let restart_policy = match restart {
             "on-failure" => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
             "unless-stopped" => bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED,
@@ -3141,5 +3146,74 @@ mod tests {
         assert_eq!(payload["interrupt"], true);
         assert_eq!(payload["old_name"], "old-name");
         assert_eq!(payload["new_name"], agent_name);
+    }
+
+    /// Result of a `docker exec` invocation against a running test container.
+    struct ExecResult {
+        success: bool,
+        stdout: String,
+    }
+
+    /// Run `docker exec <cname> <args>` via the CLI (same idiom as `docker_cleanup`) and
+    /// capture the outcome for assertions.
+    fn docker_exec(cname: &str, args: &[&str]) -> ExecResult {
+        let output = std::process::Command::new("docker")
+            .arg("exec")
+            .arg(cname)
+            .args(args)
+            .output()
+            .expect("failed to run docker exec");
+        ExecResult { success: output.status.success(), stdout: String::from_utf8_lossy(&output.stdout).trim().to_string() }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn granted_host_path_readable_writable_removable_in_container() {
+        let docker = test_docker();
+
+        // A host tempdir with one file, mirrored 1:1 into the container (matches
+        // validate_mount's default of using the canonicalized host path as the container path).
+        let host_dir = std::env::temp_dir().join(format!("vesta-grant-{}", std::process::id()));
+        std::fs::create_dir_all(&host_dir).expect("create host grant dir");
+        std::fs::write(host_dir.join("hello.txt"), "hi").expect("write hello.txt");
+        let host_path = host_dir.to_str().expect("host grant path is utf8").to_string();
+        let container_path = host_path.clone();
+        let hello_path = format!("{container_path}/hello.txt");
+        let new_file_path = format!("{container_path}/new.txt");
+        let cmd = vec!["sleep".to_string(), "300".to_string()];
+
+        // Step 1: read-only grant. Built via the real production `bind_string`, not a
+        // hand-written bind spec, so the test exercises our actual mount assembly.
+        let ro_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: false };
+        let tc_ro = TestContainer::new("grant-ro");
+        create_test_container_with_binds_async(&docker, &tc_ro, vec![crate::mounts::bind_string(&ro_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_ro.name).await, "read-only grant container should start");
+
+        let read = docker_exec(&tc_ro.name, &["cat", &hello_path]);
+        assert!(read.success, "cat of granted file should succeed");
+        assert_eq!(read.stdout, "hi", "granted host file must be readable inside the container");
+
+        let blocked_write = docker_exec(&tc_ro.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(!blocked_write.success, "a read-only grant must block writes inside the container");
+
+        // Step 2: the same mount, but writable: true -> the write now succeeds.
+        let rw_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: true };
+        let tc_rw = TestContainer::new("grant-rw");
+        create_test_container_with_binds_async(&docker, &tc_rw, vec![crate::mounts::bind_string(&rw_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_rw.name).await, "writable grant container should start");
+
+        let allowed_write = docker_exec(&tc_rw.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(allowed_write.success, "a writable grant must allow writes inside the container");
+
+        // Step 3: no user mount at all -> the path is absent inside the container (the grant,
+        // not the host directory, controls visibility).
+        let tc_none = TestContainer::new("grant-none");
+        create_test_container_async(&docker, &tc_none, &[], cmd, NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_none.name).await, "no-grant container should start");
+
+        let missing = docker_exec(&tc_none.name, &["test", "-f", &hello_path]);
+        assert!(!missing.success, "without a grant, the host path must not appear inside the container");
+
+        std::fs::remove_dir_all(&host_dir).ok();
     }
 }
