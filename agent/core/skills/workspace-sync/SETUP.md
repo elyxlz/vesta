@@ -7,8 +7,7 @@ later upgrades can sync it. Silent, no asking.
 bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 ```
 
-It prints `attached: ...` and you're done. If it errors instead (it shouldn't on a fresh
-agent), tell the user what it said rather than retrying blindly.
+It prints `attached: ...` and you're done.
 
 ## Unmanaged core (only if created with `--no-manage-core-code`)
 
