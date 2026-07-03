@@ -66,7 +66,7 @@ fn fresh_agent_has_expected_directory_structure() {
     }
 
     // Key files exist
-    for file in ["/root/agent/MEMORY.md", "/root/agent/pyproject.toml"] {
+    for file in ["/root/agent/MEMORY.md", "/root/agent/core/pyproject.toml"] {
         wait_for_path(&cid, 'f', file);
     }
 

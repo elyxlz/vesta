@@ -88,7 +88,7 @@ jobs:
 
       - name: Check version sync across sources
         run: |
-          AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
@@ -132,7 +132,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           TAG="${TAG#v}"
-          VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          VERSION=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           echo "Tag: v$TAG"
           echo "Version: $VERSION"
           if [ "$TAG" != "$VERSION" ]; then
@@ -198,12 +198,12 @@ jobs:
       - name: Check lockfile is up to date
         working-directory: agent
         run: |
-          cp uv.lock uv.lock.before
-          uv lock
+          cp core/uv.lock core/uv.lock.before
+          uv lock --project core
 
-          if ! diff -q uv.lock.before uv.lock > /dev/null; then
+          if ! diff -q core/uv.lock.before core/uv.lock > /dev/null; then
             echo "❌ uv.lock is out of date"
-            echo "Please run 'cd agent && uv lock' locally and commit the changes"
+            echo "Please run 'cd agent && uv lock --project core' locally and commit the changes"
             exit 1
           fi
 
