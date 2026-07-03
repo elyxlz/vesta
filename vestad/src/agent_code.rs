@@ -6,6 +6,9 @@ use std::sync::OnceLock;
 use std::{fmt, fs};
 
 const FINGERPRINT_MARKER: &str = ".vestad-fingerprint";
+// Embedded inputs that carry the executable bit in the repo, recorded by build.rs
+// (rust-embed itself stores content only, not modes).
+const EXEC_PATHS: &str = include_str!(concat!(env!("OUT_DIR"), "/agent_exec_paths.txt"));
 const MAIN_PY: &str = "core/main.py";
 
 #[derive(Debug)]
@@ -85,6 +88,22 @@ pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
             .map_err(|e| AgentCodeError::Io(format!("write {}: {e}", dest.display())))?;
     }
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Restore the executable bit build.rs recorded, so skill scripts/binaries ship
+        // runnable and the workspace snapshot records 100755 like the repo does.
+        for rel in EXEC_PATHS.lines().filter(|line| !line.is_empty()) {
+            let path = dir.join(rel);
+            if !path.exists() {
+                continue; // the build.rs walk and the embed filters are maintained separately
+            }
+            let mut perms = fs::metadata(&path).map_err(|e| AgentCodeError::Io(e.to_string()))?.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            fs::set_permissions(&path, perms).map_err(|e| AgentCodeError::Io(format!("chmod {}: {e}", path.display())))?;
+        }
+    }
+
     // Guards against a broken include filter in agent_embed.rs silently producing
     // an empty extraction — not a TOCTOU concern, the file was just written.
     if !main_py.exists() {
@@ -122,6 +141,14 @@ mod tests {
         assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
         assert!(dir.join("MEMORY.md").is_file());
         assert!(dir.join(".gitignore").is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Modes survive: the snapshot must record scripts as 100755, matching the image.
+            let attach = dir.join("core/skills/workspace-sync/scripts/attach.sh");
+            let mode = attach.metadata().expect("attach.sh extracted").permissions().mode();
+            assert!(mode & 0o111 != 0, "executable bit restored on extraction, got mode {mode:o}");
+        }
         assert_eq!(
             fs::read_to_string(dir.join(FINGERPRINT_MARKER)).expect("marker"),
             embed_fingerprint(),
