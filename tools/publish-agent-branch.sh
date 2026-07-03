@@ -30,24 +30,13 @@ cleanup() { git worktree remove --force "$WORK" 2>/dev/null || true; rm -rf "$WO
 trap cleanup EXIT
 
 git archive "$SRC_REF" "${PUBLISH_PATHS[@]}" | tar -x -C "$STAGE"
+# Root .gitignore: pure $HOME scoping — everything but agent/ stays out of git status
+# on a box. Content rules (runtime dirs, model/media noise) live in agent/.gitignore,
+# which is published verbatim and owns everything under agent/.
 cat > "$STAGE/.gitignore" <<'EOF'
 /*
 !/.gitignore
 !/agent/
-*.bin
-*.onnx
-*.pt
-*.db
-*.sqlite
-*.mp3
-*.mp4
-*.wav
-*.zip
-*.tar.gz
-node_modules/
-dist/
-.venv/
-__pycache__/
 EOF
 
 if git fetch "$REMOTE" "$BRANCH" 2>/dev/null; then
