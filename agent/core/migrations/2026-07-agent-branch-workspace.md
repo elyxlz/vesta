@@ -12,7 +12,7 @@ cd ~ && bash agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
 
 - Exit 0: already on the agent branch. Nothing to convert; go to the final step.
 - Exit 4: legacy workspace. Continue with step 2.
-- Anything else (exit 3, or a failed fetch): your version's files are not reachable on the remote right now. Not a workspace-shape problem and not yours to fix; go to the final step and the workspace-sync flow will attach later.
+- Anything else (exit 3, or a failed fetch): your version's files are not available from vestad right now. Not a workspace-shape problem and not yours to fix; go to the final step and the workspace-sync flow will attach later.
 
 ### 2. Convert the legacy workspace
 

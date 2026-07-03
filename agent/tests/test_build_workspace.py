@@ -91,9 +91,13 @@ def test_bundle_is_fetchable_and_carries_branch_plus_tags(tmp_path):
     clone.mkdir()
     _git(["init", "-b", "box"], clone)
     _git(
-        ["fetch", "--no-tags", str(ws / "workspace.bundle"),
-         "+refs/heads/agent-workspace:refs/remotes/origin/agent-workspace",
-         "+refs/tags/agent-v*:refs/tags/agent-v*"],
+        [
+            "fetch",
+            "--no-tags",
+            str(ws / "workspace.bundle"),
+            "+refs/heads/agent-workspace:refs/remotes/origin/agent-workspace",
+            "+refs/tags/agent-v*:refs/tags/agent-v*",
+        ],
         clone,
     )
     assert "agent-v0.1.170" in _git(["tag"], clone)

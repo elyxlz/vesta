@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Attach $HOME to the published agent branch. Idempotent and worktree-safe: the only
-# working-tree-touching step is `git reset --mixed`, which never writes files, so local
-# content can never be clobbered - differences just show up in `git status` afterwards.
+# Attach $HOME to this vestad's workspace content. Idempotent and worktree-safe: the only
+# working-tree-touching steps are `git reset --mixed` (never writes files) and materializing
+# the root .gitignore when absent, so local content can never be clobbered - differences
+# just show up in `git status` afterwards.
 #
-# Exit: 0 attached (or already attached); 3 snapshot tag for the running version not
-# found on the remote; 4 legacy workspace detected (the one-time workspace boot
+# Exit: 0 attached (or already attached); 3 snapshot tag for the running version not in
+# the workspace bundle; 4 legacy workspace detected (the one-time workspace boot
 # migration converts it: back up, retire ~/.git, re-run).
 set -euo pipefail
 
-REF="${VESTA_WORKSPACE_REF:?VESTA_WORKSPACE_REF is unset (source /run/vestad-env)}"
 NAME="${AGENT_NAME:?AGENT_NAME is unset (source /run/vestad-env)}"
-URL="${VESTA_UPSTREAM_URL:-https://github.com/elyxlz/vesta.git}"
 cd ~
 
 VERSION="$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)"
@@ -28,14 +27,6 @@ else
   git init -b "$NAME"
 fi
 
-git remote get-url origin >/dev/null 2>&1 || git remote add origin "$URL"
-git remote set-url origin "$URL"
-# Fetch exactly the agent branch + snapshot tags; never the monorepo's branches or
-# release tags (those would drag master history onto the box).
-git config remote.origin.tagOpt --no-tags
-git config --unset-all remote.origin.fetch 2>/dev/null || true
-git config remote.origin.fetch "+refs/heads/$REF:refs/remotes/origin/$REF"
-git config --add remote.origin.fetch '+refs/tags/agent-v*:refs/tags/agent-v*'
 git config user.name "$NAME"
 git config user.email "$NAME@vesta"
 # The read-only core mount provides out-of-cone files on disk; without this, git
@@ -43,9 +34,9 @@ git config user.email "$NAME@vesta"
 # starts leaking into status and add -A.
 git config sparse.expectFilesOutsideOfPatterns true
 
-git fetch origin
+bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
-  echo "snapshot $TAG not found on $REF - was this release published?" >&2
+  echo "snapshot $TAG not in the workspace bundle - is vestad on a different version?" >&2
   exit 3
 }
 

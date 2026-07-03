@@ -5,9 +5,9 @@ description: Bring your home files up to date after a Vesta upgrade, rebasing yo
 
 # Workspace Sync
 
-Your home is a git repository. Its `origin` carries the stock agent files for every
-Vesta version: one commit per release, tagged `agent-vX.Y.Z`, on the branch named by
-`$VESTA_WORKSPACE_REF`. When Vesta upgrades, the core you run updates by itself (it is
+Your home is a git repository. Vesta's daemon hands you the stock agent files for the
+version you run: one commit per release, tagged `agent-vX.Y.Z`, fetched as a bundle over
+the local machine (no internet involved). When Vesta upgrades, the core you run updates by itself (it is
 a read-only mount), but the rest of your home (skills, MEMORY.md, prompts) stays as it
 was. Syncing closes that gap: rebase onto the tag matching the version you now run, so
 you take every stock update and everything you changed or added yourself stays on top.
@@ -24,7 +24,7 @@ pre-branch workspace, converted by the one-time workspace boot migration). Then:
 ```bash
 cd ~
 git add -A && git commit -m checkpoint    # only if `git status` shows changes
-git fetch origin
+bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
 git rebase agent-vX.Y.Z                   # the version from the boot turn
 ```
 
@@ -46,7 +46,7 @@ when the user asks:
 
 ```bash
 git sparse-checkout add agent/core        # once, ever
-git fetch origin
+bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
 git rebase agent-vX.Y.Z                   # target release: core + skills move together
 ```
 
