@@ -18,8 +18,6 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 
 ## Sync (after an upgrade, when the boot turn asks)
 
-Your workspace is attached once at birth (see SETUP.md), so it already exists here.
-
 ```bash
 cd ~
 git add -A && git commit -m checkpoint    # only if `git status` shows changes
