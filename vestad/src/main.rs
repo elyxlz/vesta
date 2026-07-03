@@ -31,7 +31,7 @@ mod tunnel;
 mod types;
 mod update_check;
 
-use status::{Status, TunnelStatus};
+use status::{AgentEntry, Status, TunnelStatus};
 
 
 #[derive(Parser)]
@@ -512,6 +512,12 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             // Build the status snapshot, persist it before the API opens (so any
             // reader that sees the daemon reachable also sees status.json), and
             // print the banner from it — the same banner `vestad status` renders.
+            // Agents are seeded by name only (statuses unknown until the status
+            // cache polls the just-started containers).
+            let agents = docker::env_file_names(&config.join("agents"))
+                .into_iter()
+                .map(|name| AgentEntry { name, status: None })
+                .collect();
             let status = Status::new(
                 env!("CARGO_PKG_VERSION").to_string(),
                 user,
@@ -520,6 +526,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 expose_lan,
                 lan_url.clone(),
                 tunnel_status,
+                agents,
             );
             status.persist(&config);
             status.print_banner(&api_key);
@@ -561,6 +568,23 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let tunnel_supervisor = tunnel_intended
                 .then(|| tunnel::supervise_tunnel(config.clone(), port, on_tunnel_up));
 
+            // Keep the agents section of status.json fresh: the agent-status cache
+            // task invokes this whenever the polled agent list actually changes.
+            let on_agents_changed: agent_status::OnAgentsChanged = {
+                let status = status.clone();
+                let config = config.clone();
+                std::sync::Arc::new(move |entries: &[docker::ListEntry]| {
+                    let agents = entries
+                        .iter()
+                        .map(|entry| AgentEntry { name: entry.name.clone(), status: Some(entry.status) })
+                        .collect();
+                    if let Ok(mut s) = status.lock() {
+                        s.set_agents(agents);
+                        s.persist(&config);
+                    }
+                })
+            };
+
             serve::run_server(serve::ServerConfig {
                 port,
                 http_listener,
@@ -573,6 +597,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 dev_mode,
                 expose_lan,
                 lan_url,
+                on_agents_changed,
             }).await;
 
             if let Some(supervisor) = tunnel_supervisor {

@@ -4,6 +4,7 @@
 //! they never show a dead daemon's state. This module owns the file path, its
 //! format, and the banner rendering ("one owner per decision").
 
+use crate::docker::AgentStatus;
 use crate::paint;
 use qrcode::{render::unicode, EcLevel, QrCode};
 use serde::{Deserialize, Serialize};
@@ -32,12 +33,12 @@ const VESTA_ART: [&str; 6] = [
 /// so the renderer can size the box and pad every line to a uniform interior.
 enum BoxRow {
     Gap,
-    Art(usize),               // index into VESTA_ART, centered, accent colour
-    Center(String),           // centered dim text (e.g. the version subtitle)
-    Raw(String),              // left-aligned uncoloured text (QR rows must stay scannable)
-    Kv(&'static str, String), // "label   value", left-aligned
-    Value(String),            // a full-width left-aligned value (e.g. the api key)
-    Rule(&'static str),       // "── label ─────" section divider
+    Art(usize),     // index into VESTA_ART, centered, accent colour
+    Center(String), // centered dim text (e.g. the version subtitle)
+    Raw(String),    // left-aligned uncoloured text (QR rows must stay scannable)
+    Kv(String, String), // "label   value", left-aligned; labels longer than the fixed column widen it
+    Value(String),  // a full-width left-aligned value (e.g. the api key)
+    Rule(String),   // "── label ─────" section divider
 }
 
 impl BoxRow {
@@ -47,7 +48,7 @@ impl BoxRow {
             BoxRow::Gap => 0,
             BoxRow::Art(_) => BANNER_ART_W,
             BoxRow::Center(s) | BoxRow::Raw(s) | BoxRow::Value(s) => s.chars().count(),
-            BoxRow::Kv(_, value) => BANNER_LABEL_W + value.chars().count(),
+            BoxRow::Kv(label, value) => label.chars().count().max(BANNER_LABEL_W) + value.chars().count(),
             BoxRow::Rule(label) => label.chars().count() + 5, // "── " + " ─"
         }
     }
@@ -82,8 +83,9 @@ impl BoxRow {
                 .collect(),
             BoxRow::Raw(text) => vec![(text.clone(), text.clone())],
             BoxRow::Kv(label, value) => {
-                let label_col = format!("{:<width$}", label, width = BANNER_LABEL_W);
-                let value_width = inner.saturating_sub(BANNER_LABEL_W).max(1);
+                let label_w = label.chars().count().max(BANNER_LABEL_W);
+                let label_col = format!("{:<width$}", label, width = label_w);
+                let value_width = inner.saturating_sub(label_w).max(1);
                 wrap_chars(value, value_width)
                     .into_iter()
                     .enumerate()
@@ -92,7 +94,7 @@ impl BoxRow {
                             (format!("{label_col}{chunk}"), format!("{}{chunk}", paint(BANNER_DIM, &label_col)))
                         } else {
                             // continuation lines align under the value column
-                            let pad = " ".repeat(BANNER_LABEL_W);
+                            let pad = " ".repeat(label_w);
                             (format!("{pad}{chunk}"), format!("{pad}{chunk}"))
                         }
                     })
@@ -210,6 +212,21 @@ fn qr_lines(data: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `── agents (N) ──` section: one row per agent, name column padded so the
+/// status column stays aligned even for names longer than the config label column.
+fn agent_rows(agents: &[AgentEntry]) -> Vec<BoxRow> {
+    let name_w = agents.iter().map(|agent| agent.name.chars().count() + 2).max().unwrap_or(0).max(BANNER_LABEL_W);
+    let mut rows = vec![BoxRow::Rule(format!("agents ({})", agents.len()))];
+    for agent in agents {
+        let status_text = match agent.status {
+            Some(status) => status.human_text(),
+            None => "",
+        };
+        rows.push(BoxRow::Kv(format!("{:<name_w$}", agent.name), status_text.to_string()));
+    }
+    rows
+}
+
 // --- Status ---
 
 /// How the Cloudflare tunnel stands, as surfaced in the banner. Held in memory by
@@ -230,9 +247,18 @@ impl TunnelStatus {
     }
 }
 
-/// The daemon's startup state. Every field except `tunnel` is fixed for the life
-/// of the process; `tunnel` is kept current by the supervisor. `pid` lets readers
-/// of `status.json` confirm the snapshot belongs to the live daemon.
+/// One agent as shown in the banner: its name plus the daemon's last known status
+/// (`None` at boot, before the status cache has polled the containers).
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct AgentEntry {
+    pub name: String,
+    pub status: Option<AgentStatus>,
+}
+
+/// The daemon's startup state. Every field except `tunnel` and `agents` is fixed
+/// for the life of the process; `tunnel` is kept current by the supervisor and
+/// `agents` by the agent-status cache task. `pid` lets readers of `status.json`
+/// confirm the snapshot belongs to the live daemon.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Status {
     pub version: String,
@@ -242,10 +268,13 @@ pub struct Status {
     pub expose_lan: bool,
     pub lan_url: Option<String>,
     pub tunnel: TunnelStatus,
+    #[serde(default)]
+    pub agents: Vec<AgentEntry>,
     pub pid: u32,
 }
 
 impl Status {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: String,
         user: String,
@@ -254,8 +283,9 @@ impl Status {
         expose_lan: bool,
         lan_url: Option<String>,
         tunnel: TunnelStatus,
+        agents: Vec<AgentEntry>,
     ) -> Self {
-        Status { version, user, port, dev_mode, expose_lan, lan_url, tunnel, pid: std::process::id() }
+        Status { version, user, port, dev_mode, expose_lan, lan_url, tunnel, agents, pid: std::process::id() }
     }
 
     /// Sole owner of the `status.json` path.
@@ -286,6 +316,10 @@ impl Status {
 
     pub fn set_tunnel(&mut self, tunnel: TunnelStatus) {
         self.tunnel = tunnel;
+    }
+
+    pub fn set_agents(&mut self, agents: Vec<AgentEntry>) {
+        self.agents = agents;
     }
 
     /// Print the boxed banner: VESTA art, config grid, connection summary, and the
@@ -324,21 +358,25 @@ impl Status {
             BoxRow::Gap,
             BoxRow::Center(format!("personal AI daemon · v{}", self.version)),
             BoxRow::Gap,
-            BoxRow::Kv("user", self.user.clone()),
-            BoxRow::Kv("port", self.port.to_string()),
-            BoxRow::Kv("mode", if self.dev_mode { "development".to_string() } else { "production".to_string() }),
-            BoxRow::Kv("tunnel", tunnel_desc),
-            BoxRow::Kv("lan", lan_desc),
+            BoxRow::Kv("user".into(), self.user.clone()),
+            BoxRow::Kv("port".into(), self.port.to_string()),
+            BoxRow::Kv("mode".into(), if self.dev_mode { "development".to_string() } else { "production".to_string() }),
+            BoxRow::Kv("tunnel".into(), tunnel_desc),
+            BoxRow::Kv("lan".into(), lan_desc),
             BoxRow::Gap,
-            BoxRow::Rule("connection"),
-            BoxRow::Kv("address", address),
-            BoxRow::Kv("api key", api_key.to_string()),
-            BoxRow::Gap,
-            BoxRow::Rule("connect the app"),
         ];
+        rows.extend(agent_rows(&self.agents));
+        rows.extend([
+            BoxRow::Gap,
+            BoxRow::Rule("connection".into()),
+            BoxRow::Kv("address".into(), address),
+            BoxRow::Kv("api key".into(), api_key.to_string()),
+            BoxRow::Gap,
+            BoxRow::Rule("connect the app".into()),
+        ]);
         // remote tier: the public link when a tunnel is up (with the QR for it
         // right beneath, left-aligned), otherwise how to get one.
-        rows.push(BoxRow::Kv("remote", String::new()));
+        rows.push(BoxRow::Kv("remote".into(), String::new()));
         match tunnel_url {
             Some(url) => {
                 let link = connect_link(url, api_key);
@@ -350,11 +388,11 @@ impl Status {
         }
         if let Some(url) = lan_app {
             rows.push(BoxRow::Gap);
-            rows.push(BoxRow::Kv("lan", String::new()));
+            rows.push(BoxRow::Kv("lan".into(), String::new()));
             rows.push(BoxRow::Value(connect_link(url, api_key)));
         }
         rows.push(BoxRow::Gap);
-        rows.push(BoxRow::Kv("local", String::new()));
+        rows.push(BoxRow::Kv("local".into(), String::new()));
         rows.push(BoxRow::Value(connect_link(&local_url, api_key)));
         rows.push(BoxRow::Gap);
 
@@ -414,8 +452,8 @@ mod tests {
             BoxRow::Gap,
             BoxRow::Art(0),
             BoxRow::Center("personal AI daemon".into()),
-            BoxRow::Kv("user", "emi".into()),
-            BoxRow::Rule("connection"),
+            BoxRow::Kv("user".into(), "emi".into()),
+            BoxRow::Rule("connection".into()),
             BoxRow::Value("0123456789abcdef0123456789abcdef".into()),
         ];
         let lines = render_box(&rows);
@@ -449,13 +487,76 @@ mod tests {
             TunnelStatus::Active("https://host.example/".into()),
             TunnelStatus::Failed("invalid token".into()),
         ] {
-            let status = Status::new("0.1.0".into(), "emi".into(), 8080, true, false, None, tunnel.clone());
+            let status = Status::new("0.1.0".into(), "emi".into(), 8080, true, false, None, tunnel.clone(), Vec::new());
             let json = serde_json::to_string(&status).expect("serialize");
             let back: Status = serde_json::from_str(&json).expect("deserialize");
             assert!(back.tunnel == tunnel);
             assert_eq!(back.port, 8080);
             assert_eq!(back.pid, status.pid);
         }
+    }
+
+    #[test]
+    fn status_json_round_trips_agents() {
+        let agents = vec![
+            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
+            AgentEntry { name: "fresh".into(), status: None },
+        ];
+        let status =
+            Status::new("0.1.0".into(), "emi".into(), 8080, false, false, None, TunnelStatus::Disabled, agents.clone());
+        let json = serde_json::to_string(&status).expect("serialize");
+        let back: Status = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.agents == agents);
+    }
+
+    #[test]
+    fn agent_section_renders_count_names_and_statuses() {
+        let agents = vec![
+            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
+            AgentEntry { name: "backup".into(), status: Some(AgentStatus::NotAuthenticated) },
+        ];
+        let text = render_box_capped(&agent_rows(&agents), 60).join("\n");
+        assert!(text.contains("agents (2)"));
+        assert!(text.contains("vesta"));
+        assert!(text.contains("alive"));
+        assert!(text.contains("backup"));
+        assert!(text.contains("not authenticated"));
+    }
+
+    #[test]
+    fn agent_section_without_statuses_shows_names_only() {
+        let agents = vec![AgentEntry { name: "vesta".into(), status: None }];
+        let text = render_box_capped(&agent_rows(&agents), 60).join("\n");
+        assert!(text.contains("agents (1)"));
+        assert!(text.contains("vesta"));
+    }
+
+    #[test]
+    fn agent_section_with_no_agents_renders_only_the_rule() {
+        let lines = render_box_capped(&agent_rows(&[]), 60);
+        assert!(lines.iter().any(|line| line.contains("agents (0)")));
+        // top border + rule + bottom border: no agent rows
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn agent_names_longer_than_the_label_column_stay_separated_and_aligned() {
+        let agents = vec![
+            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
+            AgentEntry { name: "longagentname".into(), status: Some(AgentStatus::Stopped) },
+        ];
+        let lines = render_box_capped(&agent_rows(&agents), 60);
+        let column_of = |needle: &str| {
+            lines
+                .iter()
+                .find_map(|line| line.find(needle))
+                .unwrap_or_else(|| panic!("no line contains {needle}"))
+        };
+        assert_eq!(column_of("alive"), column_of("stopped"), "status column is aligned across rows");
+        assert!(
+            lines.iter().any(|line| line.contains("longagentname ")),
+            "long name stays separated from its status"
+        );
     }
 
     #[test]

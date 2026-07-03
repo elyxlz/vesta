@@ -2463,6 +2463,7 @@ pub struct ServerConfig {
     pub dev_mode: bool,
     pub expose_lan: bool,
     pub lan_url: Option<String>,
+    pub on_agents_changed: agent_status::OnAgentsChanged,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2478,6 +2479,7 @@ pub async fn run_server(cfg: ServerConfig) {
         dev_mode,
         expose_lan,
         lan_url,
+        on_agents_changed,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2528,6 +2530,7 @@ pub async fn run_server(cfg: ServerConfig) {
         docker,
         state.http_client.clone(),
         state.env_config.agents_dir.clone(),
+        on_agents_changed,
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
