@@ -87,10 +87,9 @@ def main():
         print("Error: AGENT_NAME is not set in env", file=sys.stderr)
         sys.exit(1)
     agent_name = os.environ["AGENT_NAME"]
-    if "VESTA_WORKSPACE_REF" not in os.environ:
-        print("Error: VESTA_WORKSPACE_REF is not set in env", file=sys.stderr)
-        sys.exit(1)
-    upstream_ref = os.environ["VESTA_WORKSPACE_REF"]
+    pyproject = os.path.expanduser("~/agent/core/pyproject.toml")
+    version_line = next((line for line in open(pyproject) if line.startswith("version = ")), "")
+    vesta_version = version_line.split('"')[1] if '"' in version_line else "unknown"
     author_name = f"{agent_name} (vesta)"
     author_email = f"{agent_name}@vesta.noreply"
 
@@ -133,7 +132,7 @@ def main():
     }
     # Append agent attribution to PR body
     body = args.body
-    attribution = f"\n\n---\nSubmitted by **{agent_name}** on `{upstream_ref}`"
+    attribution = f"\n\n---\nSubmitted by **{agent_name}** on vesta v{vesta_version}"
     body = f"{body}{attribution}" if body else attribution.lstrip()
 
     resp = requests.post(
