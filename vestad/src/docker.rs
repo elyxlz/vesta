@@ -1943,7 +1943,8 @@ pub async fn reconcile_containers(
                 "settings.manage_agent_code disagrees with container, using container as source of truth. fix by destroying and recreating the agent."
             );
         }
-        if !needs_rebuild(cname, &raw) {
+        // TODO(task 5): pass the agent's actual desired host-mount grants instead of `&[]`.
+        if !needs_rebuild(cname, &raw, &[]) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -2044,7 +2045,33 @@ fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
 /// divergence is intentionally NOT a trigger here: it's reported by reconcile as a
 /// warning. See `rebuild_agent` for why mount topology must come from the container,
 /// not from settings.
-fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) -> bool {
+/// Extract the user-granted bind mounts from a container's inspect data: every bind whose
+/// destination is not one of the reserved dests (env/core/constitution).
+fn actual_user_mounts(info: &bollard::models::ContainerInspectResponse) -> Vec<(String, String, bool)> {
+    info.mounts.as_deref().unwrap_or(&[]).iter()
+        .filter_map(|m| {
+            let dest = m.destination.as_deref()?;
+            if MOUNT_DESTS.contains(&dest) {
+                return None;
+            }
+            let source = m.source.as_deref()?;
+            Some((source.to_string(), dest.to_string(), m.rw.unwrap_or(false)))
+        })
+        .collect()
+}
+
+/// True when the container's actual user mounts differ (by source, dest, or rw) from desired.
+fn user_mounts_drifted(actual: &[(String, String, bool)], desired: &[crate::mounts::HostMount]) -> bool {
+    let mut a: Vec<(String, String, bool)> = actual.to_vec();
+    let mut d: Vec<(String, String, bool)> = desired.iter()
+        .map(|m| (m.host_path.clone(), m.container_path.clone(), m.writable))
+        .collect();
+    a.sort();
+    d.sort();
+    a != d
+}
+
+fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse, desired_mounts: &[crate::mounts::HostMount]) -> bool {
     let mounts = info.mounts.as_deref().unwrap_or(&[]);
     let mount_dests: Vec<&str> = mounts.iter()
         .filter_map(|m| m.destination.as_deref())
@@ -2097,6 +2124,11 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         .unwrap_or(&[]);
     if !caps.iter().any(|c| c == "SYS_ADMIN") {
         tracing::info!(container = %cname, "rebuild needed: missing SYS_ADMIN capability");
+        return true;
+    }
+
+    if user_mounts_drifted(&actual_user_mounts(info), desired_mounts) {
+        tracing::info!(container = %cname, "rebuild needed: host-mount grants changed");
         return true;
     }
 
@@ -2483,6 +2515,21 @@ mod tests {
     }
 
     #[test]
+    fn user_mounts_drift_detects_add_remove_and_mode_change() {
+        let media = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        // No actual, one desired -> drift (add).
+        assert!(user_mounts_drifted(&[], std::slice::from_ref(&media)));
+        // Matching -> no drift.
+        let actual = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), false)];
+        assert!(!user_mounts_drifted(&actual, std::slice::from_ref(&media)));
+        // Same paths, rw differs -> drift.
+        let actual_rw = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), true)];
+        assert!(user_mounts_drifted(&actual_rw, std::slice::from_ref(&media)));
+        // Actual present, none desired -> drift (remove).
+        assert!(user_mounts_drifted(&actual, &[]));
+    }
+
+    #[test]
     fn retry_import_pipeline_recovers_after_transient_failure() {
         let tries = std::cell::Cell::new(0u32);
         let result = retry_import_pipeline("test", || {
@@ -2739,9 +2786,9 @@ mod tests {
         std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| vesta_image())
     }
 
-    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str) -> bool {
+    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str, desired: &[crate::mounts::HostMount]) -> bool {
         let info = docker.inspect_container(cname, None).await.expect("inspect");
-        needs_rebuild(cname, &info)
+        needs_rebuild(cname, &info, desired)
     }
 
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
@@ -2893,7 +2940,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "fresh container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "fresh container should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2918,7 +2965,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "container with all mounts should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with all mounts should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2932,7 +2979,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong cmd SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong cmd SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2943,7 +2990,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container without env mount SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container without env mount SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2957,7 +3004,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "missing core code mounts should NOT trigger rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "missing core code mounts should NOT trigger rebuild");
     }
 
     #[tokio::test]
@@ -2971,7 +3018,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong network SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong network SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2988,7 +3035,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
         assert_eq!(container_restart_policy(&docker, &tc.name).await, "unless-stopped");
         ensure_on_failure_policy(&docker, &tc.name).await.expect("update policy in place");
         assert_eq!(container_restart_policy(&docker, &tc.name).await, "on-failure", "policy reconciled to on-failure without a rebuild");
@@ -3006,7 +3053,7 @@ mod tests {
 
         // Create with wrong network to force rebuild
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "precondition: should need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "precondition: should need rebuild");
 
         // Snapshot
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
@@ -3015,7 +3062,7 @@ mod tests {
         remove_container_force(&docker, &tc.name).await.ok();
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "rebuilt container should NOT need rebuild");
     }
 
     #[tokio::test]
