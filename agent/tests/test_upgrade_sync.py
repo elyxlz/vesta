@@ -1,7 +1,10 @@
 """Upgrade-driven upstream sync: version marker + boot turn (spec Part 1)."""
 
+import asyncio
+
 import core.models as vm
 from core import state_store
+from core.tools import _vesta_tools
 from core.upgrade_sync import upgrade_sync_turn, vesta_version
 
 
@@ -65,3 +68,14 @@ def test_first_start_with_unknown_version_marks_nothing(tmp_path):
     state = vm.State()
     assert upgrade_sync_turn(state=state, config=_config(tmp_path, version=None), first_start=True) is None
     assert state.persisted.last_synced_version is None
+
+
+def test_mark_upstream_synced_records_running_version(tmp_path):
+    config = _config(tmp_path, "0.1.171")
+    state = vm.State()
+    state.persisted.last_synced_version = "0.1.170"
+    tools = {t.name: t for t in _vesta_tools(state, config)}
+    result = asyncio.run(tools["mark_upstream_synced"].handler({}))
+    assert "0.1.171" in result["content"][0]["text"]
+    assert state.persisted.last_synced_version == "0.1.171"
+    assert state_store.load_state(config).last_synced_version == "0.1.171"

@@ -23,6 +23,8 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
     (config.agent_dir / "core" / "default-skills.txt").write_text("alpha\n")  # alpha missing on disk
+    # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
     turns = collect_boot_turns(
         state=_authed_state(),
@@ -32,16 +34,18 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
         first_start=False,
     )
 
-    assert len(turns) == 4
+    assert len(turns) == 5
     assert "[Migration: 001-x]" in turns[0]
-    assert "skills-install alpha" in turns[1]
-    assert "BAD=1" in turns[2]
-    assert "[System: restart: clean restart]" in turns[3]
+    assert "[Upstream sync]" in turns[1]
+    assert "skills-install alpha" in turns[2]
+    assert "BAD=1" in turns[3]
+    assert "[System: restart: clean restart]" in turns[4]
 
 
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("x")  # pre-marked, not run
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
     (config.core_prompts_dir / "birth.md").write_text("welcome, run setup")
     state = _authed_state()
 
@@ -50,6 +54,8 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     assert len(turns) == 1
     assert "welcome, run setup" in turns[0]
     assert state.persisted.applied_migrations == ["001-x"]
+    # The fresh image is already current: the version marker is pre-marked, no sync turn fires.
+    assert state.persisted.last_synced_version == "9.9.9"
 
 
 def test_restart_greeting_carries_pending_dreamer_summary(tmp_path):
