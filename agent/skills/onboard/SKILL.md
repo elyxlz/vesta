@@ -83,8 +83,12 @@ and links between them and the CLI.
    (`onboard presets` for personalities + skills)? Agree the monthly price (see
    **Pricing**).
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
-   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop**. If they
-   hesitate at the link, the guarantee is real and worth saying: first 7 days, full
+   <code>]` → `{ url, subdomain }`. Send the `url` as a tappable link, never bare
+   text: where the channel renders Markdown links, format it as `[Complete your
+   payment](<url>)`; otherwise put the raw `url` on its own line. Never wrap, split,
+   or alter the url, its Stripe session id must arrive byte for byte (a bare url
+   dropped into some chats gets its underscores eaten and the link dies). Then
+   **stop**. If they hesitate at the link, the guarantee is real and worth saying: first 7 days, full
    refund, no questions. They risk nothing by trying. Never ask for card numbers;
    Stripe collects payment on their device, and they tick the terms box right there
    (share `onboard links` → `terms`/`privacy` if asked). The subdomain is assigned
@@ -149,7 +153,9 @@ onboard links                                          # marketing + app install
 ```
 
 All commands print **JSON** to stdout. `checkout` returns `{ "url": "https://checkout.stripe.com/..." }`.
-Send that URL verbatim and stop. (There is no `--subdomain` or `--plan`: the
+Send that URL as a Markdown link where the channel renders one (`[Complete your
+payment](<url>)`), otherwise on its own line, and stop. Never alter the url; its
+session id must arrive byte for byte. (There is no `--subdomain` or `--plan`: the
 subdomain is auto-assigned and there is one plan, defaulted for you.)
 
 ### Examples
@@ -207,6 +213,14 @@ The cases you'll actually hit, and the move for each:
   sign in; do not onboard them again.
 - `rate limited`: too many attempts from here today. Tell them you'll pick it back
   up later, and continue then.
+
+### Stripe page says "something went wrong"
+
+The link arrived changed. A checkout url must be exact (the `cs_live_...` id and
+the whole `#...` tail); one altered character breaks it. Check both ends: you
+re-send it as a Markdown link matching the exact `onboard checkout` output, never
+retyped; they confirm the link they opened matches it exactly. Only if it is byte
+for byte identical and still fails is it not the link.
 
 ## Referral attribution
 
