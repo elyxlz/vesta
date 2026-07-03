@@ -35,6 +35,7 @@ class PersistedState(pyd.BaseModel):
     show_dreamer_summary: bool = False
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
+    last_synced_version: str | None = None
 
 
 def state_path(config: cfg.VestaConfig) -> pl.Path:
