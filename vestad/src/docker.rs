@@ -95,6 +95,15 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
 pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
+// INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
+// checkout of the workspace snapshot, and a mount puts a file/dir on disk that the
+// snapshot does not contain -- so git reports it as untracked ("?? path") noise on every
+// box unless it is kept out of git status one of two ways:
+//   - a directory: never listed in the sparse cone (agent/core), so it stays out of cone.
+//   - a file: gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
+// Adding a new /root/agent/ mount without doing this dirties every box's tree. The
+// workspace attach integration test (vestad/tests/server/workspace.rs) asserts a clean
+// tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
 pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {

@@ -18,8 +18,18 @@ fn agent_attaches_to_the_workspace_through_the_bundle_endpoint() {
     .expect("attach succeeds through the live bundle endpoint");
     assert!(attach.contains("attached:"), "attach output: {attach}");
 
+    // Enforces the MOUNT_DESTS invariant (see docker.rs): anything mounted under
+    // /root/agent/ that isn't in the workspace snapshot must be kept out of git status
+    // (out-of-cone for a dir, or gitignored in agent/.gitignore for a file). An untracked
+    // path here means a new mount was added without doing that.
     let status = exec_in_container(&container, "cd ~ && git status --porcelain").expect("status");
-    assert_eq!(status.trim(), "", "fresh attach must leave a clean tree, got: {status}");
+    assert_eq!(
+        status.trim(),
+        "",
+        "fresh attach left a dirty tree: {status}\n\
+         A vestad-mounted path under /root/agent/ isn't handled. If it's a new mount, add it to \
+         the sparse cone (dir) or agent/.gitignore (file) -- see the MOUNT_DESTS invariant in docker.rs.",
+    );
 
     let tags = exec_in_container(&container, "cd ~ && git tag -l 'agent-v*'").expect("tags");
     assert!(!tags.trim().is_empty(), "an agent-v tag must be fetched from the bundle");
