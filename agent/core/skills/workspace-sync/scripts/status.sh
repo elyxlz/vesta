@@ -2,7 +2,7 @@
 # Read-only: where this box stands vs its version's snapshot and the branch tip.
 set -euo pipefail
 cd ~
-REF="${VESTA_UPSTREAM_REF:?VESTA_UPSTREAM_REF is unset}"
+REF="${VESTA_WORKSPACE_REF:?VESTA_WORKSPACE_REF is unset}"
 VERSION="$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)"
 TAG="agent-v$VERSION"
 git fetch origin

@@ -87,10 +87,10 @@ def main():
         print("Error: AGENT_NAME is not set in env", file=sys.stderr)
         sys.exit(1)
     agent_name = os.environ["AGENT_NAME"]
-    if "VESTA_UPSTREAM_REF" not in os.environ:
-        print("Error: VESTA_UPSTREAM_REF is not set in env", file=sys.stderr)
+    if "VESTA_WORKSPACE_REF" not in os.environ:
+        print("Error: VESTA_WORKSPACE_REF is not set in env", file=sys.stderr)
         sys.exit(1)
-    upstream_ref = os.environ["VESTA_UPSTREAM_REF"]
+    upstream_ref = os.environ["VESTA_WORKSPACE_REF"]
     author_name = f"{agent_name} (vesta)"
     author_email = f"{agent_name}@vesta.noreply"
 

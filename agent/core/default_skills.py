@@ -2,7 +2,7 @@
 
 The list of default skills lives in `core/default-skills.txt`, inside the
 read-only core mount, so it updates deterministically with the core code on
-upgrade (not deferred behind the agent's next upstream sync). Fresh vestas ship every default skill baked into the image; the
+upgrade (not deferred behind the agent's next workspace sync). Fresh vestas ship every default skill baked into the image; the
 Dockerfile prunes `skills/` down to this list. Existing boxes only gain a newly
 added default skill when something installs it. Rather than hand-write an install
 migration per skill, this reconciler derives the work from disk on every boot:

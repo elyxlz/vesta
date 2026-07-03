@@ -8,7 +8,7 @@
 # migration converts it: back up, retire ~/.git, re-run).
 set -euo pipefail
 
-REF="${VESTA_UPSTREAM_REF:?VESTA_UPSTREAM_REF is unset (source /run/vestad-env)}"
+REF="${VESTA_WORKSPACE_REF:?VESTA_WORKSPACE_REF is unset (source /run/vestad-env)}"
 NAME="${AGENT_NAME:?AGENT_NAME is unset (source /run/vestad-env)}"
 URL="${VESTA_UPSTREAM_URL:-https://github.com/elyxlz/vesta.git}"
 cd ~

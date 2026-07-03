@@ -3,7 +3,7 @@
 import pathlib as pl
 import subprocess
 
-from test_upstream_sync import _env  # reuse the hermetic-git env helper (applies BASE_ENV)
+from test_workspace_sync import _env  # reuse the hermetic-git env helper (applies BASE_ENV)
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 PUBLISH = REPO_ROOT / "tools/publish-agent-branch.sh"

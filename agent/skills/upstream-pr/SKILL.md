@@ -5,7 +5,7 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
-Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from `origin/master`, never from `$VESTA_UPSTREAM_REF` or local HEAD.
+Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from `origin/master`, never from `$VESTA_WORKSPACE_REF` or local HEAD.
 
 ## Before filing (REQUIRED)
 
@@ -30,13 +30,13 @@ Never file: personal config, memory files, credentials, user-specific customizat
 Every PR and every issue must carry the agent name and vesta version, so maintainers know which agent on which version hit the bug or proposed the change.
 
 - Agent name: `$AGENT_NAME`
-- Vesta version: `$VESTA_UPSTREAM_REF` (e.g. `v0.1.148` in release builds, a branch name in dev)
+- Vesta version: `$VESTA_WORKSPACE_REF` (e.g. `agent-workspace` in release builds, `agent-workspace-<branch>` in dev)
 
 `pr.py` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
 
 ```
 ---
-Submitted by **$AGENT_NAME** on `$VESTA_UPSTREAM_REF`
+Submitted by **$AGENT_NAME** on `$VESTA_WORKSPACE_REF`
 ```
 
 ## Creating a PR

@@ -1,4 +1,4 @@
-Your git workspace converts from a sparse monorepo checkout to the published agent branch (see `~/agent/core/skills/upstream-sync/SKILL.md` for how the branch works). Check which state you are in, do only that branch, and finish. Re-running any of this is safe: attach.sh is idempotent and a converted workspace no longer matches the legacy shape.
+Your git workspace converts from a sparse monorepo checkout to the published agent branch (see `~/agent/core/skills/workspace-sync/SKILL.md` for how the branch works). Check which state you are in, do only that branch, and finish. Re-running any of this is safe: attach.sh is idempotent and a converted workspace no longer matches the legacy shape.
 
 ### 1. Check the workspace state
 
@@ -7,7 +7,7 @@ If `~/.git` does not exist, there is nothing to convert: your workspace attaches
 Otherwise run the attach script and branch on its exit code:
 
 ```bash
-cd ~ && bash agent/core/skills/upstream-sync/scripts/attach.sh; echo "exit: $?"
+cd ~ && bash agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
 ```
 
 - Exit 0: already on the agent branch. Nothing to convert; go to the final step.
@@ -21,7 +21,7 @@ cd ~
 tar czf ~/agent-backup.tar.gz agent       # safety net, keep until verified
 ls ~/agent/skills > /tmp/installed-skills # what installed means today
 mv ~/.git ~/.git-legacy                   # retire the old repo (delete on a later dream)
-bash agent/core/skills/upstream-sync/scripts/attach.sh
+bash agent/core/skills/workspace-sync/scripts/attach.sh
 ```
 
 ### 3. Reconcile your personalizations

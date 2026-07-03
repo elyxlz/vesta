@@ -4,7 +4,7 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
-    "name": "upstream-sync",
+    "name": "workspace-sync",
     "description": "Sync your workspace with the published agent branch after an upgrade; install core updates on unmanaged boxes; resolve rebase conflicts."
   },
   {

@@ -17,7 +17,7 @@ import pytest
 AGENT_ROOT = pl.Path(__file__).resolve().parents[1]
 REPO_ROOT = AGENT_ROOT.parent
 PUBLISH = REPO_ROOT / "tools/publish-agent-branch.sh"
-ATTACH = AGENT_ROOT / "core/skills/upstream-sync/scripts/attach.sh"
+ATTACH = AGENT_ROOT / "core/skills/workspace-sync/scripts/attach.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
 SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
 BRANCH = "agent-workspace"
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None or shutil.which("tar
 
 def _env(home, extra=None):
     e = os.environ.copy()
-    e.pop("VESTA_UPSTREAM_REF", None)
+    e.pop("VESTA_WORKSPACE_REF", None)
     e.update(BASE_ENV)
     e["HOME"] = str(home)
     if extra:
@@ -91,7 +91,7 @@ def _write_monorepo_content(src, version):
         (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
     (src / "agent/MEMORY.md").write_text(_memory_template(version))
     (src / "agent/.gitignore").write_text("data/\nlogs/\n")
-    core_scripts = src / "agent/core/skills/upstream-sync/scripts"
+    core_scripts = src / "agent/core/skills/workspace-sync/scripts"
     core_scripts.mkdir(parents=True, exist_ok=True)
     shutil.copy(ATTACH, core_scripts / "attach.sh")
 
@@ -110,14 +110,14 @@ def _fresh_box(tmp_path, origin, version="0.1.170", skills=("tasks", "dream")):
     (home / "agent/.gitignore").write_text("data/\nlogs/\n")
     # The image ships the core skills on disk; skills-install shells out to attach.sh
     # at its ~-anchored path.
-    core_scripts = home / "agent/core/skills/upstream-sync/scripts"
+    core_scripts = home / "agent/core/skills/workspace-sync/scripts"
     core_scripts.mkdir(parents=True)
     shutil.copy(ATTACH, core_scripts / "attach.sh")
     return home
 
 
 def _box_env(origin):
-    return {"VESTA_UPSTREAM_REF": BRANCH, "AGENT_NAME": "testbox", "VESTA_UPSTREAM_URL": str(origin)}
+    return {"VESTA_WORKSPACE_REF": BRANCH, "AGENT_NAME": "testbox", "VESTA_UPSTREAM_URL": str(origin)}
 
 
 def _attach(home, origin):

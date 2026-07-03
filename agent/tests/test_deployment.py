@@ -31,7 +31,7 @@ def test_deployment_structure():
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
 
     core_skills_dir = source_root / "core" / "skills"
-    for skill_name in ("app-chat", "upstream-sync"):
+    for skill_name in ("app-chat", "workspace-sync"):
         assert (core_skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing"
 
     for skill_name in ("tasks",):

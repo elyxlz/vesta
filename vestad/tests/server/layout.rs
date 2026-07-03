@@ -35,9 +35,9 @@ fn fresh_agent_has_expected_directory_structure() {
     let cid = container_id(name);
 
     // Root-level directories created by entrypoint / image COPY. Git state
-    // (/root/.git, branch, sparse-checkout, .gitignore) is no longer asserted
-    // here: it is initialized by the agent on first start via
-    // upstream-sync/SETUP.md, which requires auth (outside this test's scope).
+    // (/root/.git, branch, sparse-checkout, .gitignore) is not asserted here:
+    // the workspace attaches lazily (first skills-install or workspace sync),
+    // which needs the published branch (outside this test's scope).
     for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }
@@ -47,7 +47,7 @@ fn fresh_agent_has_expected_directory_structure() {
     // is pruned at image build time to default-skills.txt; pick a couple of
     // entries we know are shipped.
     wait_for_path(&cid, 'd', "/root/.claude/skills");
-    for skill in ["personality", "app-chat", "tasks", "upstream-sync"] {
+    for skill in ["personality", "app-chat", "tasks", "workspace-sync"] {
         let path = format!("/root/.claude/skills/{skill}");
         exec_in_container(&cid, &format!("test -L {path}"))
             .unwrap_or_else(|_| panic!("{path} should be a symlink"));
@@ -71,7 +71,7 @@ fn fresh_agent_has_expected_directory_structure() {
     }
 
     // Nothing at repo root that shouldn't be there. `.git` and `.gitignore` are
-    // listed because the agent creates them later via upstream-sync/SETUP.md.
+    // listed because the agent creates them later when the workspace attaches.
     let root_entries = exec_in_container(&cid, "ls -1 /root").unwrap();
     for entry in root_entries.lines() {
         assert!(

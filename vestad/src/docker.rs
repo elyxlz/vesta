@@ -903,7 +903,7 @@ pub struct AgentEnvConfig {
 /// Dev builds: a per-branch dev agent branch (`agent-workspace-<branch>`), published
 /// manually with tools/publish-agent-branch.sh when exercising the sync flow itself.
 /// Release builds: the fleet branch.
-pub fn detect_upstream_ref() -> Option<String> {
+pub fn detect_workspace_ref() -> Option<String> {
     if cfg!(debug_assertions) {
         let output = std::process::Command::new("git")
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -990,7 +990,7 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
-    append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
+    append_optional("VESTA_WORKSPACE_REF", detect_workspace_ref().as_deref());
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
@@ -1061,10 +1061,10 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_WORKSPACE_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
-    let upstream_ref = detect_upstream_ref();
+    let workspace_ref = detect_workspace_ref();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -1077,7 +1077,9 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
             .lines()
             .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
+                // VESTA_UPSTREAM_REF is stripped alongside: LEGACY(remove-when: no agent env file
+                // carries VESTA_UPSTREAM_REF): the pre-rename key would otherwise linger forever.
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_WORKSPACE_REF=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
                     return None; // re-appended below with the current values
                 }
                 if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
@@ -1093,8 +1095,8 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
-        if let Some(upstream) = &upstream_ref {
-            new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
+        if let Some(workspace) = &workspace_ref {
+            new_lines.push(format!("export VESTA_WORKSPACE_REF={workspace}"));
         }
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
@@ -2343,9 +2345,9 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn detect_upstream_ref_dev_builds_use_per_branch_agent_branch() {
-        if let Some(upstream_ref) = detect_upstream_ref() {
-            assert!(upstream_ref.starts_with("agent-workspace-"), "dev upstream ref must be a per-branch agent branch: {upstream_ref}");
+    fn detect_workspace_ref_dev_builds_use_per_branch_agent_branch() {
+        if let Some(workspace_ref) = detect_workspace_ref() {
+            assert!(workspace_ref.starts_with("agent-workspace-"), "dev workspace ref must be a per-branch agent branch: {workspace_ref}");
         }
     }
 

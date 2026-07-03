@@ -13,7 +13,7 @@ fi
 
 # Self-init a virgin workspace. Skipped when already attached: attach fetches, and
 # installs from local history must stay offline.
-[ -d .git ] || bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
+[ -d .git ] || bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 
 git sparse-checkout add "$DEST"
 if [ ! -d "$DEST" ]; then
