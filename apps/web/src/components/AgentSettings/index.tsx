@@ -47,8 +47,10 @@ export function AgentSettings() {
         </TabsContent>
 
         <TabsContent value="files">
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-            <HostAccessCard />
+          <div className="mx-auto grid w-full max-w-6xl gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
+            <div className="flex flex-col gap-4 lg:sticky lg:top-0">
+              <HostAccessCard />
+            </div>
             <FilesTab />
           </div>
         </TabsContent>
