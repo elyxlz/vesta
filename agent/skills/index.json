@@ -5,7 +5,7 @@
   },
   {
     "name": "workspace-sync",
-    "description": "Sync your workspace with the published agent branch after an upgrade."
+    "description": "Bring your home files up to date after a Vesta upgrade, rebasing your own changes onto the new version's stock files. Use when the upgrade boot turn or the user asks for a workspace sync."
   },
   {
     "name": "account",
