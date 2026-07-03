@@ -22,7 +22,7 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 cd ~
 git add -A && git commit -m checkpoint    # only if `git status` shows changes
 bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
-git rebase agent-vX.Y.Z                   # the version from the boot turn
+git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running (see top)
 ```
 
 - Conflicts: edit each conflicted file so both sides survive, `git add <file>`, then
