@@ -1592,20 +1592,33 @@ fn run(cli: Cli) {
                         mounts.push(MountEntry { host_path: host_path.clone(), container_path, writable });
                         let body = serde_json::json!({ "mounts": mounts });
                         c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("granted {host_path} (restart to apply: vesta restart {agent})");
+                        eprintln!("granted {host_path}; applies on restart: vesta restart {agent}");
                     }
                 }
                 MountCommand::Rm { agent, host_path } => {
                     let mounts = get_mount_entries(&c, &agent);
-                    let original_count = mounts.len();
-                    let filtered: Vec<MountEntry> =
-                        mounts.into_iter().filter(|m| m.host_path != host_path && m.container_path != host_path).collect();
-                    if filtered.len() == original_count {
-                        eprintln!("no grant for {host_path}");
-                    } else {
-                        let body = serde_json::json!({ "mounts": filtered });
-                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("revoked {host_path} (restart to apply)");
+                    let matched = mounts.iter().find(|m| m.host_path == host_path || m.container_path == host_path).cloned();
+                    match matched {
+                        Some(entry) => {
+                            let filtered: Vec<MountEntry> = mounts
+                                .into_iter()
+                                .filter(|m| m.host_path != entry.host_path || m.container_path != entry.container_path)
+                                .collect();
+                            let body = serde_json::json!({ "mounts": filtered });
+                            c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                            let target = if entry.container_path == entry.host_path {
+                                String::new()
+                            } else {
+                                format!(" (container path {})", entry.container_path)
+                            };
+                            eprintln!(
+                                "revoked {}{}; access remains until you restart: vesta restart {agent}",
+                                entry.host_path, target
+                            );
+                        }
+                        None => {
+                            eprintln!("no grant for {host_path} — run 'vesta mount ls {agent}' to see stored paths");
+                        }
                     }
                 }
             }
