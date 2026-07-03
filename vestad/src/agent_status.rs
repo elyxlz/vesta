@@ -11,6 +11,10 @@ use crate::serve::ServiceEntry;
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
+/// Invoked with the fresh agent list whenever the polled list actually changes
+/// (the daemon persists it into `status.json` for the `vestad status` banner).
+pub type OnAgentsChanged = Arc<dyn Fn(&[ListEntry]) + Send + Sync>;
+
 /// Cached agent list + activity states, updated by a background task.
 /// WS handlers subscribe via the watch receivers.
 pub struct AgentStatusCache {
@@ -101,6 +105,7 @@ pub fn spawn_agent_status_task(
     docker: Docker,
     http_client: reqwest::Client,
     agents_dir: PathBuf,
+    on_agents_changed: OnAgentsChanged,
 ) {
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
@@ -112,13 +117,16 @@ pub fn spawn_agent_status_task(
             let agents = docker::list_agents(&docker, &http_client, &agents_dir).await;
 
             // Update the agents watch channel (only notifies if changed)
-            cache.agents_tx.send_if_modified(|current| {
+            let changed = cache.agents_tx.send_if_modified(|current| {
                 if *current == agents {
                     return false;
                 }
                 *current = agents.clone();
                 true
             });
+            if changed {
+                on_agents_changed(&agents);
+            }
 
             // Reconcile internal WS connections for activity state
             let alive_agents: HashMap<String, u16> = agents

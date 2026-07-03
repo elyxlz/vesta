@@ -8,7 +8,7 @@ use bollard::query_parameters::{
 use bollard::Docker;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -162,7 +162,7 @@ pub enum ContainerStatus {
     Dead,
 }
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Alive,
@@ -178,6 +178,23 @@ pub enum AgentStatus {
     Stopped,
     Dead,
     NotFound,
+}
+
+impl AgentStatus {
+    /// Human-readable form for terminal surfaces (the status banner): the
+    /// snake_case wire name with spaces.
+    pub fn human_text(self) -> &'static str {
+        match self {
+            AgentStatus::Alive => "alive",
+            AgentStatus::SettingUp => "setting up",
+            AgentStatus::Starting => "starting",
+            AgentStatus::NotAuthenticated => "not authenticated",
+            AgentStatus::Unprovisioned => "unprovisioned",
+            AgentStatus::Stopped => "stopped",
+            AgentStatus::Dead => "dead",
+            AgentStatus::NotFound => "not found",
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -806,7 +823,7 @@ fn all_agent_ports(agents_dir: &std::path::Path) -> HashSet<u16> {
 }
 
 /// List agent names that have env files in the agents directory.
-fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
+pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(agents_dir) else { return Vec::new() };
     entries
         .flatten()
@@ -2221,6 +2238,14 @@ mod tests {
         assert_eq!(status_from_readiness(true, false, true), SettingUp);
         assert_eq!(status_from_readiness(false, false, true), NotAuthenticated);
         assert_eq!(status_from_readiness(false, false, false), Unprovisioned);
+    }
+
+    #[test]
+    fn agent_status_human_text_reads_as_words() {
+        assert_eq!(AgentStatus::Alive.human_text(), "alive");
+        assert_eq!(AgentStatus::SettingUp.human_text(), "setting up");
+        assert_eq!(AgentStatus::NotAuthenticated.human_text(), "not authenticated");
+        assert_eq!(AgentStatus::NotFound.human_text(), "not found");
     }
 
     #[test]
