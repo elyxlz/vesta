@@ -13,7 +13,6 @@ import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
-import { Markdown } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
@@ -325,13 +324,17 @@ export function ChatMessageArea({
                       </div>
                     )}
                     {liveReply && (
-                      <div className="mt-2 flex justify-start">
-                        <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-secondary/70 px-3.5 py-2.5 text-secondary-foreground/90">
-                          <div className="min-w-0 break-words">
-                            <Markdown>{liveReply}</Markdown>
-                          </div>
-                        </div>
-                      </div>
+                      /* Rendered through ChatBubble as a timestamp-less chat event so the draft is
+                         pixel-identical to the committed bubble that replaces it — same primitives,
+                         same padding, and the same gap buildDecorated will assign that row. */
+                      <ChatBubble
+                        event={{ type: "chat", text: liveReply }}
+                        className={
+                          row.event.type === "chat" ? "mt-1.5" : "mt-5"
+                        }
+                        fullscreen={fullscreen}
+                        isMobile={isMobile}
+                      />
                     )}
                     {isTyping && !liveReply && (
                       <div className="flex justify-start mt-2">
