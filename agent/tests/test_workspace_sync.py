@@ -270,7 +270,7 @@ def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
     status = _git(["status", "--porcelain"], home, env)
     assert "agent/MEMORY.md" in status  # personalization surfaced, not lost
     _git(["add", "-A"], home, env)
-    _git(["commit", "-m", "migrated: local customizations"], home, env)
+    _git(["commit", "-m", "my customizations"], home, env)
     assert "my personal notes" in (home / "agent/MEMORY.md").read_text()
 
 

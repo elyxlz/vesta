@@ -40,5 +40,5 @@ rm -f ~/agent/pyproject.toml ~/agent/uv.lock   # stale leftovers of the engine m
 Now `git status` shows every file where your content differs from stock. Judge each: keep yours, take stock (`git checkout -- <file>`), or integrate both. A file whose only diff is stock that moved or got deleted is not yours, take stock. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure. Then:
 
 ```bash
-git add -A && git commit -m "migrated: local customizations"
+git add -A && git commit -m "my customizations"
 ```
