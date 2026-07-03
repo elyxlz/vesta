@@ -33,22 +33,33 @@ offline, with content that provably matches the running core.
   `agent/.gitignore` (same allowlist the publish script used; mostly text, a few MB).
   `build.rs`'s embed-hash inputs widen to match, so any skill edit re-fingerprints and
   re-extracts, exactly like core edits today.
-- **A local bare repo, append-only per host.** New IO-edge module `vestad/src/workspace.rs`
-  (git CLI via `Command`, same pattern as `restic.rs`) owns
-  `~/.config/vesta/vestad/workspace.git`:
-  - On startup, after `ensure_agent_code`: if the extracted content fingerprint differs from
-    the repo's last snapshot, commit the filtered tree as one snapshot on branch
-    `agent-workspace` (subject `snapshot vX.Y.Z <fingerprint>`; fixed committer identity) plus
-    the workflow-owned root `.gitignore`, and set tag `agent-vX.Y.Z` to it (tag moves in place
-    when the version hasn't bumped — dev churn; in release operation the version bumps every
-    time, so tags are effectively immutable there).
-  - History is per-host and append-only: each host's boxes sync against their own host's
-    lineage, so `git rebase agent-vX.Y.Z` always has a real merge-base. Cross-host moves
-    (backup restored onto a different host) use the transplant form the skill already
-    documents: `git rebase --onto agent-vNEW agent-vOLD` — both tags exist in the box's own
-    repo history.
-  - **Bundle generated after each append:** `workspace.bundle` (full branch + `agent-v*`
-    tags) next to the repo. The bundle, not the repo, is what boxes consume.
+- **One tested script owns the whole construction** —
+  `vestad/scripts/build-workspace.sh`, the direct descendant of
+  `tools/publish-agent-branch.sh` (same filtered-tree/commit-if-changed/tag mechanics, same
+  real-git pytest harness), retargeted from "archive a ref, push to github" to "snapshot a
+  content dir into a local bare repo, regenerate the bundle". Contract:
+
+  `build-workspace.sh <content-dir> <workspace-dir> <version>`
+  - Init `<workspace-dir>/workspace.git` (bare) if absent.
+  - Stage `<content-dir>` (the extracted agent tree — already the right allowlist) plus the
+    script-owned root `.gitignore`; commit onto branch `agent-workspace` only if the tree
+    changed (subject `snapshot vX.Y.Z`; fixed committer identity). Append-only, no-op when
+    unchanged, idempotent.
+  - Set tag `agent-vX.Y.Z` (force — it moves on dev same-version churn; in release
+    operation the version bumps every upgrade, so tags are effectively immutable there).
+  - Regenerate `<workspace-dir>/workspace.bundle` (full branch + `agent-v*` tags)
+    atomically (tmp + rename). The bundle, not the repo, is what boxes consume.
+
+  The script is embedded into the vestad binary (`include_str!`), written under the config
+  dir, and executed at startup after `ensure_agent_code`. The Rust side
+  (`vestad/src/workspace.rs`) stays a thin edge: probe git, materialize the script, run it,
+  surface its output — no git logic in Rust. Extending the snapshot behavior means editing
+  one bash file with its own test suite, not Rust.
+- **History is per-host and append-only**: each host's boxes sync against their own host's
+  lineage, so `git rebase agent-vX.Y.Z` always has a real merge-base. Cross-host moves
+  (backup restored onto a different host) use the transplant form the skill already
+  documents: `git rebase --onto agent-vNEW agent-vOLD` — both tags exist in the box's own
+  repo history.
 - **Host git becomes a runtime requirement for vestad.** Checked at startup with a clear
   error (like the Docker probe). Today git is only invoked on dev builds; this makes it
   unconditional. Vendoring (restic-style) stays available as a later escape hatch; not now.
@@ -74,9 +85,11 @@ this box's vestad hands it.
 - The CI `publish-agent-branch` job, the github `agent-workspace` branch, its `agent-v*`
   tags on the shared repo, the branch-protection requirement, and the append-only push
   guard / tag-conflict-on-failed-release edge.
-- `tools/publish-agent-branch.sh` (its filtered-tree logic moves into `workspace.rs`);
-  `agent/tests/test_publish_agent_branch.py` (construction is vestad's now — covered by
-  vestad unit tests against scratch repos).
+- `tools/publish-agent-branch.sh` and `agent/tests/test_publish_agent_branch.py` as such —
+  both survive **transformed**: the script becomes `vestad/scripts/build-workspace.sh`
+  (push/github parts dropped, bundle step added), the test file becomes
+  `test_build_workspace.py` exercising the same script vestad executes, in the same
+  real-git harness.
 - `detect_workspace_ref` and the `VESTA_WORKSPACE_REF` env var: the branch name is a
   constant (`agent-workspace`) inside the bundle; there is no per-dev branch because every
   host serves its own content. Env-file writer stops emitting it and strips the old keys
@@ -126,8 +139,10 @@ this box's vestad hands it.
 
 ## Testing (same PR)
 
-- `workspace.rs`: snapshot append/no-op/tag-move matrix; bundle contains branch + tags;
-  filtered tree never contains `.claude`, `vestad/`, or dev-tool configs.
+- `build-workspace.sh` (pytest, real git — `test_build_workspace.py`): snapshot
+  append/no-op/tag-move matrix; bundle contains branch + tags and is fetchable; staged tree
+  never contains `.claude`, `vestad/`, or dev-tool configs; bundle regeneration is atomic.
+  `workspace.rs` keeps only thin-wrapper tests (git probe error, script materialization).
 - Endpoint: auth (agent token, self-scoped), 404 before first snapshot, bytes match bundle.
 - Box flow (pytest, re-fixtured to bundles): attach clean/idempotent; version-pinned rebase
   with/without conflicts; downgrade/cross-host transplant; cone scoping incl. mount
