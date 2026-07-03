@@ -66,6 +66,22 @@ class ActiveTool:
 
 
 @dc.dataclass
+class TurnSignals:
+    """Bridge between the long-lived stream consumer (writer) and the turn driver (waiter).
+
+    The consumer accumulates the open turn's text and closes `done` when the turn's
+    ResultMessage arrives (or the stream dies, carried in `error`). Attribution is advisory:
+    the stream-json protocol has no query<->result correlation, so a ResultMessage closes
+    whichever turn is open and one arriving with no open turn is dropped."""
+
+    show_output: bool = True
+    texts: list[str] = dc.field(default_factory=list)
+    done: asyncio.Event = dc.field(default_factory=asyncio.Event)
+    error: Exception | None = None
+    last_message_at: float = dc.field(default_factory=time.monotonic)
+
+
+@dc.dataclass
 class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
@@ -85,6 +101,9 @@ class State:
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
     interrupt_event: asyncio.Event | None = None
+    # The currently open turn's signals; written by the stream consumer, waited on by converse /
+    # compact_session. None while no turn is open (results arriving then are dropped as advisory).
+    turn: TurnSignals | None = None
     compacting: bool = False
     # True while a non-interruptible turn (a boot turn) is being processed. process_batch consults
     # this before firing client.interrupt(), so a concurrent interrupt notification queues and waits
