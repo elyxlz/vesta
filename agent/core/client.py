@@ -100,7 +100,7 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
-_SILENCE_POLL_S = 15.0  # wake the turn's wait loop during quiet stretches to log liveness notes
+_SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
 
 # Post-interrupt wait for the interrupted turn's ResultMessage. Purely a labeling nicety so the
 # next turn usually opens against a clean stream; when the CLI's wind-down outlives it, the
@@ -157,6 +157,8 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
     # notes can say "thinking, ~N tokens" instead of guessing what the quiet means.
     if turn and isinstance(msg, SystemMessage) and msg.subtype == "thinking_tokens":
         if isinstance(msg.data, dict) and "estimated_tokens" in msg.data and isinstance(msg.data["estimated_tokens"], int):
+            if turn.thinking_tokens_at is None:
+                logger.client("Thinking...")
             turn.thinking_tokens = msg.data["estimated_tokens"]
             turn.thinking_tokens_at = time.monotonic()
     texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)

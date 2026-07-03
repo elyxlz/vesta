@@ -8,9 +8,10 @@ import typing as tp
 from . import logger
 from . import models as vm
 
-_QUIET_THRESHOLDS_S = (60, 120, 300)
+_QUIET_NOTE_INTERVAL_S = 20.0  # one liveness note per interval of nothing-visible
 _QUIET_ESCALATION_S = 300  # past this, dead air with no tool running is suspicious: warn + emit
 _THINKING_TICK_FRESH_S = 30.0  # a thinking_tokens tick this recent proves the model is reasoning
+_ESCALATED_SENTINEL = -1  # noted_at member marking that this quiet stretch already warned
 _CONTEXT_USAGE_TIMEOUT_S = 10.0
 _CONTEXT_USAGE_WARN_PCT = 80.0
 
@@ -65,42 +66,44 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
 
 
 def note_turn_liveness(state: vm.State, *, turn: "vm.TurnSignals", noted_at: set[int]) -> None:
-    """Log bounded liveness notes while a turn produces nothing visible.
+    """Log one liveness note per _QUIET_NOTE_INTERVAL_S while a turn produces nothing visible.
 
     Called from converse's wait loop — the one place that waits on the model, so this cannot
     silently stop running while turns still complete. The quiet clock is time since the last
     *visible* output (query sent, text or thinking emitted), because the stream itself is rarely
     silent: the CLI ticks a thinking_tokens counter throughout extended thinking (which is
-    exactly why the old idle-based watchdog task never fired in production). One note per
-    threshold crossing, cleared when output lands, so a turn logs at most three lines however
-    long it thinks.
+    exactly why the old idle-based watchdog task never fired in production). `noted_at` holds
+    the interval buckets already noted, cleared when output lands, so each stretch of quiet
+    logs each interval once.
 
     Specificity, best signal first: a tool in flight explains the quiet (its tool-call lines
     already show liveness) — debug. A recently ticking thinking counter means the model is
     demonstrably reasoning — calm INFO with the token count, never escalated. Otherwise the
-    stream is genuinely dead air; past _QUIET_ESCALATION_S that is suspicious: warning + error
-    event, once."""
+    stream is genuinely dead air; the first note past _QUIET_ESCALATION_S is a warning + error
+    event, once per stretch (_ESCALATED_SENTINEL)."""
     quiet = time.monotonic() - turn.last_visible_at
-    if quiet < _QUIET_THRESHOLDS_S[0]:
+    bucket = int(quiet // _QUIET_NOTE_INTERVAL_S)
+    if bucket < 1:
         noted_at.clear()
         return
+    if bucket in noted_at:
+        return
+    noted_at.add(bucket)
+    elapsed = int(bucket * _QUIET_NOTE_INTERVAL_S)
     thinking_live = turn.thinking_tokens_at is not None and (time.monotonic() - turn.thinking_tokens_at) < _THINKING_TICK_FRESH_S
-    for threshold in _QUIET_THRESHOLDS_S:
-        if quiet < threshold or threshold in noted_at:
-            continue
-        noted_at.add(threshold)
-        if state.active_tools:
-            logger.debug(f"No output for {threshold}s (tool in flight) | {format_hang_diagnostics(state)}")
-        elif thinking_live:
-            logger.client(f"Thinking for {threshold}s (~{turn.thinking_tokens:,} tokens so far)")
-        elif threshold >= _QUIET_ESCALATION_S:
-            msg = f"No output and no stream activity for {threshold}s | {format_hang_diagnostics(state)}"
-            logger.warning(msg)
-            # One event per threshold crossing (noted_at gates re-emit), so a genuine stall
-            # reaches the observability surface without spamming the stream.
-            state.event_bus.emit({"type": "error", "text": msg})
-        else:
-            logger.client(f"Model quiet for {threshold}s | {format_hang_diagnostics(state)}")
+    if state.active_tools:
+        logger.debug(f"No output for {elapsed}s (tool in flight) | {format_hang_diagnostics(state)}")
+    elif thinking_live:
+        logger.client(f"Thinking for {elapsed}s (~{turn.thinking_tokens:,} tokens so far)")
+    elif quiet >= _QUIET_ESCALATION_S and _ESCALATED_SENTINEL not in noted_at:
+        noted_at.add(_ESCALATED_SENTINEL)
+        msg = f"No output and no stream activity for {elapsed}s | {format_hang_diagnostics(state)}"
+        logger.warning(msg)
+        # One event per quiet stretch (the sentinel gates re-emit), so a genuine stall
+        # reaches the observability surface without spamming the stream.
+        state.event_bus.emit({"type": "error", "text": msg})
+    else:
+        logger.client(f"Model quiet for {elapsed}s | {format_hang_diagnostics(state)}")
 
 
 async def log_context_usage(state: vm.State) -> None:

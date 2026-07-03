@@ -118,31 +118,30 @@ def _quiet_turn(quiet_s: float) -> vm.TurnSignals:
     return turn
 
 
-def test_liveness_notes_once_per_threshold(captured_notes, state):
-    turn = _quiet_turn(65)
+def test_liveness_notes_once_per_interval(captured_notes, state):
+    turn = _quiet_turn(25)
     noted: set[int] = set()
 
     note_turn_liveness(state, turn=turn, noted_at=noted)
     note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert len([n for n in captured_notes if "quiet for 60s" in n]) == 1, f"one note per crossing, got: {captured_notes}"
-    assert noted == {60}
+    assert len([n for n in captured_notes if "quiet for 20s" in n]) == 1, f"one note per interval, got: {captured_notes}"
 
 
-def test_liveness_notes_each_threshold_as_quiet_grows(captured_notes, state):
-    turn = _quiet_turn(65)
+def test_liveness_notes_again_each_interval(captured_notes, state):
+    turn = _quiet_turn(25)
     noted: set[int] = set()
 
     note_turn_liveness(state, turn=turn, noted_at=noted)
-    turn.last_visible_at = time.monotonic() - 125
+    turn.last_visible_at = time.monotonic() - 45
     note_turn_liveness(state, turn=turn, noted_at=noted)
 
     quiet_notes = [n for n in captured_notes if "quiet" in n]
-    assert len(quiet_notes) == 2 and "60s" in quiet_notes[0] and "120s" in quiet_notes[1], f"expected 60s then 120s, got: {captured_notes}"
+    assert len(quiet_notes) == 2 and "20s" in quiet_notes[0] and "40s" in quiet_notes[1], f"expected 20s then 40s, got: {captured_notes}"
 
 
 def test_liveness_resets_when_output_lands(captured_notes, state):
-    turn = _quiet_turn(65)
+    turn = _quiet_turn(25)
     noted: set[int] = set()
 
     note_turn_liveness(state, turn=turn, noted_at=noted)
@@ -150,10 +149,10 @@ def test_liveness_resets_when_output_lands(captured_notes, state):
     note_turn_liveness(state, turn=turn, noted_at=noted)
     assert noted == set()
 
-    turn.last_visible_at = time.monotonic() - 65
+    turn.last_visible_at = time.monotonic() - 25
     note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert len([n for n in captured_notes if "quiet for 60s" in n]) == 2, f"expected a re-note after output, got: {captured_notes}"
+    assert len([n for n in captured_notes if "quiet for 20s" in n]) == 2, f"expected a re-note after output, got: {captured_notes}"
 
 
 def test_liveness_reports_thinking_with_token_count(captured_notes, captured_warnings, state, tmp_path):
@@ -161,41 +160,42 @@ def test_liveness_reports_thinking_with_token_count(captured_notes, captured_war
     however long the think runs: the model is demonstrably reasoning, not stalled."""
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
-    turn = _quiet_turn(305)
+    turn = _quiet_turn(325)
     turn.thinking_tokens = 2340
     turn.thinking_tokens_at = time.monotonic() - 5
     noted: set[int] = set()
 
     note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    thinking_notes = [n for n in captured_notes if "Thinking for" in n and "2,340 tokens" in n]
-    assert len(thinking_notes) == 3, f"expected token-count notes at 60/120/300, got: {captured_notes}"
+    thinking_notes = [n for n in captured_notes if "Thinking for 320s" in n and "2,340 tokens" in n]
+    assert len(thinking_notes) == 1, f"expected a token-count note, got: {captured_notes}"
     assert captured_warnings == [], f"healthy thinking must never warn, got: {captured_warnings}"
     assert queue.empty(), "healthy thinking must not emit error events"
     state.event_bus.close()
 
 
-def test_liveness_escalates_dead_air_past_escalation(captured_warnings, captured_notes, state, tmp_path):
+def test_liveness_escalates_dead_air_once_past_escalation(captured_warnings, captured_notes, state, tmp_path):
     """No output AND no thinking ticks past the escalation threshold is a suspected stall:
-    one warning + one error event."""
+    one warning + one error event per quiet stretch, later intervals go back to calm notes."""
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
     turn = _quiet_turn(305)  # no thinking_tokens ever seen
     noted: set[int] = set()
 
     note_turn_liveness(state, turn=turn, noted_at=noted)
+    turn.last_visible_at = time.monotonic() - 325  # next interval, still dead air
     note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    warnings_300 = [w for w in captured_warnings if "no stream activity for 300s" in w]
-    assert len(warnings_300) == 1, f"expected exactly one 300s warning, got: {captured_warnings}"
+    warnings_seen = [w for w in captured_warnings if "no stream activity for 300s" in w]
+    assert len(warnings_seen) == 1, f"expected exactly one warning, got: {captured_warnings}"
     events = []
     while not queue.empty():
         event = queue.get_nowait()
         if event["type"] == "error" and "no stream activity" in event["text"]:
             events.append(event)
     assert len(events) == 1, f"expected exactly one error event, got: {events}"
-    # The earlier thresholds stay calm INFO notes, not warnings.
-    assert len([n for n in captured_notes if "quiet" in n]) == 2, f"60s+120s notes expected, got: {captured_notes}"
+    # The post-escalation interval logs a calm note, not another warning.
+    assert len([n for n in captured_notes if "quiet for 320s" in n]) == 1, f"expected a calm 320s note, got: {captured_notes}"
     state.event_bus.close()
 
 
@@ -216,16 +216,20 @@ def test_liveness_stays_debug_while_tool_runs(captured_warnings, captured_notes,
 
 
 @pytest.mark.anyio
-async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch):
-    """End to end through the wait loop: thinking_tokens system messages keep the turn's counter
-    fresh while producing no visible output, and the liveness note reports the token count."""
+async def test_converse_notes_thinking_while_waiting(monkeypatch):
+    """End to end through the wait loop: the first thinking_tokens tick logs "Thinking..." once,
+    the counter stays fresh while producing no visible output, and the interval note reports it."""
     import core.client as client_mod
     import core.diagnostics as diagnostics_mod
     from claude_agent_sdk import ResultMessage, SystemMessage
     from core.client import consume_stream
 
+    # client.py and diagnostics.py share the core.logger module, so one capture sees both
+    # the first-tick "Thinking..." and the interval notes.
+    client_notes: list[str] = []
+    monkeypatch.setattr(client_mod.logger, "client", lambda msg: client_notes.append(str(msg)))
     monkeypatch.setattr(client_mod, "_SILENCE_POLL_S", 0.02)
-    monkeypatch.setattr(diagnostics_mod, "_QUIET_THRESHOLDS_S", (0,))
+    monkeypatch.setattr(diagnostics_mod, "_QUIET_NOTE_INTERVAL_S", 0.01)
 
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
@@ -245,8 +249,9 @@ async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch
 
     async def think_then_finish():
         await q.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
+        await q.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 624, "estimated_tokens_delta": 5}))
         await wait_for_condition(
-            lambda: any("Thinking for" in n and "312 tokens" in n for n in captured_notes),
+            lambda: any("Thinking for" in n and "624 tokens" in n for n in client_notes),
             message="no thinking note during quiet stretch",
         )
         result = MagicMock(spec=ResultMessage)
@@ -262,7 +267,8 @@ async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
 
-    assert any("Thinking for" in n for n in captured_notes), f"expected a thinking note, got: {captured_notes}"
+    assert client_notes.count("Thinking...") == 1, f"first tick must log Thinking... exactly once, got: {client_notes}"
+    assert any("Thinking for" in n for n in client_notes), f"expected an interval note, got: {client_notes}"
 
 
 # --- Tool duration tracking via hooks ---
