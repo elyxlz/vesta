@@ -5,21 +5,22 @@ description: Bring your workspace up to date after a Vesta upgrade, rebasing you
 
 # Workspace Sync
 
-Your home is a git repository. Vesta's daemon hands you the stock agent files for the
+Your workspace (`~`) is a git repository. Vesta's daemon serves its stock contents for the
 version you run: one commit per release, tagged `agent-vX.Y.Z`, fetched as a bundle over
-the local machine (no internet involved). When Vesta upgrades, the core you run updates by itself (it is
-a read-only mount), but the rest of your home (skills, MEMORY.md, prompts) stays as it
-was. Syncing closes that gap: rebase onto the tag matching the version you now run, so
-you take every stock update and everything you changed or added yourself stays on top.
-To contribute changes back to the Vesta project, see `~/agent/skills/upstream-pr/SKILL.md`.
+the local machine (no internet involved). When Vesta upgrades, the core you run updates by
+itself (it is a read-only mount), but the rest of your workspace (skills, MEMORY.md,
+prompts) stays as it was. Syncing closes that gap: rebase onto the tag matching the version
+you now run, so you take every stock update while everything you changed or added yourself
+stays on top. To contribute changes back to the Vesta project, see
+`~/agent/skills/upstream-pr/SKILL.md`.
 
 The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 
 ## Sync (after an upgrade, when the boot turn asks)
 
 First check the workspace exists: if `~/.git` is missing, run
-`~/agent/core/skills/workspace-sync/scripts/attach.sh` (idempotent; exit 4 means a legacy
-pre-branch workspace, converted by the one-time workspace boot migration). Then:
+`~/agent/core/skills/workspace-sync/scripts/attach.sh` (idempotent; exit 4 means an
+old-shape workspace, converted by the one-time workspace-conversion boot migration). Then:
 
 ```bash
 cd ~
@@ -41,11 +42,11 @@ git rebase agent-vX.Y.Z                   # the version from the boot turn
 ## Status
 
 `~/agent/core/skills/workspace-sync/scripts/status.sh` shows what you have changed since
-your current version's tag, and the newest published release. Read-only.
+your current version's snapshot, and the newest snapshot Vesta's daemon has. Read-only.
 
-## Updating core yourself (boxes created with --no-manage-core-code)
+## Updating core yourself (if created with --no-manage-core-code)
 
-If your core is not a read-only mount, it is part of your checkout and updates only
+If your core is not a read-only mount, it is part of your workspace and updates only
 when the user asks:
 
 ```bash
