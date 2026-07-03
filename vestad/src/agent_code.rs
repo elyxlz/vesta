@@ -117,6 +117,11 @@ mod tests {
         // — the agent's prompt loader depends on them at runtime.
         assert!(dir.join("core/prompts/nightly_dream.md").is_file());
         assert!(dir.join("core/prompts/notification_suffix.md").is_file());
+        // The full home ships now: skills, the MEMORY template, and the agent .gitignore
+        // all feed build-workspace.sh.
+        assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
+        assert!(dir.join("MEMORY.md").is_file());
+        assert!(dir.join(".gitignore").is_file());
         assert_eq!(
             fs::read_to_string(dir.join(FINGERPRINT_MARKER)).expect("marker"),
             embed_fingerprint(),

@@ -18,7 +18,7 @@ fn collect_embed_inputs(path: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let p = entry.path();
         let name = entry.file_name();
-        if name == "__pycache__" {
+        if name == "__pycache__" || name == ".venv" || name == "node_modules" {
             continue;
         }
         if p.is_dir() {
@@ -72,7 +72,9 @@ fn main() {
     // rustc-env that agent_code.rs reads via env!(): when the hash changes, vestad recompiles,
     // rust-embed re-snapshots, and the runtime fingerprint changes so agent-code re-extracts.
     let mut embed_files: Vec<PathBuf> = Vec::new();
-    collect_embed_inputs(&repo_root.join("agent/core"), &mut embed_files);
+    for rel in ["agent/core", "agent/skills", "agent/MEMORY.md", "agent/.gitignore"] {
+        collect_embed_inputs(&repo_root.join(rel), &mut embed_files);
+    }
     embed_files.sort();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for f in &embed_files {
