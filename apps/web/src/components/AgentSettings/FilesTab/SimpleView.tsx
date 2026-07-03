@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FileTreeEntry } from "@/api/files";
+import { HostAccessCard } from "../HostAccessCard";
 import {
   collectDreamPaths,
   CONSTITUTION_PATH,
@@ -84,6 +85,9 @@ export function SimpleView({
         onShowDreams={onShowDreams}
       />
       <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+      <div className="shrink-0">
+        <HostAccessCard />
+      </div>
     </div>
   );
 }
@@ -117,8 +121,13 @@ function MindCard({
             : "hover:bg-muted/60 active:bg-muted",
         )}
       >
-        <BookOpen className="size-4 text-muted-foreground" />
-        <span className="font-medium">memory</span>
+        <BookOpen className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-medium">memory</span>
+          <span className="text-[11px] text-muted-foreground">
+            what vesta remembers about you
+          </span>
+        </span>
       </button>
 
       <button
@@ -131,8 +140,13 @@ function MindCard({
             : "hover:bg-muted/60 active:bg-muted",
         )}
       >
-        <ScrollText className="size-4 text-muted-foreground" />
-        <span className="font-medium">constitution</span>
+        <ScrollText className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-medium">constitution</span>
+          <span className="text-[11px] text-muted-foreground">
+            the directives you set that vesta follows
+          </span>
+        </span>
       </button>
 
       <button

@@ -1,7 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsScrollArea } from "@/components/SettingsScrollArea";
 import { ActionsCard } from "./ActionsCard";
-import { HostAccessCard } from "./HostAccessCard";
 import { NotificationInterruptRulesCard } from "./NotificationInterruptRulesCard";
 import { NotificationsCard } from "./NotificationsCard";
 import { FilesTab } from "./FilesTab";
@@ -47,10 +46,7 @@ export function AgentSettings() {
         </TabsContent>
 
         <TabsContent value="files">
-          <div className="mx-auto grid w-full max-w-6xl gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
-            <div className="flex flex-col gap-4 lg:sticky lg:top-0">
-              <HostAccessCard />
-            </div>
+          <div className="mx-auto w-full max-w-6xl">
             <FilesTab />
           </div>
         </TabsContent>
