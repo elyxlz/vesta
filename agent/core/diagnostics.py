@@ -8,8 +8,9 @@ import typing as tp
 from . import logger
 from . import models as vm
 
-_SILENCE_THRESHOLDS_S = (60, 120, 300)
-_SILENCE_ESCALATION_S = 300  # past this, quiet with no tool running is suspicious: warn + emit
+_QUIET_THRESHOLDS_S = (60, 120, 300)
+_QUIET_ESCALATION_S = 300  # past this, dead air with no tool running is suspicious: warn + emit
+_THINKING_TICK_FRESH_S = 30.0  # a thinking_tokens tick this recent proves the model is reasoning
 _CONTEXT_USAGE_TIMEOUT_S = 10.0
 _CONTEXT_USAGE_WARN_PCT = 80.0
 
@@ -63,37 +64,43 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
     return handler
 
 
-def note_stream_silence(state: vm.State, *, noted_at: set[int]) -> None:
-    """Log bounded liveness lines while a turn waits out a quiet stream.
+def note_turn_liveness(state: vm.State, *, turn: "vm.TurnSignals", noted_at: set[int]) -> None:
+    """Log bounded liveness notes while a turn produces nothing visible.
 
     Called from converse's wait loop — the one place that waits on the model, so this cannot
-    silently stop running while turns still complete (unlike the background watchdog task it
-    replaced, which never fired in production). One line per threshold crossing, cleared when
-    the stream talks again, so a multi-minute extended-thinking stretch reads as "still
-    thinking" instead of dead air, without flooding the log.
+    silently stop running while turns still complete. The quiet clock is time since the last
+    *visible* output (query sent, text or thinking emitted), because the stream itself is rarely
+    silent: the CLI ticks a thinking_tokens counter throughout extended thinking (which is
+    exactly why the old idle-based watchdog task never fired in production). One note per
+    threshold crossing, cleared when output lands, so a turn logs at most three lines however
+    long it thinks.
 
-    A tool in flight explains the silence (a long build, a `sleep`, a subagent), so it logs at
-    debug — the tool-call lines already show liveness. With no tool running, the early
-    thresholds are calm INFO notes (long thinking is normal); past _SILENCE_ESCALATION_S the
-    quiet is suspicious and escalates to a warning + error event, once."""
-    idle = sdk_idle_seconds(state)
-    if idle < _SILENCE_THRESHOLDS_S[0]:
+    Specificity, best signal first: a tool in flight explains the quiet (its tool-call lines
+    already show liveness) — debug. A recently ticking thinking counter means the model is
+    demonstrably reasoning — calm INFO with the token count, never escalated. Otherwise the
+    stream is genuinely dead air; past _QUIET_ESCALATION_S that is suspicious: warning + error
+    event, once."""
+    quiet = time.monotonic() - turn.last_visible_at
+    if quiet < _QUIET_THRESHOLDS_S[0]:
         noted_at.clear()
         return
-    for threshold in _SILENCE_THRESHOLDS_S:
-        if idle < threshold or threshold in noted_at:
+    thinking_live = turn.thinking_tokens_at is not None and (time.monotonic() - turn.thinking_tokens_at) < _THINKING_TICK_FRESH_S
+    for threshold in _QUIET_THRESHOLDS_S:
+        if quiet < threshold or threshold in noted_at:
             continue
         noted_at.add(threshold)
-        msg = f"Model quiet for {threshold}s (thinking or long generation) | {format_hang_diagnostics(state)}"
         if state.active_tools:
-            logger.debug(msg)
-        elif threshold >= _SILENCE_ESCALATION_S:
+            logger.debug(f"No output for {threshold}s (tool in flight) | {format_hang_diagnostics(state)}")
+        elif thinking_live:
+            logger.client(f"Thinking for {threshold}s (~{turn.thinking_tokens:,} tokens so far)")
+        elif threshold >= _QUIET_ESCALATION_S:
+            msg = f"No output and no stream activity for {threshold}s | {format_hang_diagnostics(state)}"
             logger.warning(msg)
             # One event per threshold crossing (noted_at gates re-emit), so a genuine stall
             # reaches the observability surface without spamming the stream.
             state.event_bus.emit({"type": "error", "text": msg})
         else:
-            logger.client(msg)
+            logger.client(f"Model quiet for {threshold}s | {format_hang_diagnostics(state)}")
 
 
 async def log_context_usage(state: vm.State) -> None:

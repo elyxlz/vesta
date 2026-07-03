@@ -152,6 +152,13 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
         state.compacting = False
     if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
         logger.client("Compaction boundary reached")
+    # The CLI streams a thinking_tokens counter while the model reasons (dozens per turn, dropped
+    # from the log by parse_sdk_message). Track it on the open turn so the wait loop's liveness
+    # notes can say "thinking, ~N tokens" instead of guessing what the quiet means.
+    if turn and isinstance(msg, SystemMessage) and msg.subtype == "thinking_tokens":
+        if isinstance(msg.data, dict) and "estimated_tokens" in msg.data and isinstance(msg.data["estimated_tokens"], int):
+            turn.thinking_tokens = msg.data["estimated_tokens"]
+            turn.thinking_tokens_at = time.monotonic()
     texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
@@ -162,6 +169,8 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
         for block in thinking_blocks:
             _emit_thinking(block, state=state)
     text = "\n".join(texts) if texts else None
+    if turn and (text or thinking_blocks):
+        turn.last_visible_at = time.monotonic()
     if text:
         if turn:
             turn.texts.append(text)
@@ -261,7 +270,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 if time.monotonic() - turn.last_message_at >= config.response_timeout:
                     await attempt_interrupt(state, config=config, reason="Response timeout")
                     raise TimeoutError
-                diagnostics.note_stream_silence(state, noted_at=noted_silence)
+                diagnostics.note_turn_liveness(state, turn=turn, noted_at=noted_silence)
                 continue
 
             if done_task in done:

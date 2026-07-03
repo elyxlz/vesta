@@ -79,6 +79,12 @@ class TurnSignals:
     done: asyncio.Event = dc.field(default_factory=asyncio.Event)
     error: Exception | None = None
     last_message_at: float = dc.field(default_factory=time.monotonic)
+    # Liveness for the turn's wait loop: the CLI streams a thinking_tokens counter while the
+    # model reasons (tracked here, never logged per-delta), and last_visible_at marks the last
+    # output the user could see (query sent, text, or thinking emitted).
+    thinking_tokens: int = 0
+    thinking_tokens_at: float | None = None
+    last_visible_at: float = dc.field(default_factory=time.monotonic)
 
 
 @dc.dataclass

@@ -13,7 +13,7 @@ from wait_util import wait_for_condition
 from core.diagnostics import (
     format_hang_diagnostics,
     longest_running_tool,
-    note_stream_silence,
+    note_turn_liveness,
     sdk_idle_seconds,
     touch_activity,
 )
@@ -109,104 +109,123 @@ def test_format_hang_diagnostics_includes_stderr_tail():
     assert "line 9" in diag
 
 
-# --- note_stream_silence ---
+# --- note_turn_liveness ---
 
 
-def _quiet_state(idle_s: float) -> vm.State:
-    state = vm.State()
-    state.last_sdk_activity = time.monotonic() - idle_s
-    return state
+def _quiet_turn(quiet_s: float) -> vm.TurnSignals:
+    turn = vm.TurnSignals()
+    turn.last_visible_at = time.monotonic() - quiet_s
+    return turn
 
 
-def test_silence_notes_once_per_threshold(captured_notes):
-    state = _quiet_state(65)
+def test_liveness_notes_once_per_threshold(captured_notes, state):
+    turn = _quiet_turn(65)
     noted: set[int] = set()
 
-    note_stream_silence(state, noted_at=noted)
-    note_stream_silence(state, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert len([n for n in captured_notes if "Model quiet for 60s" in n]) == 1, f"one note per crossing, got: {captured_notes}"
+    assert len([n for n in captured_notes if "quiet for 60s" in n]) == 1, f"one note per crossing, got: {captured_notes}"
     assert noted == {60}
 
 
-def test_silence_notes_each_threshold_as_idle_grows(captured_notes):
-    state = _quiet_state(65)
+def test_liveness_notes_each_threshold_as_quiet_grows(captured_notes, state):
+    turn = _quiet_turn(65)
     noted: set[int] = set()
 
-    note_stream_silence(state, noted_at=noted)
-    state.last_sdk_activity = time.monotonic() - 125
-    note_stream_silence(state, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
+    turn.last_visible_at = time.monotonic() - 125
+    note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert [n for n in captured_notes if "Model quiet" in n] == [
-        next(n for n in captured_notes if "60s" in n),
-        next(n for n in captured_notes if "120s" in n),
-    ], f"expected a 60s then a 120s note, got: {captured_notes}"
+    quiet_notes = [n for n in captured_notes if "quiet" in n]
+    assert len(quiet_notes) == 2 and "60s" in quiet_notes[0] and "120s" in quiet_notes[1], f"expected 60s then 120s, got: {captured_notes}"
 
 
-def test_silence_resets_when_stream_talks_again(captured_notes):
-    state = _quiet_state(65)
+def test_liveness_resets_when_output_lands(captured_notes, state):
+    turn = _quiet_turn(65)
     noted: set[int] = set()
 
-    note_stream_silence(state, noted_at=noted)
-    touch_activity(state, "sdk_message")
-    note_stream_silence(state, noted_at=noted)  # fresh activity clears the noted set
+    note_turn_liveness(state, turn=turn, noted_at=noted)
+    turn.last_visible_at = time.monotonic()  # output emitted
+    note_turn_liveness(state, turn=turn, noted_at=noted)
     assert noted == set()
 
-    state.last_sdk_activity = time.monotonic() - 65
-    note_stream_silence(state, noted_at=noted)
+    turn.last_visible_at = time.monotonic() - 65
+    note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert len([n for n in captured_notes if "Model quiet for 60s" in n]) == 2, f"expected a re-note after reset, got: {captured_notes}"
+    assert len([n for n in captured_notes if "quiet for 60s" in n]) == 2, f"expected a re-note after output, got: {captured_notes}"
 
 
-def test_silence_escalates_to_warning_and_event_past_escalation(captured_warnings, captured_notes, tmp_path):
-    state = _quiet_state(305)
+def test_liveness_reports_thinking_with_token_count(captured_notes, captured_warnings, state, tmp_path):
+    """A recently ticking thinking counter makes the note specific — and is never escalated,
+    however long the think runs: the model is demonstrably reasoning, not stalled."""
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
+    turn = _quiet_turn(305)
+    turn.thinking_tokens = 2340
+    turn.thinking_tokens_at = time.monotonic() - 5
     noted: set[int] = set()
 
-    note_stream_silence(state, noted_at=noted)
-    note_stream_silence(state, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    warnings_300 = [w for w in captured_warnings if "Model quiet for 300s" in w]
+    thinking_notes = [n for n in captured_notes if "Thinking for" in n and "2,340 tokens" in n]
+    assert len(thinking_notes) == 3, f"expected token-count notes at 60/120/300, got: {captured_notes}"
+    assert captured_warnings == [], f"healthy thinking must never warn, got: {captured_warnings}"
+    assert queue.empty(), "healthy thinking must not emit error events"
+    state.event_bus.close()
+
+
+def test_liveness_escalates_dead_air_past_escalation(captured_warnings, captured_notes, state, tmp_path):
+    """No output AND no thinking ticks past the escalation threshold is a suspected stall:
+    one warning + one error event."""
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    turn = _quiet_turn(305)  # no thinking_tokens ever seen
+    noted: set[int] = set()
+
+    note_turn_liveness(state, turn=turn, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
+
+    warnings_300 = [w for w in captured_warnings if "no stream activity for 300s" in w]
     assert len(warnings_300) == 1, f"expected exactly one 300s warning, got: {captured_warnings}"
     events = []
     while not queue.empty():
         event = queue.get_nowait()
-        if event["type"] == "error" and "Model quiet" in event["text"]:
+        if event["type"] == "error" and "no stream activity" in event["text"]:
             events.append(event)
     assert len(events) == 1, f"expected exactly one error event, got: {events}"
     # The earlier thresholds stay calm INFO notes, not warnings.
-    assert len([n for n in captured_notes if "Model quiet" in n]) == 2, f"60s+120s notes expected, got: {captured_notes}"
+    assert len([n for n in captured_notes if "quiet" in n]) == 2, f"60s+120s notes expected, got: {captured_notes}"
     state.event_bus.close()
 
 
-def test_silence_stays_debug_while_tool_runs(captured_warnings, captured_notes, tmp_path):
+def test_liveness_stays_debug_while_tool_runs(captured_warnings, captured_notes, state, tmp_path):
     """A running tool explains the quiet (a long build, a sleep): no notes, no warnings, no events."""
-    state = _quiet_state(305)
     state.event_bus = vm.EventBus(data_dir=tmp_path)
     queue = state.event_bus.subscribe()
     state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="sleep 180", started_at=time.monotonic() - 305)
+    turn = _quiet_turn(305)
     noted: set[int] = set()
 
-    note_stream_silence(state, noted_at=noted)
+    note_turn_liveness(state, turn=turn, noted_at=noted)
 
-    assert [n for n in captured_notes if "Model quiet" in n] == [], f"expected no notes mid-tool, got: {captured_notes}"
-    assert [w for w in captured_warnings if "Model quiet" in w] == [], f"expected no warnings mid-tool, got: {captured_warnings}"
+    assert [n for n in captured_notes if "quiet" in n or "Thinking" in n] == [], f"expected no notes mid-tool, got: {captured_notes}"
+    assert captured_warnings == [], f"expected no warnings mid-tool, got: {captured_warnings}"
     assert queue.empty(), "expected no error events mid-tool"
     state.event_bus.close()
 
 
 @pytest.mark.anyio
-async def test_converse_notes_silence_while_waiting(captured_notes, monkeypatch):
-    """The wait loop itself emits the liveness note during a long quiet stretch: a silent model
-    reads as 'still thinking' in the log before the turn completes."""
+async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch):
+    """End to end through the wait loop: thinking_tokens system messages keep the turn's counter
+    fresh while producing no visible output, and the liveness note reports the token count."""
     import core.client as client_mod
     import core.diagnostics as diagnostics_mod
-    from claude_agent_sdk import ResultMessage
+    from claude_agent_sdk import ResultMessage, SystemMessage
     from core.client import consume_stream
 
     monkeypatch.setattr(client_mod, "_SILENCE_POLL_S", 0.02)
-    monkeypatch.setattr(diagnostics_mod, "_SILENCE_THRESHOLDS_S", (0,))
+    monkeypatch.setattr(diagnostics_mod, "_QUIET_THRESHOLDS_S", (0,))
 
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
@@ -224,22 +243,26 @@ async def test_converse_notes_silence_while_waiting(captured_notes, monkeypatch)
     mock_client.receive_messages = MagicMock(side_effect=lambda: stream())
     consumer = asyncio.create_task(consume_stream(state=state, config=config))
 
-    async def end_turn_after_quiet():
-        await wait_for_condition(lambda: any("Model quiet" in n for n in captured_notes), message="no liveness note during silence")
+    async def think_then_finish():
+        await q.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
+        await wait_for_condition(
+            lambda: any("Thinking for" in n and "312 tokens" in n for n in captured_notes),
+            message="no thinking note during quiet stretch",
+        )
         result = MagicMock(spec=ResultMessage)
         result.content = []
         await q.put(result)
 
-    ender = asyncio.create_task(end_turn_after_quiet())
+    thinker = asyncio.create_task(think_then_finish())
     try:
         await asyncio.wait_for(converse("test", state=state, config=config, show_output=False), timeout=5.0)
-        await ender
+        await thinker
     finally:
         consumer.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await consumer
 
-    assert any("Model quiet" in n for n in captured_notes), f"expected a liveness note, got: {captured_notes}"
+    assert any("Thinking for" in n for n in captured_notes), f"expected a thinking note, got: {captured_notes}"
 
 
 # --- Tool duration tracking via hooks ---
