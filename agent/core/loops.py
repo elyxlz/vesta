@@ -29,7 +29,7 @@ from .client import (
     _cancel_task,
 )
 from .diagnostics import format_crash_detail
-from .helpers import load_prompt, build_restart_context
+from .helpers import load_prompt, build_restart_context, clear_notifications
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState
 
@@ -269,6 +269,7 @@ async def _run_messages_with_interrupts(
                 continue
             state.interrupt_event = asyncio.Event()
             state.noninterruptible_turn_active = not current.interruptible
+            state.in_flight_notification_paths = current.file_paths
             process_task = asyncio.create_task(run_one(current.text, user=current.is_user))
 
             while not process_task.done():
@@ -294,13 +295,11 @@ async def _run_messages_with_interrupts(
             state.noninterruptible_turn_active = False
             # Keep the file if the turn flipped auth to not_authenticated (converse detects a
             # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
+            # Operate on in_flight_notification_paths, not current.file_paths: an intentional restart
+            # mid-turn already cleared and emptied it, so this stays a no-op instead of re-emitting.
             if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
-                _delete_paths(current.file_paths)
-                # Tell live clients the notification cleared (file gone). Only notification turns carry
-                # file_paths, so user-message turns emit nothing. notif_id is the file stem, matching
-                # the arrival's NotificationEvent.notif_id.
-                for path_str in current.file_paths:
-                    state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(path_str).stem})
+                clear_notifications(state, state.in_flight_notification_paths)
+            state.in_flight_notification_paths = []
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:

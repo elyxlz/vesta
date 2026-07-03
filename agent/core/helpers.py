@@ -3,6 +3,18 @@ import pathlib as pl
 from . import models as vm
 
 
+def clear_notifications(state: vm.State, file_paths: list[str]) -> None:
+    """Drop processed notification files and tell live clients they cleared.
+
+    One owner for the unlink + notification_cleared emit, shared by the message loop (after a turn
+    completes) and the restart/stop tools (before an intentional restart, when the turn's
+    notification is already handled). notif_id is the file stem, matching the arrival's
+    NotificationEvent.notif_id so clients pair the clear with the pending entry."""
+    for path_str in file_paths:
+        pl.Path(path_str).unlink(missing_ok=True)
+        state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(path_str).stem})
+
+
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return config.agent_dir / "MEMORY.md"
 

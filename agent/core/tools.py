@@ -10,6 +10,7 @@ from . import models as vm
 from . import state_store
 from . import vestad_client
 from .api import start_ws_server
+from .helpers import clear_notifications
 from .workspace_sync import vesta_version
 
 
@@ -21,6 +22,10 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         if state.graceful_shutdown.is_set():
             return {"content": [{"type": "text", "text": "Already shutting down."}]}
         logger.shutdown(f"Container {verb} requested via vestad")
+        # The turn asking for this restart has handled its notification; drop the file now so the
+        # SIGTERM doesn't beat the loop's post-turn cleanup and leave it to be re-delivered on reboot.
+        clear_notifications(state, state.in_flight_notification_paths)
+        state.in_flight_notification_paths = []
         if not await request():
             return {"content": [{"type": "text", "text": f"Could not reach vestad to {verb} — is the daemon running?"}]}
         return {"content": [{"type": "text", "text": f"Container {verb} initiated."}]}

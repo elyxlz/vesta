@@ -120,6 +120,11 @@ class State:
     # rather than SDK-aborting the boot turn mid-stream (the queue-watcher's interruptible guard only
     # covers the queue-driven path, not this direct SDK path).
     noninterruptible_turn_active: bool = False
+    # File paths of the notification the current turn is handling (empty for user-message turns).
+    # The message loop clears these after the turn; the restart/stop tools clear them first when an
+    # intentional restart fires mid-turn, since the notification is already handled and its file
+    # would otherwise survive the SIGTERM and be re-delivered on reboot.
+    in_flight_notification_paths: list[str] = dc.field(default_factory=list)
     # Set by mark_dreamer_complete; the message processor compacts the live session at the next
     # idle point, then triggers the restart (which resumes the compacted session). Deferred rather
     # than done inline because /compact only works while the session is idle, never mid-turn.
