@@ -1419,11 +1419,13 @@ struct AgentSettings {
     manage_agent_code: bool,
     #[serde(default)]
     user_desired: UserDesired,
+    #[serde(default)]
+    mounts: Vec<crate::mounts::HostMount>,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { manage_agent_code: true, user_desired: UserDesired::Running }
+        Self { manage_agent_code: true, user_desired: UserDesired::Running, mounts: Vec::new() }
     }
 }
 
@@ -2714,11 +2716,41 @@ mod tests {
 
     #[test]
     fn agent_settings_user_desired_stopped_round_trips() {
-        let s = super::AgentSettings { manage_agent_code: true, user_desired: super::UserDesired::Stopped };
+        let s = super::AgentSettings {
+            manage_agent_code: true,
+            user_desired: super::UserDesired::Stopped,
+            mounts: Vec::new(),
+        };
         let json = serde_json::to_string(&s).expect("serialize");
         assert!(json.contains(r#""user_desired":"stopped""#), "serialized as: {json}");
         let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.user_desired, super::UserDesired::Stopped);
+    }
+
+    // --- mounts persists user-granted host filesystem access; a settings.json predating the
+    // field must still deserialize (to no grants), and a granted mount must round-trip ---
+
+    #[test]
+    fn agent_settings_defaults_mounts_to_empty() {
+        let json = r#"{"manage_agent_code": true, "user_desired": "running"}"#;
+        let s: super::AgentSettings = serde_json::from_str(json).expect("valid AgentSettings");
+        assert!(s.mounts.is_empty());
+    }
+
+    #[test]
+    fn agent_settings_roundtrips_mounts() {
+        let s = super::AgentSettings {
+            manage_agent_code: true,
+            user_desired: super::UserDesired::Running,
+            mounts: vec![crate::mounts::HostMount {
+                host_path: "/mnt/media".into(),
+                container_path: "/mnt/media".into(),
+                writable: false,
+            }],
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.mounts, s.mounts);
     }
 
     // --- Rename notification payload (the content contract the agent self-heals on) ---

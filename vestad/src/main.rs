@@ -16,7 +16,9 @@ mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod manifest;
-// Foundation for host filesystem grants; consumed starting with AgentSettings.mounts (next task).
+// HostMount is now consumed by AgentSettings.mounts; validate_mount/validate_mounts/bind_string/
+// is_protected/MountError are still unused until Tasks 3/6 wire up grant validation and the
+// container mount pipeline. Remove this allow once those tasks land.
 #[allow(dead_code)]
 mod mounts;
 mod jwt;
