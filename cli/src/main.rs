@@ -1586,17 +1586,20 @@ fn run(cli: Cli) {
                 MountCommand::Add { agent, host_path, container_path, writable } => {
                     let mut mounts = get_mount_entries(&c, &agent);
                     let container_path = container_path.unwrap_or_else(|| host_path.clone());
-                    if !mounts.iter().any(|m| m.container_path == container_path) {
+                    if mounts.iter().any(|m| m.container_path == container_path) {
+                        eprintln!("a grant already targets {container_path}");
+                    } else {
                         mounts.push(MountEntry { host_path: host_path.clone(), container_path, writable });
+                        let body = serde_json::json!({ "mounts": mounts });
+                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("granted {host_path} (restart to apply: vesta restart {agent})");
                     }
-                    let body = serde_json::json!({ "mounts": mounts });
-                    c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("granted {host_path} (restart to apply: vesta restart {agent})");
                 }
                 MountCommand::Rm { agent, host_path } => {
                     let mounts = get_mount_entries(&c, &agent);
                     let original_count = mounts.len();
-                    let filtered: Vec<MountEntry> = mounts.into_iter().filter(|m| m.host_path != host_path).collect();
+                    let filtered: Vec<MountEntry> =
+                        mounts.into_iter().filter(|m| m.host_path != host_path && m.container_path != host_path).collect();
                     if filtered.len() == original_count {
                         eprintln!("no grant for {host_path}");
                     } else {
