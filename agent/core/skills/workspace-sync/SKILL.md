@@ -9,7 +9,7 @@ Your workspace (`~`) is a git repository. Vesta's daemon serves its stock conten
 version you run: one commit per release, tagged `agent-vX.Y.Z`, fetched as a bundle over
 the local machine (no internet involved). When Vesta upgrades, the core you run updates by
 itself (it is a read-only mount), but the rest of your workspace (skills, MEMORY.md,
-prompts) stays as it was. Syncing closes that gap: rebase onto the tag matching the version
+prompts, etc) stays as it was. Syncing closes that gap: rebase onto the tag matching the version
 you now run, so you take every stock update while everything you changed or added yourself
 stays on top. To contribute changes back to the Vesta project, see
 `~/agent/skills/upstream-pr/SKILL.md`.
