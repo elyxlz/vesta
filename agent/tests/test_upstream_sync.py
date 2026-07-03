@@ -263,7 +263,7 @@ def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
     (home / "agent/pyproject.toml").write_text("stale\n")
     (home / "agent/MEMORY.md").write_text("# memory template 0.1.170\nmy personal notes\n")
     assert _attach(home, origin).returncode == 4
-    # Documented migration spine:
+    # The conversion spine from agent/core/migrations/2026-07-agent-branch-workspace.md:
     (home / ".git").rename(home / ".git-legacy")
     (home / "agent/pyproject.toml").unlink()
     assert _attach(home, origin).returncode == 0

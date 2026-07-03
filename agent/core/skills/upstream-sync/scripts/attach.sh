@@ -4,8 +4,8 @@
 # content can never be clobbered - differences just show up in `git status` afterwards.
 #
 # Exit: 0 attached (or already attached); 3 snapshot tag for the running version not
-# found on the remote; 4 legacy workspace detected (follow the migration flow in
-# SKILL.md: back up, retire ~/.git, re-run).
+# found on the remote; 4 legacy workspace detected (the one-time workspace boot
+# migration converts it: back up, retire ~/.git, re-run).
 set -euo pipefail
 
 REF="${VESTA_UPSTREAM_REF:?VESTA_UPSTREAM_REF is unset (source /run/vestad-env)}"
@@ -21,7 +21,7 @@ if [ -d .git ]; then
   # Cone-mode files also carry '!' lines, so key on the cone config: an attached
   # workspace always has core.sparseCheckoutCone=true, a legacy one never does.
   if [ -f .git/info/sparse-checkout ] && [ "$(git config --get core.sparseCheckoutCone || true)" != "true" ] && grep -q '^!' .git/info/sparse-checkout 2>/dev/null; then
-    echo "legacy workspace detected: follow the migration flow in SKILL.md" >&2
+    echo "legacy workspace detected: the one-time workspace boot migration converts it" >&2
     exit 4
   fi
 else
