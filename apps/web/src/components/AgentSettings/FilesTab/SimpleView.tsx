@@ -11,6 +11,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import type { FileTreeEntry } from "@/api/files";
 import { HostAccessCard } from "../HostAccessCard";
 import {
@@ -132,48 +140,50 @@ function MindCard({
 }) {
   return (
     <Card size="sm" className="shrink-0">
-      <CardContent className="flex flex-col gap-1.5">
-        <HubRow
-          onClick={onSelectMemory}
-          selected={memorySelected}
-          iconClass="bg-amber-500/12 text-amber-600 dark:text-amber-400"
-          icon={<BookOpen className="size-[18px]" />}
-          title="memory"
-          description="what vesta remembers about you"
-        />
-        <HubRow
-          onClick={onSelectConstitution}
-          selected={constitutionSelected}
-          iconClass="bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
-          icon={<ScrollText className="size-[18px]" />}
-          title="constitution"
-          description="the directives you set that vesta follows"
-        />
-        <HubRow
-          onClick={onShowDreams}
-          selected={dreamsActive}
-          iconClass="bg-indigo-500/12 text-indigo-500 dark:text-indigo-400"
-          icon={<Moon className="size-[18px]" />}
-          title="dreams"
-          description="nightly reflections on the day"
-          trailing={
-            <div className="flex items-center gap-1.5">
-              {dreamCount > 0 && (
-                <span className="text-[11px] text-muted-foreground">
-                  {dreamCount}
-                </span>
-              )}
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-            </div>
-          }
-        />
+      <CardContent>
+        <ItemGroup>
+          <HubRow
+            onClick={onSelectMemory}
+            selected={memorySelected}
+            iconClass="bg-amber-500/12 text-amber-600 dark:text-amber-400"
+            icon={<BookOpen />}
+            title="memory"
+            description="what vesta remembers about you"
+          />
+          <HubRow
+            onClick={onSelectConstitution}
+            selected={constitutionSelected}
+            iconClass="bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+            icon={<ScrollText />}
+            title="constitution"
+            description="the directives you set that vesta follows"
+          />
+          <HubRow
+            onClick={onShowDreams}
+            selected={dreamsActive}
+            iconClass="bg-indigo-500/12 text-indigo-500 dark:text-indigo-400"
+            icon={<Moon />}
+            title="dreams"
+            description="nightly reflections on the day"
+            trailing={
+              <>
+                {dreamCount > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {dreamCount}
+                  </span>
+                )}
+                <ChevronRight className="size-4 text-muted-foreground/60" />
+              </>
+            }
+          />
+        </ItemGroup>
       </CardContent>
     </Card>
   );
 }
 
-// A soft, tappable "cell" inside a hub card: a tinted icon square, a title,
-// an optional secondary line, and optional trailing content.
+// A soft, tappable "cell" inside a hub card, built on the shadcn Item primitive:
+// a tinted icon square, a title, an optional secondary line, optional trailing.
 function HubRow({
   icon,
   iconClass,
@@ -192,32 +202,30 @@ function HubRow({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
-        selected ? "bg-muted" : "bg-muted/40 hover:bg-muted/70 active:bg-muted",
-      )}
+    <Item
+      asChild
+      variant="muted"
+      size="sm"
+      className={cn("cursor-pointer hover:bg-muted/70", selected && "bg-muted")}
     >
-      <span
-        className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-[10px]",
-          iconClass,
-        )}
-      >
-        {icon}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm font-medium leading-tight">{title}</span>
-        {description ? (
-          <span className="truncate text-[11px] text-muted-foreground">
-            {description}
-          </span>
-        ) : null}
-      </span>
-      {trailing}
-    </button>
+      <button type="button" onClick={onClick}>
+        <ItemMedia
+          variant="icon"
+          className={cn("size-9 rounded-[10px]", iconClass)}
+        >
+          {icon}
+        </ItemMedia>
+        <ItemContent className="gap-0">
+          <ItemTitle>{title}</ItemTitle>
+          {description ? (
+            <span className="truncate text-[11px] text-muted-foreground">
+              {description}
+            </span>
+          ) : null}
+        </ItemContent>
+        {trailing ? <ItemActions>{trailing}</ItemActions> : null}
+      </button>
+    </Item>
   );
 }
 
@@ -277,38 +285,42 @@ function SkillsCard({
         )}
       </CardHeader>
 
-      <CardContent className="flex flex-1 min-h-0 flex-col gap-1.5 overflow-auto">
+      <CardContent className="flex-1 min-h-0 overflow-auto">
         {inSkillView && activeSkill ? (
           activeSkill.mdFiles.length === 0 ? (
             <EmptyRow>no markdown files</EmptyRow>
           ) : (
-            activeSkill.mdFiles.map((file) => (
-              <Row
-                key={file.path}
-                icon={<FileText className="size-4" />}
-                iconClass="bg-muted text-muted-foreground"
-                label={file.name}
-                selected={selected === file.path}
-                onClick={() => onSelect(file.path)}
-              />
-            ))
+            <ItemGroup>
+              {activeSkill.mdFiles.map((file) => (
+                <Row
+                  key={file.path}
+                  icon={<FileText />}
+                  iconClass="bg-muted text-muted-foreground"
+                  label={file.name}
+                  selected={selected === file.path}
+                  onClick={() => onSelect(file.path)}
+                />
+              ))}
+            </ItemGroup>
           )
         ) : skills.length === 0 ? (
           <EmptyRow>no skills installed</EmptyRow>
         ) : (
-          skills.map((skill) => (
-            <Row
-              key={skill.path}
-              icon={<Wand2 className="size-4" />}
-              iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
-              label={skill.name}
-              hasChevron
-              selected={
-                selected !== null && selected.startsWith(`${skill.path}/`)
-              }
-              onClick={() => setNav({ view: "skill", skillPath: skill.path })}
-            />
-          ))
+          <ItemGroup>
+            {skills.map((skill) => (
+              <Row
+                key={skill.path}
+                icon={<Wand2 />}
+                iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
+                label={skill.name}
+                hasChevron
+                selected={
+                  selected !== null && selected.startsWith(`${skill.path}/`)
+                }
+                onClick={() => setNav({ view: "skill", skillPath: skill.path })}
+              />
+            ))}
+          </ItemGroup>
         )}
       </CardContent>
     </Card>
@@ -331,27 +343,29 @@ function Row({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors",
-        selected ? "bg-muted" : "bg-muted/40 hover:bg-muted/70 active:bg-muted",
-      )}
+    <Item
+      asChild
+      variant="muted"
+      size="sm"
+      className={cn("cursor-pointer hover:bg-muted/70", selected && "bg-muted")}
     >
-      <span
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-[9px]",
-          iconClass,
-        )}
-      >
-        {icon}
-      </span>
-      <span className="flex-1 truncate">{label}</span>
-      {hasChevron && (
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-      )}
-    </button>
+      <button type="button" onClick={onClick}>
+        <ItemMedia
+          variant="icon"
+          className={cn("size-8 rounded-[9px]", iconClass)}
+        >
+          {icon}
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>{label}</ItemTitle>
+        </ItemContent>
+        {hasChevron ? (
+          <ItemActions>
+            <ChevronRight className="size-4 text-muted-foreground/60" />
+          </ItemActions>
+        ) : null}
+      </button>
+    </Item>
   );
 }
 
