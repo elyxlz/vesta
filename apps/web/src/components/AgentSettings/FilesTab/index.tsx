@@ -386,19 +386,28 @@ export function FilesTab() {
       treeInner
     );
 
-    // Mobile fills the screen; desktop centers a calm, bounded column.
-    return isMobile ? (
-      <div
-        ref={fillRef}
-        style={{ height: fillHeight }}
-        className="flex min-h-0 flex-col"
-      >
-        {panel}
-      </div>
-    ) : (
+    // The detail view (editor/dreams) is bounded so it scrolls internally; the
+    // hub flows naturally and scrolls with the page. Mobile fills the screen.
+    if (isMobile) {
+      return (
+        <div
+          ref={fillRef}
+          style={{ height: fillHeight }}
+          className={cn(
+            "flex min-h-0 flex-col",
+            !inDetail && "overflow-y-auto",
+          )}
+        >
+          {panel}
+        </div>
+      );
+    }
+    return inDetail ? (
       <div className="mx-auto flex h-[70vh] w-full max-w-2xl min-h-0 flex-col">
         {panel}
       </div>
+    ) : (
+      <div className="mx-auto w-full max-w-2xl">{panel}</div>
     );
   }
 

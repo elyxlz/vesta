@@ -15,6 +15,7 @@ import {
   Item,
   ItemActions,
   ItemContent,
+  ItemDescription,
   ItemGroup,
   ItemMedia,
   ItemTitle,
@@ -82,7 +83,7 @@ export function SimpleView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-1">
+    <div className="flex flex-col gap-3 p-1">
       <GroupLabel>vesta's mind</GroupLabel>
       <MindCard
         memorySelected={selected === MEMORY_PATH && !dreamsActive}
@@ -206,7 +207,10 @@ function HubRow({
       asChild
       variant="muted"
       size="sm"
-      className={cn("cursor-pointer hover:bg-muted/70", selected && "bg-muted")}
+      className={cn(
+        "cursor-pointer text-left hover:bg-muted/70",
+        selected && "bg-muted",
+      )}
     >
       <button type="button" onClick={onClick}>
         <ItemMedia
@@ -215,12 +219,12 @@ function HubRow({
         >
           {icon}
         </ItemMedia>
-        <ItemContent className="gap-0">
+        <ItemContent className="gap-0.5">
           <ItemTitle>{title}</ItemTitle>
           {description ? (
-            <span className="truncate text-[11px] text-muted-foreground">
+            <ItemDescription className="text-[11px]">
               {description}
-            </span>
+            </ItemDescription>
           ) : null}
         </ItemContent>
         {trailing ? <ItemActions>{trailing}</ItemActions> : null}
@@ -260,7 +264,7 @@ function SkillsCard({
   const inSkillView = activeSkill !== null;
 
   return (
-    <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
+    <Card size="sm" className="!py-0 !gap-0 flex flex-col">
       <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
         {inSkillView && activeSkill ? (
           <>
@@ -285,7 +289,7 @@ function SkillsCard({
         )}
       </CardHeader>
 
-      <CardContent className="flex-1 min-h-0 overflow-auto">
+      <CardContent className="max-h-80 overflow-auto py-2">
         {inSkillView && activeSkill ? (
           activeSkill.mdFiles.length === 0 ? (
             <EmptyRow>no markdown files</EmptyRow>
@@ -347,7 +351,10 @@ function Row({
       asChild
       variant="muted"
       size="sm"
-      className={cn("cursor-pointer hover:bg-muted/70", selected && "bg-muted")}
+      className={cn(
+        "cursor-pointer text-left hover:bg-muted/70",
+        selected && "bg-muted",
+      )}
     >
       <button type="button" onClick={onClick}>
         <ItemMedia
