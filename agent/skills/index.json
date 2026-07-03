@@ -5,7 +5,7 @@
   },
   {
     "name": "workspace-sync",
-    "description": "Bring your home files up to date after a Vesta upgrade, rebasing your own changes onto the new version's stock files. Use when the upgrade boot turn or the user asks for a workspace sync."
+    "description": "Bring your workspace up to date after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn or when the user asks to update."
   },
   {
     "name": "account",
