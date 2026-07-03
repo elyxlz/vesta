@@ -1424,8 +1424,30 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 
 // --- Container creation ---
 
+/// Assemble the full bind list for a container: base mounts (env, constitution, optional core)
+/// plus user-granted host mounts.
+fn assemble_binds(env_mount: String, constitution_mount: String, core_mount: Option<String>, user_mounts: &[crate::mounts::HostMount]) -> Vec<String> {
+    let mut binds = vec![env_mount, constitution_mount];
+    if let Some(core) = core_mount {
+        binds.push(core);
+    }
+    for m in user_mounts {
+        binds.push(crate::mounts::bind_string(m));
+    }
+    binds
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool) -> Result<(), DockerError> {
+pub async fn create_container(
+    docker: &Docker,
+    cname: &str,
+    image: &str,
+    port: u16,
+    agent_name: &str,
+    env_config: &AgentEnvConfig,
+    manage_core_code: bool,
+    user_mounts: &[crate::mounts::HostMount],
+) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
@@ -1441,10 +1463,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     labels.insert(LABEL_USER.to_string(), current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let mut binds = vec![env_mount, constitution_mount];
-    if manage_core_code {
-        binds.push(core_mount);
-    }
+    let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
+    let binds = assemble_binds(env_mount, constitution_mount, core_mount_opt, user_mounts);
 
     let mut device_requests = None;
     match gpu_available(docker).await {
@@ -1752,7 +1772,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, &[]).await?;
 
     Ok(name.to_string())
 }
@@ -2132,7 +2152,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     ensure_container_removed(docker, &cname).await?;
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, &[]).await?;
 
     Ok(())
 }
@@ -2202,7 +2222,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, &[]).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
@@ -2218,6 +2238,14 @@ mod tests {
     // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
     // need a "normal container" policy to build fixtures with.
     const RESTART_POLICY: &str = "on-failure";
+
+    #[test]
+    fn assemble_binds_appends_user_mounts() {
+        let m = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        let binds = assemble_binds("/e:/run/vestad-env:ro,z".into(), "/c:/root/agent/constitution.md:ro,z".into(), None, std::slice::from_ref(&m));
+        assert_eq!(binds.len(), 3);
+        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro,z");
+    }
 
     #[test]
     fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {

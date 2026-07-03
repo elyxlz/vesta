@@ -16,9 +16,9 @@ mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod manifest;
-// HostMount is now consumed by AgentSettings.mounts; validate_mount/validate_mounts/bind_string/
-// is_protected/MountError are still unused until Tasks 3/6 wire up grant validation and the
-// container mount pipeline. Remove this allow once those tasks land.
+// HostMount is consumed by AgentSettings.mounts and bind_string by the container mount pipeline;
+// validate_mount/validate_mounts/is_protected/MountError are still unused until Task 6 wires up
+// grant validation. Remove this allow once that task lands.
 #[allow(dead_code)]
 mod mounts;
 mod jwt;
@@ -855,7 +855,7 @@ fn main() {
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true).await
+                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, &[]).await
                             .unwrap_or_else(|e| die(&e));
 
                         if !docker::start_container(&docker, &cname).await {
