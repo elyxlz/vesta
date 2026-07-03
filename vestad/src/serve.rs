@@ -2047,6 +2047,53 @@ async fn delete_agent_backup_settings_handler(
     agent_backup_json(settings.backup.enabled, settings.backup.retention, false)
 }
 
+// --- Host filesystem grants ---
+//
+// A grant is a decision only the user makes: PUT sits behind the API-key-only middleware
+// (never the agent token), so an agent can never mount itself extra host access. GET is
+// dual-auth (API key or the agent's own token) so a skill can list its own grants.
+
+#[derive(Deserialize)]
+struct MountInput {
+    host_path: String,
+    #[serde(default)]
+    container_path: Option<String>,
+    #[serde(default)]
+    writable: bool,
+}
+
+#[derive(Deserialize)]
+struct SetMountsBody {
+    mounts: Vec<MountInput>,
+}
+
+async fn list_mounts_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let mounts = settings.agents.get(&name).map(|a| a.mounts.clone()).unwrap_or_default();
+    Ok(Json(serde_json::json!({ "mounts": mounts })))
+}
+
+async fn set_mounts_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetMountsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let inputs: Vec<(String, Option<String>, bool)> =
+        body.mounts.into_iter().map(|m| (m.host_path, m.container_path, m.writable)).collect();
+    let validated = crate::mounts::validate_mounts(&inputs)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))))?;
+    {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().mounts = validated.clone();
+        save_settings(&settings);
+    }
+    tracing::info!(agent = %name, "agent mounts updated");
+    Ok(Json(serde_json::json!({ "mounts": validated, "restart_required": true })))
+}
+
 // --- Constitution ---
 //
 // A user-authored charter prepended to the agent's system prompt ahead of MEMORY.md.
@@ -2200,6 +2247,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
+        .route("/agents/{name}/mounts", put(set_mounts_handler))
         .route("/gateway/settings", get(get_gateway_settings_handler).put(put_gateway_settings_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
@@ -2265,6 +2313,7 @@ pub fn build_router(state: SharedState) -> Router {
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
+        .route("/agents/{name}/mounts", get(list_mounts_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_agent_token,

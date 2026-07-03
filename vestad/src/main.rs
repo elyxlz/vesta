@@ -16,10 +16,6 @@ mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod manifest;
-// HostMount is consumed by AgentSettings.mounts and bind_string by the container mount pipeline;
-// validate_mount/validate_mounts/is_protected/MountError are still unused until Task 6 wires up
-// grant validation. Remove this allow once that task lands.
-#[allow(dead_code)]
 mod mounts;
 mod jwt;
 mod paths;
