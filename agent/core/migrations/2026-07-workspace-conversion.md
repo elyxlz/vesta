@@ -12,14 +12,20 @@ cd ~ && bash agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
 
 ### 2. Convert the old workspace
 
+Retire the old repo and attach the new one, but put the old one back if the attach fails, so you are never left without a working repo:
+
 ```bash
 cd ~
 tar czf ~/agent-backup.tar.gz agent       # safety net, keep until verified
 mv ~/.git ~/.git-legacy                   # retire the old repo (delete on a later dream)
-bash agent/core/skills/workspace-sync/scripts/attach.sh
+if ! bash agent/core/skills/workspace-sync/scripts/attach.sh; then
+  rm -rf ~/.git                           # drop the half-made repo the failed attach left
+  mv ~/.git-legacy ~/.git                 # restore the working repo, untouched
+  echo "conversion deferred: this version's snapshot isn't available from Vesta's daemon"
+fi
 ```
 
-If this attach fails (exit 3 or a failed fetch), stop: the old repo is retired, which is this migration's whole job, and your files on disk are untouched. The workspace-sync flow finishes the attach once your version's files are available. Otherwise continue to step 3.
+If you saw the `conversion deferred` message, stop: your old workspace is back exactly as it was and still works. This is an unmanaged-core box whose core predates the workspace feature, so its snapshot will not appear on its own. Tell the user; they convert it by hand once its core is brought current. Otherwise continue to step 3.
 
 ### 3. Drop superseded stock, then reconcile your changes
 

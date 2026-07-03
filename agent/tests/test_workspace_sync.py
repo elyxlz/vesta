@@ -272,3 +272,28 @@ def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "migrated: local customizations"], home, env)
     assert "my personal notes" in (home / "agent/MEMORY.md").read_text()
+
+
+def test_migration_restores_legacy_repo_when_snapshot_unavailable(tmp_path):
+    """An unmanaged legacy box at a version the bundle doesn't carry (its snapshot predates
+    the workspace feature) must never be left repo-less: the documented spine restores the
+    old repo when the conversion attach fails, so git still works and the box degrades
+    gracefully instead of bricking."""
+    bundle = _bundle_fixture(tmp_path, versions=("0.1.170",))
+    home = _fresh_box(tmp_path, version="0.1.999")  # 0.1.999 is not in the bundle
+    env = _box_env(bundle)
+    _git(["init", "-b", "testbox"], home, env)
+    (home / ".git/info").mkdir(parents=True, exist_ok=True)
+    (home / ".git/info/sparse-checkout").write_text("/agent/\n!/agent/core/\n!/agent/skills/*/\n")
+    assert _attach(home, bundle).returncode == 4  # legacy detected
+
+    # Spine step 2: retire, attach (fails exit 3 — no agent-v0.1.999), then restore.
+    (home / ".git").rename(home / ".git-legacy")
+    assert _attach(home, bundle).returncode == 3
+    shutil.rmtree(home / ".git")  # drop the half-made repo the failed attach left
+    (home / ".git-legacy").rename(home / ".git")
+
+    # The box still has a working repo (not bricked), and it's the legacy one.
+    assert _git(["rev-parse", "--is-inside-work-tree"], home, env).strip() == "true"
+    assert (home / ".git/info/sparse-checkout").exists()
+    assert not (home / ".git-legacy").exists()
