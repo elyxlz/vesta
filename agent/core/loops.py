@@ -73,7 +73,7 @@ def drop_core_notification(*, type_: str, body: str, config: vm.VestaConfig, nam
 def _notif_interrupts(notif: vm.Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]) -> bool:
     """True if the notification preempts the current turn. Core notifications are exempt from the user's
     rules — their disposition is control-flow, derived from the type (CORE_POOL_TYPES); everything else
-    goes through the ruleset (first match wins, default interrupt)."""
+    goes through the ruleset (first match wins, else the producer's own interrupt default)."""
     if notif.source == CORE_SOURCE:
         return notif.type not in CORE_POOL_TYPES
     return notification_interrupt_policy.should_interrupt(notif, rules)

@@ -102,6 +102,9 @@ def write_notification(tx: dict) -> None:
     notification = {
         "type": "finance",
         "source": "finance",
+        # A new transaction is a record to review when idle, not something to drop everything for, so it
+        # pools by default. The user can add an interrupt rule for e.g. large amounts if they want.
+        "interrupt": False,
         "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "message": f"New transaction: {formatted}",
     }

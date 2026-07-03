@@ -177,6 +177,9 @@ def _write_notification(notif_dir: Path, tweet: dict) -> None:
     notif = {
         "source": "twitter",
         "type": "tweet",
+        # A tweet is ambient feed content, not something to preempt the agent for, so it pools by
+        # default; the user adds an interrupt rule for a specific handle if they want one to reach them.
+        "interrupt": False,
         "handle": tweet["handle"],
         "content": tweet["text"],
         "url": tweet["url"],

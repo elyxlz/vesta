@@ -30,6 +30,17 @@ def test_no_rules_defaults_to_interrupt():
     assert npn.should_interrupt(_notif(), []) is True
 
 
+def test_no_rules_honors_producer_pool_default():
+    # A skill that ships interrupt=False (email, finance) pools when no rule matches — the fallback is
+    # the producer's default, not an unconditional interrupt.
+    assert npn.should_interrupt(_notif(interrupt=False), []) is False
+
+
+def test_matching_rule_overrides_producer_pool_default():
+    notif = _notif(source="finance", interrupt=False)
+    assert npn.should_interrupt(notif, [_rule(source="finance", action="interrupt")]) is True
+
+
 def test_source_rule_pools():
     assert npn.should_interrupt(_notif(), [_rule(source="twitter", action="pool")]) is False
 
