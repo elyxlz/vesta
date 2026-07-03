@@ -332,6 +332,22 @@ async fn account_token_handler(State(state): State<SharedState>) -> axum::respon
     .into_response()
 }
 
+/// `GET /agents/{name}/workspace.bundle` — the host's workspace bundle (branch + agent-v*
+/// tags), fetched by the box's fetch-workspace.sh during attach/sync. Agent-token
+/// authenticated; the middleware scopes the token to `{name}`, so a box can only pull
+/// through its own identity (the content is host-global either way).
+async fn workspace_bundle_handler(State(state): State<SharedState>) -> axum::response::Response {
+    workspace_bundle_response(&state.env_config.config_dir).await
+}
+
+async fn workspace_bundle_response(config_dir: &std::path::Path) -> axum::response::Response {
+    let path = crate::workspace::bundle_path(config_dir);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response(),
+        Err(_) => err_response(StatusCode::NOT_FOUND, "workspace bundle not built yet").into_response(),
+    }
+}
+
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
     Json(version_json(&state).await)
 }
@@ -2211,6 +2227,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
         .route("/agents/{name}/account-token", post(account_token_handler))
+        .route("/agents/{name}/workspace.bundle", get(workspace_bundle_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_agent_token,
@@ -2503,8 +2520,15 @@ pub async fn run_server(cfg: ServerConfig) {
     // replaces the code dir, so reconcile must restart running agents to reload the new core (and
     // re-bind their now-detached core mount).
     let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
-    if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
-        tracing::error!(error = %e, "failed to ensure agent code");
+    match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+        Err(e) => tracing::error!(error = %e, "failed to ensure agent code"),
+        Ok(code_dir) => {
+            if let Err(e) = crate::workspace::ensure_workspace(&env_config.config_dir, &code_dir) {
+                // Boxes can't sync without the bundle, but vestad must still serve
+                // (agents run fine between syncs). Loud, not fatal.
+                tracing::error!(error = %e, "workspace build failed; agent workspace sync will be unavailable");
+            }
+        }
     }
     let agent_settings = load_settings().agents.clone();
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port, expose_lan, lan_url));
@@ -2707,6 +2731,24 @@ mod tests {
         let message = payload["message"].as_str().expect("message is a string");
         assert!(message.contains("old-bot"), "message missing old name: {message}");
         assert!(message.contains("new-bot"), "message missing new name: {message}");
+    }
+
+    // --- Workspace bundle: 404 before first build, bytes after ---
+
+    #[tokio::test]
+    async fn workspace_bundle_404s_before_first_build_and_serves_bytes_after() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let missing = super::workspace_bundle_response(tmp.path()).await;
+        assert_eq!(missing.status(), super::StatusCode::NOT_FOUND);
+
+        let bundle = crate::workspace::bundle_path(tmp.path());
+        std::fs::create_dir_all(bundle.parent().expect("bundle has a parent")).expect("mkdir");
+        std::fs::write(&bundle, b"BUNDLEBYTES").expect("write bundle");
+        let served = super::workspace_bundle_response(tmp.path()).await;
+        assert_eq!(served.status(), super::StatusCode::OK);
+        let body = axum::body::to_bytes(served.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(&body[..], b"BUNDLEBYTES");
     }
 
     // --- Request-timeout layer: control routes time out, streaming/WS routes are exempt (#639) ---

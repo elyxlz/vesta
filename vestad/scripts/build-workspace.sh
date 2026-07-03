@@ -43,6 +43,9 @@ EOF
 export GIT_DIR="$REPO" GIT_WORK_TREE="$STAGE" GIT_INDEX_FILE="$STAGE/.build-index"
 export GIT_AUTHOR_NAME="vesta" GIT_AUTHOR_EMAIL="vesta@vesta"
 export GIT_COMMITTER_NAME="vesta" GIT_COMMITTER_EMAIL="vesta@vesta"
+# Hermetic against the host's git config: a user-level tag.gpgSign/commit.gpgSign (or any
+# other global setting) must not break or alter vestad's snapshot construction.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
 git add -A
 TREE="$(git write-tree)"
