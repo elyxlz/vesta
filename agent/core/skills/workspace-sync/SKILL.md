@@ -42,20 +42,6 @@ git rebase agent-vX.Y.Z                   # the version from the boot turn
 `~/agent/core/skills/workspace-sync/scripts/status.sh` shows what you have changed since
 your current version's snapshot, and the newest snapshot Vesta's daemon has. Read-only.
 
-## Updating core yourself (if created with --no-manage-core-code)
-
-If your core is not a read-only mount, it is part of your workspace and updates only
-when the user asks:
-
-```bash
-git sparse-checkout add agent/core        # once, ever
-bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
-git rebase agent-vX.Y.Z                   # target release: core + skills move together
-```
-
-Restart afterwards. Moving to an OLDER release transplants your changes instead:
-`git rebase --onto agent-vOLD agent-vCURRENT`.
-
 ## Tidy-up (occasionally, e.g. during a dream)
 
 Collapse your accumulated checkpoint commits into one readable commit:
