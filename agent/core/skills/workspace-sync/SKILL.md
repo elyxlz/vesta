@@ -30,6 +30,10 @@ git rebase agent-vX.Y.Z                   # the version from the boot turn
 
 - Conflicts: edit each conflicted file so both sides survive, `git add <file>`, then
   `git rebase --continue`. `git rebase --abort` restores exactly the pre-sync state.
+- Paused but `git diff --diff-filter=U` lists no files? Not a conflict: the rebase stopped
+  on a commit that's now empty (its changes are already in the new stock) or mode-only.
+  Run `git add -A` then `git rebase --continue`; if git says the commit is empty, run
+  `git rebase --skip`. Don't hunt for conflict markers that aren't there.
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
 - Then call `mark_workspace_synced`. If the rebase brought changes, call `restart_vesta`
   (after marking) so updated skills load.

@@ -26,11 +26,18 @@ bash agent/core/skills/workspace-sync/scripts/attach.sh
 
 If this attach fails (failed fetch, or exit 3), stop and go to the final step anyway: the legacy repo is retired, which is this migration's whole job, and your files on disk are untouched. The workspace-sync flow completes the attach once the remote content is reachable.
 
-### 3. Reconcile your personalizations (only if the attach succeeded)
+### 3. Drop superseded stock, then reconcile your personalizations (only if the attach succeeded)
 
-`git status` now shows every file where your content differs from stock. Judge each one: keep yours, take stock (`git checkout -- <file>`), or integrate both. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt upstream's structure. Then:
+First delete legacy files the new stock no longer ships, so they don't get baked into your customizations commit and rebased forward forever:
 
 ```bash
+rm -rf ~/agent/skills/upstream-sync   # superseded by the core workspace-sync skill; not yours
+rm -rf ~/agent/tests                  # dev-only tree that a box never carries
 rm -f ~/agent/pyproject.toml ~/agent/uv.lock   # stale leftovers of the engine move
+```
+
+Now `git status` shows every remaining file where your content differs from stock. Judge each one: keep yours, take stock (`git checkout -- <file>`), or integrate both. A file whose only diff is stock that moved or got deleted is not a personalization, take stock. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure. Then:
+
+```bash
 git add -A && git commit -m "migrated: local customizations"
 ```
