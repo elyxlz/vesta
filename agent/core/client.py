@@ -3,6 +3,7 @@
 import asyncio
 import datetime as dt
 import os
+import time
 import typing as tp
 
 import aiohttp
@@ -12,7 +13,6 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     Message,
     ResultMessage,
-    SystemMessage,
     ThinkingBlock,
 )
 from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
@@ -71,11 +71,10 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
-        # The SDK didn't ack the interrupt within the window. Log + emit but
-        # don't SIGTERM the whole process: in practice this fires more often
-        # during heavy thinking or a long-running tool than during a real hang,
-        # and the watchdog in core/diagnostics.py SIGTERMs if the SDK is
-        # genuinely stuck idle past its higher threshold.
+        # The SDK didn't ack the interrupt within the window. Log + emit but don't kill the
+        # process: in practice this fires more often during heavy thinking or a long-running
+        # tool than during a real hang, and converse's response-timeout path already ends a
+        # genuinely dead turn (TimeoutError -> restart).
         diag = diagnostics.format_hang_diagnostics(state)
         msg = f"SDK interrupt timed out | reason={reason} | {diag}"
         logger.warning(msg)
@@ -99,9 +98,12 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
-_STOP = object()
+_SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
 
-_INTERRUPT_DRAIN_TIMEOUT_S = 5.0  # cap the post-interrupt drain so a stalled stream can't block forever
+# Post-interrupt wait for the interrupted turn's ResultMessage. Purely a labeling nicety so the
+# next turn usually opens against a clean stream; when the CLI's wind-down outlives it, the
+# consumer still receives everything and the late result is dropped as advisory (issue #958).
+_INTERRUPT_TURN_END_GRACE_S = 5.0
 
 
 async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
@@ -112,6 +114,116 @@ async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
         pass
 
 
+def _open_turn(state: vm.State, *, show_output: bool) -> vm.TurnSignals:
+    turn = vm.TurnSignals(show_output=show_output)
+    state.turn = turn
+    return turn
+
+
+def _close_turn(state: vm.State, turn: vm.TurnSignals) -> None:
+    if state.turn is turn:
+        state.turn = None
+
+
+def _emit_text(text: str, *, state: vm.State) -> None:
+    logger.assistant(text)
+    state.event_bus.emit({"type": "assistant", "text": text})
+
+
+def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
+    if not block.thinking.strip():
+        return
+    logger.thinking(block.thinking)
+    state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
+
+
+async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaConfig) -> None:
+    """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
+    close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
+    continuation turn, or an interrupted turn's wind-down) still emit — nothing is ever lost —
+    and their ResultMessage is dropped."""
+    diagnostics.touch_activity(state, "sdk_message")
+    turn = state.turn
+    if turn:
+        turn.last_message_at = time.monotonic()
+    if isinstance(msg, AssistantMessage):
+        state.compacting = False
+    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
+    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
+    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
+    if turn and thinking_estimate is not None:
+        diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
+    texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
+    if session_id and session_id != state.persisted.session_id:
+        if state.persisted.session_id:
+            logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
+        persist_session_id(session_id, state=state, config=config)
+    show = turn.show_output if turn else True
+    if show:
+        for block in thinking_blocks:
+            _emit_thinking(block, state=state)
+    text = "\n".join(texts) if texts else None
+    if turn and (text or thinking_blocks):
+        turn.last_visible_at = time.monotonic()
+    if text:
+        if turn:
+            turn.texts.append(text)
+        if show:
+            filtered = sdk_parsing.filter_tool_lines(text)
+            if filtered:
+                _emit_text(filtered, state=state)
+    # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
+    # so a terminal auth/billing failure surfaces through the SDK either as the assistant
+    # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
+    # status (api_error_status). Check BOTH so a token expiry can't stay invisible to the app.
+    auth_lost = (isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error)) or (
+        isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS
+    )
+    if auth_lost:
+        # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
+        # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
+        # and restart-looping.
+        logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
+        state.provider_status = observed_provider_failure(state.provider_status)
+        await attempt_interrupt(state, config=config, reason="Provider auth lost")
+    if isinstance(msg, ResultMessage) or auth_lost:
+        if turn and not turn.done.is_set():
+            turn.done.set()
+        elif isinstance(msg, ResultMessage):
+            logger.debug("ResultMessage with no open turn (continuation or interrupted-turn wind-down); dropped")
+
+
+async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
+    """Single long-lived consumer of the SDK stream — one per client session, connect to disconnect.
+
+    Reading continuously is the fix for issue #958: with per-turn readers, messages left unconsumed
+    after an abandoned interrupt drain filled the SDK's bounded buffer, blocking its reader task
+    (jamming interrupt acks and control responses) and desyncing every later turn by one
+    ResultMessage. Here nothing is ever left unconsumed, by construction."""
+    assert state.client is not None
+    client = state.client
+
+    def _fail_open_turn(error: Exception) -> None:
+        turn = state.turn
+        if turn and not turn.done.is_set():
+            turn.error = error
+            turn.done.set()
+
+    try:
+        async for msg in client.receive_messages():
+            await _dispatch_message(msg, state=state, config=config)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        # Stream death: surface it through the open turn so run_one's error handling restarts.
+        # While idle, the next query() fails on the dead transport and takes the same path.
+        logger.error(f"SDK stream consumer died: {type(e).__name__}: {e}")
+        _fail_open_turn(e)
+        return
+    # Clean EOF mid-turn still means the CLI is gone; only consumer cancellation is a normal end.
+    _fail_open_turn(RuntimeError("SDK stream ended"))
+
+
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
     assert state.client is not None
     client = state.client
@@ -119,123 +231,62 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
     diagnostics.touch_activity(state, "query_start")
     state.active_tools.clear()
+    turn = _open_turn(state, show_output=show_output)
     try:
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
     except TimeoutError:
+        _close_turn(state, turn)
         await attempt_interrupt(state, config=config, reason="Query timeout")
         raise
     diagnostics.touch_activity(state, "query_sent")
-
-    responses: list[str] = []
-
-    def _emit(t: str) -> None:
-        logger.assistant(t)
-        state.event_bus.emit({"type": "assistant", "text": t})
-
-    def _emit_thinking(block: ThinkingBlock) -> None:
-        if not block.thinking.strip():
-            return
-        logger.thinking(block.thinking)
-        state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
-
-    def _render(texts: list[str], thinking_blocks: list[ThinkingBlock]) -> str | None:
-        """Emit thinking + filtered assistant text (when shown); return the joined text so the caller can record it."""
-        if show_output:
-            for block in thinking_blocks:
-                _emit_thinking(block)
-        text = "\n".join(texts) if texts else None
-        if text and show_output:
-            filtered = sdk_parsing.filter_tool_lines(text)
-            if filtered:
-                _emit(filtered)
-        return text
-
-    response_iter = client.receive_response().__aiter__()
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
     if state.interrupt_event and not state.interrupt_event.is_set():
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
-    watchdog_stop = asyncio.Event()
-    watchdog_task = asyncio.create_task(diagnostics.sdk_watchdog(state, stop=watchdog_stop))
+    done_task = asyncio.create_task(turn.done.wait())
+    waitables: set[asyncio.Task[tp.Any]] = {done_task}
+    if interrupt_task:
+        waitables.add(interrupt_task)
 
     try:
         while True:
-            anext_task = asyncio.create_task(anext(response_iter, _STOP))
-            waitables: set[asyncio.Task[tp.Any]] = {anext_task}
-            if interrupt_task and not interrupt_task.done():
-                waitables.add(interrupt_task)
-
-            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+            # Same silence budget as the old per-message wait: measured from the last stream
+            # message (the consumer touches last_message_at), so quiet stretches still time out.
+            # Wake at least every _SILENCE_POLL_S so long thinking gets liveness notes.
+            silence_budget = config.response_timeout - (time.monotonic() - turn.last_message_at)
+            wait_timeout = max(min(silence_budget, _SILENCE_POLL_S), 0)
+            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout)
 
             if not done:
-                await _cancel_task(anext_task)
-                await attempt_interrupt(state, config=config, reason="Response timeout")
-                raise TimeoutError
-
-            if interrupt_task and interrupt_task in done:
-                await attempt_interrupt(state, config=config, reason="New message interrupt")
-                await _cancel_task(anext_task)
-                # Cancelling anext_task finalizes response_iter, so drain leftover
-                # messages with a fresh iterator to keep the stream clean.
-                # Emit any text so it's not lost.
-                try:
-                    drain = client.receive_response().__aiter__()
-                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=_INTERRUPT_DRAIN_TIMEOUT_S)) is not None:
-                        texts, thinking_blocks, _ = sdk_parsing.parse_sdk_message(leftover)
-                        _render(texts, thinking_blocks)
-                except (TimeoutError, StopAsyncIteration):
-                    pass
-                break
-
-            result = anext_task.result()
-            if result is _STOP:
-                break
-
-            diagnostics.touch_activity(state, "sdk_message")
-            msg = tp.cast(Message, result)
-            if isinstance(msg, AssistantMessage):
-                state.compacting = False
-            texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
-            if session_id and session_id != state.persisted.session_id:
-                if state.persisted.session_id:
-                    logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
-                persist_session_id(session_id, state=state, config=config)
-            if show_output:
-                for block in thinking_blocks:
-                    _emit_thinking(block)
-            text = "\n".join(texts) if texts else None
-            # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
-            # so a terminal auth/billing failure surfaces through the SDK either as the assistant
-            # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
-            # status (api_error_status). Check BOTH so a token expiry can't stay invisible to the app.
-            auth_lost = (isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error)) or (
-                isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS
-            )
-            if auth_lost:
-                # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
-                # so the app shows "not signed in" in ~3s instead of hanging to the response timeout
-                # and restart-looping.
-                logger.error("Provider auth lost (terminal upstream 401/402); flipping to not_authenticated")
-                state.provider_status = observed_provider_failure(state.provider_status)
-                await attempt_interrupt(state, config=config, reason="Provider auth lost")
-                break
-            if not text:
+                if time.monotonic() - turn.last_message_at >= config.response_timeout:
+                    await attempt_interrupt(state, config=config, reason="Response timeout")
+                    raise TimeoutError
+                diagnostics.note_turn_liveness(state, turn=turn)
                 continue
-            responses.append(text)
-            if not show_output:
-                continue
-            filtered = sdk_parsing.filter_tool_lines(text)
-            if filtered:
-                _emit(filtered)
+
+            if done_task in done:
+                if turn.error is not None:
+                    raise turn.error
+                break
+
+            await attempt_interrupt(state, config=config, reason="New message interrupt")
+            # Give the wind-down a bounded window to deliver its ResultMessage so the next turn
+            # usually opens clean; on expiry the consumer still receives everything (emitted live,
+            # late result dropped), so nothing jams or leaks — the issue #958 failure mode.
+            try:
+                await asyncio.wait_for(turn.done.wait(), timeout=_INTERRUPT_TURN_END_GRACE_S)
+            except TimeoutError:
+                pass
+            break
     finally:
         state.compacting = False
-        watchdog_stop.set()
-        await _cancel_task(watchdog_task)
+        _close_turn(state, turn)
+        await _cancel_task(done_task)
         if interrupt_task and not interrupt_task.done():
             await _cancel_task(interrupt_task)
 
-    return responses
+    return turn.texts
 
 
 _EM_DASH = "—"
@@ -274,19 +325,20 @@ async def compact_session(*, state: vm.State) -> None:
     The official Claude Agent SDK has no compact() method; the documented path is to send the
     `/compact` slash command as a query (code.claude.com/docs/en/agent-sdk/slash-commands). Manual
     /compact rewrites the same session, so resume keeps working and the dreamer can restart into
-    the compacted conversation. The turn ends with SystemMessage(subtype="compact_boundary") then
-    a ResultMessage; draining the response blocks until compaction completes. Bounded so a stuck
-    summarization still lets the caller restart."""
+    the compacted conversation. The turn ends with SystemMessage(subtype="compact_boundary") — the
+    stream consumer logs it — then a ResultMessage, which closes the turn; waiting on the turn
+    blocks until compaction completes. Bounded so a stuck summarization still lets the caller
+    restart."""
     assert state.client is not None
     client = state.client
-    await client.query("/compact")
-
-    async def _drain() -> None:
-        async for msg in client.receive_response():
-            if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
-                logger.client("Compaction boundary reached")
-
-    await asyncio.wait_for(_drain(), timeout=_COMPACT_TIMEOUT_S)
+    turn = _open_turn(state, show_output=False)
+    try:
+        await client.query("/compact")
+        await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
+        if turn.error is not None:
+            raise turn.error
+    finally:
+        _close_turn(state, turn)
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
