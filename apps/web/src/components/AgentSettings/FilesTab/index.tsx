@@ -358,37 +358,46 @@ export function FilesTab() {
     </CardContent>
   );
 
-  // Mobile drill-in: the tree, then the editor/dreams detail view with a back
-  // button. Only one panel shows at a time, each filling the screen.
-  if (isMobile) {
+  // Drill-in layout: a hub, then the editor/dreams detail with a back button,
+  // one panel at a time. Used on mobile (any mode) and for the calm simple-mode
+  // hub on desktop. Advanced desktop keeps the two-pane tree + editor below.
+  const drillIn = isMobile || mode === "simple";
+  if (drillIn) {
     const inDetail = dreamsActive || selectedPath !== null;
-    return (
+    const panel = inDetail ? (
+      <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
+        <div className="shrink-0 flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="back to files"
+            onClick={goBack}
+          >
+            <ChevronLeft className="size-5" />
+          </Button>
+          <span className="flex-1 truncate text-xs text-muted-foreground">
+            {headerLabel}
+          </span>
+          {!dreamsActive && saveControls}
+        </div>
+        {editorBody}
+      </Card>
+    ) : (
+      treeInner
+    );
+
+    // Mobile fills the screen; desktop centers a calm, bounded column.
+    return isMobile ? (
       <div
         ref={fillRef}
         style={{ height: fillHeight }}
         className="flex min-h-0 flex-col"
       >
-        {inDetail ? (
-          <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
-            <div className="shrink-0 flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="back to files"
-                onClick={goBack}
-              >
-                <ChevronLeft className="size-5" />
-              </Button>
-              <span className="flex-1 truncate text-xs text-muted-foreground">
-                {headerLabel}
-              </span>
-              {!dreamsActive && saveControls}
-            </div>
-            {editorBody}
-          </Card>
-        ) : (
-          treeInner
-        )}
+        {panel}
+      </div>
+    ) : (
+      <div className="mx-auto flex h-[70vh] w-full max-w-2xl min-h-0 flex-col">
+        {panel}
       </div>
     );
   }

@@ -74,7 +74,8 @@ export function SimpleView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-1">
+    <div className="flex h-full min-h-0 flex-col gap-3 p-1">
+      <GroupLabel>vesta's mind</GroupLabel>
       <MindCard
         memorySelected={selected === MEMORY_PATH && !dreamsActive}
         constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
@@ -85,10 +86,30 @@ export function SimpleView({
         onShowDreams={onShowDreams}
       />
       <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+      <GroupLabel className="pt-1">on this computer</GroupLabel>
       <div className="shrink-0">
         <HostAccessCard />
       </div>
     </div>
+  );
+}
+
+function GroupLabel({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <p
+      className={cn(
+        "shrink-0 px-1 text-[11px] font-medium text-muted-foreground/70",
+        className,
+      )}
+    >
+      {children}
+    </p>
   );
 }
 
