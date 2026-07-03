@@ -18,9 +18,7 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 
 ## Sync (after an upgrade, when the boot turn asks)
 
-First check the workspace exists: if `~/.git` is missing, run
-`~/agent/core/skills/workspace-sync/scripts/attach.sh` (idempotent; exit 4 means an
-old-shape workspace, converted by the one-time workspace-conversion boot migration). Then:
+Your workspace is attached once at birth (see SETUP.md), so it already exists here.
 
 ```bash
 cd ~
