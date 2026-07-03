@@ -3,12 +3,18 @@ set -euo pipefail
 
 # Register a background service with vestad and print the assigned port.
 # Pass --public for services that need a public tunnel route (no token), omit
-# it for token-only services. Registration is idempotent: vestad returns the
-# same port for a given name on every call.
+# it for token-only services.
 #
 # Usage: register-service <name> [--public]
 #   PORT=$(~/agent/skills/service/scripts/register-service tasks)
 #   PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
+#
+# A container restart can run this before vestad's HTTP API is back up. In that
+# window the POST hits a refused connection (empty body), so we wait briefly for
+# vestad to become reachable rather than dying on an unparseable response. If
+# vestad is still unreachable after the deadline, fail cleanly on stderr with a
+# non-zero exit (no Python traceback) so the caller can skip the launch and retry
+# on the next boot instead of starting a portless daemon.
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 PUBLIC="false"
@@ -16,7 +22,26 @@ if [ "${2:-}" = "--public" ]; then
     PUBLIC="true"
 fi
 
-curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services" \
-    -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-    -d "{\"name\":\"$NAME\",\"public\":$PUBLIC}" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])"
+URL="https://localhost:${VESTAD_PORT}/agents/${AGENT_NAME}/services"
+BODY="{\"name\":\"${NAME}\",\"public\":${PUBLIC}}"
+WAIT_SECS="${REGISTER_SERVICE_WAIT:-30}"
+
+deadline=$(( $(date +%s) + WAIT_SECS ))
+last=""
+while :; do
+    resp=$(curl -sk --max-time 5 -X POST "$URL" \
+        -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
+        -d "$BODY" 2>/dev/null || true)
+    port=$(printf '%s' "$resp" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d['port'])" 2>/dev/null || true)
+    if [ -n "$port" ]; then
+        echo "$port"
+        exit 0
+    fi
+    last="$resp"
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "register-service: could not register '$NAME': vestad unreachable or bad response after ${WAIT_SECS}s (last: ${last:-<empty>})" >&2
+        exit 1
+    fi
+    sleep 2
+done
