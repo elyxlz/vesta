@@ -118,7 +118,7 @@ export function HostAccessCard() {
                 <div className="flex flex-col gap-2">
                   {mounts.map((mount, index) => (
                     <div
-                      key={`${mount.container_path}-${index}`}
+                      key={mount.container_path}
                       className="flex items-center gap-2 rounded-md"
                     >
                       <FolderOpen className="size-3.5 shrink-0 text-muted-foreground/60" />
