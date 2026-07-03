@@ -15,6 +15,10 @@ Your running version: `grep '^version = ' ~/agent/core/pyproject.toml`
 
 ## Sync (after an upgrade, when the boot turn asks)
 
+First check the workspace exists: if `~/.git` is missing, run
+`~/agent/core/skills/upstream-sync/scripts/attach.sh` (idempotent; exit 4 means follow
+Migration below). Then:
+
 ```bash
 cd ~
 git add -A && git commit -m checkpoint    # only if `git status` shows changes
@@ -27,18 +31,15 @@ git rebase agent-vX.Y.Z                   # the version from the boot turn
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt upstream's structure.
 - Then call `mark_upstream_synced`. If the rebase brought changes, call `restart_vesta`
   (after marking) so updated skills load.
-- If the workspace was never set up, run
-  `~/agent/core/skills/upstream-sync/scripts/attach.sh` first (idempotent; exit 4 means
-  follow Migration below).
 
 ## Status
 
 `~/agent/core/skills/upstream-sync/scripts/status.sh` shows your delta vs your
 snapshot, and the branch tip. Read-only.
 
-## Unmanaged core (only if this box manages its own core)
+## Core updates on unmanaged boxes (created with --no-manage-core-code)
 
-On boxes created with `--no-manage-core-code`, core is part of your checkout and updates
+On these boxes vestad does not mount core; it is part of your checkout and updates
 only when the user asks:
 
 ```bash
