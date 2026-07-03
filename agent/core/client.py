@@ -100,6 +100,8 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
+_SILENCE_POLL_S = 15.0  # wake the turn's wait loop during quiet stretches to log liveness notes
+
 # Post-interrupt wait for the interrupted turn's ResultMessage. Purely a labeling nicety so the
 # next turn usually opens against a clean stream; when the CLI's wind-down outlives it, the
 # consumer still receives everything and the late result is dropped as advisory (issue #958).
@@ -239,9 +241,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     if state.interrupt_event and not state.interrupt_event.is_set():
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
-    watchdog_stop = asyncio.Event()
-    watchdog_task = asyncio.create_task(diagnostics.sdk_watchdog(state, stop=watchdog_stop))
     done_task = asyncio.create_task(turn.done.wait())
+    noted_silence: set[int] = set()
 
     try:
         while True:
@@ -251,13 +252,16 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             # Same silence budget as the old per-message wait: measured from the last stream
             # message (the consumer touches last_message_at), so quiet stretches still time out.
+            # Wake at least every _SILENCE_POLL_S so long thinking gets liveness notes.
             silence_budget = config.response_timeout - (time.monotonic() - turn.last_message_at)
-            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=max(silence_budget, 0))
+            wait_timeout = max(min(silence_budget, _SILENCE_POLL_S), 0)
+            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout)
 
             if not done:
                 if time.monotonic() - turn.last_message_at >= config.response_timeout:
                     await attempt_interrupt(state, config=config, reason="Response timeout")
                     raise TimeoutError
+                diagnostics.note_stream_silence(state, noted_at=noted_silence)
                 continue
 
             if done_task in done:
@@ -277,8 +281,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     finally:
         state.compacting = False
         _close_turn(state, turn)
-        watchdog_stop.set()
-        await _cancel_task(watchdog_task)
         await _cancel_task(done_task)
         if interrupt_task and not interrupt_task.done():
             await _cancel_task(interrupt_task)

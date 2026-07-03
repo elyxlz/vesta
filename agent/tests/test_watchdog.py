@@ -2,22 +2,19 @@
 
 import asyncio
 import contextlib
-import tempfile
 import time
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core.client import converse
 from wait_util import wait_for_condition
 from core.diagnostics import (
-    _check_sdk_subprocess_alive,
     format_hang_diagnostics,
     longest_running_tool,
+    note_stream_silence,
     sdk_idle_seconds,
-    sdk_watchdog,
     touch_activity,
 )
 
@@ -33,16 +30,13 @@ def captured_warnings(monkeypatch):
 
 
 @pytest.fixture
-def fast_watchdog_poll(monkeypatch):
-    """Collapse the watchdog's poll interval so sdk_watchdog ticks immediately."""
+def captured_notes(monkeypatch):
+    """Capture the INFO-band liveness notes note_stream_silence logs via logger.client."""
     import core.diagnostics as diagnostics_mod
 
-    original_wait_for = asyncio.wait_for
-
-    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
-        return await original_wait_for(coro, timeout=0.01)
-
-    monkeypatch.setattr(diagnostics_mod.asyncio, "wait_for", fast_wait_for)
+    notes: list[str] = []
+    monkeypatch.setattr(diagnostics_mod.logger, "client", lambda msg: notes.append(str(msg)))
+    return notes
 
 
 # --- ActiveTool and State activity tracking ---
@@ -115,160 +109,137 @@ def test_format_hang_diagnostics_includes_stderr_tail():
     assert "line 9" in diag
 
 
-# --- _check_sdk_subprocess_alive ---
-# Liveness is read through the client's public is_alive() accessor. The alive/dead
-# distinction needs a launched claude process and lives in test_e2e_transport.py; the
-# reachable-without-tmux cases (no client, and a constructed-but-unlaunched real client)
-# are covered here.
+# --- note_stream_silence ---
 
 
-def test_subprocess_alive_returns_none_when_no_client():
+def _quiet_state(idle_s: float) -> vm.State:
     state = vm.State()
-    state.client = None
-    assert _check_sdk_subprocess_alive(state) is None
+    state.last_sdk_activity = time.monotonic() - idle_s
+    return state
 
 
-def test_subprocess_alive_returns_none_before_launch():
-    state = vm.State()
-    state.client = ClaudeSDKClient(options=ClaudeAgentOptions(cwd=tempfile.mkdtemp()))
-    assert _check_sdk_subprocess_alive(state) is None
+def test_silence_notes_once_per_threshold(captured_notes):
+    state = _quiet_state(65)
+    noted: set[int] = set()
+
+    note_stream_silence(state, noted_at=noted)
+    note_stream_silence(state, noted_at=noted)
+
+    assert len([n for n in captured_notes if "Model quiet for 60s" in n]) == 1, f"one note per crossing, got: {captured_notes}"
+    assert noted == {60}
 
 
-# --- sdk_watchdog ---
+def test_silence_notes_each_threshold_as_idle_grows(captured_notes):
+    state = _quiet_state(65)
+    noted: set[int] = set()
+
+    note_stream_silence(state, noted_at=noted)
+    state.last_sdk_activity = time.monotonic() - 125
+    note_stream_silence(state, noted_at=noted)
+
+    assert [n for n in captured_notes if "Model quiet" in n] == [
+        next(n for n in captured_notes if "60s" in n),
+        next(n for n in captured_notes if "120s" in n),
+    ], f"expected a 60s then a 120s note, got: {captured_notes}"
+
+
+def test_silence_resets_when_stream_talks_again(captured_notes):
+    state = _quiet_state(65)
+    noted: set[int] = set()
+
+    note_stream_silence(state, noted_at=noted)
+    touch_activity(state, "sdk_message")
+    note_stream_silence(state, noted_at=noted)  # fresh activity clears the noted set
+    assert noted == set()
+
+    state.last_sdk_activity = time.monotonic() - 65
+    note_stream_silence(state, noted_at=noted)
+
+    assert len([n for n in captured_notes if "Model quiet for 60s" in n]) == 2, f"expected a re-note after reset, got: {captured_notes}"
+
+
+def test_silence_escalates_to_warning_and_event_past_escalation(captured_warnings, captured_notes, tmp_path):
+    state = _quiet_state(305)
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    noted: set[int] = set()
+
+    note_stream_silence(state, noted_at=noted)
+    note_stream_silence(state, noted_at=noted)
+
+    warnings_300 = [w for w in captured_warnings if "Model quiet for 300s" in w]
+    assert len(warnings_300) == 1, f"expected exactly one 300s warning, got: {captured_warnings}"
+    events = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if event["type"] == "error" and "Model quiet" in event["text"]:
+            events.append(event)
+    assert len(events) == 1, f"expected exactly one error event, got: {events}"
+    # The earlier thresholds stay calm INFO notes, not warnings.
+    assert len([n for n in captured_notes if "Model quiet" in n]) == 2, f"60s+120s notes expected, got: {captured_notes}"
+    state.event_bus.close()
+
+
+def test_silence_stays_debug_while_tool_runs(captured_warnings, captured_notes, tmp_path):
+    """A running tool explains the quiet (a long build, a sleep): no notes, no warnings, no events."""
+    state = _quiet_state(305)
+    state.event_bus = vm.EventBus(data_dir=tmp_path)
+    queue = state.event_bus.subscribe()
+    state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="sleep 180", started_at=time.monotonic() - 305)
+    noted: set[int] = set()
+
+    note_stream_silence(state, noted_at=noted)
+
+    assert [n for n in captured_notes if "Model quiet" in n] == [], f"expected no notes mid-tool, got: {captured_notes}"
+    assert [w for w in captured_warnings if "Model quiet" in w] == [], f"expected no warnings mid-tool, got: {captured_warnings}"
+    assert queue.empty(), "expected no error events mid-tool"
+    state.event_bus.close()
 
 
 @pytest.mark.anyio
-async def test_watchdog_warns_at_thresholds(captured_warnings, fast_watchdog_poll):
-    state = vm.State()
-    state.last_sdk_activity = time.monotonic() - 65  # Idle for 65s
-    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
-    stop = asyncio.Event()
-
-    async def stop_after_warning():
-        await wait_for_condition(lambda: any("SDK silent for 60s" in w for w in captured_warnings), message="watchdog never warned")
-        stop.set()
-
-    await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_warning())
-
-    assert any("SDK silent for 60s" in w for w in captured_warnings), f"Expected 60s warning, got: {captured_warnings}"
-
-
-@pytest.mark.anyio
-async def test_watchdog_resets_after_activity_resumes(captured_warnings, monkeypatch):
+async def test_converse_notes_silence_while_waiting(captured_notes, monkeypatch):
+    """The wait loop itself emits the liveness note during a long quiet stretch: a silent model
+    reads as 'still thinking' in the log before the turn completes."""
+    import core.client as client_mod
     import core.diagnostics as diagnostics_mod
+    from claude_agent_sdk import ResultMessage
+    from core.client import consume_stream
+
+    monkeypatch.setattr(client_mod, "_SILENCE_POLL_S", 0.02)
+    monkeypatch.setattr(diagnostics_mod, "_SILENCE_THRESHOLDS_S", (0,))
 
     state = vm.State()
-    state.last_sdk_activity = time.monotonic() - 65  # Idle
-    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
-    stop = asyncio.Event()
+    config = vm.VestaConfig(interrupt_timeout=0.5)
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
 
-    original_wait_for = asyncio.wait_for
-    ticks = 0
+    q: asyncio.Queue = asyncio.Queue()
 
-    async def fast_wait_for(coro, *, timeout):  # type: ignore[no-untyped-def]
-        # One call per watchdog loop iteration; the idle check runs right after each call returns.
-        nonlocal ticks
-        ticks += 1
-        return await original_wait_for(coro, timeout=0.01)
+    async def stream():
+        while True:
+            yield await q.get()
 
-    monkeypatch.setattr(diagnostics_mod.asyncio, "wait_for", fast_wait_for)
+    mock_client.receive_messages = MagicMock(side_effect=lambda: stream())
+    consumer = asyncio.create_task(consume_stream(state=state, config=config))
 
-    def sixty_warning_count() -> int:
-        return len([w for w in captured_warnings if "SDK silent for 60s" in w])
+    async def end_turn_after_quiet():
+        await wait_for_condition(lambda: any("Model quiet" in n for n in captured_notes), message="no liveness note during silence")
+        result = MagicMock(spec=ResultMessage)
+        result.content = []
+        await q.put(result)
 
-    async def resume_then_idle_again():
-        await wait_for_condition(lambda: sixty_warning_count() >= 1, message="watchdog never warned the first time")
-        touch_activity(state, "sdk_message")
-        # Wait two full ticks so at least one idle check definitely ran with the fresh
-        # activity timestamp (clearing the watchdog's warned state), then go idle again.
-        ticks_at_resume = ticks
-        await wait_for_condition(lambda: ticks >= ticks_at_resume + 2, message="watchdog stopped ticking")
-        state.last_sdk_activity = time.monotonic() - 65
-        await wait_for_condition(lambda: sixty_warning_count() >= 2, message="watchdog never re-warned after reset")
-        stop.set()
+    ender = asyncio.create_task(end_turn_after_quiet())
+    try:
+        await asyncio.wait_for(converse("test", state=state, config=config, show_output=False), timeout=5.0)
+        await ender
+    finally:
+        consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consumer
 
-    await asyncio.gather(sdk_watchdog(state, stop=stop), resume_then_idle_again())
-
-    sixty_warnings = [w for w in captured_warnings if "SDK silent for 60s" in w]
-    assert len(sixty_warnings) >= 2, f"Expected 60s warning to fire again after reset, got {len(sixty_warnings)}: {captured_warnings}"
-
-
-@pytest.mark.anyio
-async def test_watchdog_stops_cleanly():
-    state = vm.State()
-    stop = asyncio.Event()
-    stop.set()  # Stop immediately
-    await sdk_watchdog(state, stop=stop)  # Should not hang
-
-
-@pytest.mark.anyio
-async def test_watchdog_emits_error_event_once_per_threshold(fast_watchdog_poll, tmp_path):
-    """Crossing a watchdog threshold emits exactly one error event to the bus, not one per poll."""
-    state = vm.State()
-    state.event_bus = vm.EventBus(data_dir=tmp_path)
-    queue = state.event_bus.subscribe()
-    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
-    state.interrupt_event = asyncio.Event()  # Turn in flight, so silence is suspicious
-    stop = asyncio.Event()
-    seen: list[tp.Any] = []
-
-    def sixty_events() -> list[str]:
-        while not queue.empty():
-            seen.append(queue.get_nowait())
-        return [e["text"] for e in seen if e["type"] == "error" and "SDK silent for 60s" in e["text"]]
-
-    async def stop_after_some_polls():
-        # Wait until the threshold has fired, then let several more polls run to prove
-        # the event is emitted once per crossing rather than once per poll.
-        await wait_for_condition(lambda: len(sixty_events()) >= 1, message="watchdog never emitted")
-        for _ in range(5):
-            await asyncio.sleep(0.02)
-        stop.set()
-
-    await asyncio.gather(sdk_watchdog(state, stop=stop), stop_after_some_polls())
-
-    assert len(sixty_events()) == 1, f"expected exactly one 60s error event, got {sixty_events()}"
-    state.event_bus.close()
-
-
-@pytest.mark.parametrize(
-    "interrupt_in_flight,with_running_tool",
-    [(False, False), (True, True)],
-    ids=["idle-between-turns", "turn-in-flight-tool-running"],
-)
-@pytest.mark.anyio
-async def test_watchdog_stays_quiet_when_silence_is_benign(
-    captured_warnings, fast_watchdog_poll, tmp_path, interrupt_in_flight, with_running_tool
-):
-    """Benign silence emits nothing: either no turn is in flight, or a turn is in flight while a
-    tool actively runs (a long `sleep` or build leaves the SDK silent without being hung)."""
-    state = vm.State()
-    state.event_bus = vm.EventBus(data_dir=tmp_path)
-    queue = state.event_bus.subscribe()
-    state.last_sdk_activity = time.monotonic() - 65  # Idle past the 60s threshold
-    state.interrupt_event = asyncio.Event() if interrupt_in_flight else None
-    if with_running_tool:
-        state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="sleep 180", started_at=time.monotonic() - 65)
-    stop = asyncio.Event()
-
-    def error_events() -> list[tp.Any]:
-        events: list[tp.Any] = []
-        while not queue.empty():
-            event = queue.get_nowait()
-            if event["type"] == "error" and "SDK silent" in event["text"]:
-                events.append(event)
-        return events
-
-    async def let_several_polls_run():
-        for _ in range(5):
-            await asyncio.sleep(0.02)
-        stop.set()
-
-    await asyncio.gather(sdk_watchdog(state, stop=stop), let_several_polls_run())
-
-    assert not [w for w in captured_warnings if "SDK silent" in w], f"expected no warnings for benign silence, got {captured_warnings}"
-    assert error_events() == [], f"expected no error events for benign silence, got {error_events()}"
-    state.event_bus.close()
+    assert any("Model quiet" in n for n in captured_notes), f"expected a liveness note, got: {captured_notes}"
 
 
 # --- Tool duration tracking via hooks ---
