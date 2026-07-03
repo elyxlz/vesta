@@ -29,11 +29,21 @@ function typingDelay(charCount: number): number {
   return raw + Math.floor(Math.random() * variance * 2) - variance;
 }
 
-// Reveal speed for streamed previews: fraction of the backlog revealed per animation frame,
-// with a floor so short backlogs still type steadily (~60cps at 60fps). Proportional catch-up
-// keeps the draft close to the wire without the chunk-at-a-time jumps of raw delta cadence.
-const REVEAL_BACKLOG_FRACTION = 0.08;
-const REVEAL_MIN_CHARS_PER_FRAME = 1;
+// Streamed previews reveal exactly ONE word per tick — a steady rhythm reads as typing, while
+// variable multi-char steps read as pops. Backlog pressure shortens the interval between words
+// (never enlarges the step), so catch-up is faster typing, not bigger jumps.
+const REVEAL_INTERVAL_RELAXED_MS = 64;
+const REVEAL_INTERVAL_BUSY_MS = 32;
+const REVEAL_INTERVAL_BACKLOGGED_MS = 16;
+const REVEAL_BUSY_BACKLOG_CHARS = 150;
+const REVEAL_BACKLOGGED_CHARS = 400;
+
+function nextWordBoundary(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  while (i < text.length && !/\s/.test(text[i])) i++;
+  return i;
+}
 
 /** Streamed-text smoother: chunks append to a buffer, an rAF loop reveals the buffer
  * incrementally so the preview reads as continuous typing regardless of chunk cadence.
@@ -52,22 +62,27 @@ function useStreamedText(): [
   const revealedRef = useRef(0);
   const frameRef = useRef<number | null>(null);
 
+  const lastRevealRef = useRef(0);
+
   const schedule = useCallback(() => {
     if (frameRef.current !== null) return;
-    const tick = () => {
+    const tick = (now: number) => {
       frameRef.current = null;
-      const backlog = bufferRef.current.length - revealedRef.current;
+      const buffer = bufferRef.current;
+      const backlog = buffer.length - revealedRef.current;
       if (backlog <= 0) return;
-      const step = Math.max(
-        REVEAL_MIN_CHARS_PER_FRAME,
-        Math.ceil(backlog * REVEAL_BACKLOG_FRACTION),
-      );
-      revealedRef.current = Math.min(
-        bufferRef.current.length,
-        revealedRef.current + step,
-      );
-      setText(bufferRef.current.slice(0, revealedRef.current));
-      if (revealedRef.current < bufferRef.current.length) {
+      const interval =
+        backlog > REVEAL_BACKLOGGED_CHARS
+          ? REVEAL_INTERVAL_BACKLOGGED_MS
+          : backlog > REVEAL_BUSY_BACKLOG_CHARS
+            ? REVEAL_INTERVAL_BUSY_MS
+            : REVEAL_INTERVAL_RELAXED_MS;
+      if (now - lastRevealRef.current >= interval) {
+        lastRevealRef.current = now;
+        revealedRef.current = nextWordBoundary(buffer, revealedRef.current);
+        setText(buffer.slice(0, revealedRef.current));
+      }
+      if (revealedRef.current < buffer.length) {
         frameRef.current = requestAnimationFrame(tick);
       }
     };
@@ -94,6 +109,7 @@ function useStreamedText(): [
     }
     bufferRef.current = "";
     revealedRef.current = 0;
+    lastRevealRef.current = 0;
     setText("");
   }, []);
 
