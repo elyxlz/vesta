@@ -16,6 +16,9 @@ mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod manifest;
+// Foundation for host filesystem grants; consumed starting with AgentSettings.mounts (next task).
+#[allow(dead_code)]
+mod mounts;
 mod jwt;
 mod paths;
 mod providers;
