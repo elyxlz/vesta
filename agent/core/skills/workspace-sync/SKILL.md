@@ -1,6 +1,6 @@
 ---
 name: workspace-sync
-description: Sync your workspace with the published agent branch after an upgrade; install core updates on unmanaged boxes; resolve rebase conflicts.
+description: Sync your workspace with the published agent branch after an upgrade.
 ---
 
 # Workspace Sync
