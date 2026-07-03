@@ -1,6 +1,7 @@
 """Tests for SDK activity watchdog, tool duration tracking, and hang diagnostics."""
 
 import asyncio
+import contextlib
 import tempfile
 import time
 import typing as tp
@@ -328,9 +329,31 @@ async def test_tool_failure_hook_cleans_up():
 # --- converse() watchdog integration ---
 
 
+async def _run_converse_with_consumer(state, config, messages):
+    """Drive one converse() turn with the real stream consumer fed from `messages`."""
+    from core.client import consume_stream
+
+    async def stream():
+        for msg in messages:
+            yield msg
+        await asyncio.Event().wait()
+
+    assert state.client is not None
+    state.client.receive_messages = MagicMock(side_effect=lambda: stream())
+    consumer = asyncio.create_task(consume_stream(state=state, config=config))
+    try:
+        await converse("test", state=state, config=config, show_output=False)
+    finally:
+        consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consumer
+
+
 @pytest.mark.anyio
 async def test_converse_touches_activity_on_messages():
-    """converse updates last_sdk_activity when SDK messages arrive."""
+    """The stream consumer updates last_sdk_activity when SDK messages arrive."""
+    from claude_agent_sdk import ResultMessage
+
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
 
@@ -339,15 +362,16 @@ async def test_converse_touches_activity_on_messages():
     mock_client.interrupt = AsyncMock()
     state.client = mock_client
 
-    async def three_messages():
-        for _ in range(3):
-            msg = MagicMock()
-            msg.content = []
-            yield msg
+    messages = []
+    for _ in range(3):
+        msg = MagicMock()
+        msg.content = []
+        messages.append(msg)
+    result = MagicMock(spec=ResultMessage)
+    result.content = []
+    messages.append(result)
 
-    mock_client.receive_response = MagicMock(return_value=three_messages())
-
-    await converse("test", state=state, config=config, show_output=False)
+    await _run_converse_with_consumer(state, config, messages)
 
     assert state.last_sdk_activity_label == "sdk_message"
 
@@ -355,6 +379,8 @@ async def test_converse_touches_activity_on_messages():
 @pytest.mark.anyio
 async def test_converse_clears_active_tools_on_start():
     """converse clears stale active_tools from prior calls."""
+    from claude_agent_sdk import ResultMessage
+
     state = vm.State()
     config = vm.VestaConfig(interrupt_timeout=0.5)
     state.active_tools["stale"] = vm.ActiveTool(name="Old", summary="leftover", started_at=0)
@@ -364,12 +390,9 @@ async def test_converse_clears_active_tools_on_start():
     mock_client.interrupt = AsyncMock()
     state.client = mock_client
 
-    async def empty_response():
-        return
-        yield  # Make it an async generator
+    result = MagicMock(spec=ResultMessage)
+    result.content = []
 
-    mock_client.receive_response = MagicMock(return_value=empty_response())
-
-    await converse("test", state=state, config=config, show_output=False)
+    await _run_converse_with_consumer(state, config, [result])
 
     assert "stale" not in state.active_tools

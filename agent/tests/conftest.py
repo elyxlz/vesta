@@ -30,3 +30,16 @@ def state():
     s = vm.State()
     s.shutdown_event = asyncio.Event()
     return s
+
+
+def idle_message_stream():
+    """receive_messages() stand-in that never yields: parks the stream consumer.
+
+    message_processor spawns consume_stream against its client; mock clients hand it this
+    so the consumer idles instead of erroring on a non-iterable MagicMock."""
+
+    async def _stream():
+        await asyncio.Event().wait()
+        yield  # never reached; makes this an async generator
+
+    return _stream()

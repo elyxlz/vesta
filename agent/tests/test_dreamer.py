@@ -1,6 +1,7 @@
 """Tests for nightly dreamer/memory scheduling."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import typing as tp
@@ -9,7 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import core.models as vm
-from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, SystemMessage
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, ResultMessage, SystemMessage
+from wait_util import wait_for_condition
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
@@ -122,21 +124,46 @@ async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tm
 # --- compact_then_restart_if_requested drain ---
 
 
+async def _run_with_compaction_stream(state, config, action, *, pre_tokens):
+    """Run `action` with the real stream consumer fed a compaction turn (boundary then result).
+
+    The stream waits for compact_session to open its turn (the real CLI only responds after the
+    /compact query), then yields the boundary and the turn-closing ResultMessage."""
+    from core.client import consume_stream
+
+    state.persisted.session_id = state.persisted.session_id or "sess-compact"
+    client = AsyncMock()
+
+    async def stream():
+        await wait_for_condition(lambda: state.turn is not None, message="compact_session never opened a turn")
+        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": pre_tokens, "trigger": "manual"}})
+        yield ResultMessage(
+            subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1, session_id=state.persisted.session_id
+        )
+        await asyncio.Event().wait()
+
+    client.receive_messages = MagicMock(side_effect=lambda: stream())
+    state.client = tp.cast(ClaudeSDKClient, client)
+    consumer = asyncio.create_task(consume_stream(state=state, config=config))
+    try:
+        await asyncio.wait_for(action(), timeout=5.0)
+    finally:
+        consumer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consumer
+    return client
+
+
 @pytest.mark.anyio
-async def test_drain_compacts_then_triggers_restart():
+async def test_drain_compacts_then_triggers_restart(tmp_path):
     from core.loops import compact_then_restart_if_requested
 
-    async def compact_response():
-        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
-
+    config = _setup(tmp_path)
     state = vm.State()
-    client = AsyncMock()
-    client.receive_response = MagicMock(return_value=compact_response())
-    state.client = tp.cast(ClaudeSDKClient, client)
     state.compact_then_restart = True
 
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
-        await compact_then_restart_if_requested(state=state)
+        client = await _run_with_compaction_stream(state, config, lambda: compact_then_restart_if_requested(state=state), pre_tokens=1000)
 
     client.query.assert_awaited_once_with("/compact")
     assert state.compact_then_restart is False
@@ -216,15 +243,9 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     assert dying_queue.qsize() == 1, "message is in the queue"
 
     # Compaction finishes: compact_then_restart_if_requested sets graceful_shutdown.
-    async def compact_response():
-        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1, "trigger": "manual"}})
-
     state.compact_then_restart = True
-    client = AsyncMock()
-    client.receive_response = MagicMock(return_value=compact_response())
-    state.client = tp.cast(ClaudeSDKClient, client)
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
-        await compact_then_restart_if_requested(state=state)
+        await _run_with_compaction_stream(state, config, lambda: compact_then_restart_if_requested(state=state), pre_tokens=1)
     restart.assert_awaited_once()  # restart fires after compaction (via vestad)
 
     # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.

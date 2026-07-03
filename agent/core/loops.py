@@ -25,6 +25,7 @@ from .client import (
     persist_session_id,
     resolve_openrouter_max_tokens,
     compact_session,
+    consume_stream,
     _cancel_task,
 )
 from .diagnostics import format_crash_detail
@@ -366,6 +367,9 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
         try:
             async with ClaudeSDKClient(options=options) as client:
                 state.client = client
+                # The one consumer of the SDK stream for this whole session (see consume_stream);
+                # turn drivers only wait on state.turn signals, they never read the stream.
+                consumer_task = asyncio.create_task(consume_stream(state=state, config=config))
                 logger.client("Client session started")
 
                 try:
@@ -382,9 +386,11 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
                         finally:
                             state.processor_busy = False
                 finally:
+                    await _cancel_task(consumer_task)
                     state.client = None
                     state.interrupt_event = None
                     state.compacting = False
+                    state.turn = None
                     logger.client("Client session closed")
             break
         except (ClaudeSDKError, OSError, RuntimeError) as exc:

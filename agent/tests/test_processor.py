@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
+from conftest import idle_message_stream
 from core.client import process_message
 from wait_util import wait_for_condition
 
@@ -47,6 +48,7 @@ async def _run_processor_test(
 
     mock_client = MagicMock()
     mock_client.return_value = mock_client
+    mock_client.receive_messages = idle_message_stream
 
     async def mock_enter(self):
         nonlocal session_count
@@ -179,6 +181,7 @@ async def test_client_cleared_on_cancellation(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
 
     mock_client = MagicMock()
+    mock_client.receive_messages = idle_message_stream
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 

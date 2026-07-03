@@ -8,6 +8,7 @@ import pytest
 from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
+from conftest import idle_message_stream
 from core.diagnostics import format_crash_detail
 from wait_util import wait_for_condition
 
@@ -44,6 +45,7 @@ def _mock_client(enter):
     """Build a ClaudeSDKClient stand-in whose async __aenter__ runs `enter`."""
     client = MagicMock()
     client.return_value = client
+    client.receive_messages = idle_message_stream
     client.__aenter__ = enter
     client.__aexit__ = AsyncMock(return_value=None)
     return client
