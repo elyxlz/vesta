@@ -105,7 +105,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "export UV_PROJECT_ENVIRONMENT=/root/agent/.venv".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // LEGACY(remove-when: fleet converged to agent-branch workspaces — the published
+        // LEGACY(remove-when: fleet converged to vestad-served workspaces — the workspace
         // branch never tracks .claude, so migrated workspaces cannot hit this):
         // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
         // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
@@ -2290,7 +2290,7 @@ mod tests {
     fn entrypoint_pins_venv_and_tolerates_both_engine_layouts() {
         // The venv must live outside the read-only core mount, and the sync/launch steps
         // must handle both the new layout (pyproject in core/) and the legacy root layout
-        // so unmanaged boxes never crash-loop before their first agent-branch sync.
+        // so unmanaged boxes never crash-loop before their first workspace sync.
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
         assert!(script.contains("UV_PROJECT_ENVIRONMENT=/root/agent/.venv"), "entrypoint must pin the venv outside core: {script}");

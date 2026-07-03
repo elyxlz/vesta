@@ -1,4 +1,4 @@
-"""Exercises the REAL agent-branch box flow against local workspace bundles (no network).
+"""Exercises the REAL box workspace flow against local workspace bundles (no network).
 
 Fixtures build a bundle with the REAL build-workspace.sh (the script vestad runs), then
 drive the REAL attach.sh / fetch-workspace.sh / skills-install / skills-remove scripts plus
@@ -263,7 +263,7 @@ def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
     (home / "agent/pyproject.toml").write_text("stale\n")
     (home / "agent/MEMORY.md").write_text("# memory template 0.1.170\nmy personal notes\n")
     assert _attach(home, bundle).returncode == 4
-    # The conversion spine from agent/core/migrations/2026-07-agent-branch-workspace.md:
+    # The conversion spine from agent/core/migrations/2026-07-workspace-conversion.md:
     (home / ".git").rename(home / ".git-legacy")
     (home / "agent/pyproject.toml").unlink()
     assert _attach(home, bundle).returncode == 0
