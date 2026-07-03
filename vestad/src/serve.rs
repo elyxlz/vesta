@@ -644,7 +644,11 @@ async fn restart_agent_handler(
         settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
         save_settings(&settings);
     }
-    docker::restart_agent(&state.docker, &name)
+    let user_mounts = {
+        let settings = state.settings.read().await;
+        settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
+    };
+    docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -677,7 +681,11 @@ async fn rebuild_agent_handler(
     tracing::info!(name = %name, "rebuilding agent");
     let _guard = agent_write_guard(&state, &name).await;
 
-    docker::rebuild_agent(&state.docker, &name, &state.env_config)
+    let user_mounts = {
+        let settings = state.settings.read().await;
+        settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
+    };
+    docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
     // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
@@ -718,7 +726,11 @@ async fn rename_agent_handler(
     let _g1 = lock_first.write().await;
     let _g2 = lock_second.write().await;
 
-    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config)
+    let user_mounts = {
+        let settings = state.settings.read().await;
+        settings.agents.get(&name).map(|a| a.mounts.clone()).unwrap_or_default()
+    };
+    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
 
@@ -2552,6 +2564,9 @@ pub async fn run_server(cfg: ServerConfig) {
             // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
             // during the slow reconcile window would otherwise be reverted by the start/stop step.
             &|name| load_settings().agents.get(name).is_none_or(|s| s.user_desired == UserDesired::Running),
+            // Mount grants are also read LIVE so a grant added/removed during the reconcile window
+            // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
+            &|name| load_settings().agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default(),
         )
         .await;
     });

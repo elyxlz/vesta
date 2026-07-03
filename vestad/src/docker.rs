@@ -1832,10 +1832,19 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
+
+    // A grant change can't be applied by a plain restart (binds are fixed at creation), so if the
+    // desired mounts drifted from the container, recreate; otherwise a cheap restart.
+    if let Ok(raw) = docker.inspect_container(&cname, None).await {
+        if needs_rebuild(&cname, &raw, user_mounts) {
+            tracing::info!(agent = %name, "restart: mount config drifted, recreating");
+            return rebuild_agent(docker, name, env_config, user_mounts).await;
+        }
+    }
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
 }
@@ -1872,6 +1881,7 @@ pub async fn reconcile_containers(
     agent_code_changed: bool,
     manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
+    mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
 ) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
@@ -1943,8 +1953,8 @@ pub async fn reconcile_containers(
                 "settings.manage_agent_code disagrees with container, using container as source of truth. fix by destroying and recreating the agent."
             );
         }
-        // TODO(task 5): pass the agent's actual desired host-mount grants instead of `&[]`.
-        if !needs_rebuild(cname, &raw, &[]) {
+        let desired_mounts = mounts_for(name);
+        if !needs_rebuild(cname, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -1962,7 +1972,7 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(docker, name, env_config).await {
+        match rebuild_agent(docker, name, env_config, &desired_mounts).await {
             Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
@@ -2153,7 +2163,7 @@ async fn resolve_existing_port(docker: &Docker, cname: &str, info: &ContainerInf
 /// a new one from the snapshot. Mount topology is preserved from the existing container,
 /// not re-derived from settings: `manage_agent_code` is fixed at create time, so the
 /// running container is the source of truth for which bind mounts to attach.
-pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
+pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let raw = docker.inspect_container(&cname, None).await.map_err(DockerError::from)?;
@@ -2184,7 +2194,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     ensure_container_removed(docker, &cname).await?;
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, &[]).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, user_mounts).await?;
 
     Ok(())
 }
@@ -2199,6 +2209,7 @@ pub async fn rename_agent(
     old_name: &str,
     new_name: &str,
     env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(old_name)?;
     validate_name(new_name)?;
@@ -2254,7 +2265,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, &[]).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, user_mounts).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
