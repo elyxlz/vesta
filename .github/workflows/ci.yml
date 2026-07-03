@@ -1326,8 +1326,27 @@ jobs:
   # ── Push Docker image (release only) ─────────────────────────────────
   # Gated on test-live: a live-test failure (via !failure() over needs) skips the
   # image push, so a broken agent is never published to :latest.
+  # ── Publish the agent branch (fleet distribution) ────────────────────
+  # The complete agent home (engine + skills) goes to the append-only
+  # agent-workspace branch, one commit + agent-vX.Y.Z tag per release. Boxes
+  # rebase onto their version's snapshot tag. Artifacts/images publish only
+  # if this lands, so a released version always has its snapshot.
+  publish-agent-branch:
+    if: github.event_name == 'release'
+    needs: [test-live]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Publish agent branch + snapshot tag
+        run: bash tools/publish-agent-branch.sh "${{ github.event.release.tag_name }}"
+
   push-image:
-    needs: [test-linux, test-live]
+    needs: [test-linux, test-live, publish-agent-branch]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -1361,7 +1380,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, publish-agent-branch]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1468,7 +1487,7 @@ jobs:
   # bumped version with no release, and the next ./release.sh skips to the next
   # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, publish-agent-branch, release]
     if: ${{ failure() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
