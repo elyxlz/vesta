@@ -61,3 +61,7 @@ logs/
 # Build artifacts
 skills/*/cli/build/
 skills/dashboard/app/core
+
+# Constitution: user-authored, bind-mounted read-only by vestad (per-agent, not
+# workspace content). Anchored so it never lands in the workspace snapshot or git status.
+/constitution.md
