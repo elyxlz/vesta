@@ -1842,7 +1842,8 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     if let Ok(raw) = docker.inspect_container(&cname, None).await {
         if needs_rebuild(&cname, &raw, user_mounts) {
             tracing::info!(agent = %name, "restart: mount config drifted, recreating");
-            return rebuild_agent(docker, name, env_config, user_mounts).await;
+            rebuild_agent(docker, name, env_config, user_mounts).await?;
+            return start_agent(docker, name).await;
         }
     }
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
@@ -2832,6 +2833,17 @@ mod tests {
         }
     }
 
+    /// Remove a test host tmpdir on drop, so an assertion panic mid-test doesn't leak it.
+    struct TestHostDir {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for TestHostDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
     /// Clean up a test image on drop.
     struct TestImage {
         tag: String,
@@ -3175,6 +3187,7 @@ mod tests {
         // validate_mount's default of using the canonicalized host path as the container path).
         let host_dir = std::env::temp_dir().join(format!("vesta-grant-{}", std::process::id()));
         std::fs::create_dir_all(&host_dir).expect("create host grant dir");
+        let _host_dir_guard = TestHostDir { path: host_dir.clone() };
         std::fs::write(host_dir.join("hello.txt"), "hi").expect("write hello.txt");
         let host_path = host_dir.to_str().expect("host grant path is utf8").to_string();
         let container_path = host_path.clone();
@@ -3213,7 +3226,5 @@ mod tests {
 
         let missing = docker_exec(&tc_none.name, &["test", "-f", &hello_path]);
         assert!(!missing.success, "without a grant, the host path must not appear inside the container");
-
-        std::fs::remove_dir_all(&host_dir).ok();
     }
 }

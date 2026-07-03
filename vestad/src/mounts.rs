@@ -83,6 +83,9 @@ pub fn validate_mount(host_path: &str, container_path: Option<&str>, writable: b
     if is_protected(&container) {
         return Err(MountError::ContainerPathProtected(container));
     }
+    if std::path::Path::new(&container).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(MountError::ContainerPathProtected(container));
+    }
     Ok(HostMount { host_path: canonical, container_path: container, writable })
 }
 
@@ -127,6 +130,17 @@ mod tests {
     #[test]
     fn rejects_missing_host_path() {
         assert!(matches!(validate_mount("/definitely/does/not/exist/xyzzy", None, false), Err(MountError::HostPathMissing)));
+    }
+
+    #[test]
+    fn rejects_dotdot_in_container_path() {
+        let dir = std::env::temp_dir();
+        let sub = dir.join("vesta-mount-test-dotdot");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(matches!(
+            validate_mount(sub.to_str().unwrap(), Some("/mnt/../root/.claude"), false),
+            Err(MountError::ContainerPathProtected(_))
+        ));
     }
 
     #[test]
