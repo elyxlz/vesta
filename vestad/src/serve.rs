@@ -1798,7 +1798,11 @@ async fn restore_backup_handler(
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
         let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
-        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await?;
+        let user_mounts = {
+            let settings = state.settings.read().await;
+            settings.agents.get(&path.name).map(|a| a.mounts.clone()).unwrap_or_default()
+        };
+        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code, &user_mounts).await?;
         tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
         Ok(r#"{"ok":true}"#.to_string())
     })

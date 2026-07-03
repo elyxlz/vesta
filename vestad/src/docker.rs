@@ -1840,11 +1840,23 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     // A grant change can't be applied by a plain restart (binds are fixed at creation), so if the
     // desired mounts drifted from the container, recreate; otherwise a cheap restart.
     if let Ok(raw) = docker.inspect_container(&cname, None).await {
-        if needs_rebuild(&cname, &raw, user_mounts) {
-            tracing::info!(agent = %name, "restart: mount config drifted, recreating");
-            rebuild_agent(docker, name, env_config, user_mounts).await?;
-            return start_agent(docker, name).await;
+        // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
+        // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
+        // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
+        if user_mounts_drifted(&actual_user_mounts(&raw), user_mounts) {
+            // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
+            // failure corrupts the writable layer) — the grant then applies on the next reconcile.
+            let available = docker_storage_available_bytes(docker).await;
+            if reconcile_blocked_by_disk(available) {
+                tracing::warn!(agent = %name, "mount grants changed but disk is critically low; skipping recreate, applying on next reconcile");
+            } else {
+                tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+                rebuild_agent(docker, name, env_config, user_mounts).await?;
+                return start_agent(docker, name).await;
+            }
         }
+    } else {
+        tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
     }
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
