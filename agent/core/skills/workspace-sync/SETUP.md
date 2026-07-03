@@ -4,14 +4,11 @@ One-time, at birth: attach your workspace (`~`) to the version Vesta's daemon se
 later upgrades can sync it. Silent, no asking.
 
 ```bash
-bash ~/agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
+bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 ```
 
-- Exit 0: attached. Done.
-- Exit 3: your version's snapshot isn't available from Vesta's daemon yet. Not yours to
-  fix; skip it. The next workspace sync attaches once it is.
-- Exit 4: an old-shape workspace was found (unexpected on a fresh agent). The one-time
-  workspace-conversion migration handles that; skip here.
+It prints `attached: ...` and you're done. If it errors instead (it shouldn't on a fresh
+agent), tell the user what it said rather than retrying blindly.
 
 ## Unmanaged core (only if created with `--no-manage-core-code`)
 
