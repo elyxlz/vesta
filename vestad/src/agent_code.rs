@@ -111,8 +111,8 @@ mod tests {
         let dir = ensure_agent_code(config).expect("first call");
         assert_eq!(dir, agent_code_dir(config));
         assert!(dir.join(MAIN_PY).is_file());
-        assert!(dir.join("pyproject.toml").is_file());
-        assert!(dir.join("uv.lock").is_file());
+        assert!(dir.join("core/pyproject.toml").is_file());
+        assert!(dir.join("core/uv.lock").is_file());
         // Non-.py files under core/ (prompts, skill manifests) must also be embedded
         // — the agent's prompt loader depends on them at runtime.
         assert!(dir.join("core/prompts/nightly_dream.md").is_file());
@@ -123,7 +123,7 @@ mod tests {
         );
 
         // Matching-fingerprint second call must not rewrite files.
-        let sentinel = dir.join("pyproject.toml");
+        let sentinel = dir.join("core/pyproject.toml");
         fs::write(&sentinel, b"SENTINEL").expect("write sentinel");
         let _ = ensure_agent_code(config).expect("second call");
         assert_eq!(fs::read(&sentinel).expect("read sentinel"), b"SENTINEL");

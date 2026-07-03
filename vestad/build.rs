@@ -72,9 +72,7 @@ fn main() {
     // rustc-env that agent_code.rs reads via env!(): when the hash changes, vestad recompiles,
     // rust-embed re-snapshots, and the runtime fingerprint changes so agent-code re-extracts.
     let mut embed_files: Vec<PathBuf> = Vec::new();
-    for rel in ["agent/core", "agent/pyproject.toml", "agent/uv.lock"] {
-        collect_embed_inputs(&repo_root.join(rel), &mut embed_files);
-    }
+    collect_embed_inputs(&repo_root.join("agent/core"), &mut embed_files);
     embed_files.sort();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for f in &embed_files {

@@ -95,13 +95,18 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
 pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
-pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 10] = [
+    let steps: [String; 11] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
+        // The venv must live outside the read-only core mount (uv would default to
+        // /root/agent/core/.venv, inside it).
+        "export UV_PROJECT_ENVIRONMENT=/root/agent/.venv".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
+        // LEGACY(remove-when: fleet converged to agent-branch workspaces — the published
+        // branch never tracks .claude, so migrated workspaces cannot hit this):
         // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
         // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
         // If the git workspace tracks .claude, a `git sparse-checkout reapply` (run by skills-install
@@ -121,7 +126,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        "uv sync --frozen --project /root/agent".into(),
+        // LEGACY(remove-when: unmanaged boxes have pulled a post-engine-move snapshot):
+        // unmanaged boxes keep the old layout (pyproject at /root/agent) until they rebase
+        // onto an agent-v* snapshot; tolerate both so they never crash-loop.
+        "if [ -f /root/agent/core/pyproject.toml ]; then uv sync --frozen --project /root/agent/core; else uv sync --frozen --project /root/agent; fi".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
         // core entries are linked last so they win any name collision. Reset
@@ -129,7 +137,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
         "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
-        "cd /root/agent && exec uv run --frozen python -m core.main".into(),
+        "cd /root/agent && if [ -f core/pyproject.toml ]; then exec uv run --frozen --project core python -m core.main; else exec uv run --frozen python -m core.main; fi".into(),
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
@@ -888,11 +896,13 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
-/// Compute the upstream ref the agent should sync against.
+/// Compute the fetch target for the agent's workspace: the published agent branch.
+/// Boxes derive their snapshot tag (`agent-v<version>`) themselves from the core
+/// version they run.
 ///
-/// Dev builds: vestad's current git branch, re-evaluated on every call so that
-/// branch renames / checkouts take effect without a vestad restart.
-/// Release builds: the binary's version tag (`vX.Y.Z`).
+/// Dev builds: a per-branch dev agent branch (`agent-workspace-<branch>`), published
+/// manually with tools/publish-agent-branch.sh when exercising the sync flow itself.
+/// Release builds: the fleet branch.
 pub fn detect_upstream_ref() -> Option<String> {
     if cfg!(debug_assertions) {
         let output = std::process::Command::new("git")
@@ -906,9 +916,9 @@ pub fn detect_upstream_ref() -> Option<String> {
         if branch.is_empty() || branch == "HEAD" {
             return None;
         }
-        Some(branch)
+        Some(format!("agent-workspace-{branch}"))
     } else {
-        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
+        Some("agent-workspace".to_string())
     }
 }
 
@@ -1443,9 +1453,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     let constitution_mount = format!("{}:{}:ro,z", constitution_path.display(), CONSTITUTION_MOUNT_DEST);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
-    let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
-    let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
+    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), CORE_MOUNT_DEST);
 
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
@@ -1454,7 +1462,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
 
     let mut binds = vec![env_mount, constitution_mount];
     if manage_core_code {
-        binds.extend([core_mount, pyproject_mount, lock_mount]);
+        binds.push(core_mount);
     }
 
     let mut device_requests = None;
@@ -2307,6 +2315,41 @@ mod tests {
     }
 
     #[test]
+    fn entrypoint_pins_venv_and_tolerates_both_engine_layouts() {
+        // The venv must live outside the read-only core mount, and the sync/launch steps
+        // must handle both the new layout (pyproject in core/) and the legacy root layout
+        // so unmanaged boxes never crash-loop before their first agent-branch sync.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("UV_PROJECT_ENVIRONMENT=/root/agent/.venv"), "entrypoint must pin the venv outside core: {script}");
+        assert!(script.contains("--project /root/agent/core"), "entrypoint must sync the core project when present: {script}");
+        assert!(script.contains("python -m core.main"), "entrypoint must launch core.main: {script}");
+    }
+
+    #[test]
+    fn mounts_have_core_code_accepts_legacy_and_single_mount_shapes() {
+        let mount_with_dest = |dest: &str| bollard::models::MountPoint { destination: Some(dest.to_string()), ..Default::default() };
+        let single = vec![mount_with_dest(CORE_MOUNT_DEST)];
+        let legacy = vec![
+            mount_with_dest(CORE_MOUNT_DEST),
+            mount_with_dest("/root/agent/pyproject.toml"),
+            mount_with_dest("/root/agent/uv.lock"),
+        ];
+        let none = vec![mount_with_dest(ENV_MOUNT_DEST)];
+        assert!(mounts_have_core_code(&single));
+        assert!(mounts_have_core_code(&legacy));
+        assert!(!mounts_have_core_code(&none));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn detect_upstream_ref_dev_builds_use_per_branch_agent_branch() {
+        if let Some(upstream_ref) = detect_upstream_ref() {
+            assert!(upstream_ref.starts_with("agent-workspace-"), "dev upstream ref must be a per-branch agent branch: {upstream_ref}");
+        }
+    }
+
+    #[test]
     fn guard_alive_rejects_terminal_states_and_passes_live_through() {
         // The two terminal states map to their standard errors with the exact agent-facing
         // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
@@ -2862,18 +2905,14 @@ mod tests {
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
         std::fs::create_dir_all(code_dir.path().join("core")).unwrap();
-        std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
-        std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("pyproject.toml"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("uv.lock"), "").unwrap();
 
         let src_core = code_dir.path().join("core");
-        let pyproject = code_dir.path().join("pyproject.toml");
-        let uv_lock = code_dir.path().join("uv.lock");
 
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
-            (pyproject.to_str().unwrap(), MOUNT_DESTS[2]),
-            (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
         ];
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;

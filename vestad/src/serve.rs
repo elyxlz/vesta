@@ -1299,8 +1299,10 @@ mod file_path_tests {
         let cases = [
             ("/root/agent/core/main.py", true),
             ("/root/agent/core", true),
-            ("/root/agent/pyproject.toml", true),
-            ("/root/agent/uv.lock", true),
+            // Engine metadata moved into core/ — the old root-level paths are no longer mounts.
+            ("/root/agent/core/pyproject.toml", true),
+            ("/root/agent/pyproject.toml", false),
+            ("/root/agent/uv.lock", false),
             ("/run/vestad-env", true),
             ("/root/agent/data/events.db", true),
             ("/root/agent/data/session_id", true),
