@@ -30,7 +30,6 @@ export function AgentSettings() {
             </div>
             <div className="flex min-w-0 flex-col gap-4">
               <ProviderCard />
-              <HostAccessCard />
               <SttCard />
               <TtsCard />
             </div>
@@ -48,7 +47,8 @@ export function AgentSettings() {
         </TabsContent>
 
         <TabsContent value="files">
-          <div className="mx-auto w-full max-w-5xl">
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+            <HostAccessCard />
             <FilesTab />
           </div>
         </TabsContent>
