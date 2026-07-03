@@ -11,8 +11,8 @@ cd ~ && bash agent/core/skills/workspace-sync/scripts/attach.sh; echo "exit: $?"
 ```
 
 - Exit 0: already on the agent branch. Nothing to convert; go to the final step.
-- Exit 3: the snapshot for your running version is not on the remote. Not a workspace problem; tell the user and go to the final step.
 - Exit 4: legacy workspace. Continue with step 2.
+- Anything else (exit 3, or a failed fetch): your version's files are not reachable on the remote right now. Not a workspace-shape problem and not yours to fix; go to the final step and the workspace-sync flow will attach later.
 
 ### 2. Convert the legacy workspace
 
@@ -24,7 +24,9 @@ mv ~/.git ~/.git-legacy                   # retire the old repo (delete on a lat
 bash agent/core/skills/workspace-sync/scripts/attach.sh
 ```
 
-### 3. Reconcile your personalizations
+If this attach fails (failed fetch, or exit 3), stop and go to the final step anyway: the legacy repo is retired, which is this migration's whole job, and your files on disk are untouched. The workspace-sync flow completes the attach once the remote content is reachable.
+
+### 3. Reconcile your personalizations (only if the attach succeeded)
 
 `git status` now shows every file where your content differs from stock. Judge each one: keep yours, take stock (`git checkout -- <file>`), or integrate both. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt upstream's structure. Then:
 
