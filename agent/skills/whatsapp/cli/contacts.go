@@ -293,8 +293,20 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 		lookupContact(info.SenderAlt.String())
 	}
 
-	if contactPhone == "" && resolvedChat.User != "" {
-		contactPhone = "+" + resolvedChat.User
+	// Fall back to a JID's user part as the phone, but only when that JID is a real
+	// phone-server JID — never for a group ID or an unresolved LID/hidden JID, whose
+	// user part is an internal numeric that would render as a bogus "+120363..." phone.
+	// In a direct chat the meaningful number is the peer's (resolvedChat); in a group
+	// it is the sender's (resolvedSender). Either way, if it didn't resolve to a real
+	// phone JID, leave contact_phone empty rather than lie.
+	if contactPhone == "" {
+		if isDirectChatJID(info.Chat) {
+			if resolvedChat.Server == types.DefaultUserServer && resolvedChat.User != "" {
+				contactPhone = "+" + resolvedChat.User
+			}
+		} else if resolvedSender.Server == types.DefaultUserServer && resolvedSender.User != "" {
+			contactPhone = "+" + resolvedSender.User
+		}
 	}
 
 	if !contactSaved && contactPhone != "" {
