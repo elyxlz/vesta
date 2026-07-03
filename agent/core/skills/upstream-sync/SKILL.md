@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: Sync your workspace with the published agent branch after an upgrade; install core updates on unmanaged boxes; resolve rebase conflicts; one-time legacy migration.
+description: Sync your workspace with the published agent branch after an upgrade; install core updates on unmanaged boxes; resolve rebase conflicts.
 ---
 
 # Upstream Sync
