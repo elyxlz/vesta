@@ -50,6 +50,7 @@ interface ChatMessageAreaProps {
   agentName: string;
   notAuthenticated: boolean;
   isTyping: boolean;
+  liveThinking: string;
   isMobile: boolean;
 }
 
@@ -119,6 +120,7 @@ export function ChatMessageArea({
   agentName,
   notAuthenticated,
   isTyping,
+  liveThinking,
   isMobile,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
@@ -306,6 +308,19 @@ export function ChatMessageArea({
                 </div>
                 {isLast && (
                   <div className="px-4 pb-4">
+                    {liveThinking && (
+                      <div className="mt-2 flex justify-start">
+                        {/* Bottom-anchored peephole: overflow clips from the top, so the newest
+                            thinking lines stay visible as the block grows. */}
+                        <div className="flex max-h-24 max-w-[85%] flex-col justify-end overflow-hidden">
+                          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted-foreground/70">
+                            {liveThinking.length > 600
+                              ? `…${liveThinking.slice(-600)}`
+                              : liveThinking}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                     {isTyping && (
                       <div className="flex justify-start mt-2">
                         <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">

@@ -53,6 +53,14 @@ class ThinkingEvent(_BaseEvent):
     signature: str
 
 
+class ThinkingDeltaEvent(_BaseEvent):
+    type: tp.Literal["thinking_delta"]
+    # One raw extended-thinking chunk, streamed as the model produces it. A live broadcast-only
+    # preview (never persisted, see emit()): the complete ThinkingEvent that follows is the record;
+    # clients accumulate deltas for display and drop the buffer when the full block arrives.
+    text: str
+
+
 class UserEvent(_BaseEvent):
     type: tp.Literal["user"]
     text: str
@@ -116,6 +124,7 @@ type StreamEvent = (
     | ToolEndEvent
     | AssistantEvent
     | ThinkingEvent
+    | ThinkingDeltaEvent
     | UserEvent
     | ErrorEvent
     | NotificationEvent
@@ -252,9 +261,10 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        # status (activity flips) and notification_cleared (pending deltas) are live-only signals with
-        # no place in history — broadcast them but don't persist.
-        if event["type"] not in ("status", "notification_cleared") and self._conn:
+        # status (activity flips), notification_cleared (pending deltas), and thinking_delta
+        # (streaming preview chunks) are live-only signals with no place in history — broadcast
+        # them but don't persist.
+        if event["type"] not in ("status", "notification_cleared", "thinking_delta") and self._conn:
             # Event-logging is best-effort: a failed history write must NEVER crash the
             # agent loop. Without this guard, a transient "database is locked" (the db
             # held by a long maintenance op past the busy timeout) propagated out of emit

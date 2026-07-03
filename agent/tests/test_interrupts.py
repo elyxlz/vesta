@@ -561,6 +561,55 @@ async def test_converse_emits_thinking_events():
 
 
 @pytest.mark.anyio
+async def test_thinking_deltas_stream_live_and_stay_out_of_the_turn():
+    """Partial thinking chunks are broadcast as thinking_delta the moment they arrive (no waiting
+    for the block to finish); sub-agent and non-thinking deltas are skipped, and none of it
+    disturbs the turn's collected texts."""
+    from claude_agent_sdk import StreamEvent, TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = _make_stream_harness()
+    deltas: list[str] = []
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "thinking_delta":
+            deltas.append(event["text"])
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit
+
+    def thinking_delta(chunk, parent_tool_use_id=None):
+        return StreamEvent(
+            uuid="u1",
+            session_id="sess-1",
+            event={"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": chunk}},
+            parent_tool_use_id=parent_tool_use_id,
+        )
+
+    async with _consuming(state, config):
+        await message_queue.put(thinking_delta("let me "))
+        await message_queue.put(thinking_delta("think"))
+        await message_queue.put(thinking_delta("subagent noise", parent_tool_use_id="tool-x"))
+        await message_queue.put(
+            StreamEvent(
+                uuid="u2",
+                session_id="sess-1",
+                event={"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "ignored"}},
+            )
+        )
+        # Deltas arrive live, before the turn is anywhere near done.
+        await wait_for_condition(lambda: len(consumed) >= 4, message="deltas never consumed")
+        assert deltas == ["let me ", "think"]
+        await message_queue.put(_assistant_msg([TextBlock("the answer")]))
+        await message_queue.put(_result_msg())
+        responses = await converse("test", state=state, config=config, show_output=True)
+
+    assert responses == ["the answer"], f"deltas must not leak into the turn texts: {responses}"
+    assert deltas == ["let me ", "think"]
+
+
+@pytest.mark.anyio
 async def test_converse_exits_promptly_on_interrupt_event():
     """converse interrupts and returns within the bounded grace even when the interrupted turn's
     ResultMessage never arrives (the CLI wind-down outliving the grace is the #958 seed)."""

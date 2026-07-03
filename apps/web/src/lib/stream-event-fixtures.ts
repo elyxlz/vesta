@@ -26,6 +26,11 @@ export const streamEventFixtures = {
       "signature": "sig"
     },
     {
+      "type": "thinking_delta",
+      "ts": "2026-01-01T00:00:00Z",
+      "text": "hm"
+    },
+    {
       "type": "chat",
       "ts": "2026-01-01T00:00:00Z",
       "text": "yo"

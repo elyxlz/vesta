@@ -44,6 +44,9 @@ export function useAgentSocketState({
 }: UseAgentSocketOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
+  // Live preview of the in-progress extended-thinking block, accumulated from thinking_delta
+  // events. Cleared when the turn's visible output lands (the complete block is the record).
+  const [liveThinking, setLiveThinking] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -56,6 +59,10 @@ export function useAgentSocketState({
   const loadingMoreRef = useRef(false);
 
   const wsRef = useRef<ReconnectingWsHandle | null>(null);
+  const liveThinkingRef = useRef("");
+  const liveThinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const pendingEchoesRef = useRef<string[]>([]);
   const cursorRef = useRef<number | null>(null);
   const onAssistantMessageRef = useRef(onAssistantMessage);
@@ -65,6 +72,26 @@ export function useAgentSocketState({
   const chatQueueRef = useRef<VestaEvent[]>([]);
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Deltas arrive many times a second; batch them into one state update per frame-ish tick so
+  // a long thinking stretch doesn't re-render the chat per chunk.
+  const appendLiveThinking = useCallback((text: string) => {
+    liveThinkingRef.current += text;
+    if (liveThinkingTimerRef.current) return;
+    liveThinkingTimerRef.current = setTimeout(() => {
+      liveThinkingTimerRef.current = null;
+      setLiveThinking(liveThinkingRef.current);
+    }, 150);
+  }, []);
+
+  const clearLiveThinking = useCallback(() => {
+    if (liveThinkingTimerRef.current) {
+      clearTimeout(liveThinkingTimerRef.current);
+      liveThinkingTimerRef.current = null;
+    }
+    liveThinkingRef.current = "";
+    setLiveThinking("");
+  }, []);
 
   const flushQueue = useCallback(() => {
     for (const event of chatQueueRef.current) {
@@ -130,6 +157,7 @@ export function useAgentSocketState({
       cursorRef.current = null;
       pendingEchoesRef.current = [];
       resetTyping();
+      clearLiveThinking();
     };
 
     resetConnection();
@@ -158,6 +186,19 @@ export function useAgentSocketState({
               return;
             }
           }
+          if (event.type === "thinking_delta") {
+            appendLiveThinking(event.text);
+            return;
+          }
+          // The turn's visible output (or the finished block itself) supersedes the preview.
+          if (
+            event.type === "thinking" ||
+            event.type === "assistant" ||
+            event.type === "chat" ||
+            (event.type === "status" && event.state === "idle")
+          ) {
+            clearLiveThinking();
+          }
           if (event.type === "chat") {
             enqueueChatMessage(event);
           } else {
@@ -182,8 +223,9 @@ export function useAgentSocketState({
       wsRef.current = null;
       setConnected(false);
       resetTyping();
+      clearLiveThinking();
     };
-  }, [active, name]);
+  }, [active, name, appendLiveThinking, clearLiveThinking]);
 
   const sendEvent = useCallback((event: object): boolean => {
     const ws = wsRef.current?.current();
@@ -235,6 +277,7 @@ export function useAgentSocketState({
   return {
     messages,
     agentState,
+    liveThinking,
     isTyping,
     connected,
     historyLoaded,

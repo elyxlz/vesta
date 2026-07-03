@@ -32,6 +32,9 @@ export type VestaEvent =
   | (BaseEvent & { type: "user"; text: string; input_method?: InputMethod })
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "thinking"; text: string; signature: string })
+  // Live streaming preview of an in-progress extended-thinking block. Broadcast-only (never in
+  // history): accumulate for display, drop the buffer when the complete `thinking` event arrives.
+  | (BaseEvent & { type: "thinking_delta"; text: string })
   | (BaseEvent & { type: "chat"; text: string })
   | (BaseEvent & {
       type: "tool_start";

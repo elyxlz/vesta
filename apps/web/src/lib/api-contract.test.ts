@@ -83,6 +83,7 @@ describe("agent stream contract", () => {
       "user",
       "assistant",
       "thinking",
+      "thinking_delta",
       "chat",
       "tool_start",
       "tool_end",

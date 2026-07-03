@@ -13,6 +13,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     Message,
     ResultMessage,
+    StreamEvent,
     SystemMessage,
     ThinkingBlock,
 )
@@ -137,6 +138,28 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
     state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
 
 
+def _dispatch_stream_delta(msg: StreamEvent, *, state: vm.State, turn: vm.TurnSignals | None) -> None:
+    """Broadcast an extended-thinking chunk as a live thinking_delta event.
+
+    Partial stream events are a display-only preview: the complete AssistantMessage that follows
+    carries the authoritative block (emitted + persisted as usual), so deltas are never logged or
+    stored. Sub-agent streams (parent_tool_use_id set) are skipped — their interleaved chunks
+    belong to no visible thinking block."""
+    if msg.parent_tool_use_id is not None:
+        return
+    if turn and not turn.show_output:
+        return
+    event = msg.event
+    if event["type"] != "content_block_delta":
+        return
+    delta = event["delta"]
+    if delta["type"] != "thinking_delta":
+        return
+    chunk = delta["thinking"]
+    if chunk:
+        state.event_bus.emit({"type": "thinking_delta", "text": chunk})
+
+
 async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
     close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
@@ -146,6 +169,9 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
+    if isinstance(msg, StreamEvent):
+        _dispatch_stream_delta(msg, state=state, turn=turn)
+        return
     if isinstance(msg, AssistantMessage):
         state.compacting = False
     if isinstance(msg, SystemMessage) and msg.subtype == "compact_boundary":
@@ -423,6 +449,9 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         skills="all",
         add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
         thinking=thinking_config,
+        # Stream extended-thinking chunks as they are produced (consume_stream broadcasts them as
+        # live thinking_delta events) instead of one silent multi-minute wait per thinking block.
+        include_partial_messages=True,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),
         mcp_servers={"vesta": build_vesta_tools_server(state, config)},

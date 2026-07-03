@@ -54,6 +54,19 @@ def test_status_not_persisted(event_bus):
     assert len(events) == 0
 
 
+def test_thinking_delta_broadcast_but_not_persisted(event_bus):
+    """thinking_delta is a live streaming preview: subscribers get it, history never does
+    (the complete ThinkingEvent that follows is the persisted record)."""
+    q = event_bus.subscribe()
+    event_bus.emit({"type": "thinking_delta", "text": "chunk one"})
+    received = q.get_nowait()
+    assert received["type"] == "thinking_delta"
+    assert received["text"] == "chunk one"
+
+    events, _ = event_bus.recent()
+    assert len(events) == 0
+
+
 def test_no_data_dir():
     """EventBus works without persistence (no data_dir)."""
     bus = EventBus()
