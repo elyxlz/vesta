@@ -1,6 +1,7 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsScrollArea } from "@/components/SettingsScrollArea";
 import { ActionsCard } from "./ActionsCard";
+import { HostAccessCard } from "./HostAccessCard";
 import { NotificationInterruptRulesCard } from "./NotificationInterruptRulesCard";
 import { NotificationsCard } from "./NotificationsCard";
 import { FilesTab } from "./FilesTab";
@@ -29,6 +30,7 @@ export function AgentSettings() {
             </div>
             <div className="flex min-w-0 flex-col gap-4">
               <ProviderCard />
+              <HostAccessCard />
               <SttCard />
               <TtsCard />
             </div>
