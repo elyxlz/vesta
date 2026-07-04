@@ -178,10 +178,7 @@ export function HostAccessCard() {
                     </ItemMedia>
                     <ItemContent className="min-w-0 gap-0.5">
                       <ItemTitle>{folderName(mount.host_path)}</ItemTitle>
-                      <ItemDescription
-                        className="text-[11px]"
-                        title={mount.host_path}
-                      >
+                      <ItemDescription title={mount.host_path}>
                         {mount.host_path}
                         {mount.container_path !== mount.host_path
                           ? ` · seen at ${mount.container_path}`
@@ -227,7 +224,7 @@ export function HostAccessCard() {
                     </ItemMedia>
                     <ItemContent className="gap-0.5">
                       <ItemTitle>add a folder</ItemTitle>
-                      <ItemDescription className="text-[11px]">
+                      <ItemDescription>
                         choose a folder to share with {agentName || "the agent"}
                       </ItemDescription>
                     </ItemContent>

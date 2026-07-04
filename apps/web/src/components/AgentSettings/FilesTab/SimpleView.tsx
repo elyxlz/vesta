@@ -229,9 +229,7 @@ function HubRow({
         <ItemContent className="gap-0.5">
           <ItemTitle>{title}</ItemTitle>
           {description ? (
-            <ItemDescription className="text-[11px]">
-              {description}
-            </ItemDescription>
+            <ItemDescription>{description}</ItemDescription>
           ) : null}
         </ItemContent>
         {trailing ? <ItemActions>{trailing}</ItemActions> : null}
