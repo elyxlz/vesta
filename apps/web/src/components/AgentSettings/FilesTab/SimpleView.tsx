@@ -6,11 +6,10 @@ import {
   FileText,
   Moon,
   ScrollText,
-  Sparkles,
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Item,
   ItemActions,
@@ -94,6 +93,7 @@ export function SimpleView({
         onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
         onShowDreams={onShowDreams}
       />
+      <GroupLabel className="pt-1">skills</GroupLabel>
       <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
       <GroupLabel className="pt-1">on this computer</GroupLabel>
       <div className="shrink-0">
@@ -264,49 +264,37 @@ function SkillsCard({
   const inSkillView = activeSkill !== null;
 
   return (
-    <Card size="sm" className="!py-0 !gap-0 flex flex-col">
-      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+    <Card size="sm">
+      <CardContent className="flex max-h-80 flex-col gap-2 overflow-auto">
         {inSkillView && activeSkill ? (
           <>
             <button
               type="button"
               onClick={() => setNav({ view: "root" })}
-              className="flex items-center gap-0.5 text-sm hover:opacity-80"
+              className="flex items-center gap-1 self-start px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
             >
-              <ChevronLeft className="size-4" />
-              skills
+              <ChevronLeft className="size-3.5" />
+              <span className="font-medium text-foreground">
+                {activeSkill.name}
+              </span>
             </button>
-            <span className="text-muted-foreground/60">/</span>
-            <CardTitle className="!text-sm !font-medium truncate">
-              {activeSkill.name}
-            </CardTitle>
+            {activeSkill.mdFiles.length === 0 ? (
+              <EmptyRow>no markdown files</EmptyRow>
+            ) : (
+              <ItemGroup>
+                {activeSkill.mdFiles.map((file) => (
+                  <Row
+                    key={file.path}
+                    icon={<FileText />}
+                    iconClass="bg-muted text-muted-foreground"
+                    label={file.name}
+                    selected={selected === file.path}
+                    onClick={() => onSelect(file.path)}
+                  />
+                ))}
+              </ItemGroup>
+            )}
           </>
-        ) : (
-          <>
-            <Sparkles className="size-4 text-muted-foreground" />
-            <CardTitle className="!text-sm !font-medium">skills</CardTitle>
-          </>
-        )}
-      </CardHeader>
-
-      <CardContent className="max-h-80 overflow-auto py-2">
-        {inSkillView && activeSkill ? (
-          activeSkill.mdFiles.length === 0 ? (
-            <EmptyRow>no markdown files</EmptyRow>
-          ) : (
-            <ItemGroup>
-              {activeSkill.mdFiles.map((file) => (
-                <Row
-                  key={file.path}
-                  icon={<FileText />}
-                  iconClass="bg-muted text-muted-foreground"
-                  label={file.name}
-                  selected={selected === file.path}
-                  onClick={() => onSelect(file.path)}
-                />
-              ))}
-            </ItemGroup>
-          )
         ) : skills.length === 0 ? (
           <EmptyRow>no skills installed</EmptyRow>
         ) : (
