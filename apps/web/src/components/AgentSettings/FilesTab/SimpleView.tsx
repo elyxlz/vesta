@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Item,
   ItemActions,
@@ -264,57 +265,61 @@ function SkillsCard({
   const inSkillView = activeSkill !== null;
 
   return (
-    <Card size="sm">
-      <CardContent className="flex max-h-80 flex-col gap-2 overflow-auto">
-        {inSkillView && activeSkill ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setNav({ view: "root" })}
-              className="flex items-center gap-1 self-start px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <ChevronLeft className="size-3.5" />
-              <span className="font-medium text-foreground">
-                {activeSkill.name}
-              </span>
-            </button>
-            {activeSkill.mdFiles.length === 0 ? (
-              <EmptyRow>no markdown files</EmptyRow>
-            ) : (
-              <ItemGroup>
-                {activeSkill.mdFiles.map((file) => (
-                  <Row
-                    key={file.path}
-                    icon={<FileText />}
-                    iconClass="bg-muted text-muted-foreground"
-                    label={file.name}
-                    selected={selected === file.path}
-                    onClick={() => onSelect(file.path)}
-                  />
-                ))}
-              </ItemGroup>
-            )}
-          </>
-        ) : skills.length === 0 ? (
-          <EmptyRow>no skills installed</EmptyRow>
-        ) : (
-          <ItemGroup>
-            {skills.map((skill) => (
-              <Row
-                key={skill.path}
-                icon={<Wand2 />}
-                iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
-                label={skill.name}
-                hasChevron
-                selected={
-                  selected !== null && selected.startsWith(`${skill.path}/`)
-                }
-                onClick={() => setNav({ view: "skill", skillPath: skill.path })}
-              />
-            ))}
-          </ItemGroup>
-        )}
-      </CardContent>
+    <Card size="sm" className="!py-0">
+      <ScrollArea className="h-80">
+        <div className="flex flex-col gap-2 p-3">
+          {inSkillView && activeSkill ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setNav({ view: "root" })}
+                className="flex items-center gap-1 self-start px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronLeft className="size-3.5" />
+                <span className="font-medium text-foreground">
+                  {activeSkill.name}
+                </span>
+              </button>
+              {activeSkill.mdFiles.length === 0 ? (
+                <EmptyRow>no markdown files</EmptyRow>
+              ) : (
+                <ItemGroup>
+                  {activeSkill.mdFiles.map((file) => (
+                    <Row
+                      key={file.path}
+                      icon={<FileText />}
+                      iconClass="bg-muted text-muted-foreground"
+                      label={file.name}
+                      selected={selected === file.path}
+                      onClick={() => onSelect(file.path)}
+                    />
+                  ))}
+                </ItemGroup>
+              )}
+            </>
+          ) : skills.length === 0 ? (
+            <EmptyRow>no skills installed</EmptyRow>
+          ) : (
+            <ItemGroup>
+              {skills.map((skill) => (
+                <Row
+                  key={skill.path}
+                  icon={<Wand2 />}
+                  iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
+                  label={skill.name}
+                  hasChevron
+                  selected={
+                    selected !== null && selected.startsWith(`${skill.path}/`)
+                  }
+                  onClick={() =>
+                    setNav({ view: "skill", skillPath: skill.path })
+                  }
+                />
+              ))}
+            </ItemGroup>
+          )}
+        </div>
+      </ScrollArea>
     </Card>
   );
 }
