@@ -227,7 +227,7 @@ export function HostAccessCard() {
                     </ItemMedia>
                     <ItemContent className="gap-0.5">
                       <ItemTitle>add a folder</ItemTitle>
-                      <ItemDescription>
+                      <ItemDescription className="text-[11px]">
                         choose a folder to share with {agentName || "the agent"}
                       </ItemDescription>
                     </ItemContent>
