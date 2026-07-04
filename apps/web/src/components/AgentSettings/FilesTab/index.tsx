@@ -61,7 +61,7 @@ function statusClass(status: SaveStatus): string {
 function AdvancedSkeleton() {
   return (
     <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
         <Skeleton className="size-4 rounded-full" />
         <Skeleton className="h-3 w-16" />
       </CardHeader>
@@ -93,23 +93,17 @@ function SimpleSkeleton() {
     <div className="flex h-full min-h-0 flex-col gap-4 p-1">
       <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
         <SkeletonRow />
-        <div className="border-t border-border/60">
-          <SkeletonRow />
-        </div>
-        <div className="border-t border-border/60">
-          <SkeletonRow />
-        </div>
+        <SkeletonRow />
+        <SkeletonRow />
       </Card>
       <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-        <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-4 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+        <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-4 !py-2.5">
           <Skeleton className="size-4 rounded-full" />
           <Skeleton className="h-3 w-12" />
         </CardHeader>
         <CardContent className="flex-1 min-h-0 !px-0 !py-0">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="border-b border-border/60 last:border-b-0">
-              <SkeletonRow />
-            </div>
+            <SkeletonRow key={i} />
           ))}
         </CardContent>
       </Card>
@@ -309,7 +303,7 @@ export function FilesTab() {
         />
       ) : root ? (
         <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
             <FolderTree className="size-4 text-muted-foreground" />
             <CardTitle className="!text-sm !font-medium">/root</CardTitle>
           </CardHeader>
@@ -366,7 +360,7 @@ export function FilesTab() {
     const inDetail = dreamsActive || selectedPath !== null;
     const panel = inDetail ? (
       <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
-        <div className="shrink-0 flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2.5">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -417,7 +411,7 @@ export function FilesTab() {
 
       <Card size="sm" className="!py-0 !gap-0 flex min-w-0 flex-col">
         {!dreamsActive && (
-          <CardHeader className="shrink-0 items-center !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+          <CardHeader className="shrink-0 items-center !px-5 !py-2.5">
             <CardTitle className="truncate !text-xs !font-normal text-muted-foreground">
               {!entries && !treeError ? (
                 <Skeleton className="h-3 w-28" />
