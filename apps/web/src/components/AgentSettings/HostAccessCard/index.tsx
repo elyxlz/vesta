@@ -21,7 +21,12 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { getAgentMounts, setAgentMounts, type HostMount } from "@/api/agents";
+import {
+  getAgentMounts,
+  getHostFolderSuggestions,
+  setAgentMounts,
+  type HostMount,
+} from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { errorMessage } from "@/lib/utils";
 
@@ -44,6 +49,23 @@ export function HostAccessCard() {
   const [hostPath, setHostPath] = useState("");
   const [containerPath, setContainerPath] = useState("");
   const [writable, setWritable] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[] | null>(null);
+
+  // Fetch folder suggestions lazily, the first time the dialog opens.
+  useEffect(() => {
+    if (!open || suggestions !== null) return;
+    let ignore = false;
+    getHostFolderSuggestions()
+      .then((f) => {
+        if (!ignore) setSuggestions(f);
+      })
+      .catch(() => {
+        if (!ignore) setSuggestions([]);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [open, suggestions]);
 
   useEffect(() => {
     if (!agentName) return;
@@ -116,6 +138,11 @@ export function HostAccessCard() {
       : mounts.length === 0
         ? "none shared yet"
         : `${mounts.length} folder${mounts.length === 1 ? "" : "s"} shared`;
+
+  // Suggestions not already shared, and not the one being typed.
+  const availableSuggestions = (suggestions ?? []).filter(
+    (s) => !(mounts ?? []).some((m) => m.host_path === s) && s !== hostPath,
+  );
 
   return (
     <>
@@ -228,6 +255,29 @@ export function HostAccessCard() {
                 )}
 
                 <div className="flex flex-col gap-2 rounded-xl bg-muted/40 p-3">
+                  {availableSuggestions.length > 0 ? (
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">
+                        suggested folders
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {availableSuggestions.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => {
+                              setHostPath(s);
+                              setContainerPath("");
+                            }}
+                            className="max-w-full truncate rounded-full bg-background px-2.5 py-1 text-[11px] text-muted-foreground ring-1 ring-border transition-colors hover:text-foreground"
+                            title={s}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <Input
                     value={hostPath}
                     onChange={(e) => setHostPath(e.target.value)}

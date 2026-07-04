@@ -2098,6 +2098,13 @@ async fn set_mounts_handler(
     Ok(Json(serde_json::json!({ "mounts": validated, "restart_required": true })))
 }
 
+/// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
+/// host filesystem (common mount roots + home media folders), so it is API-key only — never the
+/// agent token; an agent must not enumerate the host.
+async fn host_folder_suggestions_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "folders": crate::mounts::suggest_host_folders() }))
+}
+
 // --- Constitution ---
 //
 // A user-authored charter prepended to the agent's system prompt ahead of MEMORY.md.
@@ -2252,6 +2259,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/agents/{name}/mounts", put(set_mounts_handler))
+        .route("/host/folders", get(host_folder_suggestions_handler))
         .route("/gateway/settings", get(get_gateway_settings_handler).put(put_gateway_settings_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(

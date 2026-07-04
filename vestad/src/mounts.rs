@@ -108,6 +108,51 @@ pub fn bind_string(m: &HostMount) -> String {
     format!("{}:{}:{mode},z", m.host_path, m.container_path)
 }
 
+/// Host roots whose immediate subdirectories are common places to share (media libraries,
+/// downloads, data disks). Their children — e.g. `/mnt/media` — are the suggestions.
+pub const SUGGESTION_ROOTS: &[&str] = &["/mnt", "/media", "/srv", "/data", "/pool", "/tank"];
+
+/// Well-known folders inside the host user's home worth suggesting when they exist.
+pub const HOME_SUGGESTIONS: &[&str] =
+    &["Downloads", "Movies", "Videos", "Music", "Pictures", "Documents"];
+
+/// Existing host folders to suggest as shares, so the user doesn't hand-type a path. Scans the
+/// immediate children of the common mount roots plus a few well-known home folders. Only
+/// directories that actually exist are returned.
+pub fn suggest_host_folders() -> Vec<String> {
+    scan_candidate_folders(
+        SUGGESTION_ROOTS,
+        std::env::var("HOME").ok().as_deref(),
+        HOME_SUGGESTIONS,
+    )
+}
+
+fn scan_candidate_folders(roots: &[&str], home: Option<&str>, home_dirs: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    if let Some(home) = home {
+        for name in home_dirs {
+            let path = std::path::Path::new(home).join(name);
+            if path.is_dir() {
+                out.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +170,27 @@ mod tests {
     #[test]
     fn rejects_relative_host_path() {
         assert!(matches!(validate_mount("relative/path", None, false), Err(MountError::NotAbsolute)));
+    }
+
+    #[test]
+    fn scan_lists_existing_subdirs_and_home_media_only() {
+        let tmp = std::env::temp_dir().join(format!("vesta-suggest-{}", std::process::id()));
+        let root = tmp.join("mnt");
+        std::fs::create_dir_all(root.join("media")).unwrap();
+        std::fs::create_dir_all(root.join("downloads")).unwrap();
+        std::fs::write(root.join("a-file"), b"x").unwrap(); // a file, not a dir — excluded
+        let home = tmp.join("home");
+        std::fs::create_dir_all(home.join("Downloads")).unwrap(); // exists
+        // "Movies" intentionally not created — must be excluded.
+
+        let got = scan_candidate_folders(&[root.to_str().unwrap()], home.to_str(), &["Downloads", "Movies"]);
+
+        assert!(got.iter().any(|p| p.ends_with("/media")), "should list /mnt/media child: {got:?}");
+        assert!(got.iter().any(|p| p.ends_with("/downloads")));
+        assert!(got.iter().any(|p| p.ends_with("/Downloads")), "should include existing home folder");
+        assert!(!got.iter().any(|p| p.ends_with("/a-file")), "files must be excluded");
+        assert!(!got.iter().any(|p| p.ends_with("/Movies")), "nonexistent home folder must be excluded");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

@@ -430,3 +430,10 @@ export async function setAgentMounts(
   }>(`/agents/${encodeURIComponent(name)}/mounts`, jsonInit("PUT", { mounts }));
   return { mounts: resp.mounts, restartRequired: resp.restart_required };
 }
+
+/// Existing host folders vestad suggests sharing (GET /host/folders), so the user doesn't
+/// hand-type a path. Host-level (not agent-scoped) and API-key only.
+export async function getHostFolderSuggestions(): Promise<string[]> {
+  const resp = await apiJson<{ folders: string[] }>("/host/folders");
+  return resp.folders;
+}
