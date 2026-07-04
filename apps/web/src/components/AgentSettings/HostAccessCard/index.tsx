@@ -189,22 +189,20 @@ export function HostAccessCard() {
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions>
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="text-[11px] text-muted-foreground">
-                          {mount.writable ? "can edit" : "view only"}
-                        </span>
-                        <Switch
-                          size="sm"
-                          checked={mount.writable}
-                          disabled={saving}
-                          aria-label={`allow editing ${folderName(mount.host_path)}`}
-                          onCheckedChange={(v) => toggleWritable(index, v)}
-                        />
-                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        {mount.writable ? "can edit" : "view only"}
+                      </span>
+                      <Switch
+                        size="sm"
+                        checked={mount.writable}
+                        disabled={saving}
+                        aria-label={`allow editing ${folderName(mount.host_path)}`}
+                        onCheckedChange={(v) => toggleWritable(index, v)}
+                      />
                       <Button
                         size="icon-xs"
                         variant="ghost"
-                        className="opacity-0 transition-opacity group-hover/item:opacity-100 focus-visible:opacity-100"
+                        className="text-muted-foreground/60 hover:text-foreground"
                         aria-label={`remove ${mount.host_path}`}
                         disabled={saving}
                         onClick={() => removePath(index)}
@@ -231,7 +229,7 @@ export function HostAccessCard() {
                     <ItemContent className="gap-0.5">
                       <ItemTitle>add a folder</ItemTitle>
                       <ItemDescription>
-                        choose a folder to share with vesta
+                        choose a folder to share with {agentName || "the agent"}
                       </ItemDescription>
                     </ItemContent>
                   </button>
@@ -255,7 +253,7 @@ export function HostAccessCard() {
           <DialogHeader>
             <DialogTitle>add a folder</DialogTitle>
             <DialogDescription>
-              choose a folder on this computer for {agentName || "vesta"} to
+              choose a folder on this computer for {agentName || "the agent"} to
               open.
             </DialogDescription>
           </DialogHeader>
@@ -296,7 +294,7 @@ export function HostAccessCard() {
               <Input
                 value={containerPath}
                 onChange={(e) => setContainerPath(e.target.value)}
-                placeholder="where vesta sees it (optional)"
+                placeholder={`where ${agentName || "the agent"} sees it (optional)`}
                 aria-label="path inside the container"
                 className="h-8 text-xs"
                 autoFocus
@@ -307,7 +305,7 @@ export function HostAccessCard() {
                 onClick={() => setShowContainerPath(true)}
                 className="self-start text-[11px] text-muted-foreground transition-colors hover:text-foreground"
               >
-                change where vesta sees it
+                change where {agentName || "the agent"} sees it
               </button>
             )}
 

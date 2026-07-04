@@ -298,6 +298,7 @@ export function FilesTab() {
           entries={entries}
           selected={selectedPath}
           dreamsActive={dreamsActive}
+          agentName={agentName}
           onSelect={selectFile}
           onShowDreams={showDreams}
         />

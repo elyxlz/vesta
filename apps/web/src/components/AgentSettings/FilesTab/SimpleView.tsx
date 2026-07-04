@@ -33,6 +33,7 @@ interface SimpleViewProps {
   entries: FileTreeEntry[];
   selected: string | null;
   dreamsActive: boolean;
+  agentName?: string;
   onSelect: (path: string) => void;
   onShowDreams: () => void;
 }
@@ -73,6 +74,7 @@ export function SimpleView({
   entries,
   selected,
   dreamsActive,
+  agentName,
   onSelect,
   onShowDreams,
 }: SimpleViewProps) {
@@ -81,11 +83,13 @@ export function SimpleView({
     () => collectDreamPaths(entries).length,
     [entries],
   );
+  const name = agentName ?? "the agent";
 
   return (
     <div className="flex flex-col gap-3 p-1">
-      <GroupLabel>vesta's mind</GroupLabel>
+      <GroupLabel>{name}'s mind</GroupLabel>
       <MindCard
+        name={name}
         memorySelected={selected === MEMORY_PATH && !dreamsActive}
         constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
         dreamsActive={dreamsActive}
@@ -124,6 +128,7 @@ function GroupLabel({
 }
 
 function MindCard({
+  name,
   memorySelected,
   constitutionSelected,
   dreamsActive,
@@ -132,6 +137,7 @@ function MindCard({
   onSelectConstitution,
   onShowDreams,
 }: {
+  name: string;
   memorySelected: boolean;
   constitutionSelected: boolean;
   dreamsActive: boolean;
@@ -150,7 +156,7 @@ function MindCard({
             iconClass="bg-amber-500/12 text-amber-600 dark:text-amber-400"
             icon={<BookOpen />}
             title="memory"
-            description="what vesta remembers about you"
+            description={`what ${name} remembers about you`}
           />
           <HubRow
             onClick={onSelectConstitution}
@@ -158,7 +164,7 @@ function MindCard({
             iconClass="bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
             icon={<ScrollText />}
             title="constitution"
-            description="the directives you set that vesta follows"
+            description={`the directives you set that ${name} follows`}
           />
           <HubRow
             onClick={onShowDreams}
