@@ -49,6 +49,7 @@ export function HostAccessCard() {
   const [hostPath, setHostPath] = useState("");
   const [containerPath, setContainerPath] = useState("");
   const [writable, setWritable] = useState(false);
+  const [showContainerPath, setShowContainerPath] = useState(false);
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
 
   // Fetch folder suggestions lazily, the first time the dialog opens.
@@ -116,6 +117,7 @@ export function HostAccessCard() {
         setHostPath("");
         setContainerPath("");
         setWritable(false);
+        setShowContainerPath(false);
       }
     });
   };
@@ -285,13 +287,24 @@ export function HostAccessCard() {
                     aria-label="folder path on this computer"
                     className="h-8 text-xs"
                   />
-                  <Input
-                    value={containerPath}
-                    onChange={(e) => setContainerPath(e.target.value)}
-                    placeholder="where vesta sees it (optional)"
-                    aria-label="path inside the container"
-                    className="h-8 text-xs"
-                  />
+                  {showContainerPath ? (
+                    <Input
+                      value={containerPath}
+                      onChange={(e) => setContainerPath(e.target.value)}
+                      placeholder="where vesta sees it (optional)"
+                      aria-label="path inside the container"
+                      className="h-8 text-xs"
+                      autoFocus
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowContainerPath(true)}
+                      className="self-start text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      change where vesta sees it
+                    </button>
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Switch
