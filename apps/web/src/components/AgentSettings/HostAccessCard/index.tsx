@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Lock, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, FolderOpen, Lock, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,8 +30,8 @@ function folderName(path: string): string {
   return segments.length > 0 ? segments[segments.length - 1] : path;
 }
 
-// Host filesystem grants: folders on the host the agent may open (and, if writable, write) inside
-// its container. A list with add/remove/toggle that PUTs the whole list (plain state + effect).
+// Host filesystem grants, behind progressive disclosure: the hub shows a single "shared folders"
+// cell; opening it reveals the full list + add/remove/toggle in a dialog. PUTs the whole list.
 export function HostAccessCard() {
   const { name: agentName } = useSelectedAgent();
   const [mounts, setMounts] = useState<HostMount[] | null>(null);
@@ -32,6 +39,7 @@ export function HostAccessCard() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [restartHint, setRestartHint] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
 
   const [hostPath, setHostPath] = useState("");
   const [containerPath, setContainerPath] = useState("");
@@ -102,133 +110,175 @@ export function HostAccessCard() {
     );
   };
 
+  const summary =
+    mounts === null
+      ? "…"
+      : mounts.length === 0
+        ? "none shared yet"
+        : `${mounts.length} folder${mounts.length === 1 ? "" : "s"} shared`;
+
   return (
-    <Card size="sm">
-      <CardContent className="flex flex-col gap-2">
-        {loadError ? (
-          <p className="px-1 text-xs text-destructive">
-            failed to load: {loadError}
-          </p>
-        ) : mounts === null ? (
+    <>
+      <Card size="sm">
+        <CardContent>
           <ItemGroup>
-            {Array.from({ length: 2 }).map((_, i) => (
-              <Item key={i} variant="muted" size="sm">
+            <Item
+              asChild
+              variant="muted"
+              size="sm"
+              className="cursor-pointer text-left hover:bg-muted/70"
+            >
+              <button type="button" onClick={() => setOpen(true)}>
                 <ItemMedia
                   variant="icon"
-                  className="size-9 rounded-[10px] bg-muted"
+                  className="size-9 rounded-[10px] bg-sky-500/12 text-sky-600 dark:text-sky-400"
                 >
-                  <Skeleton className="size-4 rounded" />
+                  <FolderOpen />
                 </ItemMedia>
-                <ItemContent>
-                  <Skeleton className="h-3 w-36 rounded" />
+                <ItemContent className="gap-0.5">
+                  <ItemTitle>shared folders</ItemTitle>
+                  <ItemDescription className="text-[11px]">
+                    {summary}
+                  </ItemDescription>
                 </ItemContent>
-              </Item>
-            ))}
+                <ItemActions>
+                  <ChevronRight className="size-4 text-muted-foreground/60" />
+                </ItemActions>
+              </button>
+            </Item>
           </ItemGroup>
-        ) : (
-          <>
-            {mounts.length > 0 ? (
-              <ItemGroup>
-                {mounts.map((mount, index) => (
-                  <Item key={mount.container_path} variant="muted" size="sm">
-                    <ItemMedia
-                      variant="icon"
-                      className="size-9 rounded-[10px] bg-sky-500/12 text-sky-600 dark:text-sky-400"
-                    >
-                      <FolderOpen />
-                    </ItemMedia>
-                    <ItemContent className="gap-0.5">
-                      <ItemTitle>{folderName(mount.host_path)}</ItemTitle>
-                      <ItemDescription
-                        className="text-[11px]"
-                        title={mount.host_path}
-                      >
-                        {mount.host_path}
-                        {mount.container_path !== mount.host_path
-                          ? ` · seen at ${mount.container_path}`
-                          : ""}
-                      </ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <Switch
-                          size="sm"
-                          checked={mount.writable}
-                          disabled={saving}
-                          aria-label={`allow ${agentName || "vesta"} to edit ${folderName(mount.host_path)}`}
-                          onCheckedChange={(v) => toggleWritable(index, v)}
-                        />
-                        can edit
-                      </span>
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        aria-label={`remove ${mount.host_path}`}
-                        disabled={saving}
-                        onClick={() => removePath(index)}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </ItemActions>
-                  </Item>
-                ))}
-              </ItemGroup>
-            ) : (
-              <p className="px-1 text-xs text-muted-foreground/60">
-                no shared folders yet.
-              </p>
-            )}
+        </CardContent>
+      </Card>
 
-            <div className="flex flex-col gap-2 rounded-xl bg-muted/40 p-3">
-              <Input
-                value={hostPath}
-                onChange={(e) => setHostPath(e.target.value)}
-                placeholder="/mnt/media"
-                aria-label="folder path on this computer"
-                className="h-8 text-xs"
-              />
-              <Input
-                value={containerPath}
-                onChange={(e) => setContainerPath(e.target.value)}
-                placeholder="where vesta sees it (optional)"
-                aria-label="path inside the container"
-                className="h-8 text-xs"
-              />
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Switch
-                    size="sm"
-                    checked={writable}
-                    onCheckedChange={setWritable}
-                    aria-label="allow editing"
-                  />
-                  can edit
-                  {!writable ? (
-                    <Lock className="size-3 text-muted-foreground/60" />
-                  ) : null}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!hostPath.trim() || saving}
-                  onClick={addPath}
-                >
-                  <Plus className="size-4" />
-                  add folder
-                </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>shared folders</DialogTitle>
+            <DialogDescription>
+              folders on this computer {agentName || "vesta"} can open.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex min-w-0 flex-col gap-3">
+            {loadError ? (
+              <p className="text-xs text-destructive">
+                failed to load: {loadError}
+              </p>
+            ) : mounts === null ? (
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-12 w-full rounded-2xl" />
+                <Skeleton className="h-12 w-full rounded-2xl" />
               </div>
-            </div>
+            ) : (
+              <>
+                {mounts.length > 0 ? (
+                  <ItemGroup className="min-w-0">
+                    {mounts.map((mount, index) => (
+                      <Item
+                        key={mount.container_path}
+                        variant="muted"
+                        size="sm"
+                      >
+                        <ItemMedia
+                          variant="icon"
+                          className="size-9 rounded-[10px] bg-sky-500/12 text-sky-600 dark:text-sky-400"
+                        >
+                          <FolderOpen />
+                        </ItemMedia>
+                        <ItemContent className="min-w-0 gap-0.5">
+                          <ItemTitle>{folderName(mount.host_path)}</ItemTitle>
+                          <ItemDescription
+                            className="text-[11px]"
+                            title={mount.host_path}
+                          >
+                            {mount.host_path}
+                            {mount.container_path !== mount.host_path
+                              ? ` · seen at ${mount.container_path}`
+                              : ""}
+                          </ItemDescription>
+                        </ItemContent>
+                        <ItemActions>
+                          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            <Switch
+                              size="sm"
+                              checked={mount.writable}
+                              disabled={saving}
+                              aria-label={`allow editing ${folderName(mount.host_path)}`}
+                              onCheckedChange={(v) => toggleWritable(index, v)}
+                            />
+                            can edit
+                          </span>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`remove ${mount.host_path}`}
+                            disabled={saving}
+                            onClick={() => removePath(index)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </ItemActions>
+                      </Item>
+                    ))}
+                  </ItemGroup>
+                ) : (
+                  <p className="text-xs text-muted-foreground/60">
+                    no shared folders yet.
+                  </p>
+                )}
 
-            {saveError ? (
-              <p className="px-1 text-xs text-destructive">{saveError}</p>
-            ) : restartHint ? (
-              <p className="px-1 text-xs text-muted-foreground/60">
-                restart {agentName || "the agent"} to apply.
-              </p>
-            ) : null}
-          </>
-        )}
-      </CardContent>
-    </Card>
+                <div className="flex flex-col gap-2 rounded-xl bg-muted/40 p-3">
+                  <Input
+                    value={hostPath}
+                    onChange={(e) => setHostPath(e.target.value)}
+                    placeholder="/mnt/media"
+                    aria-label="folder path on this computer"
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    value={containerPath}
+                    onChange={(e) => setContainerPath(e.target.value)}
+                    placeholder="where vesta sees it (optional)"
+                    aria-label="path inside the container"
+                    className="h-8 text-xs"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Switch
+                        size="sm"
+                        checked={writable}
+                        onCheckedChange={setWritable}
+                        aria-label="allow editing"
+                      />
+                      can edit
+                      {!writable ? (
+                        <Lock className="size-3 text-muted-foreground/60" />
+                      ) : null}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!hostPath.trim() || saving}
+                      onClick={addPath}
+                    >
+                      <Plus className="size-4" />
+                      add folder
+                    </Button>
+                  </div>
+                </div>
+
+                {saveError ? (
+                  <p className="text-xs text-destructive">{saveError}</p>
+                ) : restartHint ? (
+                  <p className="text-xs text-muted-foreground/60">
+                    restart {agentName || "the agent"} to apply.
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
