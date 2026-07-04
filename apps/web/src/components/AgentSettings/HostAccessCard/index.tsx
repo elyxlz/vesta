@@ -1,25 +1,30 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, HardDrive, Lock, Plus } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { FolderOpen, Lock, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import { getAgentMounts, setAgentMounts, type HostMount } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { errorMessage } from "@/lib/utils";
 
-// Host filesystem grants: host paths the agent may read (and, if writable, write) inside its
-// container. A list with add/remove that PUTs the whole list, mirroring the notification rules
-// card's data-flow (plain state + effect, no react-query).
+function folderName(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : path;
+}
+
+// Host filesystem grants: folders on the host the agent may open (and, if writable, write) inside
+// its container. A list with add/remove/toggle that PUTs the whole list (plain state + effect).
 export function HostAccessCard() {
   const { name: agentName } = useSelectedAgent();
   const [mounts, setMounts] = useState<HostMount[] | null>(null);
@@ -90,61 +95,71 @@ export function HostAccessCard() {
     void save(mounts.filter((_, i) => i !== index));
   };
 
+  const toggleWritable = (index: number, value: boolean) => {
+    if (!mounts) return;
+    void save(
+      mounts.map((m, i) => (i === index ? { ...m, writable: value } : m)),
+    );
+  };
+
   return (
     <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <HardDrive className="size-4 text-muted-foreground" />
-          shared folders
-        </CardTitle>
-        <CardDescription className="text-xs">
-          folders on this computer {agentName || "vesta"} can open.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-3">
-          {loadError ? (
-            <p className="text-xs text-destructive">
-              failed to load: {loadError}
-            </p>
-          ) : mounts === null ? (
-            <div className="flex flex-col gap-2">
-              {Array.from({ length: 2 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Skeleton className="h-5 w-40 rounded-3xl" />
-                  <Skeleton className="h-5 w-14 rounded-3xl" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <>
-              {mounts.length > 0 ? (
-                <div className="flex flex-col gap-2">
-                  {mounts.map((mount, index) => (
-                    <div
-                      key={mount.container_path}
-                      className="flex items-center gap-2 rounded-md"
+      <CardContent className="flex flex-col gap-2">
+        {loadError ? (
+          <p className="px-1 text-xs text-destructive">
+            failed to load: {loadError}
+          </p>
+        ) : mounts === null ? (
+          <ItemGroup>
+            {Array.from({ length: 2 }).map((_, i) => (
+              <Item key={i} variant="muted" size="sm">
+                <ItemMedia
+                  variant="icon"
+                  className="size-9 rounded-[10px] bg-muted"
+                >
+                  <Skeleton className="size-4 rounded" />
+                </ItemMedia>
+                <ItemContent>
+                  <Skeleton className="h-3 w-36 rounded" />
+                </ItemContent>
+              </Item>
+            ))}
+          </ItemGroup>
+        ) : (
+          <>
+            {mounts.length > 0 ? (
+              <ItemGroup>
+                {mounts.map((mount, index) => (
+                  <Item key={mount.container_path} variant="muted" size="sm">
+                    <ItemMedia
+                      variant="icon"
+                      className="size-9 rounded-[10px] bg-sky-500/12 text-sky-600 dark:text-sky-400"
                     >
-                      <FolderOpen className="size-3.5 shrink-0 text-muted-foreground/60" />
-                      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                        <span
-                          className="truncate text-xs font-medium"
-                          title={mount.host_path}
-                        >
-                          {mount.host_path}
-                        </span>
-                        {mount.container_path !== mount.host_path ? (
-                          <span
-                            className="truncate text-[11px] text-muted-foreground"
-                            title={mount.container_path}
-                          >
-                            -&gt; {mount.container_path}
-                          </span>
-                        ) : null}
-                      </div>
-                      <Badge variant={mount.writable ? "default" : "secondary"}>
-                        {mount.writable ? "can edit" : "view only"}
-                      </Badge>
+                      <FolderOpen />
+                    </ItemMedia>
+                    <ItemContent className="gap-0.5">
+                      <ItemTitle>{folderName(mount.host_path)}</ItemTitle>
+                      <ItemDescription
+                        className="text-[11px]"
+                        title={mount.host_path}
+                      >
+                        {mount.host_path}
+                        {mount.container_path !== mount.host_path
+                          ? ` · seen at ${mount.container_path}`
+                          : ""}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <Switch
+                          size="sm"
+                          checked={mount.writable}
+                          disabled={saving}
+                          aria-label={`allow ${agentName || "vesta"} to edit ${folderName(mount.host_path)}`}
+                          onCheckedChange={(v) => toggleWritable(index, v)}
+                        />
+                        can edit
+                      </span>
                       <Button
                         size="icon-xs"
                         variant="ghost"
@@ -152,66 +167,67 @@ export function HostAccessCard() {
                         disabled={saving}
                         onClick={() => removePath(index)}
                       >
-                        ✕
+                        <Trash2 className="size-3.5" />
                       </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground/60">
-                  no shared folders yet.
-                </p>
-              )}
+                    </ItemActions>
+                  </Item>
+                ))}
+              </ItemGroup>
+            ) : (
+              <p className="px-1 text-xs text-muted-foreground/60">
+                no shared folders yet.
+              </p>
+            )}
 
-              <div className="flex flex-col gap-2 rounded-xl border border-border/60 bg-muted/40 p-3">
-                <Input
-                  value={hostPath}
-                  onChange={(e) => setHostPath(e.target.value)}
-                  placeholder="/mnt/media"
-                  aria-label="folder path on this computer"
-                  className="h-8 text-xs"
-                />
-                <Input
-                  value={containerPath}
-                  onChange={(e) => setContainerPath(e.target.value)}
-                  placeholder="where vesta sees it (optional)"
-                  aria-label="path inside the container"
-                  className="h-8 text-xs"
-                />
-                <div className="flex items-center justify-between">
-                  <Label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Switch
-                      size="sm"
-                      checked={writable}
-                      onCheckedChange={setWritable}
-                    />
-                    can edit
-                    {!writable ? (
-                      <Lock className="size-3 text-muted-foreground/60" />
-                    ) : null}
-                  </Label>
-                  <Button
+            <div className="flex flex-col gap-2 rounded-xl bg-muted/40 p-3">
+              <Input
+                value={hostPath}
+                onChange={(e) => setHostPath(e.target.value)}
+                placeholder="/mnt/media"
+                aria-label="folder path on this computer"
+                className="h-8 text-xs"
+              />
+              <Input
+                value={containerPath}
+                onChange={(e) => setContainerPath(e.target.value)}
+                placeholder="where vesta sees it (optional)"
+                aria-label="path inside the container"
+                className="h-8 text-xs"
+              />
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Switch
                     size="sm"
-                    variant="outline"
-                    disabled={!hostPath.trim() || saving}
-                    onClick={addPath}
-                  >
-                    <Plus className="size-4" />
-                    add folder
-                  </Button>
-                </div>
+                    checked={writable}
+                    onCheckedChange={setWritable}
+                    aria-label="allow editing"
+                  />
+                  can edit
+                  {!writable ? (
+                    <Lock className="size-3 text-muted-foreground/60" />
+                  ) : null}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!hostPath.trim() || saving}
+                  onClick={addPath}
+                >
+                  <Plus className="size-4" />
+                  add folder
+                </Button>
               </div>
+            </div>
 
-              {saveError ? (
-                <p className="text-xs text-destructive">{saveError}</p>
-              ) : restartHint ? (
-                <p className="text-xs text-muted-foreground/60">
-                  restart {agentName || "the agent"} to apply.
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
+            {saveError ? (
+              <p className="px-1 text-xs text-destructive">{saveError}</p>
+            ) : restartHint ? (
+              <p className="px-1 text-xs text-muted-foreground/60">
+                restart {agentName || "the agent"} to apply.
+              </p>
+            ) : null}
+          </>
+        )}
       </CardContent>
     </Card>
   );
