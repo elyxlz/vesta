@@ -204,7 +204,6 @@ export function HostAccessCard() {
                         variant="ghost"
                         className="text-muted-foreground/60 hover:text-foreground"
                         aria-label={`remove ${mount.host_path}`}
-                        disabled={saving}
                         onClick={() => removePath(index)}
                       >
                         <Trash2 className="size-3.5" />
