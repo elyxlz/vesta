@@ -266,7 +266,7 @@ function SkillsCard({
 
   return (
     <Card size="sm" className="!py-0">
-      <ScrollArea className="max-h-80 [&_[data-slot=scroll-area-viewport]]:px-3 [&_[data-slot=scroll-area-viewport]]:py-0">
+      <ScrollArea className="[&_[data-slot=scroll-area-viewport]]:max-h-80 [&_[data-slot=scroll-area-viewport]]:px-3 [&_[data-slot=scroll-area-viewport]]:py-0">
         <div className="flex flex-col gap-2">
           {inSkillView && activeSkill ? (
             <>
