@@ -1,7 +1,13 @@
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { type MotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
-import { Home, KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
+import {
+  Home,
+  KeyRound,
+  LayoutDashboard,
+  MessageSquare,
+  RotateCw,
+} from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
@@ -18,6 +24,8 @@ import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
+import { useRestartPending } from "@/stores/use-restart-pending";
+import { restartAgent } from "@/api/agents";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -36,6 +44,23 @@ export function AgentNavbar({
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
+  const restartPending = useRestartPending((s) =>
+    name ? (s.pending[name] ?? false) : false,
+  );
+  const clearRestartPending = useRestartPending((s) => s.clearPending);
+  const [restarting, setRestarting] = useState(false);
+  const applyRestart = async () => {
+    if (!name) return;
+    setRestarting(true);
+    try {
+      await restartAgent(name);
+      clearRestartPending(name);
+    } catch {
+      // Leave the flag set so the user can retry.
+    } finally {
+      setRestarting(false);
+    }
+  };
   const needsAuth =
     (agent?.status === "not_authenticated" ||
       agent?.status === "unprovisioned") &&
@@ -97,6 +122,22 @@ export function AgentNavbar({
           connected ? (
             <div className="flex items-center gap-2">
               <StatusPill showHostname={false} />
+              {restartPending && (
+                <Button
+                  variant="default"
+                  size={isMobile ? "icon-lg" : "lg"}
+                  disabled={restarting}
+                  aria-label="restart to apply changes"
+                  onClick={() => void applyRestart()}
+                >
+                  <RotateCw
+                    data-icon={isMobile ? undefined : "inline-start"}
+                    className={restarting ? "animate-spin" : undefined}
+                  />
+                  {!isMobile &&
+                    (restarting ? "restarting…" : "restart to apply")}
+                </Button>
+              )}
               {!isMobile && needsAuth && (
                 <Button
                   variant="default"

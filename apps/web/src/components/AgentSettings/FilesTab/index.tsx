@@ -22,6 +22,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useFillHeight } from "@/hooks/use-fill-height";
 import { useAppMode } from "@/stores/use-app-mode";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
 import { FileEditor } from "./FileEditor";
@@ -45,7 +46,7 @@ function statusText(status: SaveStatus, dirty: boolean): string {
     case "saving":
       return "saving...";
     case "saved":
-      return "saved — restart the agent for changes to take effect";
+      return "saved";
     case "error":
       return status.message;
     default:
@@ -150,6 +151,7 @@ export function FilesTab() {
   const [editorContent, setEditorContent] = useState("");
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
   const mode = useAppMode((s) => s.mode);
+  const markRestartPending = useRestartPending((s) => s.markPending);
   const [dreamsActive, setDreamsActive] = useState(false);
 
   useEffect(() => {
@@ -244,6 +246,7 @@ export function FilesTab() {
       await writeFile(agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
+      markRestartPending(agentName);
     } catch (e) {
       setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }

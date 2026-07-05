@@ -28,6 +28,7 @@ import {
   type HostMount,
 } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import { errorMessage } from "@/lib/utils";
 
 function folderName(path: string): string {
@@ -40,10 +41,10 @@ function folderName(path: string): string {
 // path). PUTs the whole list on every change.
 export function HostAccessCard() {
   const { name: agentName } = useSelectedAgent();
+  const markRestartPending = useRestartPending((s) => s.markPending);
   const [mounts, setMounts] = useState<HostMount[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [restartHint, setRestartHint] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -95,7 +96,7 @@ export function HostAccessCard() {
     try {
       const result = await setAgentMounts(agentName, next);
       setMounts(result.mounts);
-      setRestartHint(result.restartRequired);
+      if (result.restartRequired) markRestartPending(agentName);
       return true;
     } catch (e) {
       setSaveError(errorMessage(e, "failed to update host access"));
@@ -234,10 +235,6 @@ export function HostAccessCard() {
 
               {saveError ? (
                 <p className="px-1 text-xs text-destructive">{saveError}</p>
-              ) : restartHint ? (
-                <p className="px-1 text-xs text-muted-foreground/60">
-                  restart {agentName || "the agent"} to apply.
-                </p>
               ) : null}
             </>
           )}
