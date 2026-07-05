@@ -59,6 +59,13 @@ const SOURCE_COLORS = [
   "bg-orange-500/12 text-orange-600 dark:text-orange-400",
   "bg-teal-500/12 text-teal-600 dark:text-teal-400",
   "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
+  "bg-blue-500/12 text-blue-600 dark:text-blue-400",
+  "bg-lime-500/12 text-lime-600 dark:text-lime-400",
+  "bg-pink-500/12 text-pink-600 dark:text-pink-400",
+  "bg-purple-500/12 text-purple-600 dark:text-purple-400",
+  "bg-red-500/12 text-red-600 dark:text-red-400",
+  "bg-green-500/12 text-green-600 dark:text-green-400",
+  "bg-yellow-500/12 text-yellow-600 dark:text-yellow-400",
 ];
 
 function sourceColor(source: string): string {
