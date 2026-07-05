@@ -90,7 +90,7 @@ export function SimpleView({
     // bento — the left column (mind + shared folders) is a continuous flex column, skills on the
     // right. The wrappers use `display: contents` on mobile so all three sections flatten into one
     // column and interleave; at lg they become the two real columns.
-    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
       <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="flex flex-col gap-3">
           <GroupLabel>{name}'s mind</GroupLabel>

@@ -127,7 +127,7 @@ function SkeletonSection({
 function SimpleSkeleton({ agentName }: { agentName?: string }) {
   const name = agentName ?? "the agent";
   return (
-    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
       <div className="contents lg:flex lg:flex-col lg:gap-6">
         <SkeletonSection label={`${name}'s mind`} rows={3} />
         <SkeletonSection
