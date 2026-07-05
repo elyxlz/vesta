@@ -30,7 +30,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
         state=_authed_state(),
         config=config,
         config_issues=["BAD=1 is invalid; reverted to default"],
-        greeting_reason="restart: clean restart",
+        greeting_reason="clean: routine restart, no specific reason",
         first_start=False,
     )
 
@@ -39,7 +39,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
     assert "[Workspace sync]" in turns[1]
     assert "skills-install alpha" in turns[2]
     assert "BAD=1" in turns[3]
-    assert "[System: restart: clean restart]" in turns[4]
+    assert "[System Restart]\nReason: routine restart, no specific reason" in turns[4]
 
 
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):

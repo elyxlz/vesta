@@ -179,6 +179,37 @@ def test_reason_constants_follow_category_detail_shape():
     assert vm.NIGHTLY_RESTART == "nightly: the dreamer ran and compacted your session for continuous context"
 
 
+def test_build_restart_context_renders_system_restart_header(tmp_path):
+    from core import helpers
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    # core_prompts_dir == agent_dir/core/prompts; write a stand-in restart.md so load_prompt resolves.
+    config.core_prompts_dir.mkdir(parents=True, exist_ok=True)
+    (config.core_prompts_dir / "restart.md").write_text("Read the `restart` skill and follow it.\n")
+
+    out = helpers.build_restart_context(vm.NIGHTLY_RESTART, config)
+    assert out.startswith("[System Restart]\nReason: the dreamer ran and compacted your session for continuous context")
+    assert out.endswith("Read the `restart` skill and follow it.")
+
+    # A reason without a category prefix renders whole.
+    out2 = helpers.build_restart_context("first start", config)
+    assert "Reason: first start" in out2
+
+    # Extras (dreamer summary) slot between the header and the restart prompt.
+    out3 = helpers.build_restart_context(vm.NIGHTLY_RESTART, config, extras=["[Dreamer Summary: x]\nhello"])
+    header, summary, prompt = out3.split("\n\n")
+    assert header.startswith("[System Restart]")
+    assert summary.startswith("[Dreamer Summary: x]")
+    assert prompt == "Read the `restart` skill and follow it."
+
+
+def test_shipped_restart_prompt_has_no_redundant_restarted_line():
+    import pathlib
+
+    text = (pathlib.Path(__file__).parents[1] / "core" / "prompts" / "restart.md").read_text()
+    assert "You've restarted" not in text
+
+
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor
