@@ -15,6 +15,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { ItemGroup } from "@/components/ui/item";
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
@@ -122,11 +123,11 @@ export function NotificationsCard() {
         {error ? (
           <p className="text-xs text-destructive">failed to load: {error}</p>
         ) : items === null ? (
-          <div className="flex flex-col gap-2.5">
+          <ItemGroup>
             {Array.from({ length: 4 }).map((_, i) => (
               <NotificationRowSkeleton key={i} />
             ))}
-          </div>
+          </ItemGroup>
         ) : items.length === 0 ? (
           <Empty>
             <EmptyHeader>
@@ -141,14 +142,16 @@ export function NotificationsCard() {
           </Empty>
         ) : (
           <div className="flex flex-col gap-2.5">
-            {items.map((event, i) => (
-              <NotificationRow
-                key={event.notif_id ?? event.ts ?? `row-${i}`}
-                event={event}
-                // Pending = received but not yet processed (still on disk per the live pending set).
-                isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
-              />
-            ))}
+            <ItemGroup>
+              {items.map((event, i) => (
+                <NotificationRow
+                  key={event.notif_id ?? event.ts ?? `row-${i}`}
+                  event={event}
+                  // Pending = received but not yet processed (still on disk per the live pending set).
+                  isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
+                />
+              ))}
+            </ItemGroup>
             {cursor !== null ? (
               <Button
                 size="xs"
