@@ -159,11 +159,7 @@ export async function createAgent(name: string): Promise<void> {
 /// the create POST is in flight. The image step (`pulling` on a release build,
 /// `building` from a local checkout) is the dominant wait.
 export type BuildPhase =
-  | "pulling"
-  | "building"
-  | "preparing"
-  | "creating"
-  | "starting";
+  "pulling" | "building" | "preparing" | "creating" | "starting";
 
 const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
   pulling: "downloading the agent image...",
