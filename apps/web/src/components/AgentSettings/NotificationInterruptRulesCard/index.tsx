@@ -11,6 +11,13 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
+import {
   getNotificationInterruptRules,
   setNotificationInterruptRules,
   type FieldPredicate,
@@ -271,21 +278,30 @@ export function NotificationInterruptRulesCard() {
               ) : null}
 
               {/* Rules are authored by the agent: ask it in chat instead of a form. */}
-              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-muted/40 p-3">
-                <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {rules.length === 0 ? "No rules yet. " : ""}
-                  To add a rule, just ask {agentName || "the agent"} — e.g.{" "}
-                  <span className="text-foreground">
-                    "don't let Twitter interrupt you"
-                  </span>{" "}
-                  or{" "}
-                  <span className="text-foreground">
-                    "snooze the Bride Squad group chat"
-                  </span>
-                  .
-                </p>
-              </div>
+              <Item variant="muted" size="sm" className="items-start">
+                <ItemMedia
+                  variant="icon"
+                  className="size-9 rounded-[10px] bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                >
+                  <Sparkles />
+                </ItemMedia>
+                <ItemContent className="gap-0.5">
+                  <ItemTitle>
+                    {rules.length === 0 ? "no rules yet" : "add a rule"}
+                  </ItemTitle>
+                  <ItemDescription className="line-clamp-none">
+                    just ask {agentName || "the agent"} — e.g.{" "}
+                    <span className="text-foreground">
+                      "don't let Twitter interrupt you"
+                    </span>{" "}
+                    or{" "}
+                    <span className="text-foreground">
+                      "snooze the Bride Squad group chat"
+                    </span>
+                    .
+                  </ItemDescription>
+                </ItemContent>
+              </Item>
 
               {saveError ? (
                 <p className="text-xs text-destructive">{saveError}</p>
