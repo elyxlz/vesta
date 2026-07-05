@@ -42,6 +42,26 @@ def state_path(config: cfg.VestaConfig) -> pl.Path:
     return config.data_dir / STATE_FILENAME
 
 
+PENDING_REASON_FILENAME = "pending_restart_reason"
+
+
+def pending_reason_path(config: cfg.VestaConfig) -> pl.Path:
+    return config.data_dir / PENDING_REASON_FILENAME
+
+
+def take_pending_reason(config: cfg.VestaConfig) -> str | None:
+    """Read + delete the one-shot restart-reason inbox vestad may have written before this boot.
+
+    The file is transport, not storage: it is drained into last_restart_reason and removed so it
+    never re-fires on a later boot. Returns the stripped reason, or None if absent/empty."""
+    path = pending_reason_path(config)
+    if not path.exists():
+        return None
+    reason = path.read_text(encoding="utf-8").strip()
+    path.unlink(missing_ok=True)
+    return reason or None
+
+
 def load_state(config: cfg.VestaConfig) -> PersistedState:
     path = state_path(config)
     if path.exists():
