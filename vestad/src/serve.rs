@@ -289,6 +289,25 @@ pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_
     err_response(status, &e.to_string())
 }
 
+/// Run a container-mutating operation on a detached task and await its single result over a oneshot
+/// channel. Load-bearing invariant for a self-restart: the request's client is the agent inside the
+/// very container the operation stops, so the loopback connection drops the instant the container
+/// goes down — and an inline `.await` would be cancelled mid-recreate, stranding the agent stopped.
+/// Spawning runs the op to completion regardless of the client; the request only observes its result
+/// (so a still-connected app caller still gets a truthful response). JSON analogue of the SSE
+/// `spawn_pipeline_sse` used by backup/restore, which fixed this same drop-cancellation class.
+async fn spawn_detached<Fut>(op: Fut) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+where
+    Fut: std::future::Future<Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>> + Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _ = tx.send(op.await);
+    });
+    rx.await
+        .unwrap_or_else(|_| Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, "restart task panicked")))
+}
+
 // --- Handlers ---
 
 async fn health() -> Json<serde_json::Value> {
@@ -636,22 +655,28 @@ async fn restart_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
-    let _guard = agent_write_guard(&state, &name).await;
+    // Detached from this request's connection: a self-restart's client is the agent inside the very
+    // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
+    // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
+    spawn_detached(async move {
+        let _guard = agent_write_guard(&state, &name).await;
 
-    // A restart implies the agent should be running — record it so boot-start agrees with intent.
-    {
-        let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
-        save_settings(&settings);
-    }
-    let user_mounts = {
-        let settings = state.settings.read().await;
-        settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
-    };
-    docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
-        .await
-        .map_err(map_docker_err)?;
-    Ok(ok_json())
+        // A restart implies the agent should be running — record it so boot-start agrees with intent.
+        {
+            let mut settings = state.settings.write().await;
+            settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+            save_settings(&settings);
+        }
+        let user_mounts = {
+            let settings = state.settings.read().await;
+            settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
+        };
+        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
+            .await
+            .map_err(map_docker_err)?;
+        Ok(ok_json())
+    })
+    .await
 }
 
 async fn destroy_agent_handler(
@@ -3179,5 +3204,54 @@ mod gateway_settings_tests {
         assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
         assert_eq!(off["lan"]["url"], serde_json::Value::Null);
         assert_eq!(off["tunnel_url"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod restart_detach_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    /// Regression for the nightly-dream restart that stranded the agent: a self-restart's client is
+    /// the agent inside the container being stopped, so the request future is dropped mid-operation.
+    /// spawn_detached must run the operation to completion regardless — mirroring the drop-cancellation
+    /// fix already covered for backup/restore in backup.rs::sse_stream_drop_cancels_container_restart.
+    #[tokio::test]
+    async fn detached_op_completes_after_request_future_dropped() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let op_started = Arc::new(Notify::new());
+        let op_gate = Arc::new(Notify::new());
+
+        let completed_c = completed.clone();
+        let op_started_c = op_started.clone();
+        let op_gate_c = op_gate.clone();
+
+        // The request side: spawn_detached spawns the op, then awaits its oneshot result. Drive it on
+        // its own task so we can drop it (client disconnect) once the op is in flight.
+        let request = tokio::spawn(spawn_detached(async move {
+            op_started_c.notify_one();
+            // Mirrors the multi-step rebuild in progress (stop -> snapshot -> recreate -> start).
+            op_gate_c.notified().await;
+            completed_c.store(true, Ordering::SeqCst);
+            Ok(ok_json())
+        }));
+
+        // Once the op is running, drop the request future — as hyper does when the loopback client dies.
+        op_started.notified().await;
+        assert!(!completed.load(Ordering::SeqCst), "op should still be in flight");
+        request.abort();
+
+        // The detached op must still finish despite the dropped request.
+        op_gate.notify_one();
+        for _ in 0..200 {
+            if completed.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(completed.load(Ordering::SeqCst), "detached op must run to completion after request dropped");
     }
 }
