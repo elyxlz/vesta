@@ -119,7 +119,7 @@ function Disposition({ event }: { event: NotificationEvent }) {
   if (!decided) return null;
   return (
     <Badge
-      variant={decided === "interrupt" ? "default" : "secondary"}
+      variant={decided === "interrupt" ? "default" : "outline"}
       className="w-[4.5rem]"
     >
       {decided === "interrupt" ? "interrupt" : "snooze"}
@@ -191,7 +191,7 @@ export function NotificationRow({
           ) : null}
           <ItemTitle>{event.source}</ItemTitle>
           {event.notif_type ? (
-            <Badge variant="secondary">{event.notif_type}</Badge>
+            <Badge variant="outline">{event.notif_type}</Badge>
           ) : null}
         </div>
 
