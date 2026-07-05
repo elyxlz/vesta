@@ -40,7 +40,7 @@ const itemVariants = cva(
       variant: {
         default: "border-transparent",
         outline: "border-border",
-        muted: "border-border bg-muted/50",
+        muted: "border-transparent bg-muted/50",
       },
       size: {
         default: "gap-3.5 px-4 py-3.5",
