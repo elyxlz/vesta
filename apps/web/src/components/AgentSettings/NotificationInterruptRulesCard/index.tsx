@@ -12,8 +12,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Item,
+  ItemActions,
   ItemContent,
   ItemDescription,
+  ItemGroup,
   ItemTitle,
 } from "@/components/ui/item";
 import {
@@ -188,15 +190,16 @@ export function NotificationInterruptRulesCard() {
               {/* Active rules in priority order (first match wins). Drag to reorder; read-only
                   summaries with a clickable action badge + delete. */}
               {rules.length > 0 ? (
-                <div className="flex flex-col gap-2">
+                <ItemGroup>
                   {rules.map((rule, index) => {
                     const conditions = ruleConditions(rule);
                     const draggable = rules.length > 1;
                     return (
-                      <div
+                      <Item
                         key={rule.id}
+                        variant="muted"
+                        size="sm"
                         className={cn(
-                          "flex items-center gap-2 rounded-md",
                           dragIndex !== null &&
                             dragIndex !== index &&
                             "outline-dashed outline-1 outline-border/60",
@@ -240,40 +243,42 @@ export function NotificationInterruptRulesCard() {
                             ))
                           )}
                         </div>
-                        <Badge
-                          asChild
-                          variant={
-                            rule.action === "interrupt"
-                              ? "default"
-                              : "secondary"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleAction(index)}
-                            aria-label={`action: ${
+                        <ItemActions>
+                          <Badge
+                            asChild
+                            variant={
                               rule.action === "interrupt"
-                                ? "interrupt"
-                                : "snooze"
-                            }, click to toggle`}
+                                ? "default"
+                                : "outline"
+                            }
                           >
-                            {rule.action === "interrupt"
-                              ? "interrupt"
-                              : "snooze"}
-                          </button>
-                        </Badge>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="delete rule"
-                          onClick={() => deleteRule(index)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleAction(index)}
+                              aria-label={`action: ${
+                                rule.action === "interrupt"
+                                  ? "interrupt"
+                                  : "snooze"
+                              }, click to toggle`}
+                            >
+                              {rule.action === "interrupt"
+                                ? "interrupt"
+                                : "snooze"}
+                            </button>
+                          </Badge>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label="delete rule"
+                            onClick={() => deleteRule(index)}
+                          >
+                            ✕
+                          </Button>
+                        </ItemActions>
+                      </Item>
                     );
                   })}
-                </div>
+                </ItemGroup>
               ) : null}
 
               {/* Rules are authored by the agent: ask it in chat instead of a form. */}
