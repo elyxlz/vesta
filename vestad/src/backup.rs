@@ -4,8 +4,8 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    docker_cp_content, inspect_container, remove_container_force, start_container,
-    stop_container_with_timeout, validate_name, AgentEnvConfig, ContainerStatus, DockerError,
+    inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
+    write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -106,14 +106,7 @@ where
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         tracing::info!(agent = %name, "stopping agent for backup");
-        if let Err(err) = docker_cp_content(
-            docker,
-            &cname,
-            "backup — paused for backup",
-            "/root/agent/data/restart_reason",
-        )
-        .await
-        {
+        if let Err(err) = write_pending_restart_reason(docker, &cname, "backup: you were paused for a scheduled backup").await {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
         stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();

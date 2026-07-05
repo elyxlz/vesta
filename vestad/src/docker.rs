@@ -1525,6 +1525,19 @@ pub async fn create_container(
     }
 }
 
+// --- Restart-reason inbox ---
+
+/// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
+/// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
+/// plain text, no schema shared across the crate boundary.
+pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
+
+/// Write `reason` into the agent's boot inbox. Best-effort at every call site: a failed write
+/// only costs a missing greeting line, never the restart itself.
+pub(crate) async fn write_pending_restart_reason(docker: &Docker, cname: &str, reason: &str) -> Result<(), DockerError> {
+    docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+}
+
 // --- Credential injection ---
 
 pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
@@ -2295,6 +2308,12 @@ mod tests {
     // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
     // need a "normal container" policy to build fixtures with.
     const RESTART_POLICY: &str = "on-failure";
+
+    #[test]
+    fn pending_restart_reason_path_matches_agent_contract() {
+        // The agent drains this exact path on boot (agent state_store.take_pending_reason).
+        assert_eq!(PENDING_RESTART_REASON_PATH, "/root/agent/data/pending_restart_reason");
+    }
 
     #[test]
     fn assemble_binds_appends_user_mounts() {
