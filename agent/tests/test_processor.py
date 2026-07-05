@@ -210,6 +210,29 @@ def test_shipped_restart_prompt_has_no_redundant_restarted_line():
     assert "You've restarted" not in text
 
 
+def test_consume_restart_reason_drains_pending_inbox(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+
+    # No inbox -> existing behavior (returns the persisted reason).
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CLEAN_RESTART
+
+    # Inbox present -> it wins over the persisted clean reason and the file is removed one-shot.
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have read-only access to /media/Plex\n")
+    got = _consume_restart_reason(state, config, first_start=False)
+    assert got == "mounts: you now have read-only access to /media/Plex"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+    # Drained: the next boot falls back to CRASH_RESTART like any consumed reason.
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CRASH_RESTART
+
+
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor

@@ -219,6 +219,11 @@ def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_st
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
     if first_start:
         return vm.FIRST_START_REASON
+    pending = state_store.take_pending_reason(config)
+    if pending is not None:
+        # An external actor (vestad backup/mounts/manual restart) handed in a reason for this boot;
+        # it overrides the clean-restart placeholder the prior run persisted on its way down.
+        state.persisted.last_restart_reason = pending
     stored = state.persisted.last_restart_reason
     state.persisted.last_restart_reason = None
     state_store.save_state(state.persisted, config)
