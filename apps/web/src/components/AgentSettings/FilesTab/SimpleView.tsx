@@ -229,8 +229,8 @@ function HubRow({
       variant="muted"
       size="sm"
       className={cn(
-        "cursor-pointer text-left hover:bg-muted/70",
-        selected && "bg-muted",
+        "cursor-pointer text-left transition hover:brightness-95 dark:hover:brightness-110",
+        selected && "brightness-95 dark:brightness-110",
       )}
     >
       <button type="button" onClick={onClick}>
@@ -363,8 +363,8 @@ function Row({
       variant="muted"
       size="sm"
       className={cn(
-        "cursor-pointer text-left hover:bg-muted/70",
-        selected && "bg-muted",
+        "cursor-pointer text-left transition hover:brightness-95 dark:hover:brightness-110",
+        selected && "brightness-95 dark:brightness-110",
       )}
     >
       <button type="button" onClick={onClick}>
