@@ -156,6 +156,11 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
+    /// Manage host filesystem access for an agent
+    Mount {
+        #[command(subcommand)]
+        cmd: MountCommand,
+    },
     /// View or change agent settings. With no flags, prints model + context window
     /// (manage_agent_code is fixed at create time and read-only here).
     Settings {
@@ -328,6 +333,35 @@ enum BackupAction {
     },
 }
 
+#[derive(Subcommand)]
+enum MountCommand {
+    /// List host paths this agent can access
+    Ls { agent: String },
+    /// Grant the agent access to a host path (read-only by default)
+    Add {
+        agent: String,
+        host_path: String,
+        /// Container path (defaults to mirroring the host path)
+        #[arg(long = "as")]
+        container_path: Option<String>,
+        /// Allow the agent to write (default read-only)
+        #[arg(long)]
+        writable: bool,
+    },
+    /// Revoke a grant by host path
+    Rm { agent: String, host_path: String },
+}
+
+/// A single host filesystem grant, as returned by / sent to GET|PUT /agents/{name}/mounts.
+/// The server validates and canonicalizes host_path/container_path on PUT.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct MountEntry {
+    host_path: String,
+    container_path: String,
+    #[serde(default)]
+    writable: bool,
+}
+
 #[derive(Clone, clap::ValueEnum)]
 enum Toggle {
     On,
@@ -462,6 +496,18 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
         if has_override { "(override)" } else { "(global)" });
     let (daily, weekly, monthly) = retention_fields(&result["retention"]);
     eprintln!("  retention: daily={daily}, weekly={weekly}, monthly={monthly}");
+}
+
+fn get_mount_entries(c: &client::Client, agent: &str) -> Vec<MountEntry> {
+    let value = c.get_agent_mounts(agent).unwrap_or_else(|e| platform::die(&e));
+    match value["mounts"].as_array() {
+        Some(entries) => entries
+            .iter()
+            .cloned()
+            .map(|entry| serde_json::from_value(entry).unwrap_or_else(|e| platform::die(&format!("failed to parse mount entry: {e}"))))
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn read_file_or_stdin(path: &std::path::Path) -> String {
@@ -1519,6 +1565,65 @@ fn run(cli: Cli) {
             }
         }
 
+        Command::Mount { cmd } => {
+            let c = get_client(host_ref, token_ref);
+            match cmd {
+                MountCommand::Ls { agent } => {
+                    let mounts = get_mount_entries(&c, &agent);
+                    if mounts.is_empty() {
+                        eprintln!("no host grants for '{agent}'");
+                    } else {
+                        for m in &mounts {
+                            let target = if m.container_path == m.host_path {
+                                String::new()
+                            } else {
+                                format!(" -> {}", m.container_path)
+                            };
+                            println!("  {}{}  [{}]", m.host_path, target, if m.writable { "rw" } else { "ro" });
+                        }
+                    }
+                }
+                MountCommand::Add { agent, host_path, container_path, writable } => {
+                    let mut mounts = get_mount_entries(&c, &agent);
+                    let container_path = container_path.unwrap_or_else(|| host_path.clone());
+                    if mounts.iter().any(|m| m.container_path == container_path) {
+                        eprintln!("a grant already targets {container_path}");
+                    } else {
+                        mounts.push(MountEntry { host_path: host_path.clone(), container_path, writable });
+                        let body = serde_json::json!({ "mounts": mounts });
+                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("granted {host_path}; applies on restart: vesta restart {agent}");
+                    }
+                }
+                MountCommand::Rm { agent, host_path } => {
+                    let mounts = get_mount_entries(&c, &agent);
+                    let matched = mounts.iter().find(|m| m.host_path == host_path || m.container_path == host_path).cloned();
+                    match matched {
+                        Some(entry) => {
+                            let filtered: Vec<MountEntry> = mounts
+                                .into_iter()
+                                .filter(|m| m.host_path != entry.host_path || m.container_path != entry.container_path)
+                                .collect();
+                            let body = serde_json::json!({ "mounts": filtered });
+                            c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                            let target = if entry.container_path == entry.host_path {
+                                String::new()
+                            } else {
+                                format!(" (container path {})", entry.container_path)
+                            };
+                            eprintln!(
+                                "revoked {}{}; access remains until you restart: vesta restart {agent}",
+                                entry.host_path, target
+                            );
+                        }
+                        None => {
+                            eprintln!("no grant for {host_path} — run 'vesta mount ls {agent}' to see stored paths");
+                        }
+                    }
+                }
+            }
+        }
+
         Command::Destroy { name } => {
             let c = get_client(host_ref, token_ref);
             c.destroy_agent(&name).unwrap_or_else(|e| platform::die(&e));
@@ -1712,5 +1817,32 @@ mod tests {
         let rules = vec![serde_json::json!({ "id": "a" }), serde_json::json!({ "id": "b" })];
         assert_eq!(remove_rule(&rules, "a").unwrap(), vec![serde_json::json!({ "id": "b" })]);
         assert!(remove_rule(&rules, "missing").is_none());
+    }
+
+    #[test]
+    fn parses_mount_add_with_flags() {
+        let cli = Cli::try_parse_from(["vesta", "mount", "add", "media", "/mnt/media", "--as", "/mnt/media", "--writable"]).unwrap();
+        match cli.command {
+            Some(Command::Mount {
+                cmd: MountCommand::Add { agent, host_path, container_path, writable },
+            }) => {
+                assert_eq!(agent, "media");
+                assert_eq!(host_path, "/mnt/media");
+                assert_eq!(container_path, Some("/mnt/media".to_string()));
+                assert!(writable);
+            }
+            _ => panic!("expected Command::Mount {{ cmd: MountCommand::Add {{ .. }} }}"),
+        }
+    }
+
+    #[test]
+    fn parses_mount_ls() {
+        let cli = Cli::try_parse_from(["vesta", "mount", "ls", "media"]).unwrap();
+        match cli.command {
+            Some(Command::Mount { cmd: MountCommand::Ls { agent } }) => {
+                assert_eq!(agent, "media");
+            }
+            _ => panic!("expected Command::Mount {{ cmd: MountCommand::Ls {{ .. }} }}"),
+        }
     }
 }

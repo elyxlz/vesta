@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GripVertical, ListFilter, Sparkles } from "lucide-react";
+import { GripVertical, ListFilter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item";
 import {
   getNotificationInterruptRules,
   setNotificationInterruptRules,
@@ -182,15 +190,16 @@ export function NotificationInterruptRulesCard() {
               {/* Active rules in priority order (first match wins). Drag to reorder; read-only
                   summaries with a clickable action badge + delete. */}
               {rules.length > 0 ? (
-                <div className="flex flex-col gap-2">
+                <ItemGroup>
                   {rules.map((rule, index) => {
                     const conditions = ruleConditions(rule);
                     const draggable = rules.length > 1;
                     return (
-                      <div
+                      <Item
                         key={rule.id}
+                        variant="muted"
+                        size="sm"
                         className={cn(
-                          "flex items-center gap-2 rounded-md",
                           dragIndex !== null &&
                             dragIndex !== index &&
                             "outline-dashed outline-1 outline-border/60",
@@ -234,58 +243,63 @@ export function NotificationInterruptRulesCard() {
                             ))
                           )}
                         </div>
-                        <Badge
-                          asChild
-                          variant={
-                            rule.action === "interrupt"
-                              ? "default"
-                              : "secondary"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleAction(index)}
-                            aria-label={`action: ${
+                        <ItemActions>
+                          <Badge
+                            asChild
+                            variant={
                               rule.action === "interrupt"
-                                ? "interrupt"
-                                : "snooze"
-                            }, click to toggle`}
+                                ? "default"
+                                : "outline"
+                            }
                           >
-                            {rule.action === "interrupt"
-                              ? "interrupt"
-                              : "snooze"}
-                          </button>
-                        </Badge>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="delete rule"
-                          onClick={() => deleteRule(index)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleAction(index)}
+                              aria-label={`action: ${
+                                rule.action === "interrupt"
+                                  ? "interrupt"
+                                  : "snooze"
+                              }, click to toggle`}
+                            >
+                              {rule.action === "interrupt"
+                                ? "interrupt"
+                                : "snooze"}
+                            </button>
+                          </Badge>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label="delete rule"
+                            onClick={() => deleteRule(index)}
+                          >
+                            ✕
+                          </Button>
+                        </ItemActions>
+                      </Item>
                     );
                   })}
-                </div>
+                </ItemGroup>
               ) : null}
 
               {/* Rules are authored by the agent: ask it in chat instead of a form. */}
-              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-muted/40 p-3">
-                <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {rules.length === 0 ? "No rules yet. " : ""}
-                  To add a rule, just ask {agentName || "the agent"} — e.g.{" "}
-                  <span className="text-foreground">
-                    "don't let Twitter interrupt you"
-                  </span>{" "}
-                  or{" "}
-                  <span className="text-foreground">
-                    "snooze the Bride Squad group chat"
-                  </span>
-                  .
-                </p>
-              </div>
+              <Item variant="muted" size="sm" className="items-start">
+                <ItemContent className="gap-0.5">
+                  <ItemTitle>
+                    {rules.length === 0 ? "no rules yet" : "add a rule"}
+                  </ItemTitle>
+                  <ItemDescription className="line-clamp-none">
+                    just ask {agentName || "the agent"} — e.g.{" "}
+                    <span className="text-foreground">
+                      "don't let Twitter interrupt you"
+                    </span>{" "}
+                    or{" "}
+                    <span className="text-foreground">
+                      "snooze the Bride Squad group chat"
+                    </span>
+                    .
+                  </ItemDescription>
+                </ItemContent>
+              </Item>
 
               {saveError ? (
                 <p className="text-xs text-destructive">{saveError}</p>

@@ -289,6 +289,25 @@ pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_
     err_response(status, &e.to_string())
 }
 
+/// Run a container-mutating operation on a detached task and await its single result over a oneshot
+/// channel. Load-bearing invariant for a self-restart: the request's client is the agent inside the
+/// very container the operation stops, so the loopback connection drops the instant the container
+/// goes down — and an inline `.await` would be cancelled mid-recreate, stranding the agent stopped.
+/// Spawning runs the op to completion regardless of the client; the request only observes its result
+/// (so a still-connected app caller still gets a truthful response). JSON analogue of the SSE
+/// `spawn_pipeline_sse` used by backup/restore, which fixed this same drop-cancellation class.
+async fn spawn_detached<Fut>(op: Fut) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+where
+    Fut: std::future::Future<Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>> + Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _ = tx.send(op.await);
+    });
+    rx.await
+        .unwrap_or_else(|_| Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, "restart task panicked")))
+}
+
 // --- Handlers ---
 
 async fn health() -> Json<serde_json::Value> {
@@ -636,18 +655,28 @@ async fn restart_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
-    let _guard = agent_write_guard(&state, &name).await;
+    // Detached from this request's connection: a self-restart's client is the agent inside the very
+    // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
+    // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
+    spawn_detached(async move {
+        let _guard = agent_write_guard(&state, &name).await;
 
-    // A restart implies the agent should be running — record it so boot-start agrees with intent.
-    {
-        let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
-        save_settings(&settings);
-    }
-    docker::restart_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
-    Ok(ok_json())
+        // A restart implies the agent should be running — record it so boot-start agrees with intent.
+        {
+            let mut settings = state.settings.write().await;
+            settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+            save_settings(&settings);
+        }
+        let user_mounts = {
+            let settings = state.settings.read().await;
+            settings.agent_mounts(&name)
+        };
+        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
+            .await
+            .map_err(map_docker_err)?;
+        Ok(ok_json())
+    })
+    .await
 }
 
 async fn destroy_agent_handler(
@@ -677,7 +706,11 @@ async fn rebuild_agent_handler(
     tracing::info!(name = %name, "rebuilding agent");
     let _guard = agent_write_guard(&state, &name).await;
 
-    docker::rebuild_agent(&state.docker, &name, &state.env_config)
+    let user_mounts = {
+        let settings = state.settings.read().await;
+        settings.agent_mounts(&name)
+    };
+    docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
     // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
@@ -718,7 +751,11 @@ async fn rename_agent_handler(
     let _g1 = lock_first.write().await;
     let _g2 = lock_second.write().await;
 
-    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config)
+    let user_mounts = {
+        let settings = state.settings.read().await;
+        settings.agent_mounts(&name)
+    };
+    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
 
@@ -1419,17 +1456,26 @@ struct AgentSettings {
     manage_agent_code: bool,
     #[serde(default)]
     user_desired: UserDesired,
+    #[serde(default)]
+    mounts: Vec<crate::mounts::HostMount>,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { manage_agent_code: true, user_desired: UserDesired::Running }
+        Self { manage_agent_code: true, user_desired: UserDesired::Running, mounts: Vec::new() }
     }
 }
 
 impl Settings {
     fn manages_core_code(&self, name: &str) -> bool {
         self.agents.get(name).is_none_or(|s| s.manage_agent_code)
+    }
+
+    /// The agent's host-folder grants, or an empty list if the agent has none recorded.
+    /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
+    /// reconcile) sees grants the same way.
+    fn agent_mounts(&self, name: &str) -> Vec<crate::mounts::HostMount> {
+        self.agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default()
     }
 }
 
@@ -1784,7 +1830,11 @@ async fn restore_backup_handler(
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
         let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
-        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await?;
+        let user_mounts = {
+            let settings = state.settings.read().await;
+            settings.agent_mounts(&path.name)
+        };
+        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code, &user_mounts).await?;
         tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
         Ok(r#"{"ok":true}"#.to_string())
     })
@@ -2033,6 +2083,74 @@ async fn delete_agent_backup_settings_handler(
     agent_backup_json(settings.backup.enabled, settings.backup.retention, false)
 }
 
+// --- Host filesystem grants ---
+//
+// A grant is a decision only the user makes: PUT sits behind the API-key-only middleware
+// (never the agent token), so an agent can never mount itself extra host access. GET is
+// dual-auth (API key or the agent's own token) so a skill can list its own grants.
+
+#[derive(Deserialize)]
+struct MountInput {
+    host_path: String,
+    #[serde(default)]
+    container_path: Option<String>,
+    #[serde(default)]
+    writable: bool,
+}
+
+#[derive(Deserialize)]
+struct SetMountsBody {
+    mounts: Vec<MountInput>,
+}
+
+async fn list_mounts_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let mounts = settings.agent_mounts(&name);
+    Ok(Json(serde_json::json!({ "mounts": mounts })))
+}
+
+async fn set_mounts_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetMountsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let inputs: Vec<(String, Option<String>, bool)> =
+        body.mounts.into_iter().map(|m| (m.host_path, m.container_path, m.writable)).collect();
+    // The agent's already-accepted grant paths grandfather a temporarily-offline existing grant so
+    // one missing drive can't reject the whole edit (see mounts::validate_mount).
+    let known_host_paths: std::collections::HashSet<String> = {
+        let settings = state.settings.read().await;
+        settings.agent_mounts(&name).into_iter().map(|m| m.host_path).collect()
+    };
+    // validate_mounts canonicalizes each host path (blocking std::fs, and a hung network mount can
+    // stall for a long time), so run it off the async worker.
+    let validated = tokio::task::spawn_blocking(move || crate::mounts::validate_mounts(&inputs, &known_host_paths))
+        .await
+        .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "mount validation task failed"))?
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))))?;
+    {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().mounts = validated.clone();
+        save_settings(&settings);
+    }
+    tracing::info!(agent = %name, "agent mounts updated");
+    Ok(Json(serde_json::json!({ "mounts": validated, "restart_required": true })))
+}
+
+/// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
+/// host filesystem (common mount roots + home media folders), so it is API-key only — never the
+/// agent token; an agent must not enumerate the host. The scan is blocking std::fs (and a hung
+/// network mount under one of the roots can stall it), so it runs off the async worker.
+async fn host_folder_suggestions_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let folders = tokio::task::spawn_blocking(crate::mounts::suggest_host_folders)
+        .await
+        .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "folder scan task failed"))?;
+    Ok(Json(serde_json::json!({ "folders": folders })))
+}
+
 // --- Constitution ---
 //
 // A user-authored charter prepended to the agent's system prompt ahead of MEMORY.md.
@@ -2186,6 +2304,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
+        .route("/agents/{name}/mounts", put(set_mounts_handler))
+        .route("/host/folders", get(host_folder_suggestions_handler))
         .route("/gateway/settings", get(get_gateway_settings_handler).put(put_gateway_settings_handler))
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
@@ -2238,10 +2358,20 @@ pub fn build_router(state: SharedState) -> Router {
     // X-Agent-Token. The agent-token branch is inherently self-scoped — the middleware checks the
     // token against the agent name in the path — so an agent can stop/restart only itself. This is
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
-    let agents_self_lifecycle = Router::new()
+    // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
+    // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
+    // so it rides the longrun timeout like the rebuild route, not the control tier.
+    let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
-        .route("/agents/{name}/restart", post(restart_agent_handler))
         .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+    let agents_self_restart = Router::new()
+        .route("/agents/{name}/restart", post(restart_agent_handler))
+        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_agent_token,
@@ -2251,6 +2381,7 @@ pub fn build_router(state: SharedState) -> Router {
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
+        .route("/agents/{name}/mounts", get(list_mounts_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_agent_token,
@@ -2271,7 +2402,8 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
-        .merge(agents_self_lifecycle)
+        .merge(agents_self_stop)
+        .merge(agents_self_restart)
         .merge(agents_services)
         .merge(agents_services_read)
         .merge(gateway_logs)
@@ -2550,6 +2682,9 @@ pub async fn run_server(cfg: ServerConfig) {
             // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
             // during the slow reconcile window would otherwise be reverted by the start/stop step.
             &|name| load_settings().agents.get(name).is_none_or(|s| s.user_desired == UserDesired::Running),
+            // Mount grants are also read LIVE so a grant added/removed during the reconcile window
+            // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
+            &|name| load_settings().agent_mounts(name),
         )
         .await;
     });
@@ -2714,11 +2849,41 @@ mod tests {
 
     #[test]
     fn agent_settings_user_desired_stopped_round_trips() {
-        let s = super::AgentSettings { manage_agent_code: true, user_desired: super::UserDesired::Stopped };
+        let s = super::AgentSettings {
+            manage_agent_code: true,
+            user_desired: super::UserDesired::Stopped,
+            mounts: Vec::new(),
+        };
         let json = serde_json::to_string(&s).expect("serialize");
         assert!(json.contains(r#""user_desired":"stopped""#), "serialized as: {json}");
         let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.user_desired, super::UserDesired::Stopped);
+    }
+
+    // --- mounts persists user-granted host filesystem access; a settings.json predating the
+    // field must still deserialize (to no grants), and a granted mount must round-trip ---
+
+    #[test]
+    fn agent_settings_defaults_mounts_to_empty() {
+        let json = r#"{"manage_agent_code": true, "user_desired": "running"}"#;
+        let s: super::AgentSettings = serde_json::from_str(json).expect("valid AgentSettings");
+        assert!(s.mounts.is_empty());
+    }
+
+    #[test]
+    fn agent_settings_roundtrips_mounts() {
+        let s = super::AgentSettings {
+            manage_agent_code: true,
+            user_desired: super::UserDesired::Running,
+            mounts: vec![crate::mounts::HostMount {
+                host_path: "/mnt/media".into(),
+                container_path: "/mnt/media".into(),
+                writable: false,
+            }],
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.mounts, s.mounts);
     }
 
     // --- Rename notification payload (the content contract the agent self-heals on) ---
@@ -3071,5 +3236,54 @@ mod gateway_settings_tests {
         assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
         assert_eq!(off["lan"]["url"], serde_json::Value::Null);
         assert_eq!(off["tunnel_url"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod restart_detach_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    /// Regression for the nightly-dream restart that stranded the agent: a self-restart's client is
+    /// the agent inside the container being stopped, so the request future is dropped mid-operation.
+    /// spawn_detached must run the operation to completion regardless — mirroring the drop-cancellation
+    /// fix already covered for backup/restore in backup.rs::sse_stream_drop_cancels_container_restart.
+    #[tokio::test]
+    async fn detached_op_completes_after_request_future_dropped() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let op_started = Arc::new(Notify::new());
+        let op_gate = Arc::new(Notify::new());
+
+        let completed_c = completed.clone();
+        let op_started_c = op_started.clone();
+        let op_gate_c = op_gate.clone();
+
+        // The request side: spawn_detached spawns the op, then awaits its oneshot result. Drive it on
+        // its own task so we can drop it (client disconnect) once the op is in flight.
+        let request = tokio::spawn(spawn_detached(async move {
+            op_started_c.notify_one();
+            // Mirrors the multi-step rebuild in progress (stop -> snapshot -> recreate -> start).
+            op_gate_c.notified().await;
+            completed_c.store(true, Ordering::SeqCst);
+            Ok(ok_json())
+        }));
+
+        // Once the op is running, drop the request future — as hyper does when the loopback client dies.
+        op_started.notified().await;
+        assert!(!completed.load(Ordering::SeqCst), "op should still be in flight");
+        request.abort();
+
+        // The detached op must still finish despite the dropped request.
+        op_gate.notify_one();
+        for _ in 0..200 {
+            if completed.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(completed.load(Ordering::SeqCst), "detached op must run to completion after request dropped");
     }
 }

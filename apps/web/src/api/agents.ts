@@ -1,4 +1,4 @@
-import { apiJson, apiFetch } from "./client";
+import { apiJson, apiFetch, jsonInit } from "./client";
 import type { VestaEvent } from "@/lib/types";
 
 export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
@@ -395,4 +395,41 @@ export async function getNotificationHistory(
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
   return { notifications: items, cursor: resp.cursor };
+}
+
+/// A user-granted host filesystem access: a host path bind-mounted into the agent's container at
+/// `container_path` (defaults to `host_path` when unset by the caller), read-only unless `writable`.
+export interface HostMount {
+  host_path: string;
+  container_path: string;
+  writable: boolean;
+}
+
+/// Read the agent's host filesystem grants (GET /mounts).
+export async function getAgentMounts(name: string): Promise<HostMount[]> {
+  const resp = await apiJson<{ mounts: HostMount[] }>(
+    `/agents/${encodeURIComponent(name)}/mounts`,
+  );
+  return resp.mounts;
+}
+
+/// Replace the agent's host filesystem grants (PUT /mounts). The server validates each grant
+/// (host path exists, container path isn't protected, no duplicate container paths) and returns the
+/// validated list plus whether a restart is needed to apply it (always true today).
+export async function setAgentMounts(
+  name: string,
+  mounts: HostMount[],
+): Promise<{ mounts: HostMount[]; restartRequired: boolean }> {
+  const resp = await apiJson<{
+    mounts: HostMount[];
+    restart_required: boolean;
+  }>(`/agents/${encodeURIComponent(name)}/mounts`, jsonInit("PUT", { mounts }));
+  return { mounts: resp.mounts, restartRequired: resp.restart_required };
+}
+
+/// Existing host folders vestad suggests sharing (GET /host/folders), so the user doesn't
+/// hand-type a path. Host-level (not agent-scoped) and API-key only.
+export async function getHostFolderSuggestions(): Promise<string[]> {
+  const resp = await apiJson<{ folders: string[] }>("/host/folders");
+  return resp.folders;
 }

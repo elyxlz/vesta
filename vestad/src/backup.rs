@@ -248,6 +248,7 @@ pub async fn restore_backup(
     backup_id: &str,
     env_config: &AgentEnvConfig,
     manage_core_code: bool,
+    user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -281,7 +282,7 @@ pub async fn restore_backup(
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "restoring snapshot into image");
     let image = crate::restic::restore_to_image(name, backup_id).await?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, user_mounts).await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed("failed to start restored agent".into()));

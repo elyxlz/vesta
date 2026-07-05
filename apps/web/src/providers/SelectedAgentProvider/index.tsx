@@ -11,7 +11,8 @@ import {
   deleteAgent,
   type BackupInfo,
 } from "@/api";
-import { useAgentOps } from "@/stores/use-agent-ops";
+import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
@@ -33,6 +34,7 @@ export function SelectedAgentProvider({
 
   const withOp = useAgentOps((s) => s.withOp);
   const removeAgentOp = useAgentOps((s) => s.removeAgent);
+  const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
 
@@ -57,8 +59,32 @@ export function SelectedAgentProvider({
 
   const start = op("starting", () => startAgent(name), "start failed");
   const stop = op("stopping", () => stopAgent(name), "stop failed");
-  const restart = op("starting", () => restartAgent(name), "restart failed");
-  const rebuild = op("rebuilding", () => rebuildAgent(name), "rebuild failed");
+  // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
+  // success (the run callback throws on failure, so a failed op keeps the reminder). This is the single
+  // owner of clearing it, whichever surface (navbar button, agent menu) triggers the op.
+  const applyPending = (
+    operation: AgentOperation,
+    run: () => Promise<unknown>,
+    failure: string,
+  ) =>
+    op(
+      operation,
+      async () => {
+        await run();
+        clearRestartPending(name);
+      },
+      failure,
+    );
+  const restart = applyPending(
+    "starting",
+    () => restartAgent(name),
+    "restart failed",
+  );
+  const rebuild = applyPending(
+    "rebuilding",
+    () => rebuildAgent(name),
+    "rebuild failed",
+  );
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 

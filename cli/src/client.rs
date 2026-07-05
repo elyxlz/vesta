@@ -678,6 +678,14 @@ impl Client {
         read_json(self.get("/backups")?)
     }
 
+    pub fn get_agent_mounts(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/mounts"))?)
+    }
+
+    pub fn set_agent_mounts(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        read_json(self.put_json(&format!("/agents/{name}/mounts"), body)?)
+    }
+
     pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         read_json(self.get(&format!("/agents/{name}/settings/backup"))?)
     }

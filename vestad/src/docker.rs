@@ -1424,8 +1424,30 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 
 // --- Container creation ---
 
+/// Assemble the full bind list for a container: base mounts (env, constitution, optional core)
+/// plus user-granted host mounts.
+fn assemble_binds(env_mount: String, constitution_mount: String, core_mount: Option<String>, user_mounts: &[crate::mounts::HostMount]) -> Vec<String> {
+    let mut binds = vec![env_mount, constitution_mount];
+    if let Some(core) = core_mount {
+        binds.push(core);
+    }
+    for m in user_mounts {
+        binds.push(crate::mounts::bind_string(m));
+    }
+    binds
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool) -> Result<(), DockerError> {
+pub async fn create_container(
+    docker: &Docker,
+    cname: &str,
+    image: &str,
+    port: u16,
+    agent_name: &str,
+    env_config: &AgentEnvConfig,
+    manage_core_code: bool,
+    user_mounts: &[crate::mounts::HostMount],
+) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
@@ -1441,10 +1463,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     labels.insert(LABEL_USER.to_string(), current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let mut binds = vec![env_mount, constitution_mount];
-    if manage_core_code {
-        binds.push(core_mount);
-    }
+    let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
+    let binds = assemble_binds(env_mount, constitution_mount, core_mount_opt, user_mounts);
 
     let mut device_requests = None;
     match gpu_available(docker).await {
@@ -1752,7 +1772,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code).await?;
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, &[]).await?;
 
     Ok(name.to_string())
 }
@@ -1812,10 +1832,36 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
+
+    // A grant change can't be applied by a plain restart (binds are fixed at creation), so if the
+    // desired mounts drifted from the container, recreate; otherwise a cheap restart.
+    if let Ok(raw) = docker.inspect_container(&cname, None).await {
+        // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
+        // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
+        // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
+        if user_mounts_drifted(&actual_user_mounts(&raw), user_mounts) {
+            // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
+            // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
+            // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
+            // Surface a truthful error instead of reporting success on a grant we didn't apply.
+            let available = docker_storage_available_bytes(docker).await;
+            if reconcile_blocked_by_disk(available) {
+                tracing::error!(agent = %name, "mount grants changed but disk is critically low; cannot recreate to apply them");
+                return Err(DockerError::Failed(format!(
+                    "cannot apply host-folder grants for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+                )));
+            }
+            tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            rebuild_agent(docker, name, env_config, user_mounts).await?;
+            return start_agent(docker, name).await;
+        }
+    } else {
+        tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
+    }
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
 }
@@ -1852,6 +1898,7 @@ pub async fn reconcile_containers(
     agent_code_changed: bool,
     manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
+    mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
 ) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
@@ -1923,7 +1970,8 @@ pub async fn reconcile_containers(
                 "settings.manage_agent_code disagrees with container, using container as source of truth. fix by destroying and recreating the agent."
             );
         }
-        if !needs_rebuild(cname, &raw) {
+        let desired_mounts = mounts_for(name);
+        if !needs_rebuild(cname, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -1941,7 +1989,7 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(docker, name, env_config).await {
+        match rebuild_agent(docker, name, env_config, &desired_mounts).await {
             Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
@@ -2024,13 +2072,36 @@ fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
 /// divergence is intentionally NOT a trigger here: it's reported by reconcile as a
 /// warning. See `rebuild_agent` for why mount topology must come from the container,
 /// not from settings.
-fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) -> bool {
-    let mounts = info.mounts.as_deref().unwrap_or(&[]);
-    let mount_dests: Vec<&str> = mounts.iter()
-        .filter_map(|m| m.destination.as_deref())
-        .collect();
+/// Extract the user-granted bind mounts from a container's inspect data: every bind whose
+/// destination is not one of the reserved dests (env/core/constitution).
+fn actual_user_mounts(info: &bollard::models::ContainerInspectResponse) -> Vec<(String, String, bool)> {
+    info.mounts.as_deref().unwrap_or(&[]).iter()
+        .filter_map(|m| {
+            let dest = m.destination.as_deref()?;
+            if MOUNT_DESTS.contains(&dest) {
+                return None;
+            }
+            let source = m.source.as_deref()?;
+            Some((source.to_string(), dest.to_string(), m.rw.unwrap_or(false)))
+        })
+        .collect()
+}
 
-    if !mount_dests.contains(&ENV_MOUNT_DEST) {
+/// True when the container's actual user mounts differ (by source, dest, or rw) from desired.
+fn user_mounts_drifted(actual: &[(String, String, bool)], desired: &[crate::mounts::HostMount]) -> bool {
+    let mut a: Vec<(String, String, bool)> = actual.to_vec();
+    let mut d: Vec<(String, String, bool)> = desired.iter()
+        .map(|m| (m.host_path.clone(), m.container_path.clone(), m.writable))
+        .collect();
+    a.sort();
+    d.sort();
+    a != d
+}
+
+fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse, desired_mounts: &[crate::mounts::HostMount]) -> bool {
+    let mounts = info.mounts.as_deref().unwrap_or(&[]);
+    let has_env_mount = mounts.iter().any(|m| m.destination.as_deref() == Some(ENV_MOUNT_DEST));
+    if !has_env_mount {
         tracing::info!(container = %cname, "rebuild needed: missing env-file mount");
         return true;
     }
@@ -2080,6 +2151,11 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
+    if user_mounts_drifted(&actual_user_mounts(info), desired_mounts) {
+        tracing::info!(container = %cname, "rebuild needed: host-mount grants changed");
+        return true;
+    }
+
     false
 }
 
@@ -2101,7 +2177,7 @@ async fn resolve_existing_port(docker: &Docker, cname: &str, info: &ContainerInf
 /// a new one from the snapshot. Mount topology is preserved from the existing container,
 /// not re-derived from settings: `manage_agent_code` is fixed at create time, so the
 /// running container is the source of truth for which bind mounts to attach.
-pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
+pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let raw = docker.inspect_container(&cname, None).await.map_err(DockerError::from)?;
@@ -2132,7 +2208,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     ensure_container_removed(docker, &cname).await?;
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, user_mounts).await?;
 
     Ok(())
 }
@@ -2147,6 +2223,7 @@ pub async fn rename_agent(
     old_name: &str,
     new_name: &str,
     env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(old_name)?;
     validate_name(new_name)?;
@@ -2202,7 +2279,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, user_mounts).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
@@ -2218,6 +2295,14 @@ mod tests {
     // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
     // need a "normal container" policy to build fixtures with.
     const RESTART_POLICY: &str = "on-failure";
+
+    #[test]
+    fn assemble_binds_appends_user_mounts() {
+        let m = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        let binds = assemble_binds("/e:/run/vestad-env:ro,z".into(), "/c:/root/agent/constitution.md:ro,z".into(), None, std::slice::from_ref(&m));
+        assert_eq!(binds.len(), 3);
+        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro");
+    }
 
     #[test]
     fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
@@ -2452,6 +2537,21 @@ mod tests {
     fn constitution_mount_dest_is_read_only_path() {
         // Ensures the file API refuses to write the constitution from inside the container.
         assert!(MOUNT_DESTS.contains(&CONSTITUTION_MOUNT_DEST));
+    }
+
+    #[test]
+    fn user_mounts_drift_detects_add_remove_and_mode_change() {
+        let media = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        // No actual, one desired -> drift (add).
+        assert!(user_mounts_drifted(&[], std::slice::from_ref(&media)));
+        // Matching -> no drift.
+        let actual = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), false)];
+        assert!(!user_mounts_drifted(&actual, std::slice::from_ref(&media)));
+        // Same paths, rw differs -> drift.
+        let actual_rw = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), true)];
+        assert!(user_mounts_drifted(&actual_rw, std::slice::from_ref(&media)));
+        // Actual present, none desired -> drift (remove).
+        assert!(user_mounts_drifted(&actual, &[]));
     }
 
     #[test]
@@ -2711,9 +2811,9 @@ mod tests {
         std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| vesta_image())
     }
 
-    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str) -> bool {
+    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str, desired: &[crate::mounts::HostMount]) -> bool {
         let info = docker.inspect_container(cname, None).await.expect("inspect");
-        needs_rebuild(cname, &info)
+        needs_rebuild(cname, &info, desired)
     }
 
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
@@ -2746,6 +2846,17 @@ mod tests {
         }
     }
 
+    /// Remove a test host tmpdir on drop, so an assertion panic mid-test doesn't leak it.
+    struct TestHostDir {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for TestHostDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
     /// Clean up a test image on drop.
     struct TestImage {
         tag: String,
@@ -2768,7 +2879,12 @@ mod tests {
         let binds: Vec<String> = mounts.iter()
             .map(|(src, dst)| format!("{}:{}:ro,z", src, dst))
             .collect();
+        create_test_container_with_binds_async(docker, tc, binds, cmd, network, restart).await;
+    }
 
+    /// Like `create_test_container_async`, but takes fully-assembled bind strings instead of
+    /// hardcoding `:ro,z` — needed to exercise a writable grant via `crate::mounts::bind_string`.
+    async fn create_test_container_with_binds_async(docker: &Docker, tc: &TestContainer, binds: Vec<String>, cmd: Vec<String>, network: &str, restart: &str) {
         let restart_policy = match restart {
             "on-failure" => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
             "unless-stopped" => bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED,
@@ -2865,7 +2981,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "fresh container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "fresh container should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2890,7 +3006,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "container with all mounts should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with all mounts should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2904,7 +3020,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong cmd SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong cmd SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2915,7 +3031,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container without env mount SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container without env mount SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2929,7 +3045,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "missing core code mounts should NOT trigger rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "missing core code mounts should NOT trigger rebuild");
     }
 
     #[tokio::test]
@@ -2943,7 +3059,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong network SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong network SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2960,7 +3076,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
         assert_eq!(container_restart_policy(&docker, &tc.name).await, "unless-stopped");
         ensure_on_failure_policy(&docker, &tc.name).await.expect("update policy in place");
         assert_eq!(container_restart_policy(&docker, &tc.name).await, "on-failure", "policy reconciled to on-failure without a rebuild");
@@ -2978,7 +3094,7 @@ mod tests {
 
         // Create with wrong network to force rebuild
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "precondition: should need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "precondition: should need rebuild");
 
         // Snapshot
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
@@ -2987,7 +3103,7 @@ mod tests {
         remove_container_force(&docker, &tc.name).await.ok();
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "rebuilt container should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -3055,5 +3171,73 @@ mod tests {
         assert_eq!(payload["interrupt"], true);
         assert_eq!(payload["old_name"], "old-name");
         assert_eq!(payload["new_name"], agent_name);
+    }
+
+    /// Result of a `docker exec` invocation against a running test container.
+    struct ExecResult {
+        success: bool,
+        stdout: String,
+    }
+
+    /// Run `docker exec <cname> <args>` via the CLI (same idiom as `docker_cleanup`) and
+    /// capture the outcome for assertions.
+    fn docker_exec(cname: &str, args: &[&str]) -> ExecResult {
+        let output = std::process::Command::new("docker")
+            .arg("exec")
+            .arg(cname)
+            .args(args)
+            .output()
+            .expect("failed to run docker exec");
+        ExecResult { success: output.status.success(), stdout: String::from_utf8_lossy(&output.stdout).trim().to_string() }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn granted_host_path_readable_writable_removable_in_container() {
+        let docker = test_docker();
+
+        // A host tempdir with one file, mirrored 1:1 into the container (matches
+        // validate_mount's default of using the canonicalized host path as the container path).
+        let host_dir = std::env::temp_dir().join(format!("vesta-grant-{}", std::process::id()));
+        std::fs::create_dir_all(&host_dir).expect("create host grant dir");
+        let _host_dir_guard = TestHostDir { path: host_dir.clone() };
+        std::fs::write(host_dir.join("hello.txt"), "hi").expect("write hello.txt");
+        let host_path = host_dir.to_str().expect("host grant path is utf8").to_string();
+        let container_path = host_path.clone();
+        let hello_path = format!("{container_path}/hello.txt");
+        let new_file_path = format!("{container_path}/new.txt");
+        let cmd = vec!["sleep".to_string(), "300".to_string()];
+
+        // Step 1: read-only grant. Built via the real production `bind_string`, not a
+        // hand-written bind spec, so the test exercises our actual mount assembly.
+        let ro_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: false };
+        let tc_ro = TestContainer::new("grant-ro");
+        create_test_container_with_binds_async(&docker, &tc_ro, vec![crate::mounts::bind_string(&ro_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_ro.name).await, "read-only grant container should start");
+
+        let read = docker_exec(&tc_ro.name, &["cat", &hello_path]);
+        assert!(read.success, "cat of granted file should succeed");
+        assert_eq!(read.stdout, "hi", "granted host file must be readable inside the container");
+
+        let blocked_write = docker_exec(&tc_ro.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(!blocked_write.success, "a read-only grant must block writes inside the container");
+
+        // Step 2: the same mount, but writable: true -> the write now succeeds.
+        let rw_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: true };
+        let tc_rw = TestContainer::new("grant-rw");
+        create_test_container_with_binds_async(&docker, &tc_rw, vec![crate::mounts::bind_string(&rw_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_rw.name).await, "writable grant container should start");
+
+        let allowed_write = docker_exec(&tc_rw.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(allowed_write.success, "a writable grant must allow writes inside the container");
+
+        // Step 3: no user mount at all -> the path is absent inside the container (the grant,
+        // not the host directory, controls visibility).
+        let tc_none = TestContainer::new("grant-none");
+        create_test_container_async(&docker, &tc_none, &[], cmd, NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_none.name).await, "no-grant container should start");
+
+        let missing = docker_exec(&tc_none.name, &["test", "-f", &hello_path]);
+        assert!(!missing.success, "without a grant, the host path must not appear inside the container");
     }
 }
