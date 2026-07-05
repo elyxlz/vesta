@@ -86,22 +86,28 @@ export function SimpleView({
   const name = agentName ?? "the agent";
 
   return (
-    <div className="flex flex-col gap-3 p-1">
-      <GroupLabel>{name}'s mind</GroupLabel>
-      <MindCard
-        name={name}
-        memorySelected={selected === MEMORY_PATH && !dreamsActive}
-        constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
-        dreamsActive={dreamsActive}
-        dreamCount={dreamCount}
-        onSelectMemory={() => onSelect(MEMORY_PATH)}
-        onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
-        onShowDreams={onShowDreams}
-      />
-      <GroupLabel className="pt-1">skills</GroupLabel>
-      <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
-      <GroupLabel className="pt-1">on this computer</GroupLabel>
-      <div className="shrink-0">
+    // Mobile: one stacked column (mind → skills → shared folders). Desktop: a bento — mind and
+    // shared folders on the left, skills on the right (grid auto-flow places them from this order).
+    <div className="grid grid-cols-1 gap-3 p-1 lg:grid-cols-2 lg:items-start">
+      <div className="flex flex-col gap-3">
+        <GroupLabel>{name}'s mind</GroupLabel>
+        <MindCard
+          name={name}
+          memorySelected={selected === MEMORY_PATH && !dreamsActive}
+          constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
+          dreamsActive={dreamsActive}
+          dreamCount={dreamCount}
+          onSelectMemory={() => onSelect(MEMORY_PATH)}
+          onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
+          onShowDreams={onShowDreams}
+        />
+      </div>
+      <div className="flex flex-col gap-3">
+        <GroupLabel>skills</GroupLabel>
+        <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+      </div>
+      <div className="flex flex-col gap-3">
+        <GroupLabel>on this computer</GroupLabel>
         <HostAccessCard />
       </div>
     </div>

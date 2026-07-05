@@ -98,7 +98,7 @@ function HubRowSkeleton() {
 
 function SkeletonSection({ label, rows }: { label: string; rows: number }) {
   return (
-    <>
+    <div className="flex flex-col gap-3">
       <p className="px-1 text-[11px] font-medium text-muted-foreground/70">
         {label}
       </p>
@@ -111,14 +111,14 @@ function SkeletonSection({ label, rows }: { label: string; rows: number }) {
           </ItemGroup>
         </CardContent>
       </Card>
-    </>
+    </div>
   );
 }
 
 function SimpleSkeleton({ agentName }: { agentName?: string }) {
   const name = agentName ?? "the agent";
   return (
-    <div className="flex flex-col gap-3 p-1">
+    <div className="grid grid-cols-1 gap-3 p-1 lg:grid-cols-2 lg:items-start">
       <SkeletonSection label={`${name}'s mind`} rows={3} />
       <SkeletonSection label="skills" rows={3} />
       <SkeletonSection label="on this computer" rows={2} />
@@ -419,7 +419,7 @@ export function FilesTab() {
         {panel}
       </div>
     ) : (
-      <div className="mx-auto w-full max-w-2xl">{panel}</div>
+      <div className="mx-auto w-full max-w-4xl">{panel}</div>
     );
   }
 
