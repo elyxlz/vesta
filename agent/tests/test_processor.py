@@ -136,6 +136,7 @@ async def test_restarts_on_timeout(tmp_path):
     reason, and that reason must classify as a CRASH so main() exits non-zero and Docker's
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
+
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
 
