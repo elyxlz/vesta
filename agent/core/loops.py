@@ -221,7 +221,7 @@ async def _run_messages_with_interrupts(
                 raise
             logger.error("Message processing cancelled unexpectedly, triggering restart")
             state.event_bus.emit({"type": "error", "text": "processing cancelled"})
-            state.persisted.last_restart_reason = "error: processing cancelled"
+            state.persisted.last_restart_reason = "error: a turn was cancelled unexpectedly"
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
             raise

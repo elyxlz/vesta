@@ -136,7 +136,6 @@ async def test_restarts_on_timeout(tmp_path):
     reason, and that reason must classify as a CRASH so main() exits non-zero and Docker's
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
-    from core.main import _is_crash_reason
 
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
@@ -146,7 +145,7 @@ async def test_restarts_on_timeout(tmp_path):
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
-    assert _is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
+    assert vm.is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -167,6 +166,99 @@ def test_restart_reason_round_trip(tmp_path):
     # Consumed: a fresh load now reports CRASH_RESTART.
     again = vm.State(persisted=state_store.load_state(config))
     assert _consume_restart_reason(again, config, first_start=False) == vm.CRASH_RESTART
+
+
+def test_reason_constants_follow_category_detail_shape():
+    for const in (vm.CLEAN_RESTART, vm.NIGHTLY_RESTART, vm.CRASH_RESTART):
+        assert ": " in const, f"{const!r} must be 'category: detail'"
+        category = const.split(": ", 1)[0]
+        assert category in {"clean", "nightly", "crash", "error"}, category
+        assert "—" not in const and "–" not in const
+    assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
+    assert vm.NIGHTLY_RESTART == "nightly: the dreamer ran and compacted your session for continuous context"
+
+
+def test_build_restart_context_renders_system_restart_header(tmp_path):
+    from core import helpers
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    # core_prompts_dir == agent_dir/core/prompts; write a stand-in restart.md so load_prompt resolves.
+    config.core_prompts_dir.mkdir(parents=True, exist_ok=True)
+    (config.core_prompts_dir / "restart.md").write_text("Read the `restart` skill and follow it.\n")
+
+    out = helpers.build_restart_context(vm.NIGHTLY_RESTART, config)
+    assert out.startswith("[System Restart]\nReason: the dreamer ran and compacted your session for continuous context")
+    assert out.endswith("Read the `restart` skill and follow it.")
+
+    # A reason without a category prefix renders whole.
+    out2 = helpers.build_restart_context("first start", config)
+    assert "Reason: first start" in out2
+
+    # Extras (dreamer summary) slot between the header and the restart prompt.
+    out3 = helpers.build_restart_context(vm.NIGHTLY_RESTART, config, extras=["[Dreamer Summary: x]\nhello"])
+    header, summary, prompt = out3.split("\n\n")
+    assert header.startswith("[System Restart]")
+    assert summary.startswith("[Dreamer Summary: x]")
+    assert prompt == "Read the `restart` skill and follow it."
+
+    # Crash/error reasons keep their marker: the restart skill branches on a crash boot
+    # ("crash -> mention it"), so the category must stay visible for dynamic crash strings.
+    out4 = helpers.build_restart_context("crash: JSONDecodeError: Expecting value", config)
+    assert "Reason: crash: JSONDecodeError: Expecting value" in out4
+    out5 = helpers.build_restart_context("error: Response timed out", config)
+    assert "Reason: error: Response timed out" in out5
+
+
+def test_consume_restart_reason_drains_pending_inbox(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+
+    # No inbox -> existing behavior (returns the persisted reason).
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CLEAN_RESTART
+
+    # Inbox present -> it wins over the persisted clean reason and the file is removed one-shot.
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have read-only access to /media/Plex\n")
+    got = _consume_restart_reason(state, config, first_start=False)
+    assert got == "mounts: you now have read-only access to /media/Plex"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+    # Drained: the next boot falls back to CRASH_RESTART like any consumed reason.
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CRASH_RESTART
+
+
+def test_pending_inbox_never_masks_a_crash_reason(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = "crash: TypeError: boom"
+    (config.data_dir / "pending_restart_reason").write_text("backup: you were paused for a scheduled backup\n")
+
+    # The crash the prior run recorded wins over the external reason, and the inbox is still
+    # consumed so it can't fire stale on a later boot.
+    assert _consume_restart_reason(state, config, first_start=False) == "crash: TypeError: boom"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+
+def test_first_start_drains_the_inbox_so_it_cannot_fire_later(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have access to /media/Plex (read-only)\n")
+
+    assert _consume_restart_reason(state, config, first_start=True) == vm.FIRST_START_REASON
+    assert not (config.data_dir / "pending_restart_reason").exists(), "a stale inbox must not fire on a later boot"
 
 
 @pytest.mark.anyio
@@ -431,7 +523,7 @@ async def test_cancellation_triggers_restart(tmp_path):
             await _run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error: processing cancelled"
+    assert state.persisted.last_restart_reason == "error: a turn was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -490,7 +582,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor cancelled unexpectedly"
+    assert state.persisted.last_restart_reason == "crash: the processor was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -534,7 +626,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor exited silently"
+    assert state.persisted.last_restart_reason == "crash: the processor exited silently"
 
 
 @pytest.mark.anyio

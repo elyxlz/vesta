@@ -650,11 +650,33 @@ async fn stop_agent_handler(
     Ok(ok_json())
 }
 
+#[derive(Deserialize, Default)]
+struct RestartBody {
+    /// Optional human reason the agent surfaces on its next boot ("manual: switching to ...").
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Lenient body parse for POST /restart: the endpoint predates the body, so bodyless requests
+/// (the CLI, the agent's self-restart, curl with a stray JSON Content-Type) must keep working.
+/// An Option<Json<...>> extractor would 400 an empty body sent with a JSON header and 415 any
+/// other Content-Type; raw bytes sidestep the header entirely.
+fn parse_restart_reason(body: &[u8]) -> Result<Option<String>, String> {
+    if body.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_slice::<RestartBody>(body)
+        .map(|restart_body| restart_body.reason)
+        .map_err(|e| format!("invalid restart body: {e}"))
+}
+
 async fn restart_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
+    let reason = parse_restart_reason(&body).map_err(|msg| err_response(StatusCode::BAD_REQUEST, &msg))?;
     // Detached from this request's connection: a self-restart's client is the agent inside the very
     // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
@@ -671,7 +693,7 @@ async fn restart_agent_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
-        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
+        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts, reason)
             .await
             .map_err(map_docker_err)?;
         Ok(ok_json())
@@ -3236,6 +3258,25 @@ mod gateway_settings_tests {
         assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
         assert_eq!(off["lan"]["url"], serde_json::Value::Null);
         assert_eq!(off["tunnel_url"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod restart_body_tests {
+    use super::parse_restart_reason;
+
+    #[test]
+    fn tolerates_empty_bodies_and_parses_reason() {
+        // Bodyless POSTs (the CLI, the agent's self-restart, curl with a stray JSON header)
+        // must keep working — the pre-reason handler accepted them all.
+        assert_eq!(parse_restart_reason(b"").unwrap(), None);
+        assert_eq!(parse_restart_reason(b"{}").unwrap(), None);
+        assert_eq!(parse_restart_reason(br#"{"reason": null}"#).unwrap(), None);
+        assert_eq!(
+            parse_restart_reason(br#"{"reason": "manual: switching to Claude Opus 4.8"}"#).unwrap(),
+            Some("manual: switching to Claude Opus 4.8".to_string())
+        );
+        assert!(parse_restart_reason(b"not json").is_err());
     }
 }
 

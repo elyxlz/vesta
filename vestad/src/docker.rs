@@ -1525,6 +1525,19 @@ pub async fn create_container(
     }
 }
 
+// --- Restart-reason inbox ---
+
+/// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
+/// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
+/// plain text, no schema shared across the crate boundary.
+pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
+
+/// Write `reason` into the agent's boot inbox. Best-effort at every call site: a failed write
+/// only costs a missing greeting line, never the restart itself.
+pub(crate) async fn write_pending_restart_reason(docker: &Docker, cname: &str, reason: &str) -> Result<(), DockerError> {
+    docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+}
+
 // --- Credential injection ---
 
 pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
@@ -1832,7 +1845,13 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
+pub async fn restart_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    reason: Option<String>,
+) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
@@ -1843,7 +1862,8 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
         // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
         // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
-        if user_mounts_drifted(&actual_user_mounts(&raw), user_mounts) {
+        let actual_mounts = actual_user_mounts(&raw);
+        if user_mounts_drifted(&actual_mounts, user_mounts) {
             // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
             // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
             // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
@@ -1856,14 +1876,33 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
                 )));
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
+            let effective = crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
             rebuild_agent(docker, name, env_config, user_mounts).await?;
+            // Written into the freshly created container AFTER the rebuild: a write before it
+            // would survive a failed rebuild in the old container, claiming access that was
+            // never applied (and would bake the reason into the rebuild snapshot).
+            write_boot_reason(docker, name, &cname, effective).await;
             return start_agent(docker, name).await;
         }
     } else {
         tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
     }
+    // The container's filesystem survives a plain restart, so the inbox written here is read on the
+    // very next boot.
+    write_boot_reason(docker, name, &cname, reason).await;
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
+}
+
+/// Best-effort write of an optional boot reason to the agent's inbox: a failed write only costs a
+/// missing greeting line, never the restart itself.
+async fn write_boot_reason(docker: &Docker, name: &str, cname: &str, reason: Option<String>) {
+    if let Some(text) = reason {
+        if let Err(err) = write_pending_restart_reason(docker, cname, &text).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+        }
+    }
 }
 
 /// Free space (in bytes) on the filesystem backing `path`, or `None` if it can't be read.
@@ -1990,7 +2029,13 @@ pub async fn reconcile_containers(
             }
         }
         match rebuild_agent(docker, name, env_config, &desired_mounts).await {
-            Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
+            Ok(()) => {
+                tracing::info!(agent = %name, "rebuild complete");
+                // Grants can also land here (restart_agent defers to reconcile when disk is low or
+                // inspect fails); tell the agent about the delta, same as the restart path would.
+                let mount_reason = crate::mounts::mount_change_reason(&actual_user_mounts(&raw), &desired_mounts);
+                write_boot_reason(docker, name, cname, mount_reason).await;
+            }
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
     }
@@ -2295,6 +2340,12 @@ mod tests {
     // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
     // need a "normal container" policy to build fixtures with.
     const RESTART_POLICY: &str = "on-failure";
+
+    #[test]
+    fn pending_restart_reason_path_matches_agent_contract() {
+        // The agent drains this exact path on boot (agent state_store.take_pending_reason).
+        assert_eq!(PENDING_RESTART_REASON_PATH, "/root/agent/data/pending_restart_reason");
+    }
 
     #[test]
     fn assemble_binds_appends_user_mounts() {

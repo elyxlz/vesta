@@ -51,10 +51,18 @@ class QueuedTurn(tp.NamedTuple):
     interruptible: bool = True
 
 
-CLEAN_RESTART = "restart: clean restart"
-NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
-CRASH_RESTART = "crash: restarted after unexpected exit"
+CLEAN_RESTART = "clean: routine restart, no specific reason"
+NIGHTLY_RESTART = "nightly: the dreamer ran and compacted your session for continuous context"
+CRASH_RESTART = "crash: restarted after an unexpected exit"
 FIRST_START_REASON = "first start"
+
+
+def is_crash_reason(reason: str | None) -> bool:
+    """Whether a restart reason marks an unexpected exit (the `crash:`/`error:` categories the
+    processor/loop error handlers write). The single owner of the crash-category vocabulary: it
+    drives the non-zero exit that lets Docker's on-failure policy recover the agent, the
+    inbox-override precedence on boot, and the render (crash reasons keep their marker)."""
+    return reason is not None and (reason.startswith("crash:") or reason.startswith("error:"))
 
 
 @dc.dataclass
