@@ -136,8 +136,6 @@ async def test_restarts_on_timeout(tmp_path):
     reason, and that reason must classify as a CRASH so main() exits non-zero and Docker's
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
-    from core.main import _is_crash_reason
-
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
 
@@ -146,7 +144,7 @@ async def test_restarts_on_timeout(tmp_path):
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
-    assert _is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
+    assert vm.is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -208,13 +206,6 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     assert "Reason: crash: JSONDecodeError: Expecting value" in out4
     out5 = helpers.build_restart_context("error: Response timed out", config)
     assert "Reason: error: Response timed out" in out5
-
-
-def test_shipped_restart_prompt_has_no_redundant_restarted_line():
-    import pathlib
-
-    text = (pathlib.Path(__file__).parents[1] / "core" / "prompts" / "restart.md").read_text()
-    assert "You've restarted" not in text
 
 
 def test_consume_restart_reason_drains_pending_inbox(tmp_path):

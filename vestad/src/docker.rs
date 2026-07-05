@@ -1862,7 +1862,8 @@ pub async fn restart_agent(
         // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
         // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
         // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
-        if user_mounts_drifted(&actual_user_mounts(&raw), user_mounts) {
+        let actual_mounts = actual_user_mounts(&raw);
+        if user_mounts_drifted(&actual_mounts, user_mounts) {
             // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
             // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
             // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
@@ -1876,7 +1877,7 @@ pub async fn restart_agent(
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
             // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
-            let effective = crate::mounts::effective_restart_reason(reason, &actual_user_mounts(&raw), user_mounts);
+            let effective = crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
             rebuild_agent(docker, name, env_config, user_mounts).await?;
             // Written into the freshly created container AFTER the rebuild: a write before it
             // would survive a failed rebuild in the old container, claiming access that was

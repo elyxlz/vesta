@@ -149,7 +149,7 @@ async def run_vesta(
     # policy recovers us. Intentional restarts/stops are driven by vestad (docker restart/stop) and
     # a SIGTERM-driven shutdown carries no crash reason, so those exit 0 — vestad starts us back, or
     # leaves us down. Capture intent before the clean-restart default below overwrites a blank reason.
-    crashed = _is_crash_reason(state.persisted.last_restart_reason)
+    crashed = vm.is_crash_reason(state.persisted.last_restart_reason)
     reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
     if not state.persisted.last_restart_reason:
@@ -208,13 +208,6 @@ def collect_boot_turns(
     return turns
 
 
-def _is_crash_reason(reason: str | None) -> bool:
-    """Whether a persisted restart reason marks an unexpected exit (set by the processor/loop error
-    handlers as `crash:`/`error:`), as opposed to a clean or vestad-driven shutdown. Drives the
-    non-zero exit that lets Docker's on-failure policy recover the agent."""
-    return reason is not None and (reason.startswith("crash:") or reason.startswith("error:"))
-
-
 def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
     # Drain the inbox on every boot, including first start: a file left behind would fire stale
@@ -223,7 +216,7 @@ def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_st
     if first_start:
         return vm.FIRST_START_REASON
     stored = state.persisted.last_restart_reason
-    if pending is not None and not _is_crash_reason(stored):
+    if pending is not None and not vm.is_crash_reason(stored):
         # An external actor (vestad backup/mounts/manual restart) handed in a reason for this boot.
         # It overrides the clean-restart placeholder the prior run persisted on its way down, but
         # never a recorded crash: the crash detail is the more important story to surface.
