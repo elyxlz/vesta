@@ -60,22 +60,29 @@ export function SelectedAgentProvider({
   const start = op("starting", () => startAgent(name), "start failed");
   const stop = op("stopping", () => stopAgent(name), "stop failed");
   // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
-  // success (the run callback throws on failure, so a failed restart keeps the reminder). This is the
-  // single owner of clearing it, whichever surface (navbar button, agent menu) triggers the restart.
-  const restart = op(
+  // success (the run callback throws on failure, so a failed op keeps the reminder). This is the single
+  // owner of clearing it, whichever surface (navbar button, agent menu) triggers the op.
+  const applyPending = (
+    operation: AgentOperation,
+    run: () => Promise<unknown>,
+    failure: string,
+  ) =>
+    op(
+      operation,
+      async () => {
+        await run();
+        clearRestartPending(name);
+      },
+      failure,
+    );
+  const restart = applyPending(
     "starting",
-    async () => {
-      await restartAgent(name);
-      clearRestartPending(name);
-    },
+    () => restartAgent(name),
     "restart failed",
   );
-  const rebuild = op(
+  const rebuild = applyPending(
     "rebuilding",
-    async () => {
-      await rebuildAgent(name);
-      clearRestartPending(name);
-    },
+    () => rebuildAgent(name),
     "rebuild failed",
   );
 
