@@ -124,12 +124,14 @@ where
     result
 }
 
+const SCHEDULED_BACKUP_RESUME_REASON: &str = "backup: you were paused for a scheduled backup";
+
 /// The boot reason for the restart after a backup pause, by what triggered the backup.
 fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
     match backup_type {
         BackupType::Manual => "backup: you were paused for a manual backup",
         BackupType::PreRestore => "backup: you were paused for a safety backup before a restore",
-        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => "backup: you were paused for a scheduled backup",
+        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => SCHEDULED_BACKUP_RESUME_REASON,
     }
 }
 
@@ -203,7 +205,7 @@ pub async fn create_backups_batch(
     };
 
     // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
-    with_container_paused(docker, name, cs, "backup: you were paused for a scheduled backup", || async {
+    with_container_paused(docker, name, cs, SCHEDULED_BACKUP_RESUME_REASON, || async {
         let mut results = Vec::new();
         for bt in types {
             let result = crate::restic::snapshot(name, &bt).await;
