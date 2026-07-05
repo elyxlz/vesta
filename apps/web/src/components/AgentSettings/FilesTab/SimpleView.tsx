@@ -93,7 +93,7 @@ export function SimpleView({
     <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
       <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="flex flex-col gap-3">
-          <GroupLabel>{name}'s mind</GroupLabel>
+          <GroupLabel>who {name} is</GroupLabel>
           <MindCard
             name={name}
             memorySelected={selected === MEMORY_PATH && !dreamsActive}
@@ -108,13 +108,13 @@ export function SimpleView({
           />
         </div>
         <div className="order-3 flex flex-col gap-3 lg:order-none">
-          <GroupLabel>on this computer</GroupLabel>
+          <GroupLabel>shared folders</GroupLabel>
           <HostAccessCard />
         </div>
       </div>
       <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="order-2 flex flex-col gap-3 lg:order-none">
-          <GroupLabel>skills</GroupLabel>
+          <GroupLabel>abilities</GroupLabel>
           <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
         </div>
       </div>
