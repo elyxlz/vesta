@@ -33,51 +33,56 @@ inert: vestad supplies a reason that is silently dropped.
 This design completes that channel and exposes it as a general interface. The writer half
 already exists; the load-bearing missing piece is the agent-side reader.
 
-## The contract
+## One store, one delivery channel
 
-A one-shot plain-text file at `/root/agent/data/last_restart_reason`.
+There is exactly **one store** for "why this boot happened":
+`state.persisted.last_restart_reason` in `state.json`. It stays the single source of truth
+and keeps its second job of gating the exit code (a `crash:`/`error:` reason makes the agent
+exit non-zero so Docker's `on-failure` policy recovers it).
 
-- **Writer:** `vestad` (host), via `docker_cp_content`, before it stops/recreates the container.
-- **Reader:** the agent, once, on boot.
-- **Payload:** a short human-readable string. Plain text — no JSON, no schema shared across
-  the crate boundary.
-- **Lifecycle:** written before a restart, read exactly once on the next boot, then unlinked.
-  Absent file → today's behavior, unchanged.
+The problem is only that an *external* actor can't reach that store: `vestad` must not write
+`state.json` (the running agent re-saves it from memory on shutdown and would clobber the
+edit). So we give it a **delivery channel**, not a second store:
 
-The file is named `last_restart_reason` to match the concept the agent already uses
-(`state.persisted.last_restart_reason`). It is the same value — the reason for this boot —
-just supplied from outside instead of from the agent's own prior run. The rename from the
-current `restart_reason` path is safe: nothing reads the old name, and the file is transient,
-so no compatibility shim is needed.
+- A transient inbox file `/root/agent/data/pending_restart_reason`.
+- `vestad` (host) writes it before it stops/recreates the container.
+- On the next boot the agent **drains** it into `last_restart_reason` and deletes it.
+
+At rest there is only ever the one field; the file exists only in the window between a
+`vestad` write and the next boot, then it's gone — a message in a queue, not a parallel copy.
+Naming it `pending_restart_reason` (distinct from the `last_restart_reason` store) keeps that
+role obvious: it is an incoming reason awaiting consumption, not a second copy of the record.
+
+**Payload:** a short human-readable string. Plain text — no JSON, no schema shared across the
+crate boundary.
 
 ## Reader (agent) — the missing piece
 
-`_consume_restart_reason` resolves the effective reason on boot with a single clear precedence:
+The drain happens at the single existing consumption point, `_consume_restart_reason`, before
+it reads the field:
 
-1. **External file** `~/agent/data/last_restart_reason`, if present — read it, strip it, and
-   `unlink` it (one-shot).
-2. Otherwise the agent-persisted `state.persisted.last_restart_reason` (crash / dreamer).
-3. Otherwise `CLEAN_RESTART`.
+1. If `~/agent/data/pending_restart_reason` exists, read + strip it, assign it to
+   `state.persisted.last_restart_reason`, and `unlink` the file (one-shot).
+2. Then the function proceeds exactly as today: return the field, clear it, save state.
 
-The resolved reason flows unchanged into `greeting_reason` → the greeting boot turn, so the
-agent naturally says e.g. "you're awake — you now have read-only access to `/media/Plex`."
+The result flows unchanged into `greeting_reason` → the greeting boot turn, so the agent
+naturally says e.g. "you're awake — you now have read-only access to `/media/Plex`." Absent
+inbox file → today's behavior, unchanged.
 
-**Why the two sources don't collide:** a crash reason is agent-set in `state.json` on the
-*prior* run and only occurs when vestad was *not* involved (the agent crashed and Docker's
-`on-failure` recovered it); a file reason is only written when vestad drives the restart, in
-which case the agent exits cleanly and persists `CLEAN_RESTART`. They are mutually exclusive
-in practice. The file reason is plain text and never starts with `crash:`/`error:`, so it is
-correctly treated as a clean reason.
-
-**Interaction with crash/exit logic is none:** `_is_crash_reason` runs at *shutdown* against
-the field the current run sets for its *own* exit code — a separate concern from the boot
-reason the file feeds. The file is consumed only at boot.
+**Why draining is safe and unambiguous:** a `vestad`-driven restart exits the agent cleanly,
+so the field would otherwise be `CLEAN_RESTART`; draining overwrites that placeholder with the
+specific reason. A crash reason is agent-set and only occurs when `vestad` was *not* involved
+(so no inbox file exists), meaning the two never realistically co-occur. If they somehow did,
+the external file wins for that boot; the inbox payload is plain text and never carries a
+`crash:`/`error:` prefix, so `_is_crash_reason` is unaffected and the exit-code path is
+untouched.
 
 ## Writer (vestad)
 
-- **Extract one helper**, `write_restart_reason(docker, name, reason)`, as the single owner of
-  the path + `docker_cp_content` recipe. `backup.rs` switches to it (and stops being a dead
-  write — the agent will now surface "I was paused for a backup").
+- **Extract one helper**, `write_pending_restart_reason(docker, name, reason)`, as the single
+  owner of the inbox path + `docker_cp_content` recipe. `backup.rs` switches to it (renaming
+  the path from `restart_reason` to `pending_restart_reason`) and stops being a dead write —
+  the agent will now surface "I was paused for a backup."
 - **Mounts (motivating caller):** `restart_agent` already computes the actual-vs-desired mount
   diff to decide whether to rebuild. In that branch it writes a reason describing the delta
   (e.g. "granted read-only access to /media/Plex") before recreating. **No app or API change
@@ -89,9 +94,9 @@ reason the file feeds. The file is consumed only at boot.
 ## Scope
 
 **In:**
-- Agent-side reader in `_consume_restart_reason` + a path constant + unit tests.
-- `write_restart_reason` helper; `backup.rs` routed through it; path renamed to
-  `last_restart_reason`.
+- Agent-side drain in `_consume_restart_reason` + an inbox-path constant + unit tests.
+- `write_pending_restart_reason` helper; `backup.rs` routed through it; path renamed to
+  `pending_restart_reason`.
 - Optional `{reason}` on `POST /agents/{name}/restart`.
 - Mount-drift branch of `restart_agent` writes a synthesized reason.
 
@@ -103,14 +108,15 @@ reason the file feeds. The file is consumed only at boot.
 ## Testing
 
 - **Agent** (`tests/test_processor.py`, near the existing `test_restart_reason_round_trip`):
-  file present → `_consume_restart_reason` returns its content and the file is removed; file
-  absent → existing behavior; file present alongside a persisted clean reason → file wins.
-- **vestad:** `write_restart_reason` writes the agreed path (docker-gated); the mount-drift
-  restart writes a reason (docker-gated, alongside the existing recreate coverage).
+  inbox present → `_consume_restart_reason` returns its content and the file is removed; inbox
+  present over a persisted `CLEAN_RESTART` → inbox wins; inbox absent → existing behavior.
+- **vestad:** `write_pending_restart_reason` writes the agreed path (docker-gated); the
+  mount-drift restart writes a reason (docker-gated, alongside the existing recreate coverage).
 
 ## Blast radius
 
-- **Agent:** one file read + `unlink` in `_consume_restart_reason`, one path constant, tests.
+- **Agent:** a file read + `unlink` folded into `_consume_restart_reason`, one path constant,
+  tests. No change to the crash/exit path or `state.json` schema.
 - **vestad:** extract one helper, rename one path, one optional API field, one call in the
   mount-drift branch. No new IO pattern (`docker_cp_content` exists), no cross-crate schema
   coupling (plain string).
