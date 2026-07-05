@@ -184,6 +184,14 @@ def main():
     p_update_event.add_argument("--location", default=None)
     p_update_event.add_argument("--body", default=None)
     p_update_event.add_argument("--timezone", default=None)
+    p_update_event_reminder = p_update_event.add_mutually_exclusive_group()
+    p_update_event_reminder.add_argument(
+        "--reminder-on", dest="reminder_on", action="store_true", default=None, help="Turn the event reminder on."
+    )
+    p_update_event_reminder.add_argument(
+        "--reminder-off", dest="reminder_on", action="store_false", default=None, help="Turn the event reminder off."
+    )
+    p_update_event.add_argument("--reminder-minutes", type=int, default=None, help="Minutes before start to fire the reminder.")
 
     p_delete_event = cal_sub.add_parser("delete")
     p_delete_event.add_argument("--account", required=True)
@@ -378,6 +386,8 @@ def _dispatch_calendar(args, config, client):
             location=args.location,
             body=args.body,
             timezone=args.timezone,
+            reminder_on=args.reminder_on,
+            reminder_minutes=args.reminder_minutes,
         )
     elif args.command == "delete":
         return calendar.delete_event(
