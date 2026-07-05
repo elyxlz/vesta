@@ -169,6 +169,16 @@ def test_restart_reason_round_trip(tmp_path):
     assert _consume_restart_reason(again, config, first_start=False) == vm.CRASH_RESTART
 
 
+def test_reason_constants_follow_category_detail_shape():
+    for const in (vm.CLEAN_RESTART, vm.NIGHTLY_RESTART, vm.CRASH_RESTART):
+        assert ": " in const, f"{const!r} must be 'category: detail'"
+        category = const.split(": ", 1)[0]
+        assert category in {"clean", "nightly", "crash", "error"}, category
+        assert "—" not in const and "–" not in const
+    assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
+    assert vm.NIGHTLY_RESTART == "nightly: the dreamer ran and compacted your session for continuous context"
+
+
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor
@@ -431,7 +441,7 @@ async def test_cancellation_triggers_restart(tmp_path):
             await _run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error: processing cancelled"
+    assert state.persisted.last_restart_reason == "error: a turn was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -490,7 +500,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor cancelled unexpectedly"
+    assert state.persisted.last_restart_reason == "crash: the processor was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -534,7 +544,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     handle_processor_done(task, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor exited silently"
+    assert state.persisted.last_restart_reason == "crash: the processor exited silently"
 
 
 @pytest.mark.anyio

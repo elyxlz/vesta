@@ -51,9 +51,9 @@ class QueuedTurn(tp.NamedTuple):
     interruptible: bool = True
 
 
-CLEAN_RESTART = "restart: clean restart"
-NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
-CRASH_RESTART = "crash: restarted after unexpected exit"
+CLEAN_RESTART = "clean: routine restart, no specific reason"
+NIGHTLY_RESTART = "nightly: the dreamer ran and compacted your session for continuous context"
+CRASH_RESTART = "crash: restarted after an unexpected exit"
 FIRST_START_REASON = "first start"
 
 
