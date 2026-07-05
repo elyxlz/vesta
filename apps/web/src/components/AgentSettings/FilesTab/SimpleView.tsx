@@ -86,29 +86,37 @@ export function SimpleView({
   const name = agentName ?? "the agent";
 
   return (
-    // Mobile: one stacked column (mind → skills → shared folders). Desktop: a bento — mind and
-    // shared folders on the left, skills on the right (grid auto-flow places them from this order).
-    <div className="grid grid-cols-1 gap-3 p-1 lg:grid-cols-2 lg:items-start">
-      <div className="flex flex-col gap-3">
-        <GroupLabel>{name}'s mind</GroupLabel>
-        <MindCard
-          name={name}
-          memorySelected={selected === MEMORY_PATH && !dreamsActive}
-          constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
-          dreamsActive={dreamsActive}
-          dreamCount={dreamCount}
-          onSelectMemory={() => onSelect(MEMORY_PATH)}
-          onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
-          onShowDreams={onShowDreams}
-        />
+    // Mobile: one stacked column (mind → skills → shared folders), ordered via `order`. Desktop: a
+    // bento — the left column (mind + shared folders) is a continuous flex column, skills on the
+    // right. The wrappers use `display: contents` on mobile so all three sections flatten into one
+    // column and interleave; at lg they become the two real columns.
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
+      <div className="contents lg:flex lg:flex-col lg:gap-3">
+        <div className="flex flex-col gap-3">
+          <GroupLabel>{name}'s mind</GroupLabel>
+          <MindCard
+            name={name}
+            memorySelected={selected === MEMORY_PATH && !dreamsActive}
+            constitutionSelected={
+              selected === CONSTITUTION_PATH && !dreamsActive
+            }
+            dreamsActive={dreamsActive}
+            dreamCount={dreamCount}
+            onSelectMemory={() => onSelect(MEMORY_PATH)}
+            onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
+            onShowDreams={onShowDreams}
+          />
+        </div>
+        <div className="order-3 flex flex-col gap-3 lg:order-none">
+          <GroupLabel>on this computer</GroupLabel>
+          <HostAccessCard />
+        </div>
       </div>
-      <div className="flex flex-col gap-3">
-        <GroupLabel>skills</GroupLabel>
-        <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
-      </div>
-      <div className="flex flex-col gap-3">
-        <GroupLabel>on this computer</GroupLabel>
-        <HostAccessCard />
+      <div className="contents lg:flex lg:flex-col lg:gap-3">
+        <div className="order-2 flex flex-col gap-3 lg:order-none">
+          <GroupLabel>skills</GroupLabel>
+          <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+        </div>
       </div>
     </div>
   );

@@ -96,9 +96,17 @@ function HubRowSkeleton() {
   );
 }
 
-function SkeletonSection({ label, rows }: { label: string; rows: number }) {
+function SkeletonSection({
+  label,
+  rows,
+  className,
+}: {
+  label: string;
+  rows: number;
+  className?: string;
+}) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className={cn("flex flex-col gap-3", className)}>
       <p className="px-1 text-[11px] font-medium text-muted-foreground/70">
         {label}
       </p>
@@ -115,13 +123,26 @@ function SkeletonSection({ label, rows }: { label: string; rows: number }) {
   );
 }
 
+// Matches SimpleView's bento: mind + shared folders left, skills right; one stacked column on mobile.
 function SimpleSkeleton({ agentName }: { agentName?: string }) {
   const name = agentName ?? "the agent";
   return (
-    <div className="grid grid-cols-1 gap-3 p-1 lg:grid-cols-2 lg:items-start">
-      <SkeletonSection label={`${name}'s mind`} rows={3} />
-      <SkeletonSection label="skills" rows={3} />
-      <SkeletonSection label="on this computer" rows={2} />
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
+      <div className="contents lg:flex lg:flex-col lg:gap-3">
+        <SkeletonSection label={`${name}'s mind`} rows={3} />
+        <SkeletonSection
+          label="on this computer"
+          rows={2}
+          className="order-3 lg:order-none"
+        />
+      </div>
+      <div className="contents lg:flex lg:flex-col lg:gap-3">
+        <SkeletonSection
+          label="skills"
+          rows={3}
+          className="order-2 lg:order-none"
+        />
+      </div>
     </div>
   );
 }
