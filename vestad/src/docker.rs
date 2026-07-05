@@ -1845,7 +1845,13 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
+pub async fn restart_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    reason: Option<String>,
+) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
@@ -1869,14 +1875,31 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
                 )));
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
+            // Written before the stop so it lands in the snapshot the new container boots from.
+            let effective = reason.or_else(|| crate::mounts::mount_change_reason(&actual_user_mounts(&raw), user_mounts));
+            write_boot_reason(docker, name, &cname, effective).await;
             rebuild_agent(docker, name, env_config, user_mounts).await?;
             return start_agent(docker, name).await;
         }
     } else {
         tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
     }
+    // The container's filesystem survives a plain restart, so the inbox written here is read on the
+    // very next boot.
+    write_boot_reason(docker, name, &cname, reason).await;
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
+}
+
+/// Best-effort write of an optional boot reason to the agent's inbox: a failed write only costs a
+/// missing greeting line, never the restart itself.
+async fn write_boot_reason(docker: &Docker, name: &str, cname: &str, reason: Option<String>) {
+    if let Some(text) = reason {
+        if let Err(err) = write_pending_restart_reason(docker, cname, &text).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+        }
+    }
 }
 
 /// Free space (in bytes) on the filesystem backing `path`, or `None` if it can't be read.
