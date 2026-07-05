@@ -202,6 +202,13 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     assert summary.startswith("[Dreamer Summary: x]")
     assert prompt == "Read the `restart` skill and follow it."
 
+    # Crash/error reasons keep their marker: the restart skill branches on a crash boot
+    # ("crash -> mention it"), so the category must stay visible for dynamic crash strings.
+    out4 = helpers.build_restart_context("crash: JSONDecodeError: Expecting value", config)
+    assert "Reason: crash: JSONDecodeError: Expecting value" in out4
+    out5 = helpers.build_restart_context("error: Response timed out", config)
+    assert "Reason: error: Response timed out" in out5
+
 
 def test_shipped_restart_prompt_has_no_redundant_restarted_line():
     import pathlib
@@ -231,6 +238,35 @@ def test_consume_restart_reason_drains_pending_inbox(tmp_path):
 
     # Drained: the next boot falls back to CRASH_RESTART like any consumed reason.
     assert _consume_restart_reason(state, config, first_start=False) == vm.CRASH_RESTART
+
+
+def test_pending_inbox_never_masks_a_crash_reason(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = "crash: TypeError: boom"
+    (config.data_dir / "pending_restart_reason").write_text("backup: you were paused for a scheduled backup\n")
+
+    # The crash the prior run recorded wins over the external reason, and the inbox is still
+    # consumed so it can't fire stale on a later boot.
+    assert _consume_restart_reason(state, config, first_start=False) == "crash: TypeError: boom"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+
+def test_first_start_drains_the_inbox_so_it_cannot_fire_later(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have access to /media/Plex (read-only)\n")
+
+    assert _consume_restart_reason(state, config, first_start=True) == vm.FIRST_START_REASON
+    assert not (config.data_dir / "pending_restart_reason").exists(), "a stale inbox must not fire on a later boot"
 
 
 @pytest.mark.anyio

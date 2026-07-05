@@ -31,10 +31,12 @@ def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
 
 
 def build_restart_context(reason: str, config: vm.VestaConfig, *, extras: list[str] | None = None) -> str:
-    # Reasons are stored as "category: detail"; the category is an internal tag (it drives the
-    # crash exit-code path), so show only the human detail under a clear restart header.
-    detail = reason.split(": ", 1)[1] if ": " in reason else reason
-    parts = [f"[System Restart]\nReason: {detail}"]
+    # Reasons are stored as "category: detail"; most categories are internal routing tags, so show
+    # only the human detail under a clear restart header. crash/error stay whole: the restart skill
+    # branches on a crash boot ("crash -> mention it"), so their marker must survive the render.
+    category, _, detail = reason.partition(": ")
+    shown = reason if category in ("crash", "error") or not detail else detail
+    parts = [f"[System Restart]\nReason: {shown}"]
     if extras:
         parts.extend(extras)
     greeting = load_prompt("restart", config) or ""
