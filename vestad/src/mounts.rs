@@ -144,35 +144,63 @@ fn join_and(items: &[String]) -> String {
 
 /// A `mounts:` restart reason describing a grant change, or None if nothing changed.
 /// `actual` is the container's current user binds as (host, container, writable) tuples
-/// (`docker::actual_user_mounts`); `desired` is the new grant list. Classification is by
-/// container_path + mode, so a writable flip reads as a fresh grant of the new mode.
+/// (`docker::actual_user_mounts`); `desired` is the new grant list. Classified per
+/// container_path: new path = granted, dropped path = removed, same path with a different
+/// mode = changed — a downgrade must read as a revocation of write access, never a gain.
 pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMount]) -> Option<String> {
-    let actual_set: std::collections::HashSet<(&str, bool)> = actual.iter().map(|(_, container, writable)| (container.as_str(), *writable)).collect();
+    let actual_modes: std::collections::HashMap<&str, bool> =
+        actual.iter().map(|(_, container, writable)| (container.as_str(), *writable)).collect();
     let desired_paths: std::collections::HashSet<&str> = desired.iter().map(|mount| mount.container_path.as_str()).collect();
 
     let mode = |writable: bool| if writable { "read-write" } else { "read-only" };
 
-    let granted: Vec<String> = desired
-        .iter()
-        .filter(|mount| !actual_set.contains(&(mount.container_path.as_str(), mount.writable)))
-        .map(|mount| format!("{} ({})", mount.container_path, mode(mount.writable)))
-        .collect();
+    let mut granted: Vec<String> = Vec::new();
+    let mut changed: Vec<String> = Vec::new();
+    for mount in desired {
+        match actual_modes.get(mount.container_path.as_str()) {
+            None => granted.push(format!("{} ({})", mount.container_path, mode(mount.writable))),
+            Some(current) if *current != mount.writable => {
+                changed.push(format!("{} (now {})", mount.container_path, mode(mount.writable)));
+            }
+            Some(_) => {}
+        }
+    }
     let removed: Vec<String> = actual
         .iter()
         .filter(|(_, container, _)| !desired_paths.contains(container.as_str()))
         .map(|(_, container, _)| container.clone())
         .collect();
 
-    match (granted.is_empty(), removed.is_empty()) {
-        (true, true) => None,
-        (false, true) => Some(format!("mounts: you now have access to {}", join_and(&granted))),
-        (true, false) => Some(format!("mounts: your access to {} was removed", join_and(&removed))),
-        (false, false) => Some(format!(
-            "mounts: filesystem access changed. granted: {}; removed: {}",
-            granted.join(", "),
-            removed.join(", ")
-        )),
+    match (granted.is_empty(), removed.is_empty(), changed.is_empty()) {
+        (true, true, true) => None,
+        (false, true, true) => Some(format!("mounts: you now have access to {}", join_and(&granted))),
+        (true, false, true) => Some(format!("mounts: your access to {} was removed", join_and(&removed))),
+        (true, true, false) => Some(format!("mounts: your access changed: {}", join_and(&changed))),
+        _ => {
+            let mut segments: Vec<String> = Vec::new();
+            if !granted.is_empty() {
+                segments.push(format!("granted: {}", granted.join(", ")));
+            }
+            if !removed.is_empty() {
+                segments.push(format!("removed: {}", removed.join(", ")));
+            }
+            if !changed.is_empty() {
+                segments.push(format!("changed: {}", changed.join(", ")));
+            }
+            Some(format!("mounts: filesystem access changed. {}", segments.join("; ")))
+        }
     }
+}
+
+/// The reason a restart should hand the agent: an explicit caller reason wins; otherwise the
+/// mount delta the restart applies speaks for itself; no delta, no reason. Factored pure so the
+/// precedence is pinned by a fast test (`restart_agent` itself needs Docker).
+pub fn effective_restart_reason(
+    caller: Option<String>,
+    actual: &[(String, String, bool)],
+    desired: &[HostMount],
+) -> Option<String> {
+    caller.or_else(|| mount_change_reason(actual, desired))
 }
 
 /// Host roots whose immediate subdirectories are common places to share (media libraries,
@@ -254,13 +282,37 @@ mod tests {
             mount_change_reason(&[("/old".into(), "/old".into(), false)], &[m("/media/Plex", false)]).as_deref(),
             Some("mounts: filesystem access changed. granted: /media/Plex (read-only); removed: /old")
         );
-        // writable flip reads as a fresh grant
+        // writable flips are mode changes, not fresh grants: a downgrade must not read as a gain
+        assert_eq!(
+            mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", false)]).as_deref(),
+            Some("mounts: your access changed: /x (now read-only)")
+        );
         assert_eq!(
             mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true)]).as_deref(),
-            Some("mounts: you now have access to /x (read-write)")
+            Some("mounts: your access changed: /x (now read-write)")
+        );
+        // grant + mode change fold into the general branch
+        assert_eq!(
+            mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true), m("/new", false)]).as_deref(),
+            Some("mounts: filesystem access changed. granted: /new (read-only); changed: /x (now read-write)")
         );
         // no change
         assert_eq!(mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", true)]), None);
+    }
+
+    #[test]
+    fn effective_restart_reason_prefers_the_caller_reason() {
+        // Caller intent wins over the synthesized delta...
+        assert_eq!(
+            effective_restart_reason(Some("manual: switching model".into()), &[], &[m("/new", false)]).as_deref(),
+            Some("manual: switching model")
+        );
+        // ...else the delta speaks, and no delta means no reason.
+        assert_eq!(
+            effective_restart_reason(None, &[], &[m("/new", false)]).as_deref(),
+            Some("mounts: you now have access to /new (read-only)")
+        );
+        assert_eq!(effective_restart_reason(None, &[], &[]), None);
     }
 
     #[test]

@@ -1876,7 +1876,7 @@ pub async fn restart_agent(
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
             // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
-            let effective = reason.or_else(|| crate::mounts::mount_change_reason(&actual_user_mounts(&raw), user_mounts));
+            let effective = crate::mounts::effective_restart_reason(reason, &actual_user_mounts(&raw), user_mounts);
             rebuild_agent(docker, name, env_config, user_mounts).await?;
             // Written into the freshly created container AFTER the rebuild: a write before it
             // would survive a failed rebuild in the old container, claiming access that was
@@ -2028,7 +2028,13 @@ pub async fn reconcile_containers(
             }
         }
         match rebuild_agent(docker, name, env_config, &desired_mounts).await {
-            Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
+            Ok(()) => {
+                tracing::info!(agent = %name, "rebuild complete");
+                // Grants can also land here (restart_agent defers to reconcile when disk is low or
+                // inspect fails); tell the agent about the delta, same as the restart path would.
+                let mount_reason = crate::mounts::mount_change_reason(&actual_user_mounts(&raw), &desired_mounts);
+                write_boot_reason(docker, name, cname, mount_reason).await;
+            }
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
     }
