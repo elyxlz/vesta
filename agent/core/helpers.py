@@ -19,7 +19,10 @@ def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
 
 
 def build_restart_context(reason: str, config: vm.VestaConfig, *, extras: list[str] | None = None) -> str:
-    parts = [f"[System: {reason}]"]
+    # Reasons are stored as "category: detail"; the category is an internal tag (it drives the
+    # crash exit-code path), so show only the human detail under a clear restart header.
+    detail = reason.split(": ", 1)[1] if ": " in reason else reason
+    parts = [f"[System Restart]\nReason: {detail}"]
     if extras:
         parts.extend(extras)
     greeting = load_prompt("restart", config) or ""
