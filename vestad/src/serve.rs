@@ -650,11 +650,20 @@ async fn stop_agent_handler(
     Ok(ok_json())
 }
 
+#[derive(Deserialize, Default)]
+struct RestartBody {
+    /// Optional human reason the agent surfaces on its next boot ("manual: switching to ...").
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 async fn restart_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
+    body: Option<Json<RestartBody>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
+    let reason = body.and_then(|Json(restart_body)| restart_body.reason);
     // Detached from this request's connection: a self-restart's client is the agent inside the very
     // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
@@ -671,7 +680,7 @@ async fn restart_agent_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
-        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
+        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts, reason)
             .await
             .map_err(map_docker_err)?;
         Ok(ok_json())
