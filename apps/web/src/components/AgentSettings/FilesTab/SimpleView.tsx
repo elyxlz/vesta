@@ -91,7 +91,7 @@ export function SimpleView({
     // right. The wrappers use `display: contents` on mobile so all three sections flatten into one
     // column and interleave; at lg they become the two real columns.
     <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
-      <div className="contents lg:flex lg:flex-col lg:gap-3">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="flex flex-col gap-3">
           <GroupLabel>{name}'s mind</GroupLabel>
           <MindCard
@@ -112,7 +112,7 @@ export function SimpleView({
           <HostAccessCard />
         </div>
       </div>
-      <div className="contents lg:flex lg:flex-col lg:gap-3">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
         <div className="order-2 flex flex-col gap-3 lg:order-none">
           <GroupLabel>skills</GroupLabel>
           <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />

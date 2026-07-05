@@ -128,7 +128,7 @@ function SimpleSkeleton({ agentName }: { agentName?: string }) {
   const name = agentName ?? "the agent";
   return (
     <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start">
-      <div className="contents lg:flex lg:flex-col lg:gap-3">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
         <SkeletonSection label={`${name}'s mind`} rows={3} />
         <SkeletonSection
           label="on this computer"
@@ -136,7 +136,7 @@ function SimpleSkeleton({ agentName }: { agentName?: string }) {
           className="order-3 lg:order-none"
         />
       </div>
-      <div className="contents lg:flex lg:flex-col lg:gap-3">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
         <SkeletonSection
           label="skills"
           rows={3}
