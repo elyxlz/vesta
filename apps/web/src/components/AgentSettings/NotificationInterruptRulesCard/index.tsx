@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GripVertical, ListFilter, Sparkles } from "lucide-react";
+import { GripVertical, ListFilter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,6 @@ import {
   Item,
   ItemContent,
   ItemDescription,
-  ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
 import {
@@ -279,12 +278,6 @@ export function NotificationInterruptRulesCard() {
 
               {/* Rules are authored by the agent: ask it in chat instead of a form. */}
               <Item variant="muted" size="sm" className="items-start">
-                <ItemMedia
-                  variant="icon"
-                  className="size-9 rounded-[10px] bg-amber-500/12 text-amber-600 dark:text-amber-400"
-                >
-                  <Sparkles />
-                </ItemMedia>
                 <ItemContent className="gap-0.5">
                   <ItemTitle>
                     {rules.length === 0 ? "no rules yet" : "add a rule"}
