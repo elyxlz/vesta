@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Item, ItemContent, ItemGroup, ItemMedia } from "@/components/ui/item";
 import { cn, errorMessage } from "@/lib/utils";
 import {
   fetchFileTree,
@@ -80,34 +81,44 @@ function AdvancedSkeleton() {
   );
 }
 
-function SkeletonRow() {
+// A hub cell placeholder, shaped like the Item cells the simple view renders.
+function HubRowSkeleton() {
   return (
-    <div className="flex w-full items-center gap-2.5 px-4 py-3">
-      <Skeleton className="size-4 shrink-0 rounded-full" />
-      <Skeleton className="h-3 flex-1 rounded" />
-    </div>
+    <Item variant="muted" size="sm">
+      <ItemMedia variant="icon" className="size-9 rounded-[10px] bg-muted">
+        <Skeleton className="size-4 rounded" />
+      </ItemMedia>
+      <ItemContent className="gap-1.5">
+        <Skeleton className="h-3.5 w-24 rounded" />
+        <Skeleton className="h-3 w-40 max-w-full rounded" />
+      </ItemContent>
+    </Item>
+  );
+}
+
+function SkeletonSection({ rows }: { rows: number }) {
+  return (
+    <>
+      <Skeleton className="ml-1 h-3 w-20 rounded" />
+      <Card size="sm">
+        <CardContent>
+          <ItemGroup>
+            {Array.from({ length: rows }).map((_, i) => (
+              <HubRowSkeleton key={i} />
+            ))}
+          </ItemGroup>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
 function SimpleSkeleton() {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-1">
-      <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
-        <SkeletonRow />
-        <SkeletonRow />
-        <SkeletonRow />
-      </Card>
-      <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-        <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-4 !py-2.5">
-          <Skeleton className="size-4 rounded-full" />
-          <Skeleton className="h-3 w-12" />
-        </CardHeader>
-        <CardContent className="flex-1 min-h-0 !px-0 !py-0">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <SkeletonRow key={i} />
-          ))}
-        </CardContent>
-      </Card>
+    <div className="flex flex-col gap-3 p-1">
+      <SkeletonSection rows={3} />
+      <SkeletonSection rows={3} />
+      <SkeletonSection rows={2} />
     </div>
   );
 }
