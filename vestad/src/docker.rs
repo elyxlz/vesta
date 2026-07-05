@@ -1876,10 +1876,12 @@ pub async fn restart_agent(
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
             // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
-            // Written before the stop so it lands in the snapshot the new container boots from.
             let effective = reason.or_else(|| crate::mounts::mount_change_reason(&actual_user_mounts(&raw), user_mounts));
-            write_boot_reason(docker, name, &cname, effective).await;
             rebuild_agent(docker, name, env_config, user_mounts).await?;
+            // Written into the freshly created container AFTER the rebuild: a write before it
+            // would survive a failed rebuild in the old container, claiming access that was
+            // never applied (and would bake the reason into the rebuild snapshot).
+            write_boot_reason(docker, name, &cname, effective).await;
             return start_agent(docker, name).await;
         }
     } else {

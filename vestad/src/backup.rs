@@ -91,11 +91,14 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     Some(dt.unix_timestamp() as u64)
 }
 
-/// Stop (if running), run `op`, restart. Writes a restart reason for the agent.
+/// Stop (if running), run `op`, restart. Writes `resume_reason` into the agent's boot inbox for
+/// the restart. The write happens AFTER `op` — writing before the stop would bake the reason into
+/// the snapshot `op` takes, and a restore of that backup would replay it as a stale greeting.
 async fn with_container_paused<F, Fut, T>(
     docker: &Docker,
     name: &str,
     cs: ContainerStatus,
+    resume_reason: &str,
     op: F,
 ) -> T
 where
@@ -106,9 +109,6 @@ where
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         tracing::info!(agent = %name, "stopping agent for backup");
-        if let Err(err) = write_pending_restart_reason(docker, &cname, "backup: you were paused for a scheduled backup").await {
-            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
-        }
         stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
     }
 
@@ -116,9 +116,21 @@ where
 
     if was_running {
         tracing::info!(agent = %name, "restarting agent");
+        if let Err(err) = write_pending_restart_reason(docker, &cname, resume_reason).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+        }
         start_container(docker, &cname).await;
     }
     result
+}
+
+/// The boot reason for the restart after a backup pause, by what triggered the backup.
+fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
+    match backup_type {
+        BackupType::Manual => "backup: you were paused for a manual backup",
+        BackupType::PreRestore => "backup: you were paused for a safety backup before a restore",
+        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => "backup: you were paused for a scheduled backup",
+    }
 }
 
 /// Validate the agent, confirm its container is backup-able (not NotFound/Dead),
@@ -151,7 +163,7 @@ pub async fn create_backup(
 ) -> Result<BackupInfo, DockerError> {
     let cs = backup_preflight(docker, name).await?;
 
-    let result = with_container_paused(docker, name, cs, || async {
+    let result = with_container_paused(docker, name, cs, backup_resume_reason(&backup_type), || async {
         tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
         crate::restic::snapshot(name, &backup_type).await
     })
@@ -190,7 +202,8 @@ pub async fn create_backups_batch(
         Err(e) => return fail_all(types, e),
     };
 
-    with_container_paused(docker, name, cs, || async {
+    // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
+    with_container_paused(docker, name, cs, "backup: you were paused for a scheduled backup", || async {
         let mut results = Vec::new();
         for bt in types {
             let result = crate::restic::snapshot(name, &bt).await;
