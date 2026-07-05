@@ -669,7 +669,7 @@ async fn restart_agent_handler(
         }
         let user_mounts = {
             let settings = state.settings.read().await;
-            settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
+            settings.agent_mounts(&name)
         };
         docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts)
             .await
@@ -708,7 +708,7 @@ async fn rebuild_agent_handler(
 
     let user_mounts = {
         let settings = state.settings.read().await;
-        settings.agents.get(&name).map(|s| s.mounts.clone()).unwrap_or_default()
+        settings.agent_mounts(&name)
     };
     docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts)
         .await
@@ -753,7 +753,7 @@ async fn rename_agent_handler(
 
     let user_mounts = {
         let settings = state.settings.read().await;
-        settings.agents.get(&name).map(|a| a.mounts.clone()).unwrap_or_default()
+        settings.agent_mounts(&name)
     };
     docker::rename_agent(&state.docker, &name, &new_name, &state.env_config, &user_mounts)
         .await
@@ -1470,6 +1470,13 @@ impl Settings {
     fn manages_core_code(&self, name: &str) -> bool {
         self.agents.get(name).is_none_or(|s| s.manage_agent_code)
     }
+
+    /// The agent's host-folder grants, or an empty list if the agent has none recorded.
+    /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
+    /// reconcile) sees grants the same way.
+    fn agent_mounts(&self, name: &str) -> Vec<crate::mounts::HostMount> {
+        self.agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1825,7 +1832,7 @@ async fn restore_backup_handler(
         let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
         let user_mounts = {
             let settings = state.settings.read().await;
-            settings.agents.get(&path.name).map(|a| a.mounts.clone()).unwrap_or_default()
+            settings.agent_mounts(&path.name)
         };
         backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code, &user_mounts).await?;
         tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
@@ -2101,7 +2108,7 @@ async fn list_mounts_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let settings = state.settings.read().await;
-    let mounts = settings.agents.get(&name).map(|a| a.mounts.clone()).unwrap_or_default();
+    let mounts = settings.agent_mounts(&name);
     Ok(Json(serde_json::json!({ "mounts": mounts })))
 }
 
@@ -2112,7 +2119,17 @@ async fn set_mounts_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let inputs: Vec<(String, Option<String>, bool)> =
         body.mounts.into_iter().map(|m| (m.host_path, m.container_path, m.writable)).collect();
-    let validated = crate::mounts::validate_mounts(&inputs)
+    // The agent's already-accepted grant paths grandfather a temporarily-offline existing grant so
+    // one missing drive can't reject the whole edit (see mounts::validate_mount).
+    let known_host_paths: std::collections::HashSet<String> = {
+        let settings = state.settings.read().await;
+        settings.agent_mounts(&name).into_iter().map(|m| m.host_path).collect()
+    };
+    // validate_mounts canonicalizes each host path (blocking std::fs, and a hung network mount can
+    // stall for a long time), so run it off the async worker.
+    let validated = tokio::task::spawn_blocking(move || crate::mounts::validate_mounts(&inputs, &known_host_paths))
+        .await
+        .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "mount validation task failed"))?
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))))?;
     {
         let mut settings = state.settings.write().await;
@@ -2125,9 +2142,13 @@ async fn set_mounts_handler(
 
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
-/// agent token; an agent must not enumerate the host.
-async fn host_folder_suggestions_handler() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "folders": crate::mounts::suggest_host_folders() }))
+/// agent token; an agent must not enumerate the host. The scan is blocking std::fs (and a hung
+/// network mount under one of the roots can stall it), so it runs off the async worker.
+async fn host_folder_suggestions_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let folders = tokio::task::spawn_blocking(crate::mounts::suggest_host_folders)
+        .await
+        .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "folder scan task failed"))?;
+    Ok(Json(serde_json::json!({ "folders": folders })))
 }
 
 // --- Constitution ---
@@ -2337,10 +2358,20 @@ pub fn build_router(state: SharedState) -> Router {
     // X-Agent-Token. The agent-token branch is inherently self-scoped — the middleware checks the
     // token against the agent name in the path — so an agent can stop/restart only itself. This is
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
-    let agents_self_lifecycle = Router::new()
+    // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
+    // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
+    // so it rides the longrun timeout like the rebuild route, not the control tier.
+    let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
-        .route("/agents/{name}/restart", post(restart_agent_handler))
         .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+    let agents_self_restart = Router::new()
+        .route("/agents/{name}/restart", post(restart_agent_handler))
+        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_agent_token,
@@ -2371,7 +2402,8 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
-        .merge(agents_self_lifecycle)
+        .merge(agents_self_stop)
+        .merge(agents_self_restart)
         .merge(agents_services)
         .merge(agents_services_read)
         .merge(gateway_logs)
@@ -2652,7 +2684,7 @@ pub async fn run_server(cfg: ServerConfig) {
             &|name| load_settings().agents.get(name).is_none_or(|s| s.user_desired == UserDesired::Running),
             // Mount grants are also read LIVE so a grant added/removed during the reconcile window
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
-            &|name| load_settings().agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default(),
+            &|name| load_settings().agent_mounts(name),
         )
         .await;
     });

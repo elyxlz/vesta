@@ -25,7 +25,6 @@ import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import { restartAgent } from "@/api/agents";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -39,7 +38,7 @@ export function AgentNavbar({
 }) {
   const { connected } = useAuth();
   const { reachable } = useGateway();
-  const { name, agent } = useSelectedAgent();
+  const { name, agent, restart } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -47,16 +46,15 @@ export function AgentNavbar({
   const restartPending = useRestartPending((s) =>
     name ? (s.pending[name] ?? false) : false,
   );
-  const clearRestartPending = useRestartPending((s) => s.clearPending);
   const [restarting, setRestarting] = useState(false);
+  // Route through the provider's restart so clearing the pending flag has a single owner (the
+  // provider), whichever surface triggers a restart. withOp resolves after completion (it handles
+  // failure internally and keeps the flag set), so the spinner ends correctly either way.
   const applyRestart = async () => {
     if (!name) return;
     setRestarting(true);
     try {
-      await restartAgent(name);
-      clearRestartPending(name);
-    } catch {
-      // Leave the flag set so the user can retry.
+      await restart();
     } finally {
       setRestarting(false);
     }

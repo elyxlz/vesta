@@ -1845,15 +1845,19 @@ pub async fn restart_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
         if user_mounts_drifted(&actual_user_mounts(&raw), user_mounts) {
             // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
-            // failure corrupts the writable layer) — the grant then applies on the next reconcile.
+            // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
+            // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
+            // Surface a truthful error instead of reporting success on a grant we didn't apply.
             let available = docker_storage_available_bytes(docker).await;
             if reconcile_blocked_by_disk(available) {
-                tracing::warn!(agent = %name, "mount grants changed but disk is critically low; skipping recreate, applying on next reconcile");
-            } else {
-                tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
-                rebuild_agent(docker, name, env_config, user_mounts).await?;
-                return start_agent(docker, name).await;
+                tracing::error!(agent = %name, "mount grants changed but disk is critically low; cannot recreate to apply them");
+                return Err(DockerError::Failed(format!(
+                    "cannot apply host-folder grants for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+                )));
             }
+            tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            rebuild_agent(docker, name, env_config, user_mounts).await?;
+            return start_agent(docker, name).await;
         }
     } else {
         tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
@@ -2096,11 +2100,8 @@ fn user_mounts_drifted(actual: &[(String, String, bool)], desired: &[crate::moun
 
 fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse, desired_mounts: &[crate::mounts::HostMount]) -> bool {
     let mounts = info.mounts.as_deref().unwrap_or(&[]);
-    let mount_dests: Vec<&str> = mounts.iter()
-        .filter_map(|m| m.destination.as_deref())
-        .collect();
-
-    if !mount_dests.contains(&ENV_MOUNT_DEST) {
+    let has_env_mount = mounts.iter().any(|m| m.destination.as_deref() == Some(ENV_MOUNT_DEST));
+    if !has_env_mount {
         tracing::info!(container = %cname, "rebuild needed: missing env-file mount");
         return true;
     }
@@ -2300,7 +2301,7 @@ mod tests {
         let m = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
         let binds = assemble_binds("/e:/run/vestad-env:ro,z".into(), "/c:/root/agent/constitution.md:ro,z".into(), None, std::slice::from_ref(&m));
         assert_eq!(binds.len(), 3);
-        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro,z");
+        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro");
     }
 
     #[test]

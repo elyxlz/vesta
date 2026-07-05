@@ -3,15 +3,20 @@
 //! protected-prefix rule. A grant is a decision only the user makes (see serve.rs auth).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 
-/// Container-path roots a grant may never mount onto. `/root` covers the agent's entire
-/// world (home, `/root/agent/data` = events.db + state.json, `/root/.claude` = auth,
-/// `/root/agent/core` = code); the rest are OS dirs whose replacement would break the
-/// container. Everything outside these — `/mnt`, `/media`, `/data`, `/srv`, … — is allowed.
+/// Container-path roots a grant may never mount onto at all (prefix match). `/root` covers the
+/// agent's entire world (home, `/root/agent/data` = events.db + state.json, `/root/.claude` = auth,
+/// `/root/agent/core` = code); the rest are OS dirs whose replacement would break the container.
 pub const PROTECTED_PREFIXES: &[&str] = &[
     "/root", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run", "/proc", "/sys", "/dev", "/boot",
 ];
+
+/// Writable container runtime roots that must not be *shadowed at their top level* (mounting onto
+/// `/tmp`/`/var`/`/opt` breaks the agent's temp files, logs, etc.), but whose subpaths ARE fine —
+/// a grant onto e.g. `/var/lib/plexmediaserver` is legitimate. Exact match only, unlike the prefixes.
+pub const PROTECTED_EXACT: &[&str] = &["/tmp", "/var", "/opt"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostMount {
@@ -24,7 +29,7 @@ pub struct HostMount {
 #[derive(Debug)]
 pub enum MountError {
     NotAbsolute,
-    HostPathMissing,
+    HostPathMissing(String),
     ContainerPathProtected(String),
     DuplicateContainerPath(String),
 }
@@ -33,7 +38,7 @@ impl fmt::Display for MountError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MountError::NotAbsolute => write!(f, "path must be absolute"),
-            MountError::HostPathMissing => write!(f, "host path does not exist"),
+            MountError::HostPathMissing(path) => write!(f, "host path '{path}' does not exist"),
             MountError::ContainerPathProtected(path) => {
                 write!(f, "container path '{path}' is protected; choose a path outside /root and system dirs, e.g. under /mnt")
             }
@@ -53,23 +58,37 @@ fn normalize(path: &str) -> &str {
     }
 }
 
-/// True if `container_path` is at or under any protected root, or is `/` itself.
+/// True if `container_path` is `/`, exactly a protected runtime root (`/tmp`, `/var`, `/opt`), or at
+/// or under any protected prefix (`/root` and the OS dirs).
 pub fn is_protected(container_path: &str) -> bool {
     let path = normalize(container_path);
-    if path == "/" {
+    if path == "/" || PROTECTED_EXACT.contains(&path) {
         return true;
     }
     PROTECTED_PREFIXES.iter().any(|root| path == *root || path.starts_with(&format!("{root}/")))
 }
 
-/// Validate one grant. `host_path` must be absolute and exist (canonicalized). The container
-/// path defaults to the (canonicalized) host path and must not be protected.
-pub fn validate_mount(host_path: &str, container_path: Option<&str>, writable: bool) -> Result<HostMount, MountError> {
+/// Validate one grant. `host_path` must be absolute and (normally) exist — it is canonicalized so the
+/// stored form resolves symlinks. The container path defaults to the (canonicalized) host path and
+/// must not be protected. `known_host_paths` are the host paths of grants already accepted for this
+/// agent: a path in that set that is *temporarily* missing (unplugged drive, unmounted NFS) is kept
+/// as-is instead of rejected, so one offline grant can't block edits to unrelated grants. A brand-new
+/// missing path is still rejected.
+pub fn validate_mount(
+    host_path: &str,
+    container_path: Option<&str>,
+    writable: bool,
+    known_host_paths: &HashSet<String>,
+) -> Result<HostMount, MountError> {
     if !host_path.starts_with('/') {
         return Err(MountError::NotAbsolute);
     }
-    let canonical = std::fs::canonicalize(host_path).map_err(|_| MountError::HostPathMissing)?;
-    let canonical = canonical.to_string_lossy().to_string();
+    let canonical = match std::fs::canonicalize(host_path) {
+        Ok(p) => p.to_string_lossy().to_string(),
+        // A grant that was accepted before is already canonical; if it's merely offline now, keep it.
+        Err(_) if known_host_paths.contains(host_path) => host_path.to_string(),
+        Err(_) => return Err(MountError::HostPathMissing(host_path.to_string())),
+    };
 
     let container = match container_path {
         Some(cp) => {
@@ -90,10 +109,12 @@ pub fn validate_mount(host_path: &str, container_path: Option<&str>, writable: b
 }
 
 /// Validate a full list and reject duplicate container paths (two grants can't target one dest).
-pub fn validate_mounts(inputs: &[(String, Option<String>, bool)]) -> Result<Vec<HostMount>, MountError> {
+/// `known_host_paths` (the agent's already-accepted grant paths) grandfathers temporarily-offline
+/// existing grants so a single missing path can't reject the whole edit — see `validate_mount`.
+pub fn validate_mounts(inputs: &[(String, Option<String>, bool)], known_host_paths: &HashSet<String>) -> Result<Vec<HostMount>, MountError> {
     let mut out: Vec<HostMount> = Vec::with_capacity(inputs.len());
     for (host, container, writable) in inputs {
-        let mount = validate_mount(host, container.as_deref(), *writable)?;
+        let mount = validate_mount(host, container.as_deref(), *writable, known_host_paths)?;
         if out.iter().any(|m| m.container_path == mount.container_path) {
             return Err(MountError::DuplicateContainerPath(mount.container_path));
         }
@@ -102,10 +123,14 @@ pub fn validate_mounts(inputs: &[(String, Option<String>, bool)]) -> Result<Vec<
     Ok(out)
 }
 
-/// The Docker `-v` bind spec: `host:container:{ro|rw},z`.
+/// The Docker `-v` bind spec: `host:container:{ro|rw}`. Deliberately no SELinux `z`/`Z` relabel: a
+/// grant shares an *existing* host directory that host services (Plex, Samba, the user) may also use,
+/// and `z` would recursively `chcon` the whole tree to a container-shared label — slow on large trees
+/// and a host-wide change that can break those services. On an SELinux-enforcing host the user relabels
+/// intentionally if needed; we never mutate host labels behind their back.
 pub fn bind_string(m: &HostMount) -> String {
     let mode = if m.writable { "rw" } else { "ro" };
-    format!("{}:{}:{mode},z", m.host_path, m.container_path)
+    format!("{}:{}:{mode}", m.host_path, m.container_path)
 }
 
 /// Host roots whose immediate subdirectories are common places to share (media libraries,
@@ -157,19 +182,46 @@ fn scan_candidate_folders(roots: &[&str], home: Option<&str>, home_dirs: &[&str]
 mod tests {
     use super::*;
 
+    fn no_known() -> HashSet<String> {
+        HashSet::new()
+    }
+
     #[test]
     fn mirror_uses_canonical_host_path_as_container_path() {
         let dir = std::env::temp_dir();
         let sub = dir.join("vesta-mount-test");
         std::fs::create_dir_all(&sub).unwrap();
-        let m = validate_mount(sub.to_str().unwrap(), None, false).unwrap();
+        let m = validate_mount(sub.to_str().unwrap(), None, false, &no_known()).unwrap();
         assert_eq!(m.container_path, m.host_path);
         assert!(!m.writable);
     }
 
     #[test]
     fn rejects_relative_host_path() {
-        assert!(matches!(validate_mount("relative/path", None, false), Err(MountError::NotAbsolute)));
+        assert!(matches!(validate_mount("relative/path", None, false, &no_known()), Err(MountError::NotAbsolute)));
+    }
+
+    #[test]
+    fn known_but_offline_host_path_is_kept_not_rejected() {
+        // A grant that was accepted before but whose host path is now missing (unplugged drive)
+        // must validate so edits to OTHER grants aren't blocked. It's already canonical, so it's
+        // kept as-is; a NEW missing path is still rejected.
+        let missing = "/definitely/does/not/exist/offline-drive";
+        let known: HashSet<String> = [missing.to_string()].into_iter().collect();
+        let m = validate_mount(missing, Some("/mnt/offline"), false, &known).unwrap();
+        assert_eq!(m.host_path, missing);
+        assert!(matches!(validate_mount(missing, Some("/mnt/offline"), false, &no_known()), Err(MountError::HostPathMissing(_))));
+    }
+
+    #[test]
+    fn known_offline_path_still_enforces_container_protection() {
+        // Grandfathering an offline host path must not bypass the protected-container-path rule.
+        let missing = "/definitely/does/not/exist/offline-drive";
+        let known: HashSet<String> = [missing.to_string()].into_iter().collect();
+        assert!(matches!(
+            validate_mount(missing, Some("/root/.claude"), false, &known),
+            Err(MountError::ContainerPathProtected(_))
+        ));
     }
 
     #[test]
@@ -195,7 +247,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_host_path() {
-        assert!(matches!(validate_mount("/definitely/does/not/exist/xyzzy", None, false), Err(MountError::HostPathMissing)));
+        assert!(matches!(validate_mount("/definitely/does/not/exist/xyzzy", None, false, &no_known()), Err(MountError::HostPathMissing(_))));
     }
 
     #[test]
@@ -204,7 +256,7 @@ mod tests {
         let sub = dir.join("vesta-mount-test-dotdot");
         std::fs::create_dir_all(&sub).unwrap();
         assert!(matches!(
-            validate_mount(sub.to_str().unwrap(), Some("/mnt/../root/.claude"), false),
+            validate_mount(sub.to_str().unwrap(), Some("/mnt/../root/.claude"), false, &no_known()),
             Err(MountError::ContainerPathProtected(_))
         ));
     }
@@ -217,6 +269,13 @@ mod tests {
         assert!(is_protected("/etc/passwd"));
         assert!(is_protected("/"));
         assert!(is_protected("/usr/bin"));
+        // Writable container runtime roots: shadowing the root itself is blocked...
+        assert!(is_protected("/tmp"));
+        assert!(is_protected("/var"));
+        assert!(is_protected("/opt"));
+        // ...but a subpath is fine (e.g. Plex config lives under /var/lib/plexmediaserver).
+        assert!(!is_protected("/var/lib/plexmediaserver"));
+        assert!(!is_protected("/tmp/shared"));
     }
 
     #[test]
@@ -232,9 +291,9 @@ mod tests {
     #[test]
     fn bind_string_ro_and_rw() {
         let ro = HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
-        assert_eq!(bind_string(&ro), "/mnt/media:/mnt/media:ro,z");
+        assert_eq!(bind_string(&ro), "/mnt/media:/mnt/media:ro");
         let rw = HostMount { host_path: "/mnt/dl".into(), container_path: "/mnt/dl".into(), writable: true };
-        assert_eq!(bind_string(&rw), "/mnt/dl:/mnt/dl:rw,z");
+        assert_eq!(bind_string(&rw), "/mnt/dl:/mnt/dl:rw");
     }
 
     #[test]
@@ -251,6 +310,6 @@ mod tests {
             (sub_a.to_str().unwrap().to_string(), Some("/mnt/x".to_string()), false),
             (sub_b.to_str().unwrap().to_string(), Some("/mnt/x".to_string()), false),
         ];
-        assert!(matches!(validate_mounts(&inputs), Err(MountError::DuplicateContainerPath(_))));
+        assert!(matches!(validate_mounts(&inputs, &no_known()), Err(MountError::DuplicateContainerPath(_))));
     }
 }
