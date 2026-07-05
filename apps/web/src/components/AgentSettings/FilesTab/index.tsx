@@ -96,10 +96,12 @@ function HubRowSkeleton() {
   );
 }
 
-function SkeletonSection({ rows }: { rows: number }) {
+function SkeletonSection({ label, rows }: { label: string; rows: number }) {
   return (
     <>
-      <Skeleton className="ml-1 h-3 w-20 rounded" />
+      <p className="px-1 text-[11px] font-medium text-muted-foreground/70">
+        {label}
+      </p>
       <Card size="sm">
         <CardContent>
           <ItemGroup>
@@ -113,12 +115,13 @@ function SkeletonSection({ rows }: { rows: number }) {
   );
 }
 
-function SimpleSkeleton() {
+function SimpleSkeleton({ agentName }: { agentName?: string }) {
+  const name = agentName ?? "the agent";
   return (
     <div className="flex flex-col gap-3 p-1">
-      <SkeletonSection rows={3} />
-      <SkeletonSection rows={3} />
-      <SkeletonSection rows={2} />
+      <SkeletonSection label={`${name}'s mind`} rows={3} />
+      <SkeletonSection label="skills" rows={3} />
+      <SkeletonSection label="on this computer" rows={2} />
     </div>
   );
 }
@@ -303,7 +306,7 @@ export function FilesTab() {
         </p>
       ) : !entries ? (
         mode === "simple" ? (
-          <SimpleSkeleton />
+          <SimpleSkeleton agentName={agentName} />
         ) : (
           <AdvancedSkeleton />
         )
