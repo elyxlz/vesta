@@ -133,6 +133,48 @@ pub fn bind_string(m: &HostMount) -> String {
     format!("{}:{}:{mode}", m.host_path, m.container_path)
 }
 
+/// Join items as "a", "a and b", or "a, b and c" for human-readable reason copy.
+fn join_and(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [head @ .., last] => format!("{} and {}", head.join(", "), last),
+    }
+}
+
+/// A `mounts:` restart reason describing a grant change, or None if nothing changed.
+/// `actual` is the container's current user binds as (host, container, writable) tuples
+/// (`docker::actual_user_mounts`); `desired` is the new grant list. Classification is by
+/// container_path + mode, so a writable flip reads as a fresh grant of the new mode.
+pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMount]) -> Option<String> {
+    let actual_set: std::collections::HashSet<(&str, bool)> = actual.iter().map(|(_, container, writable)| (container.as_str(), *writable)).collect();
+    let desired_paths: std::collections::HashSet<&str> = desired.iter().map(|mount| mount.container_path.as_str()).collect();
+
+    let mode = |writable: bool| if writable { "read-write" } else { "read-only" };
+
+    let granted: Vec<String> = desired
+        .iter()
+        .filter(|mount| !actual_set.contains(&(mount.container_path.as_str(), mount.writable)))
+        .map(|mount| format!("{} ({})", mount.container_path, mode(mount.writable)))
+        .collect();
+    let removed: Vec<String> = actual
+        .iter()
+        .filter(|(_, container, _)| !desired_paths.contains(container.as_str()))
+        .map(|(_, container, _)| container.clone())
+        .collect();
+
+    match (granted.is_empty(), removed.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(format!("mounts: you now have access to {}", join_and(&granted))),
+        (true, false) => Some(format!("mounts: your access to {} was removed", join_and(&removed))),
+        (false, false) => Some(format!(
+            "mounts: filesystem access changed. granted: {}; removed: {}",
+            granted.join(", "),
+            removed.join(", ")
+        )),
+    }
+}
+
 /// Host roots whose immediate subdirectories are common places to share (media libraries,
 /// downloads, data disks). Their children — e.g. `/mnt/media` — are the suggestions.
 pub const SUGGESTION_ROOTS: &[&str] = &["/mnt", "/media", "/srv", "/data", "/pool", "/tank"];
@@ -184,6 +226,41 @@ mod tests {
 
     fn no_known() -> HashSet<String> {
         HashSet::new()
+    }
+
+    fn m(container: &str, writable: bool) -> HostMount {
+        HostMount { host_path: container.into(), container_path: container.into(), writable }
+    }
+
+    #[test]
+    fn mount_change_reason_grants_removals_and_mixed() {
+        // single grant
+        assert_eq!(
+            mount_change_reason(&[], &[m("/media/Plex", false)]).as_deref(),
+            Some("mounts: you now have access to /media/Plex (read-only)")
+        );
+        // multiple grants
+        assert_eq!(
+            mount_change_reason(&[], &[m("/media/Plex", false), m("/downloads", true)]).as_deref(),
+            Some("mounts: you now have access to /media/Plex (read-only) and /downloads (read-write)")
+        );
+        // removal only
+        assert_eq!(
+            mount_change_reason(&[("/media/Plex".into(), "/media/Plex".into(), false)], &[]).as_deref(),
+            Some("mounts: your access to /media/Plex was removed")
+        );
+        // mixed
+        assert_eq!(
+            mount_change_reason(&[("/old".into(), "/old".into(), false)], &[m("/media/Plex", false)]).as_deref(),
+            Some("mounts: filesystem access changed. granted: /media/Plex (read-only); removed: /old")
+        );
+        // writable flip reads as a fresh grant
+        assert_eq!(
+            mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true)]).as_deref(),
+            Some("mounts: you now have access to /x (read-write)")
+        );
+        // no change
+        assert_eq!(mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", true)]), None);
     }
 
     #[test]
