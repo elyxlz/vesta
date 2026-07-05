@@ -65,9 +65,8 @@ it reads the field:
    `state.persisted.last_restart_reason`, and `unlink` the file (one-shot).
 2. Then the function proceeds exactly as today: return the field, clear it, save state.
 
-The result flows unchanged into `greeting_reason` → the greeting boot turn, so the agent
-naturally says e.g. "you're awake — you now have read-only access to `/media/Plex`." Absent
-inbox file → today's behavior, unchanged.
+The result flows unchanged into `greeting_reason` → the greeting boot turn, rendered per the
+standardized format below. Absent inbox file → today's behavior, unchanged.
 
 **Why draining is safe and unambiguous:** a `vestad`-driven restart exits the agent cleanly,
 so the field would otherwise be `CLEAN_RESTART`; draining overwrites that placeholder with the
@@ -84,21 +83,59 @@ untouched.
   the path from `restart_reason` to `pending_restart_reason`) and stops being a dead write —
   the agent will now surface "I was paused for a backup."
 - **Mounts (motivating caller):** `restart_agent` already computes the actual-vs-desired mount
-  diff to decide whether to rebuild. In that branch it writes a reason describing the delta
-  (e.g. "granted read-only access to /media/Plex") before recreating. **No app or API change
-  needed** — vestad synthesizes it from the diff it already has.
+  diff to decide whether to rebuild. In that branch it synthesizes a `mounts:` reason from the
+  full delta (adds and removes together — one `PUT /mounts` can change several at once) before
+  recreating. **No app or API change needed** — vestad has the diff. Copy generator:
+  - only grants: `mounts: you now have access to /media/Plex (read-only) and /downloads (read-write)`
+  - only removals: `mounts: your access to /media/Plex and /old was removed`
+  - both: `mounts: filesystem access changed. granted: /media/Plex (read-only); removed: /old`
 - **The general interface:** `POST /agents/{name}/restart` gains an optional `{reason}` field.
-  When present, vestad writes it before the restart. This is the interface external callers
-  (app "restart" button, CLI) use to attach a human reason.
+  When present, vestad writes it before the restart. This is the interface external callers use
+  to attach a human reason — e.g. the app, after a provider change, restarts with
+  `manual: switching to Claude Opus 4.8` (it knows the model it just set).
+
+## Standardized reason copy and boot message
+
+Every reason is a single `category: detail` string; `category` is a fixed small set, `detail`
+is a lowercase plain-language phrase with no trailing period and no em/en dash. The `category`
+is a machine tag (`_is_crash_reason` keys on `crash`/`error`); it is **not shown** to the agent.
+
+| Category | Copy |
+|---|---|
+| `clean` | `clean: routine restart, no specific reason` |
+| `nightly` | `nightly: the dreamer ran and compacted your session for continuous context` |
+| `crash` | `crash: {detail}` (e.g. `crash: the processor exited unexpectedly`) |
+| `error` | `error: {detail}` (e.g. `error: a turn failed to complete`) |
+| `backup` | `backup: you were paused for a scheduled backup` |
+| `mounts` | `mounts: {delta}` (see the generator above) |
+| `manual` | `manual: {caller-supplied}` (e.g. `manual: switching to Claude Opus 4.8`) |
+
+**Render (`build_restart_context`).** The stored `category: detail` is split on the first
+`": "`; only the detail is shown, under a clear restart header:
+
+```
+[System Restart]
+Reason: {detail}
+
+Read the `restart` skill and follow it.
+```
+
+A pending dreamer summary still slots between the `Reason:` line and the `restart.md` line.
+`restart.md` drops its leading "You've restarted." — the `[System Restart]` header now carries
+that, avoiding the doubled statement (per the "no redundant instructions" guidance). If a
+stored reason somehow lacks a `category: ` prefix, the whole string renders as the detail.
 
 ## Scope
 
 **In:**
 - Agent-side drain in `_consume_restart_reason` + an inbox-path constant + unit tests.
+- Standardized reason copy (the constants in `models.py` + the crash/error/dreamer strings)
+  and the new `[System Restart]` / `Reason:` render in `build_restart_context`; `restart.md`
+  drops "You've restarted."
 - `write_pending_restart_reason` helper; `backup.rs` routed through it; path renamed to
-  `pending_restart_reason`.
+  `pending_restart_reason`; its copy standardized to `backup: …`.
 - Optional `{reason}` on `POST /agents/{name}/restart`.
-- Mount-drift branch of `restart_agent` writes a synthesized reason.
+- Mount-drift branch of `restart_agent` writes a synthesized `mounts:` reason (multi-mount).
 
 **Out (follow-ups, not this change):**
 - Wiring the web app to *send* a reason on manual restart. The API accepting `{reason}` is the
@@ -110,8 +147,11 @@ untouched.
 - **Agent** (`tests/test_processor.py`, near the existing `test_restart_reason_round_trip`):
   inbox present → `_consume_restart_reason` returns its content and the file is removed; inbox
   present over a persisted `CLEAN_RESTART` → inbox wins; inbox absent → existing behavior.
-- **vestad:** `write_pending_restart_reason` writes the agreed path (docker-gated); the
-  mount-drift restart writes a reason (docker-gated, alongside the existing recreate coverage).
+- **Agent render:** `build_restart_context` strips the `category:` prefix and emits the
+  `[System Restart]` / `Reason:` block; a prefix-less reason renders whole; `_is_crash_reason`
+  still true for `crash:`/`error:` categories.
+- **vestad:** `write_pending_restart_reason` writes the agreed path (docker-gated); the mount
+  reason generator (only-grants / only-removals / both, single and multi) as a pure unit test.
 
 ## Blast radius
 
