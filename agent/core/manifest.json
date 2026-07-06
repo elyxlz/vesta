@@ -4,7 +4,7 @@
   "providers": {
     "claude": {
       "display": "Claude account",
-      "models": ["opus", "sonnet", "haiku"],
+      "models": ["opus", "sonnet"],
       "default_model": "opus",
       "context": {
         "default": 1000000,

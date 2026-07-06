@@ -19,7 +19,7 @@ def test_manifest_has_both_providers_and_defaults():
     assert manifest["default_provider"] == "claude"
     assert manifest["default_personality"] == "dry"
     assert sorted(manifest["providers"]) == ["claude", "openrouter"]
-    assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet", "haiku"]
+    assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
     assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
 

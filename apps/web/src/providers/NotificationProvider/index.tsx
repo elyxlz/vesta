@@ -193,7 +193,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         : `${agent.name} needs to sign in again`;
       const body = unprovisioned
         ? "Tap to choose a provider and sign in."
-        : "Vesta lost the provider credentials. Tap to re-authenticate.";
+        : "vesta lost the provider credentials. Tap to re-authenticate.";
       try {
         const n = new Notification(title, {
           body,
