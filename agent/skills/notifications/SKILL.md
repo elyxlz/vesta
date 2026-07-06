@@ -1,6 +1,6 @@
 ---
 name: notifications
-description: Manage how incoming notifications affect YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your current work vs. wait in the pool (interrupt rules), and triage the pooled ones when a triage pass hands them to you. The point is your productivity: being preempted by low-value notifications mid-task is costly. Use when you notice unimportant notifications breaking your focus, when the user tells you what should or shouldn't pull you off your work (e.g. "don't let Twitter interrupt you", "always let my wife's messages reach you right away", "stay focused on this and hold the low-priority stuff"), when you want to guard a hard task, when asked what's currently allowed to interrupt you, or when triaging the notifications that piled up while you were busy.
+description: Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage. Use when the user says what should or shouldn't interrupt you ("don't let Twitter interrupt you", "always let my wife's messages through right away"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications.
 ---
 
 # Notifications
