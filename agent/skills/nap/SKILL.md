@@ -5,32 +5,24 @@ description: Take a nap; compact the conversation in place to free up context. U
 
 # Nap
 
-A nap compacts the current conversation in place: the session continues right where it was, the older history rewritten as a curated summary. It is the light sibling of the nightly dream: the dream curates memory to disk, compacts, and restarts; a nap only compacts.
+A nap compacts the current conversation in place: the session continues right where it was, with the older history rewritten as a curated summary. It is the light sibling of the nightly dream: the dream curates memory to disk, compacts, and restarts; a nap only compacts.
 
 ## When to nap
 
-- Context usage is getting high. Napping early with the prompt below beats the built-in autocompact, which summarizes blindly when the window fills.
-- The user tells you to take a nap.
+- Context usage is getting high. Nap deliberately with the prompt below, which preserves what matters, rather than letting the built-in autocompact fire only once the window is nearly full and summarize blindly.
+- The user asks you to take a nap.
 
-Do not nap mid-task for no reason; a nap costs a summarization pass and loses verbatim detail that was not explicitly preserved.
+A nap costs a summarization pass and drops any verbatim detail you did not explicitly preserve, so nap with a reason, not mid-task out of habit.
 
 ## How
 
-Call `compact_context` with two arguments:
+Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
 
-- `instructions`: the nap prompt below, plus anything currently in flight that must survive verbatim (an exact next command, a draft message, a number you must not lose).
-- `followup` (optional): a short instruction to your own next turn after the compaction (delivered to you, not the user), e.g. reminding yourself to tell the user you cleared your head if it is worth saying. Core prepends a line noting the summary is above, so keep this to your own intent. Omit it for a silent nap.
+- `instructions` (required): the nap prompt below, plus anything in flight that must survive verbatim (an exact next command, a draft message, a number you cannot lose).
+- `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Core prepends a note that the summary is now above. Omit it for a silent nap.
 
-The compaction runs after the current turn ends; the session then continues compacted.
-
-## The nap prompt (instructions)
+## The nap prompt (for `instructions`)
 
 ```
 Preserve, with specifics: the user's current state and tone; every open thread and commitment (who is waiting on what); each in-flight task with its literal next action; recent decisions and the reasons behind them; and a brief record of tasks and work already completed this session (what was done and how it turned out). Keep exact values (names, dates, amounts, paths, commands) for anything unresolved. Drop verbose tool output and file contents, and condense resolved threads to a one-line record of what was done rather than dropping them entirely.
-```
-
-## The followup (optional)
-
-```
-You just compacted to free up context. If anything is worth telling the user, say it briefly; otherwise carry on.
 ```
