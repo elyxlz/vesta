@@ -184,11 +184,11 @@ def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> st
         return setup_prompt.strip()
 
     extras = []
-    if state.persisted.show_dreamer_summary:
-        state.persisted.show_dreamer_summary = False
+    boot_msg = state.persisted.pending_boot_message
+    if boot_msg is not None:
+        state.persisted.pending_boot_message = None
         state_store.save_state(state.persisted, config)
-        for path in sorted(config.dreamer_dir.glob("*.md"), reverse=True)[:3]:
-            extras.append(f"[Dreamer Summary: {path.stem}]\n{path.read_text().strip()}")
+        extras.append(boot_msg)
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return None

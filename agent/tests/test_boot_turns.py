@@ -58,16 +58,16 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     assert state.persisted.last_synced_version == "9.9.9"
 
 
-def test_restart_greeting_carries_pending_dreamer_summary(tmp_path):
+def test_restart_greeting_carries_pending_boot_message(tmp_path):
     config = _boot_config(tmp_path)
-    (config.dreamer_dir / "2026-06-27.md").write_text("today I learned the user likes tea")
     state = _authed_state()
-    state.persisted.show_dreamer_summary = True
+    state.persisted.pending_boot_message = (
+        "[Your context was just compacted; the summary is above.]\n\nnew day: greet warmly, summary at dreamer/x.md"
+    )
 
-    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="nightly: dreamer ran", first_start=False)
+    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: restarted", first_start=False)
 
     assert len(turns) == 1
-    assert "Dreamer Summary" in turns[0]
-    assert "likes tea" in turns[0]
-    # The flag is consumed so the summary isn't re-surfaced on the next boot.
-    assert state.persisted.show_dreamer_summary is False
+    assert "new day: greet warmly" in turns[0]
+    # The message is consumed so it isn't re-surfaced on the next boot.
+    assert state.persisted.pending_boot_message is None

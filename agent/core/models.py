@@ -58,7 +58,6 @@ class QueuedTurn(tp.NamedTuple):
 
 
 CLEAN_RESTART = "clean: routine restart, no specific reason"
-NIGHTLY_RESTART = "nightly: the dreamer ran and compacted your session for continuous context"
 CRASH_RESTART = "crash: restarted after an unexpected exit"
 FIRST_START_REASON = "first start"
 
