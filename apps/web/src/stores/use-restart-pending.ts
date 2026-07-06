@@ -11,7 +11,8 @@ import { persist } from "zustand/middleware";
 // SelectedAgentProvider).
 // The reason vocabulary is the withdraw contract: clearReason only matches an identical key,
 // so the store owns the spelling. "settings" only labels flags migrated from the un-keyed v0 store.
-export type RestartReason = "host-access" | "files" | "preempt-mode" | "settings";
+export type RestartReason =
+  "host-access" | "files" | "preempt-mode" | "settings";
 
 interface RestartPendingState {
   pending: Record<string, RestartReason[]>;
