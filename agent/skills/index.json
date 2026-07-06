@@ -76,6 +76,10 @@
     "description": "Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon."
   },
   {
+    "name": "nap",
+    "description": "Take a nap; compact the conversation in place to free up context, with an optional brief note to the user afterward. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap."
+  },
+  {
     "name": "notifications",
     "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications."
   },
