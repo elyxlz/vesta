@@ -44,7 +44,7 @@ export function AgentNavbar({
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const restartPending = useRestartPending((s) =>
-    name ? (s.pending[name] ?? false) : false,
+    name ? (s.pending[name]?.length ?? 0) > 0 : false,
   );
   const [restarting, setRestarting] = useState(false);
   // Route through the provider's restart so clearing the pending flag has a single owner (the

@@ -281,7 +281,7 @@ export function FilesTab() {
       await writeFile(agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
-      markRestartPending(agentName);
+      markRestartPending(agentName, "host-access");
     } catch (e) {
       setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
