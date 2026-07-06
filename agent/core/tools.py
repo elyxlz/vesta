@@ -113,10 +113,14 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         },
     )
     async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        instructions = str(args["instructions"]).strip()
+        # A JSON null for an optional arg means "absent", not the literal string "None": guard so a
+        # model passing followup/instructions as null does not feed "None" to the summarizer or turn.
+        raw_instructions = args["instructions"]
+        instructions = str(raw_instructions).strip() if raw_instructions is not None else ""
         if not instructions:
             return {"content": [{"type": "text", "text": "error: instructions required"}]}
-        followup = str(args["followup"]).strip() if "followup" in args else ""
+        raw_followup = args["followup"] if "followup" in args else None
+        followup = str(raw_followup).strip() if raw_followup is not None else ""
         # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
         raw_restart = args["restart"] if "restart" in args else False
         restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")

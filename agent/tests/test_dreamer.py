@@ -174,6 +174,18 @@ async def test_compact_context_restart_only_true_on_real_true(tmp_path, restart_
     assert state.pending_compaction.restart is expected
 
 
+@pytest.mark.anyio
+async def test_compact_context_null_followup_treated_as_absent(tmp_path):
+    """A JSON null for the optional followup means absent, not the literal string 'None'."""
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"instructions": "keep", "followup": None})
+
+    assert state.pending_compaction is not None
+    assert state.pending_compaction.followup is None
+
+
 # --- drain_compaction_request: compact, then route the follow-up ---
 
 
@@ -246,22 +258,6 @@ async def test_drain_nap_without_followup_drops_nothing(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_drain_nap_dedups_followup_when_one_pending(tmp_path):
-    config = _setup(tmp_path)
-    (config.notifications_dir / f"{vm.TYPE_COMPACTION_FOLLOWUP}-1.json").write_text("{}")
-    state = vm.State()
-    state.client = _mock_compact_client()
-    state.pending_compaction = vm.PendingCompaction(instructions="keep", followup="reflect", restart=False)
-
-    with patch("core.loops.compact_session", new_callable=AsyncMock):
-        from core.loops import drain_compaction_request
-
-        await drain_compaction_request(state=state, config=config)
-
-    assert len(list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json"))) == 1
-
-
-@pytest.mark.anyio
 async def test_drain_restart_boot_message_and_no_notification(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
@@ -285,7 +281,9 @@ async def test_drain_restart_boot_message_and_no_notification(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_drain_restart_unreachable_clears_boot_message(tmp_path):
+async def test_drain_restart_unreachable_delivers_followup_as_notification(tmp_path):
+    """When the restart cannot happen (vestad unreachable), the follow-up must not be lost: it is
+    cleared from the boot channel and delivered as a live notification on the session we stay on."""
     config = _setup(tmp_path)
     state = vm.State()
     state.client = _mock_compact_client()
@@ -300,10 +298,15 @@ async def test_drain_restart_unreachable_clears_boot_message(tmp_path):
         await drain_compaction_request(state=state, config=config)
 
     assert state.persisted.pending_boot_message is None
+    files = list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json"))
+    assert len(files) == 1
+    assert "new day" in json.loads(files[0].read_text())["body"]
 
 
 @pytest.mark.anyio
-async def test_drain_compaction_failure_is_nonfatal(tmp_path):
+async def test_drain_nap_failure_delivers_followup_without_false_orientation(tmp_path):
+    """A failed compaction is non-fatal and still delivers the follow-up, but must NOT prepend the
+    'summary is above' orientation, since no summary was produced."""
     config = _setup(tmp_path)
     state = vm.State()
     state.client = _mock_compact_client()
@@ -314,9 +317,32 @@ async def test_drain_compaction_failure_is_nonfatal(tmp_path):
 
         await drain_compaction_request(state=state, config=config)
 
-    # Core stays dumb about compaction success: the follow-up is still delivered.
-    assert len(list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json"))) == 1
+    files = list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json"))
+    assert len(files) == 1
+    body = json.loads(files[0].read_text())["body"]
+    assert body == "reflect", "no false 'summary above' claim when compaction failed"
     assert state.compacting is False
+
+
+@pytest.mark.anyio
+async def test_drain_restart_after_compaction_failure_still_restarts(tmp_path):
+    """Reliability invariant: a failed compaction on the restart path still restarts (resume works
+    on the un-compacted session), and the boot message omits the false orientation."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.client = _mock_compact_client()
+    state.pending_compaction = vm.PendingCompaction(instructions="keep", followup="new day", restart=True)
+
+    with (
+        patch("core.loops.compact_session", new_callable=AsyncMock, side_effect=ClaudeSDKError("boom")),
+        patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart,
+    ):
+        from core.loops import drain_compaction_request
+
+        await drain_compaction_request(state=state, config=config)
+
+    restart.assert_awaited_once()
+    assert state.persisted.pending_boot_message == "new day"
 
 
 @pytest.mark.anyio

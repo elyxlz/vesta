@@ -71,3 +71,18 @@ def test_restart_greeting_carries_pending_boot_message(tmp_path):
     assert "new day: greet warmly" in turns[0]
     # The message is consumed so it isn't re-surfaced on the next boot.
     assert state.persisted.pending_boot_message is None
+
+
+def test_pending_boot_message_consumed_even_on_unauthenticated_boot(tmp_path):
+    """It must be consumed on the boot it was set for, never stranded to a later restart, even when
+    the greeting is skipped because the provider is not authenticated."""
+    from core.loops import greeting_turn
+
+    config = _boot_config(tmp_path)
+    state = vm.State()  # no provider_status -> unauthenticated
+    state.persisted.pending_boot_message = "[Your context was just compacted; the summary is above.]\n\nnew day"
+
+    result = greeting_turn(config=config, state=state, reason="clean: restarted")
+
+    assert result is None  # no greeting on an unauthenticated boot
+    assert state.persisted.pending_boot_message is None  # but the one-shot message is still consumed
