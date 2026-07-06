@@ -127,6 +127,16 @@ class State:
     # fires the SDK interrupt. Dormant (never set) in the default "message" mode, where
     # preemption is the producer's priority:"now" pre-send (client.send_preempt).
     interrupt_event: asyncio.Event | None = None
+    # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet: send_preempt
+    # increments, converse(pre_sent=True) decrements at open. While non-zero, process_message
+    # skips the dash-correction turn (its query would land behind the queued preempt CLI-side
+    # and cross turn attribution) and the stream consumer banks a ResultMessage arriving with
+    # no open turn (below) instead of dropping it.
+    preempt_outstanding: int = 0
+    # ResultMessages of pre-sent turns that landed before their Vesta turn opened (the CLI ran
+    # the preempt fast). converse(pre_sent=True) claims one at open and completes immediately,
+    # instead of waiting out the silence timeout on a turn nothing will ever close.
+    preempt_orphaned_results: int = 0
     # The currently open turn's signals; written by the stream consumer, waited on by converse /
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None

@@ -1,7 +1,6 @@
 """Background processing loops and notification handling."""
 
 import asyncio
-import collections
 import datetime as dt
 import json
 import pathlib as pl
@@ -265,7 +264,7 @@ async def _run_messages_with_interrupts(
         finally:
             state.event_bus.set_state("idle")
 
-    pending: collections.deque[vm.QueuedTurn] = collections.deque([first])
+    pending: list[vm.QueuedTurn] = [first]
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -275,7 +274,11 @@ async def _run_messages_with_interrupts(
                     await queue.put(remaining)
                 break
 
-            current = pending.popleft()
+            # Pre-sent items already jumped the CLI's prompt queue (priority:"now"), so they
+            # must jump ours too: taking them first keeps Vesta's turn pairing aligned with
+            # the order the CLI actually runs turns.
+            index = next((i for i, item in enumerate(pending) if item.pre_sent), 0)
+            current = pending.pop(index)
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
@@ -293,11 +296,17 @@ async def _run_messages_with_interrupts(
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
-                    pending.append(queue_task.result())
+                    arrived = queue_task.result()
                     if config.preempt_mode == "message":
-                        # A pre-sent item has already ended the current turn CLI-side; a plain
-                        # item just waits its turn. Either way, only collect it here.
+                        # A pre-sent item has already ended the current turn CLI-side. A plain
+                        # item means the producer's pre-send missed (inter-turn gap, failed
+                        # write): a turn is demonstrably running now, so deliver the preempt
+                        # from here (send_preempt self-gates on boot turns/compaction/auth).
+                        if not arrived.pre_sent and await send_preempt(arrived.text, state=state, config=config):
+                            arrived = arrived._replace(pre_sent=True)
+                        pending.append(arrived)
                         continue
+                    pending.append(arrived)
                     if not current.interruptible:
                         # Boot turns run to completion; the queued item waits its turn rather than preempting.
                         continue
