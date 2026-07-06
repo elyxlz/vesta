@@ -1,6 +1,6 @@
 ---
 name: nap
-description: Take a nap; compact the conversation in place to free up context, with an optional brief note to the user afterward. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap.
+description: Take a nap; compact the conversation in place to free up context. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap.
 ---
 
 # Nap
@@ -19,7 +19,7 @@ Do not nap mid-task for no reason; a nap costs a summarization pass and loses ve
 Call `compact_context` with two arguments:
 
 - `instructions`: the nap prompt below, plus anything currently in flight that must survive verbatim (an exact next command, a draft message, a number you must not lose).
-- `followup` (optional): a short note delivered as your next turn after the compaction, so you can tell the user you cleared your head if it is worth saying. Core prepends a line noting the summary is above, so keep this to your own intent. Omit it for a silent nap.
+- `followup` (optional): a short instruction to your own next turn after the compaction (delivered to you, not the user), e.g. reminding yourself to tell the user you cleared your head if it is worth saying. Core prepends a line noting the summary is above, so keep this to your own intent. Omit it for a silent nap.
 
 The compaction runs after the current turn ends; the session then continues compacted.
 

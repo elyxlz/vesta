@@ -77,7 +77,7 @@
   },
   {
     "name": "nap",
-    "description": "Take a nap; compact the conversation in place to free up context, with an optional brief note to the user afterward. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap."
+    "description": "Take a nap; compact the conversation in place to free up context. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap."
   },
   {
     "name": "notifications",
