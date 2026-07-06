@@ -106,9 +106,11 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         "compacting (core prepends a note that the summary is now above). Pass `restart=true` to restart "
         "into the compacted session; core delivers the follow-up on the far side of the restart. Omit "
         "restart for an in-place compaction (a nap).",
-        {"type": "object",
-         "properties": {"instructions": {"type": "string"}, "followup": {"type": "string"}, "restart": {"type": "boolean"}},
-         "required": ["instructions"]},
+        {
+            "type": "object",
+            "properties": {"instructions": {"type": "string"}, "followup": {"type": "string"}, "restart": {"type": "boolean"}},
+            "required": ["instructions"],
+        },
     )
     async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         instructions = str(args["instructions"]).strip()

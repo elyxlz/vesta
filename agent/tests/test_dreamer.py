@@ -170,6 +170,7 @@ async def test_compact_context_restart_only_true_on_real_true(tmp_path, restart_
 
     await _tool_handler(state, config, "compact_context")({"instructions": "keep", "restart": restart_arg})
 
+    assert state.pending_compaction is not None
     assert state.pending_compaction.restart is expected
 
 
@@ -276,8 +277,10 @@ async def test_drain_restart_boot_message_and_no_notification(tmp_path):
         await drain_compaction_request(state=state, config=config)
 
     restart.assert_awaited_once()
-    assert state.persisted.pending_boot_message.startswith("[Your context was just compacted; the summary is above.]")
-    assert "new day, greet warmly" in state.persisted.pending_boot_message
+    boot_msg = state.persisted.pending_boot_message
+    assert boot_msg is not None
+    assert boot_msg.startswith("[Your context was just compacted; the summary is above.]")
+    assert "new day, greet warmly" in boot_msg
     assert list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json")) == []
 
 
