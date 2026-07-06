@@ -72,6 +72,14 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
 
     if not result:
         result = _run_device_flow(app, scopes, cache_file)
+    else:
+        # Persist the cache after a silent acquisition. MSAL rotates the refresh
+        # token in-memory on refresh; if we never write it back, the on-disk token
+        # is never renewed, so its 90-day inactivity clock never advances and it
+        # eventually dies with AADSTS700082 even under constant daemon polling.
+        cache = app.token_cache
+        if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+            _write_cache(cache_file, content=cache.serialize())
 
     return result["access_token"]
 

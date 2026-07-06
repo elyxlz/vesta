@@ -40,5 +40,11 @@ rm -f ~/agent/pyproject.toml ~/agent/uv.lock   # stale leftovers of the engine m
 Now `git status` shows every file where your content differs from stock. Judge each: keep yours, take stock (`git checkout -- <file>`), or integrate both. A file whose only diff is stock that moved or got deleted is not yours, take stock. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure. Then:
 
 ```bash
-git add -A && git commit -m "my customizations"
+git add -A --sparse && git commit -m "my customizations"
+```
+
+(`--sparse` lets git stage files in directories of your own under `agent/`, which start outside the sparse cone.) Then widen the cone to cover them, so no later sparse-checkout reapply prunes them:
+
+```bash
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh
 ```

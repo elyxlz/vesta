@@ -56,6 +56,21 @@ def build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
 
+def build_priority_now_message(prompt: str, *, timestamp: dt.datetime) -> dict[str, tp.Any]:
+    """The stream-json envelope for a preempting user message. `priority` is undocumented CLI
+    protocol (verified on 2.1.191/2.1.201, probed live 2026-07-06): a queued "now" prompt makes
+    the CLI end the running turn at its next step boundary with the graceful "interrupt" reason,
+    so background subagents survive — unlike the interrupt control request, whose headless
+    handler kills every backgrounded task (issue #982). A CLI that ignores the field just queues
+    the message to run after the current turn: delayed, never lost."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": build_query(prompt, timestamp=timestamp)},
+        "parent_tool_use_id": None,
+        "priority": "now",
+    }
+
+
 def thinking_tokens_estimate(msg: Message) -> int | None:
     """The CLI streams SystemMessage(subtype="thinking_tokens") counters throughout extended
     thinking. Return the running token estimate, or None for any other message (or a payload

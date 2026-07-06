@@ -1,14 +1,12 @@
 """Vesta main entry point and orchestration."""
 
 import asyncio
-import errno
 import os
 import signal
 import sys
 import types
 import typing as tp
 
-import aioconsole
 from rich import print_json
 
 from . import models as vm
@@ -24,38 +22,6 @@ from .loops import (
 from .default_skills import default_skill_sync_turn
 from .migrations import pending_migration_turns
 from .workspace_sync import workspace_sync_turn, vesta_version
-
-
-async def input_handler(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State) -> None:
-    while not state.shutdown_event.is_set():
-        try:
-            user_msg = await aioconsole.ainput("")
-            if state.shutdown_event.is_set():
-                break
-            if not user_msg.strip():
-                continue
-
-            logger.user(user_msg.strip())
-            await queue.put(vm.QueuedTurn(user_msg.strip(), True, []))
-        except KeyboardInterrupt:
-            logger.shutdown("stdin: KeyboardInterrupt, shutting down")
-            state.shutdown_event.set()
-            break
-        except EOFError:
-            logger.shutdown("stdin: EOF (no TTY?), shutting down")
-            state.shutdown_event.set()
-            break
-        except asyncio.CancelledError:
-            break
-        except BlockingIOError:
-            await asyncio.sleep(0.1)
-            continue
-        except OSError as e:
-            if e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK:
-                await asyncio.sleep(0.1)
-                continue
-            else:
-                raise
 
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:

@@ -191,8 +191,11 @@ def get_transactions(
         if not continuation_key:
             break
 
-        # Subsequent pages use continuation_key instead of date params
-        params = {"continuation_key": continuation_key}
+        # Subsequent pages MUST resend the same date_from/date_to alongside the
+        # continuation_key: Enable Banking validates that the key's embedded dates
+        # match the request, and 422s ("dateFrom in request is not the same as in
+        # continuationKey") if they're dropped. So add the key, keep the dates.
+        params["continuation_key"] = continuation_key
 
     return all_txns
 

@@ -281,7 +281,7 @@ export function FilesTab() {
       await writeFile(agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
-      markRestartPending(agentName);
+      markRestartPending(agentName, "files");
     } catch (e) {
       setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
@@ -344,7 +344,7 @@ export function FilesTab() {
         <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
           <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
             <FolderTree className="size-4 text-muted-foreground" />
-            <CardTitle className="!text-sm !font-medium">/root</CardTitle>
+            <CardTitle>/root</CardTitle>
           </CardHeader>
           <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
             <FileTree
