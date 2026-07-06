@@ -87,21 +87,17 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
 
     @tool(
         "mark_dreamer_complete",
-        "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, then (once this turn ends) compacts the conversation and restarts the agent, which resumes the compacted session — so you come back with a clean but continuous context rather than a blank slate.",
+        "Call once the nightly dream is fully complete (retrospective done, fixes validated, queue "
+        "drained per the dream skill's gate). Records that today's dream ran so it does not re-fire on "
+        "the next hourly check. This only records the run; it does not compact or restart. Compact and "
+        "restart as your final step via compact_context(followup=..., restart=true).",
         {},
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
-        state.persisted.show_dreamer_summary = True
-        state.persisted.last_restart_reason = vm.NIGHTLY_RESTART
         state_store.save_state(state.persisted, config)
-        # /compact only works while the session is idle, so we can't compact from inside this
-        # mid-turn tool call. Flag it; the message processor compacts at the next idle point and
-        # then triggers the restart. The session_id is intentionally kept so the restart resumes
-        # the compacted conversation instead of starting fresh.
-        state.compact_then_restart = True
-        logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
-        return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
+        logger.dreamer("Dreamer run recorded by agent")
+        return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 
     @tool(
         "compact_context",

@@ -103,21 +103,18 @@ def _mark_dreamer_complete_handler(state, config):
 
 
 @pytest.mark.anyio
-async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tmp_path):
-    """The session is kept (so the restart resumes the compacted conversation) and the restart
-    is deferred to the idle drain via compact_then_restart — not triggered inline mid-turn."""
+async def test_mark_dreamer_complete_stamps_timestamp_only(tmp_path):
+    """Pure recorder: stamps last_dreamer_run; touches no summary, restart, or compaction state.
+    The compaction/restart is composed separately via compact_context."""
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.session_id = "sess-abc"
 
     await _mark_dreamer_complete_handler(state, config)({})
 
-    assert state.persisted.session_id == "sess-abc", "session must be kept for a resuming restart"
-    assert state.compact_then_restart is True
-    assert state.persisted.show_dreamer_summary is True
     assert state.persisted.last_dreamer_run is not None
-    assert state.persisted.last_restart_reason == vm.NIGHTLY_RESTART
-    # The restart happens after compaction in the drain, so the tool itself must NOT shut down.
+    assert state.persisted.session_id == "sess-abc"
+    assert state.pending_compaction is None
     assert not state.graceful_shutdown.is_set()
 
 
