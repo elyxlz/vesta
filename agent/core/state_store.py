@@ -33,6 +33,9 @@ class PersistedState(pyd.BaseModel):
     last_restart_reason: str | None = None
     last_dreamer_run: dt.datetime | None = None
     show_dreamer_summary: bool = False
+    # A generic turn delivered once on the next boot (set by the compaction drain for a restart
+    # follow-up), then cleared. Only read at boot, so it cannot be read early or strand.
+    pending_boot_message: str | None = None
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
     last_synced_version: str | None = None

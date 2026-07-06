@@ -33,10 +33,11 @@ __all__ = [
 # as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
 TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
+TYPE_COMPACTION_FOLLOWUP = "compaction_followup"
 
 # Core notifications are exempt from the user's rules; loops.py derives their disposition from the type.
 # Types listed here pool (wait for idle); every other core type interrupts.
-CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK})
+CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
 
 
 class QueuedTurn(tp.NamedTuple):
