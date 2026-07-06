@@ -456,6 +456,7 @@ impl Client {
         model: Option<&str>,
         max_context_tokens: Option<u64>,
         timezone: Option<&str>,
+        preempt_mode: Option<&str>,
     ) -> Result<(), String> {
         let mut changed = false;
         if let Some(mut signin) = auth {
@@ -489,6 +490,10 @@ impl Client {
             self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "timezone": tz }))?;
             changed = true;
         }
+        if let Some(mode) = preempt_mode {
+            self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "preempt_mode": mode }))?;
+            changed = true;
+        }
         if changed { self.restart_agent(name) } else { Ok(()) }
     }
 
@@ -506,6 +511,11 @@ impl Client {
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         read_json(self.get(&format!("/agents/{name}/settings"))?)
+    }
+
+    /// The agent's own config prefs (GET /config, proxied) — timezone, preempt_mode, etc.
+    pub fn get_agent_config(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/config"))?)
     }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {

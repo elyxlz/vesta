@@ -376,6 +376,29 @@ export async function setNotificationInterruptRules(
   return rules;
 }
 
+export type PreemptMode = "message" | "interrupt";
+
+/// How urgent messages preempt a running turn, from the agent's config (GET /config).
+export async function getPreemptMode(name: string): Promise<PreemptMode> {
+  const resp = await apiJson<{ preempt_mode?: PreemptMode }>(
+    `/agents/${encodeURIComponent(name)}/config`,
+  );
+  return resp.preempt_mode ?? "message";
+}
+
+/// Set how urgent messages preempt a running turn (PUT /config with {preempt_mode}). A pref:
+/// saved immediately but applies on the agent's next restart, so the caller flags restart-pending.
+export async function setPreemptMode(
+  name: string,
+  mode: PreemptMode,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preempt_mode: mode }),
+  });
+}
+
 /// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
 /// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
 /// Pending state isn't derived here — it's seeded from the connect snapshot and kept live via
