@@ -26,7 +26,7 @@ The compaction runs after the current turn ends; the session then continues comp
 ## The nap prompt (instructions)
 
 ```
-Preserve, with specifics: the user's current state and tone; every open thread and commitment (who is waiting on what); each in-flight task with its literal next action; recent decisions and the reasons behind them. Keep exact values (names, dates, amounts, paths, commands) for anything unresolved. Drop verbose tool output, file contents, and threads that are fully resolved.
+Preserve, with specifics: the user's current state and tone; every open thread and commitment (who is waiting on what); each in-flight task with its literal next action; recent decisions and the reasons behind them; and a brief record of tasks and work already completed this session (what was done and how it turned out). Keep exact values (names, dates, amounts, paths, commands) for anything unresolved. Drop verbose tool output and file contents, and condense resolved threads to a one-line record of what was done rather than dropping them entirely.
 ```
 
 ## The followup (optional)
