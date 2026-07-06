@@ -5,19 +5,35 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
-Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from `origin/master`, never from your workspace branch or local HEAD.
+Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from upstream `master`, never from your workspace branch or local HEAD.
+
+## Discovering what to file (run this every night, in the dream's Upstream phase)
+
+Don't wait to stumble on things worth upstreaming: sweep for them. Your workspace (`~`) is a git repo whose stock baseline is the tag `agent-vX.Y.Z` matching the version you run. Diffing your branch against that tag surfaces **everything you've changed or added on top of stock**, i.e. the full contribution surface, in one command:
+
+```bash
+VER=$(grep '^version = ' ~/agent/core/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+git -C ~ diff --stat "agent-v$VER"..HEAD -- agent/ ':(exclude)agent/core/**'
+```
+
+Walk the list and, for each changed/added file, decide with gate 1 below: generalizable → file it; user-specific → leave it local. Common finds: a hook, script, or SKILL.md improvement built for one task that any instance would want.
+
+Two gotchas learned the hard way:
+- **Diff against the `agent-vX.Y.Z` tag, NOT `upstream/master`.** Vesta serves the workspace as a *subset* of the full monorepo (no `core/`, `tests/`, frontend), so a raw diff against `upstream/master` is polluted with thousands of phantom "deletions" for files that aren't in your workspace at all. The tag is your exact stock baseline, so its diff is purely your real changes.
+- **A local-only file that never existed upstream is the easiest thing to miss.** If you built a whole hook/script locally, there's nothing to "sync", so it silently never gets contributed. The sweep catches exactly these.
 
 ## Before filing (REQUIRED)
 
 Three gates before opening a worktree.
 
-**1. Is it worth filing?** Push upstream only what would benefit any vesta instance:
+**1. Is it worth filing?** Default lean: **everything is upstreamable unless it's personal information or super niche to one user.** If a change would help any vesta instance, it belongs upstream. Concretely:
 - Bug fixes in agent code, skills, or prompts
 - New skills (strip personal config first) (can be specific skills, they are opt in for new vestas)
 - Prompt or SKILL.md or MEMORY.md improvements
+- **Personality / voice improvements** (the `personality` SKILL.md shared rules, the `presets/*.md` preset files, the bubble_lint hook). These are NOT per-instance: the presets and the hook ship with every vesta, so a fix or a sharpened rule that isn't glued to one user's specifics benefits everyone. Upstream the generalizable rule, keep only the user-specific tuning local.
 - Infrastructure or tooling improvements
 
-Never file: personal config, memory files, credentials, user-specific customizations.
+Never file: personal config, the user's own memory content, credentials, user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks).
 
 **2. Issue, PR, or both?**
 - You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `pr.py --body "...fixes #N"` is enough.
