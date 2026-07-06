@@ -172,6 +172,10 @@ enum Command {
         /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
         #[arg(long)]
         context_window: Option<u64>,
+        /// How urgent messages preempt a running turn: message (background work survives,
+        /// waits for a running tool) or interrupt (immediate, kills background subagents)
+        #[arg(long)]
+        preempt_mode: Option<PreemptMode>,
     },
     /// Sign out an agent: clear its provider credentials. It stays running but can't respond
     /// until you reconnect a provider with `vesta auth`.
@@ -414,6 +418,21 @@ enum RulesAction {
 enum PolicyAction {
     Interrupt,
     Pool,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PreemptMode {
+    Message,
+    Interrupt,
+}
+
+impl PreemptMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            PreemptMode::Message => "message",
+            PreemptMode::Interrupt => "interrupt",
+        }
+    }
 }
 
 impl PolicyAction {
@@ -790,7 +809,7 @@ fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
     // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
     client
-        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None)
+        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None, None)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -1138,19 +1157,19 @@ fn run(cli: Cli) {
             //    dance first.
             match plan {
                 ProvisionPlan::OpenRouter(or) => {
-                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
                 ProvisionPlan::ClaudeCredentials { credentials, opts } => {
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated (claude)");
                 }
                 ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref())
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated!");
                 }
@@ -1197,7 +1216,7 @@ fn run(cli: Cli) {
                 eprintln!("waiting for agent to start...");
                 c.wait_until_running(&name, START_READY_TIMEOUT)
                     .unwrap_or_else(|e| platform::die(&e));
-                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref())
+                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref(), None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("created (running on OpenRouter)");
             } else {
@@ -1205,15 +1224,20 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Settings { name, model, context_window } => {
+        Command::Settings { name, model, context_window, preempt_mode } => {
             let c = get_client(host_ref, token_ref);
-            if model.is_some() || context_window.is_some() {
-                c.update_settings(&name, None, model.as_deref(), context_window, None)
+            if model.is_some() || context_window.is_some() || preempt_mode.is_some() {
+                c.update_settings(&name, None, model.as_deref(), context_window, None, preempt_mode.map(PreemptMode::as_str))
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
                 let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
+                if let Ok(config) = c.get_agent_config(&name) {
+                    if let Some(mode) = config["preempt_mode"].as_str() {
+                        eprintln!("preempt_mode = {mode}");
+                    }
+                }
                 // Only report model/context when a provider is actually configured; a signed-out
                 // agent (kind "none") has a stored default model but no active provider.
                 if let Ok(provider) = c.get_provider(&name) {
@@ -1404,7 +1428,7 @@ fn run(cli: Cli) {
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None)
+                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {

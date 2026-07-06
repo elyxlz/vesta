@@ -96,7 +96,7 @@ export function HostAccessCard() {
     try {
       const result = await setAgentMounts(agentName, next);
       setMounts(result.mounts);
-      if (result.restartRequired) markRestartPending(agentName);
+      if (result.restartRequired) markRestartPending(agentName, "host-access");
       return true;
     } catch (e) {
       setSaveError(errorMessage(e, "failed to update host access"));

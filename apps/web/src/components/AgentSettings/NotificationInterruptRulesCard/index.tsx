@@ -158,11 +158,11 @@ export function NotificationInterruptRulesCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+        <CardTitle>
           <ListFilter className="size-4 text-muted-foreground" />
           interrupt rules
         </CardTitle>
-        <CardDescription className="text-xs">
+        <CardDescription>
           what interrupts {agentName || "the agent"}, and what can wait for a
           quiet moment.
         </CardDescription>

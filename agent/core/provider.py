@@ -56,6 +56,12 @@ def is_terminal_auth_error(error: str | None) -> bool:
     return error in _TERMINAL_AUTH_ERRORS
 
 
+def is_unauthenticated(status: "ProviderStatus | None") -> bool:
+    """The "dead token" predicate: gates handing prompts to the CLI (the processor's deferral
+    and send_preempt) so a known-bad credential doesn't burn the CLI's retry budget."""
+    return status is not None and status.state == ProviderAuthState.NOT_AUTHENTICATED
+
+
 @dc.dataclass
 class ProviderStatus:
     state: ProviderAuthState

@@ -150,7 +150,6 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
         patch("core.main.message_processor", side_effect=crashing_processor),
         patch("core.main.monitor_loop", new_callable=AsyncMock),
-        patch("core.main.input_handler", new_callable=AsyncMock),
         patch("core.main.collect_boot_turns", return_value=[]),
     ):
         mock_runner = MagicMock()

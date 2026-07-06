@@ -1,7 +1,6 @@
 """Background processing loops and notification handling."""
 
 import asyncio
-import collections
 import datetime as dt
 import json
 import pathlib as pl
@@ -22,6 +21,7 @@ from .client import (
     process_message,
     build_client_options,
     attempt_interrupt,
+    send_preempt,
     persist_session_id,
     resolve_openrouter_max_tokens,
     compact_session,
@@ -31,7 +31,7 @@ from .client import (
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context, clear_notifications
 from .openrouter_cache import start_cache_proxy
-from .provider import ProviderAuthState
+from .provider import ProviderAuthState, is_unauthenticated
 
 from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
@@ -136,22 +136,26 @@ async def process_batch(
 ) -> None:
     """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
 
-    File paths are carried in the queue item and deleted only after the message is processed,
-    so that a mid-compaction restart can recover unprocessed notifications from disk."""
+    Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_interrupts):
+    an item landing mid-turn is pre-sent there as a priority:"now" message. File paths are
+    carried in the queue item and deleted only after the message is processed, so that a
+    mid-compaction restart can recover unprocessed notifications from disk."""
     if not notifications:
         return
 
-    # Don't SDK-abort a non-interruptible boot turn: the batch is still queued below and the
-    # queue-watcher defers it until the boot turn completes.
-    if state.client and not state.noninterruptible_turn_active:
+    # Interrupt mode preempts from here, at batch time (the queue-watcher's escalation covers
+    # an interrupt that misses into an inter-turn gap). Don't SDK-abort a non-interruptible
+    # boot turn: the batch is still queued below and the queue-watcher defers it.
+    if config.preempt_mode == "interrupt" and state.client and not state.noninterruptible_turn_active:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
     async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
+        text = format_notification_batch(group, suffix=suffix)
         paths = [n.file_path for n in group if n.file_path]
-        await queue.put(vm.QueuedTurn(format_notification_batch(group, suffix=suffix), False, paths))
+        await queue.put(vm.QueuedTurn(text, False, paths))
 
     if system:
         await queue_section(system, suffix="")
@@ -203,10 +207,12 @@ async def _run_messages_with_interrupts(
     state: vm.State,
     config: vm.VestaConfig,
 ) -> None:
-    """Run a turn and any follow-ups; new queue items interrupt the current turn (deferred during
-    compaction, and never for a non-interruptible boot turn, which runs to completion)."""
+    """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
+    mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
+    loop never aborts anything. preempt_mode="interrupt" only: a mid-turn item interrupts
+    the current turn (deferred during compaction, never for a non-interruptible boot turn)."""
 
-    async def run_one(text: str, *, user: bool) -> None:
+    async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
         try:
             if user:
                 logger.user(text)
@@ -215,7 +221,7 @@ async def _run_messages_with_interrupts(
                 preview = text[:1000] + "..." if len(text) > 1000 else text
                 logger.system(preview.replace("\n", " "))
             state.event_bus.set_state("thinking")
-            await process_message(text, state=state, config=config, is_user=user)
+            await process_message(text, state=state, config=config, is_user=user, pre_sent=pre_sent)
         except asyncio.CancelledError:
             if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
                 raise
@@ -249,7 +255,7 @@ async def _run_messages_with_interrupts(
         finally:
             state.event_bus.set_state("idle")
 
-    pending: collections.deque[vm.QueuedTurn] = collections.deque([first])
+    pending: list[vm.QueuedTurn] = [first]
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -259,25 +265,42 @@ async def _run_messages_with_interrupts(
                     await queue.put(remaining)
                 break
 
-            current = pending.popleft()
+            # Pre-sent items already jumped the CLI's prompt queue (priority:"now"), so they
+            # must jump ours too: taking them first keeps Vesta's turn pairing aligned with
+            # the order the CLI actually runs turns.
+            index = next((i for i, item in enumerate(pending) if item.pre_sent), 0)
+            current = pending.pop(index)
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
             # monitor_loop re-reads the dir and re-queues it. (Migrations regenerate on boot anyway.)
-            if state.provider_status is not None and state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED:
+            if is_unauthenticated(state.provider_status):
                 logger.client("Provider not authenticated; deferring message until re-auth")
                 continue
             state.interrupt_event = asyncio.Event()
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
-            process_task = asyncio.create_task(run_one(current.text, user=current.is_user))
+            process_task = asyncio.create_task(run_one(current.text, user=current.is_user, pre_sent=current.pre_sent))
 
             while not process_task.done():
                 queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
-                    pending.append(queue_task.result())
+                    arrived = queue_task.result()
+                    # The single owner of preempt delivery: an item landing while a turn runs is
+                    # pre-sent as a priority:"now" message, ending the turn at its next step
+                    # boundary with background subagents intact (issue #982). send_preempt
+                    # self-gates (idle, boot turn, compaction, auth), so a miss just queues plain.
+                    if (
+                        config.preempt_mode == "message"
+                        and not arrived.pre_sent
+                        and await send_preempt(arrived.text, state=state, config=config)
+                    ):
+                        arrived = arrived._replace(pre_sent=True)
+                    pending.append(arrived)
+                    if config.preempt_mode == "message":
+                        continue
                     if not current.interruptible:
                         # Boot turns run to completion; the queued item waits its turn rather than preempting.
                         continue

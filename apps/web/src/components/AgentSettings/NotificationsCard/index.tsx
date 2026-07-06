@@ -110,11 +110,11 @@ export function NotificationsCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+        <CardTitle>
           <BellRing className="size-4 text-muted-foreground" />
           recent notifications
         </CardTitle>
-        <CardDescription className="text-xs">
+        <CardDescription>
           everything the agent has received, and whether each interrupted the
           agent or was snoozed until it was free.
         </CardDescription>
