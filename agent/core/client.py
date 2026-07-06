@@ -1,4 +1,4 @@
-"""Conversation loop: builds queries, drives the SDK client, handles interrupts and dash-correction."""
+"""Conversation loop: builds queries, drives the SDK client, handles preemption and dash-correction."""
 
 import asyncio
 import datetime as dt
@@ -62,6 +62,12 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
+    """Hard-abort the current turn via the SDK's interrupt control request.
+
+    In headless mode the CLI's handler for this request also kills every running backgrounded
+    subagent/workflow task (issue #982), so routine preemption defaults to send_preempt instead;
+    this fires only on failure paths (silence/query timeout, provider auth lost) and in the
+    legacy preempt_mode="interrupt" fallback."""
     client = state.client
     if not client:
         return False
@@ -92,6 +98,45 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return False
 
 
+async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) -> bool:
+    """Preempt the running turn by delivering `prompt` as a priority:"now" user message.
+
+    The CLI aborts the current turn at its next step boundary with the graceful "interrupt"
+    reason — background subagents and shells survive, unlike the interrupt control request
+    (issue #982) — and runs this prompt as the next turn. A foreground tool call already
+    executing is not cut short: the abort latches and applies when the tool returns, so the
+    preempt is delayed by at most that tool's remaining runtime, never lost.
+
+    `priority` is undocumented stream-json protocol (verified against CLI 2.1.191/2.1.201,
+    probed live 2026-07-06); a CLI that ignores it just queues the message to run after the
+    current turn. Returns False without sending when there is nothing to preempt (no client,
+    no open turn) or when preemption is barred (boot turn, compaction in flight), and on a
+    failed write — the caller then queues the prompt normally (pre_sent=False)."""
+    client = state.client
+    if not client or state.turn is None or state.noninterruptible_turn_active or state.compacting:
+        return False
+
+    message = {
+        "type": "user",
+        "message": {"role": "user", "content": sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())},
+        "parent_tool_use_id": None,
+        "priority": "now",
+    }
+
+    async def _one() -> tp.AsyncIterator[dict[str, tp.Any]]:
+        yield message
+
+    try:
+        await asyncio.wait_for(client.query(_one()), timeout=config.query_timeout)
+        logger.debug("Preempt sent (priority=now)")
+        return True
+    except Exception as e:
+        # Like attempt_interrupt: best-effort, broad catch. A failed preempt must never abort
+        # the notification/message that asked for it — the prompt still queues and runs.
+        logger.error(f"Preempt send failed: {e} | {diagnostics.format_hang_diagnostics(state)}")
+        return False
+
+
 def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConfig) -> None:
     state.persisted.session_id = session_id
     state_store.save_state(state.persisted, config)
@@ -100,9 +145,10 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
 
 _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
 
-# Post-interrupt wait for the interrupted turn's ResultMessage. Purely a labeling nicety so the
-# next turn usually opens against a clean stream; when the CLI's wind-down outlives it, the
-# consumer still receives everything and the late result is dropped as advisory (issue #958).
+# Legacy preempt_mode="interrupt" only: post-interrupt wait for the interrupted turn's
+# ResultMessage. Purely a labeling nicety so the next turn usually opens against a clean stream;
+# when the CLI's wind-down outlives it, the consumer still receives everything and the late
+# result is dropped as advisory (issue #958).
 _INTERRUPT_TURN_END_GRACE_S = 5.0
 
 
@@ -224,20 +270,27 @@ async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
     _fail_open_turn(RuntimeError("SDK stream ended"))
 
 
-async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
+async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
+    """Drive one turn: send the query (unless the producer already pre-sent it as a
+    priority:"now" preempt — see send_preempt) and wait for the turn's result. In the default
+    "message" preempt mode a later message needs no handling here: the CLI-side abort ends this
+    turn, which arrives as an ordinary ResultMessage closing `turn.done`. In the legacy
+    "interrupt" mode the queue-watcher sets `state.interrupt_event` and this loop fires the SDK
+    interrupt itself."""
     assert state.client is not None
     client = state.client
 
-    query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
     diagnostics.touch_activity(state, "query_start")
     state.active_tools.clear()
     turn = _open_turn(state, show_output=show_output)
-    try:
-        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
-    except TimeoutError:
-        _close_turn(state, turn)
-        await attempt_interrupt(state, config=config, reason="Query timeout")
-        raise
+    if not pre_sent:
+        query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
+        try:
+            await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+        except TimeoutError:
+            _close_turn(state, turn)
+            await attempt_interrupt(state, config=config, reason="Query timeout")
+            raise
     diagnostics.touch_activity(state, "query_sent")
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
@@ -302,8 +355,10 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
-async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
-    responses = await converse(msg, state=state, config=config, show_output=True)
+async def process_message(
+    msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool, pre_sent: bool = False
+) -> tuple[list[str], vm.State]:
+    responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
     if responses and _contains_dashes(responses):
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)

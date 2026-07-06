@@ -65,11 +65,12 @@ async def test_message_processor_interrupts_on_new_message(config, state):
     """New messages arriving during processing set the interrupt event and are processed after."""
     from core.provider import ProviderAuthState, ProviderStatus
 
+    config.preempt_mode = "interrupt"
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     processing_started = asyncio.Event()
     interrupt_seen = asyncio.Event()
 
-    async def slow_side_effect(msg, *, state, config, is_user):
+    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
         if "slow" in msg:
             processing_started.set()
             await wait_for_condition(lambda: state.interrupt_event is not None and state.interrupt_event.is_set())
@@ -83,7 +84,7 @@ async def test_message_processor_interrupts_on_new_message(config, state):
     processed: list[str] = []
     original = slow_side_effect
 
-    async def tracking(msg, *, state, config, is_user):
+    async def tracking(msg, *, state, config, is_user, pre_sent=False):
         processed.append(msg)
         return await original(msg, state=state, config=config, is_user=is_user)
 
@@ -126,7 +127,7 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
     processing_started = asyncio.Event()
     busy_during_turn = False
 
-    async def slow_side_effect(msg, *, state, config, is_user):
+    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
         nonlocal busy_during_turn
         busy_during_turn = state.processor_busy
         processing_started.set()
@@ -172,7 +173,7 @@ async def test_run_messages_with_interrupts_cancels_process_task(config, state):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user):
+    async def hanging_process(msg, *, state, config, is_user, pre_sent=False):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -204,7 +205,7 @@ async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
     boot_started = asyncio.Event()
     release_boot = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user):
+    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
         processed.append(msg)
         if msg == "boot":
             boot_started.set()
@@ -233,6 +234,7 @@ async def test_process_batch_does_not_sdk_abort_a_boot_turn(config, state, tmp_p
     (the SDK-level path), but must still queue the batch so it runs after the boot turn."""
     from core.loops import process_batch
 
+    config.preempt_mode = "interrupt"
     state.client = MagicMock()  # a live SDK client; attempt_interrupt would otherwise abort the turn
     state.noninterruptible_turn_active = True
     queue: asyncio.Queue = asyncio.Queue()
@@ -253,6 +255,7 @@ async def test_process_batch_sdk_aborts_a_normal_turn(config, state, tmp_path):
     """The gate is specific to boot turns: with no boot turn in flight, process_batch still interrupts."""
     from core.loops import process_batch
 
+    config.preempt_mode = "interrupt"
     state.client = MagicMock()
     state.noninterruptible_turn_active = False
     queue: asyncio.Queue = asyncio.Queue()
@@ -272,6 +275,7 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(c
     """While state.compacting is True, new messages must be queued, not interrupt the in-flight task."""
     from core.loops import _run_messages_with_interrupts
 
+    config.preempt_mode = "interrupt"
     state.compacting = True
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -279,7 +283,7 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(c
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user):
+    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
         processed.append(msg)
         if msg == "first":
             first_started.set()

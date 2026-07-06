@@ -265,6 +265,14 @@ class VestaConfig(pyd_settings.BaseSettings):
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
+    # How an interrupting message/notification preempts a running turn. "message" (default)
+    # pre-sends the prompt as a priority:"now" user message: the CLI ends the turn at its next
+    # step boundary and background subagents survive (issue #982). "interrupt" is the legacy
+    # SDK interrupt control request: preempts mid-tool too, but kills every backgrounded
+    # subagent in headless mode. LEGACY(remove-when: a release has shipped with "message" as
+    # the default and no agent needed the fallback): drop the knob and the interrupt preempt
+    # path with it.
+    preempt_mode: tp.Literal["message", "interrupt"] = "message"
     ws_port: int = 0
     # SecretStr so it's redacted in GET /config dumps; the auth middleware reads its real value.
     agent_token: pyd.SecretStr | None = None

@@ -43,12 +43,17 @@ class QueuedTurn(tp.NamedTuple):
     """One item in the agent's processing queue: a prompt plus how to handle it.
 
     `interruptible=False` marks a boot turn — boot-time control-flow that must run to completion;
-    a later-queued message waits its turn instead of preempting it."""
+    a later-queued message waits its turn instead of preempting it.
+
+    `pre_sent=True` records that the producer already delivered this prompt to the CLI as a
+    priority:"now" preempt (client.send_preempt), so converse must wait for its turn without
+    sending a second query."""
 
     text: str
     is_user: bool
     file_paths: list[str]
     interruptible: bool = True
+    pre_sent: bool = False
 
 
 CLEAN_RESTART = "clean: routine restart, no specific reason"
@@ -118,15 +123,17 @@ class State:
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
+    # Legacy preempt_mode="interrupt" only: per-turn event the queue-watcher sets so converse
+    # fires the SDK interrupt. Dormant (never set) in the default "message" mode, where
+    # preemption is the producer's priority:"now" pre-send (client.send_preempt).
     interrupt_event: asyncio.Event | None = None
     # The currently open turn's signals; written by the stream consumer, waited on by converse /
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None
     compacting: bool = False
-    # True while a non-interruptible turn (a boot turn) is being processed. process_batch consults
-    # this before firing client.interrupt(), so a concurrent interrupt notification queues and waits
-    # rather than SDK-aborting the boot turn mid-stream (the queue-watcher's interruptible guard only
-    # covers the queue-driven path, not this direct SDK path).
+    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt (and, in
+    # the legacy interrupt mode, process_batch) consults this, so a concurrent interrupting
+    # notification queues and waits rather than preempting the boot turn mid-stream.
     noninterruptible_turn_active: bool = False
     # File paths of the notification the current turn is handling (empty for user-message turns).
     # The message loop clears these after the turn; the restart/stop tools clear them first when an
