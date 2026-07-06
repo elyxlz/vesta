@@ -739,6 +739,26 @@ async def test_compact_session_waits_for_result(config):
     assert state.turn is None
 
 
+@pytest.mark.anyio
+async def test_compact_session_collapses_multiline_instructions_to_one_line(config):
+    """A slash command is a single line: multi-line guidance is collapsed so nothing after the
+    first newline is truncated by the CLI parser."""
+    from claude_agent_sdk import SystemMessage
+    from core.client import compact_session
+
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+
+    async with consuming(state, config):
+        boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
+        await message_queue.put(boundary)
+        await message_queue.put(result_msg())
+        multiline = "keep open threads\nand this draft:\nline two"
+        await asyncio.wait_for(compact_session(state=state, instructions=multiline), timeout=5.0)
+
+    mock_client.query.assert_awaited_once_with("/compact keep open threads and this draft: line two")
+    assert state.turn is None
+
+
 # --- Converse auth handling ---
 
 

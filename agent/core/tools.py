@@ -103,7 +103,30 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
         return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete]
+    @tool(
+        "compact_context",
+        "Compact this conversation with the given `instructions` at the next idle point (it needs an "
+        "idle session). Optionally pass `followup`: a short instruction delivered as a turn after "
+        "compacting (core prepends a note that the summary is now above). Pass `restart=true` to restart "
+        "into the compacted session; core delivers the follow-up on the far side of the restart. Omit "
+        "restart for an in-place compaction (a nap).",
+        {"type": "object",
+         "properties": {"instructions": {"type": "string"}, "followup": {"type": "string"}, "restart": {"type": "boolean"}},
+         "required": ["instructions"]},
+    )
+    async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        instructions = str(args["instructions"]).strip()
+        if not instructions:
+            return {"content": [{"type": "text", "text": "error: instructions required"}]}
+        followup = str(args["followup"]).strip() if "followup" in args else ""
+        # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
+        raw_restart = args["restart"] if "restart" in args else False
+        restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")
+        state.pending_compaction = vm.PendingCompaction(instructions=instructions, followup=followup or None, restart=restart)
+        logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
+        return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
+
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:

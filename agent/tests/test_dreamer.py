@@ -121,6 +121,61 @@ async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tm
     assert not state.graceful_shutdown.is_set()
 
 
+# --- compact_context: the compaction primitive ---
+
+
+def _tool_handler(state, config, name):
+    from core.tools import _vesta_tools
+
+    return next(t.handler for t in _vesta_tools(state, config) if t.name == name)
+
+
+@pytest.mark.anyio
+async def test_compact_context_sets_nap_descriptor(tmp_path):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"instructions": "keep threads", "followup": "reflect briefly"})
+
+    assert state.pending_compaction == vm.PendingCompaction(instructions="keep threads", followup="reflect briefly", restart=False)
+
+
+@pytest.mark.anyio
+async def test_compact_context_defaults_followup_none_and_restart_false(tmp_path):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"instructions": "keep threads"})
+
+    assert state.pending_compaction == vm.PendingCompaction(instructions="keep threads", followup=None, restart=False)
+
+
+@pytest.mark.anyio
+async def test_compact_context_rejects_empty_instructions(tmp_path):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    result = await _tool_handler(state, config, "compact_context")({"instructions": "   "})
+
+    assert state.pending_compaction is None
+    assert "error" in result["content"][0]["text"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "restart_arg,expected",
+    [(True, True), ("true", True), ("TRUE", True), (False, False), ("false", False), ("", False)],
+    ids=["bool-true", "str-true", "str-true-caps", "bool-false", "str-false", "str-empty"],
+)
+async def test_compact_context_restart_only_true_on_real_true(tmp_path, restart_arg, expected):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"instructions": "keep", "restart": restart_arg})
+
+    assert state.pending_compaction.restart is expected
+
+
 # --- compact_then_restart_if_requested drain ---
 
 

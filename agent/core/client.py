@@ -393,11 +393,12 @@ _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
 _COMPACT_TIMEOUT_S = 600.0  # day-sized contexts can take minutes to summarize
 
 
-async def compact_session(*, state: vm.State) -> None:
+async def compact_session(*, state: vm.State, instructions: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
     The official Claude Agent SDK has no compact() method; the documented path is to send the
-    `/compact` slash command as a query (code.claude.com/docs/en/agent-sdk/slash-commands). Manual
+    `/compact` slash command as a query (code.claude.com/docs/en/agent-sdk/slash-commands). Text
+    after the command is passed to the summarizer as guidance (a caller's curated prompt). Manual
     /compact rewrites the same session, so resume keeps working and the dreamer can restart into
     the compacted conversation. The turn ends with SystemMessage(subtype="compact_boundary") — the
     stream consumer logs it — then a ResultMessage, which closes the turn; waiting on the turn
@@ -407,7 +408,10 @@ async def compact_session(*, state: vm.State) -> None:
     client = state.client
     turn = _open_turn(state, show_output=False)
     try:
-        await client.query("/compact")
+        # A slash command is a single line: collapse whitespace so multi-line guidance (e.g. an
+        # appended draft) reaches the summarizer intact instead of being truncated at the first newline.
+        query = "/compact" if instructions is None else f"/compact {' '.join(instructions.split())}"
+        await client.query(query)
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:
             raise turn.error

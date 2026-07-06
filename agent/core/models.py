@@ -104,6 +104,18 @@ class TurnSignals:
     quiet_escalated: bool = False
 
 
+@dc.dataclass(frozen=True)
+class PendingCompaction:
+    """A deferred /compact scheduled between turns (compact_session only runs on an idle
+    session). instructions guide the summarizer; followup is an optional turn delivered after
+    compacting; restart means restart into the compacted session afterward. The drain routes
+    the followup to a restart-safe channel."""
+
+    instructions: str | None
+    followup: str | None
+    restart: bool
+
+
 @dc.dataclass
 class State:
     client: ClaudeSDKClient | None = None
@@ -146,10 +158,9 @@ class State:
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
-    # Set by mark_dreamer_complete; the message processor compacts the live session at the next
-    # idle point, then triggers the restart (which resumes the compacted session). Deferred rather
-    # than done inline because /compact only works while the session is idle, never mid-turn.
-    compact_then_restart: bool = False
+    # A deferred compaction scheduled by the compact_context tool, drained after the turn's
+    # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
+    pending_compaction: PendingCompaction | None = None
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
