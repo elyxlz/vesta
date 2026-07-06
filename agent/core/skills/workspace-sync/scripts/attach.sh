@@ -40,8 +40,9 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
   exit 3
 }
 
-# Cone = the skills on disk (installed set) - engine and uninstalled skills stay out.
-find agent/skills -mindepth 1 -maxdepth 1 -type d | sort | git sparse-checkout set --cone --stdin
+# set-cone.sh owns the cone: skills on disk plus tracked agent dirs and an unmanaged
+# box's core opt-in, so a re-attach never narrows what an agent already keeps.
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh
 
 if ! git rev-parse -q --verify HEAD >/dev/null; then
   git update-ref "refs/heads/$NAME" "$TAG"

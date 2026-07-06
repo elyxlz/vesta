@@ -23,6 +23,7 @@ cd ~
 git add -A && git commit -m checkpoint    # only if `git status` shows changes
 bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
 git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running (see top)
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh   # cone covers your tracked dirs
 ```
 
 - Conflicts: edit each conflicted file so both sides survive, `git add <file>`, then
@@ -31,6 +32,10 @@ git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running 
   on a commit that's now empty (its changes are already in the new stock) or mode-only.
   Run `git add -A` then `git rebase --continue`; if git says the commit is empty, run
   `git rebase --skip`. Don't hunt for conflict markers that aren't there.
+- `git add -A` refusing paths "outside of your sparse-checkout definition" means you
+  created a new directory: stage it deliberately with `git add --sparse <dir>` (never
+  a blanket `add -A --sparse`, which would also stage engine files from the core
+  mount); the set-cone.sh step covers it once committed.
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
 - Then call `mark_workspace_synced`. If the rebase brought changes, call `restart_vesta`
   (after marking) so the new skills load.
