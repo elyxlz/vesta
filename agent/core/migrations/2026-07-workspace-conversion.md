@@ -46,5 +46,5 @@ git add -A --sparse && git commit -m "my customizations"
 (`--sparse` lets git stage files in directories of your own under `agent/`, which start outside the sparse cone.) Then widen the cone to cover them, so no later sparse-checkout reapply prunes them:
 
 ```bash
-bash agent/core/skills/workspace-sync/scripts/set-cone.sh
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh
 ```

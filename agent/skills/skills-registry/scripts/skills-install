@@ -15,13 +15,12 @@ fi
 # installs from local history must stay offline.
 [ -d .git ] || bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 
-bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --add "$DEST"
-if [ ! -d "$DEST" ]; then
-    # Unknown skill: recompute drops the dead entry (the dir never materialized).
-    bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh
+# Validate before touching the cone; attach guarantees HEAD, the install source.
+git rev-parse -q --verify "HEAD:$DEST" >/dev/null || {
     echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
     exit 1
-fi
+}
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --add "$DEST"
 
 echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then

@@ -10,4 +10,9 @@ if ! git sparse-checkout list 2>/dev/null | grep -qx "$DEST"; then
     exit 0
 fi
 bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --remove "$DEST"
+if [ -f "$DEST/SKILL.md" ]; then
+    # git leaves the dir when it holds uncommitted changes; the skill would stay active.
+    echo "Error: '$SKILL_NAME' left the cone but is still on disk (uncommitted changes in $DEST?). Commit or discard them, then rerun." >&2
+    exit 1
+fi
 echo "Removed '$SKILL_NAME'. Restart Vesta to deactivate it."
