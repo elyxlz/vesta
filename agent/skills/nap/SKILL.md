@@ -5,7 +5,7 @@ description: Take a nap; compact the conversation in place to free up context. U
 
 # Nap
 
-A nap compacts the current conversation in place: the session continues right where it was, the older history rewritten as a curated summary. No restart, no memory curation, no summary file. It is the light sibling of the nightly dream: the dream curates memory to disk, compacts, and restarts; a nap only compacts.
+A nap compacts the current conversation in place: the session continues right where it was, the older history rewritten as a curated summary. It is the light sibling of the nightly dream: the dream curates memory to disk, compacts, and restarts; a nap only compacts.
 
 ## When to nap
 
