@@ -372,20 +372,23 @@ async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -
         state.event_bus.set_state("idle")
 
     turn = _followup_turn(pending.followup, compacted_ok=compacted_ok) if pending.followup is not None else None
+    deliver_live = not pending.restart
     if pending.restart:
         if turn is not None:
+            # Persist before requesting the restart: vestad SIGTERMs us during request_restart(),
+            # so there is no later moment to write it.
             state.persisted.pending_boot_message = turn
             state_store.save_state(state.persisted, config)
-        # vestad owns the restart: it SIGTERMs us (clean shutdown) and starts us back on the
-        # compacted session. If vestad is unreachable, we stay up on this session, so the boot
-        # channel is moot: deliver the follow-up now as a live notification instead of losing it.
+        # vestad owns the restart and starts us back on the compacted session. If it is unreachable
+        # we stay up on this session, so the boot channel is moot: clear it and fall back to the
+        # live channel below instead of losing the follow-up.
         if not await vestad_client.request_restart():
             logger.warning("vestad unreachable for restart; continuing on the compacted session")
             if turn is not None:
                 state.persisted.pending_boot_message = None
                 state_store.save_state(state.persisted, config)
-                drop_core_notification(type_=TYPE_COMPACTION_FOLLOWUP, body=turn, config=config)
-    elif turn is not None:
+            deliver_live = True
+    if deliver_live and turn is not None:
         drop_core_notification(type_=TYPE_COMPACTION_FOLLOWUP, body=turn, config=config)
 
 

@@ -14,6 +14,11 @@ from .helpers import clear_notifications
 from .workspace_sync import vesta_version
 
 
+def _opt_str(value: tp.Any) -> str:
+    """Normalize an optional string tool arg: a JSON null (or absent) means empty, never 'None'."""
+    return str(value).strip() if value is not None else ""
+
+
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
         # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
@@ -113,14 +118,10 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         },
     )
     async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        # A JSON null for an optional arg means "absent", not the literal string "None": guard so a
-        # model passing followup/instructions as null does not feed "None" to the summarizer or turn.
-        raw_instructions = args["instructions"]
-        instructions = str(raw_instructions).strip() if raw_instructions is not None else ""
+        instructions = _opt_str(args["instructions"])
         if not instructions:
             return {"content": [{"type": "text", "text": "error: instructions required"}]}
-        raw_followup = args["followup"] if "followup" in args else None
-        followup = str(raw_followup).strip() if raw_followup is not None else ""
+        followup = _opt_str(args["followup"] if "followup" in args else None)
         # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
         raw_restart = args["restart"] if "restart" in args else False
         restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")
