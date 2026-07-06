@@ -233,6 +233,8 @@ def update_event(
     location: str | None = None,
     body: str | None = None,
     timezone: str | None = None,
+    reminder_on: bool | None = None,
+    reminder_minutes: int | None = None,
 ) -> dict[str, Any]:
     if (start is not None or end is not None) and timezone is None:
         raise ValueError("timezone is required when updating start or end")
@@ -252,6 +254,10 @@ def update_event(
         formatted_updates["location"] = {"displayName": location}
     if body is not None:
         formatted_updates["body"] = {"contentType": "Text", "content": body}
+    if reminder_on is not None:
+        formatted_updates["isReminderOn"] = reminder_on
+    if reminder_minutes is not None:
+        formatted_updates["reminderMinutesBeforeStart"] = reminder_minutes
 
     if not formatted_updates:
         raise ValueError("Must specify at least one field to update")
