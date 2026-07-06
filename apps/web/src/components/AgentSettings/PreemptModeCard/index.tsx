@@ -16,9 +16,9 @@ import { errorMessage } from "@/lib/utils";
 
 const MODE_HINT: Record<PreemptMode, string> = {
   message:
-    "Background work keeps running when an urgent message cuts in; a tool call already running finishes first.",
+    "Your message is picked up at the next natural pause. Anything Vesta is working on in the background keeps going.",
   interrupt:
-    "Urgent messages cut in immediately, even mid-tool, but running background agents are stopped.",
+    "Vesta drops everything and answers right away, but work in progress in the background is lost.",
 };
 
 // How an interrupting notification preempts a running turn. A pref: saved on change, applies on
@@ -67,7 +67,7 @@ export function PreemptModeCard() {
           interrupt handling
         </CardTitle>
         <CardDescription>
-          How an interrupting message cuts into work already in progress.
+          What happens when an urgent message arrives while Vesta is busy.
           Applies after a restart.
         </CardDescription>
       </CardHeader>
