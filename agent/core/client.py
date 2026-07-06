@@ -72,8 +72,8 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
 
     In headless mode the CLI's handler for this request also kills every running backgrounded
     subagent/workflow task (issue #982), so routine preemption defaults to send_preempt instead;
-    this fires only on failure paths (silence/query timeout, provider auth lost) and in the
-    legacy preempt_mode="interrupt" fallback."""
+    this fires only on failure paths (silence/query timeout, provider auth lost) and in
+    preempt_mode="interrupt", which trades that teardown for immediate mid-tool preemption."""
     client = state.client
     if not client:
         return False
@@ -149,7 +149,7 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
 
 _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
 
-# Legacy preempt_mode="interrupt" only: post-interrupt wait for the interrupted turn's
+# preempt_mode="interrupt" only: post-interrupt wait for the interrupted turn's
 # ResultMessage. Purely a labeling nicety so the next turn usually opens against a clean stream;
 # when the CLI's wind-down outlives it, the consumer still receives everything and the late
 # result is dropped as advisory (issue #958).
@@ -284,7 +284,7 @@ async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
     """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
     wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
-    this turn as an ordinary ResultMessage. Legacy preempt_mode="interrupt" only: the
+    this turn as an ordinary ResultMessage. preempt_mode="interrupt" only: the
     queue-watcher sets `state.interrupt_event` and this loop fires the SDK interrupt itself."""
     assert state.client is not None
     client = state.client

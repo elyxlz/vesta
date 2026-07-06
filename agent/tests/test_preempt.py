@@ -2,7 +2,7 @@
 
 The SDK interrupt control request kills every backgrounded subagent in headless mode, so the
 default preempt mode delivers the preempting prompt itself as a priority:"now" user message and
-never touches the interrupt path. The legacy interrupt mode keeps its coverage in
+never touches the interrupt path. The interrupt mode keeps its coverage in
 test_interrupts.py (pinned with config.preempt_mode = "interrupt")."""
 
 import asyncio

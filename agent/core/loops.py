@@ -143,10 +143,9 @@ async def process_batch(
     if not notifications:
         return
 
-    # LEGACY(remove-when: a release has shipped with preempt_mode="message" as the default and
-    # no agent needed the fallback): the interrupt preempt path, including the queue-watcher
-    # escalation in _run_messages_with_interrupts. Don't SDK-abort a non-interruptible boot
-    # turn: the batch is still queued below and the queue-watcher defers it.
+    # Interrupt mode preempts from here, at batch time (the queue-watcher's escalation covers
+    # an interrupt that misses into an inter-turn gap). Don't SDK-abort a non-interruptible
+    # boot turn: the batch is still queued below and the queue-watcher defers it.
     if config.preempt_mode == "interrupt" and state.client and not state.noninterruptible_turn_active:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
@@ -210,7 +209,7 @@ async def _run_messages_with_interrupts(
 ) -> None:
     """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
     mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
-    loop never aborts anything. Legacy preempt_mode="interrupt" only: a mid-turn item interrupts
+    loop never aborts anything. preempt_mode="interrupt" only: a mid-turn item interrupts
     the current turn (deferred during compaction, never for a non-interruptible boot turn)."""
 
     async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
