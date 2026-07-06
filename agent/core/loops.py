@@ -31,7 +31,7 @@ from .client import (
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context, clear_notifications
 from .openrouter_cache import start_cache_proxy
-from .provider import ProviderAuthState
+from .provider import ProviderAuthState, is_unauthenticated
 
 from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
@@ -136,12 +136,10 @@ async def process_batch(
 ) -> None:
     """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
 
-    In the default "message" preempt mode the first section preempts a running turn by
-    pre-sending its prompt as a priority:"now" message (send_preempt, which is a no-op while
-    idle, during a boot turn, or mid-compaction); any second section queues behind it and runs
-    next. The legacy "interrupt" mode fires the SDK interrupt instead. File paths are carried
-    in the queue item and deleted only after the message is processed, so that a mid-compaction
-    restart can recover unprocessed notifications from disk."""
+    Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_interrupts):
+    an item landing mid-turn is pre-sent there as a priority:"now" message. File paths are
+    carried in the queue item and deleted only after the message is processed, so that a
+    mid-compaction restart can recover unprocessed notifications from disk."""
     if not notifications:
         return
 
@@ -155,15 +153,10 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
-    first = True
-
     async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
-        nonlocal first
         text = format_notification_batch(group, suffix=suffix)
         paths = [n.file_path for n in group if n.file_path]
-        pre_sent = first and config.preempt_mode == "message" and await send_preempt(text, state=state, config=config)
-        first = False
-        await queue.put(vm.QueuedTurn(text, False, paths, pre_sent=pre_sent))
+        await queue.put(vm.QueuedTurn(text, False, paths))
 
     if system:
         await queue_section(system, suffix="")
@@ -215,11 +208,10 @@ async def _run_messages_with_interrupts(
     state: vm.State,
     config: vm.VestaConfig,
 ) -> None:
-    """Run a turn and any follow-ups, collecting queue items that arrive mid-turn. In the
-    default "message" preempt mode this loop never aborts anything — preemption happens
-    CLI-side via the producer's priority:"now" pre-send (send_preempt) and the running turn
-    ends on its own. In the legacy "interrupt" mode a mid-turn queue item interrupts the
-    current turn (deferred during compaction, and never for a non-interruptible boot turn)."""
+    """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
+    mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
+    loop never aborts anything. Legacy preempt_mode="interrupt" only: a mid-turn item interrupts
+    the current turn (deferred during compaction, never for a non-interruptible boot turn)."""
 
     async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
         try:
@@ -283,7 +275,7 @@ async def _run_messages_with_interrupts(
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
             # monitor_loop re-reads the dir and re-queues it. (Migrations regenerate on boot anyway.)
-            if state.provider_status is not None and state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED:
+            if is_unauthenticated(state.provider_status):
                 logger.client("Provider not authenticated; deferring message until re-auth")
                 continue
             state.interrupt_event = asyncio.Event()
@@ -297,16 +289,19 @@ async def _run_messages_with_interrupts(
 
                 if queue_task in done:
                     arrived = queue_task.result()
-                    if config.preempt_mode == "message":
-                        # A pre-sent item has already ended the current turn CLI-side. A plain
-                        # item means the producer's pre-send missed (inter-turn gap, failed
-                        # write): a turn is demonstrably running now, so deliver the preempt
-                        # from here (send_preempt self-gates on boot turns/compaction/auth).
-                        if not arrived.pre_sent and await send_preempt(arrived.text, state=state, config=config):
-                            arrived = arrived._replace(pre_sent=True)
-                        pending.append(arrived)
-                        continue
+                    # The single owner of preempt delivery: an item landing while a turn runs is
+                    # pre-sent as a priority:"now" message, ending the turn at its next step
+                    # boundary with background subagents intact (issue #982). send_preempt
+                    # self-gates (idle, boot turn, compaction, auth), so a miss just queues plain.
+                    if (
+                        config.preempt_mode == "message"
+                        and not arrived.pre_sent
+                        and await send_preempt(arrived.text, state=state, config=config)
+                    ):
+                        arrived = arrived._replace(pre_sent=True)
                     pending.append(arrived)
+                    if config.preempt_mode == "message":
+                        continue
                     if not current.interruptible:
                         # Boot turns run to completion; the queued item waits its turn rather than preempting.
                         continue

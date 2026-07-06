@@ -23,8 +23,8 @@ from . import state_store
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     TERMINAL_PROVIDER_ERRORS,
-    ProviderAuthState,
     is_terminal_auth_error,
+    is_unauthenticated,
     observed_provider_failure,
 )
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
@@ -105,41 +105,32 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
 
 
 async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) -> bool:
-    """Preempt the running turn by delivering `prompt` as a priority:"now" user message.
+    """Preempt the running turn by delivering `prompt` as a priority:"now" user message (the
+    envelope and its protocol story live in sdk_parsing.build_priority_now_message). A foreground
+    tool call already executing is not cut short: the abort latches and applies when the tool
+    returns, so the preempt is delayed by at most that tool's remaining runtime, never lost.
 
-    The CLI aborts the current turn at its next step boundary with the graceful "interrupt"
-    reason — background subagents and shells survive, unlike the interrupt control request
-    (issue #982) — and runs this prompt as the next turn. A foreground tool call already
-    executing is not cut short: the abort latches and applies when the tool returns, so the
-    preempt is delayed by at most that tool's remaining runtime, never lost.
-
-    `priority` is undocumented stream-json protocol (verified against CLI 2.1.191/2.1.201,
-    probed live 2026-07-06); a CLI that ignores it just queues the message to run after the
-    current turn. Returns False without sending when there is nothing to preempt (no client,
-    no open turn) or when preemption is barred (boot turn, compaction in flight, provider not
-    authenticated), and on a failed write — the caller then queues the prompt normally
-    (pre_sent=False), and the processor's queue-watcher retries the pre-send if the item lands
-    while a later turn is running."""
+    Returns False without sending when there is nothing to preempt (no client, no open turn),
+    when preemption is barred (boot turn, compaction in flight, unauthenticated provider), or
+    on a failed write — the caller then queues the prompt plain, and the processor's
+    queue-watcher retries the pre-send if the item lands while a later turn is running."""
     client = state.client
     if not client or state.turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
-    if state.provider_status is not None and state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED:
-        # Same deferral as the processor's unauthenticated gate: don't hand prompts to a dead
-        # token; the notification file stays on disk and re-runs after re-auth.
+    if is_unauthenticated(state.provider_status):
+        # Same deferral as the processor's gate: don't hand prompts to a dead token; the
+        # notification file stays on disk and re-runs after re-auth.
         return False
 
-    message = {
-        "type": "user",
-        "message": {"role": "user", "content": sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())},
-        "parent_tool_use_id": None,
-        "priority": "now",
-    }
+    message = sdk_parsing.build_priority_now_message(prompt, timestamp=dt.datetime.now())
 
     async def _one() -> tp.AsyncIterator[dict[str, tp.Any]]:
         yield message
 
     try:
-        await asyncio.wait_for(client.query(_one()), timeout=config.query_timeout)
+        # A single stdin write: bound it like an interrupt, not like a query — on timeout the
+        # caller queues plain and nothing is lost.
+        await asyncio.wait_for(client.query(_one()), timeout=config.interrupt_timeout)
         state.preempt_outstanding += 1
         logger.debug("Preempt sent (priority=now)")
         return True
@@ -291,12 +282,10 @@ async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
 
 
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
-    """Drive one turn: send the query (unless the producer already pre-sent it as a
-    priority:"now" preempt — see send_preempt) and wait for the turn's result. In the default
-    "message" preempt mode a later message needs no handling here: the CLI-side abort ends this
-    turn, which arrives as an ordinary ResultMessage closing `turn.done`. In the legacy
-    "interrupt" mode the queue-watcher sets `state.interrupt_event` and this loop fires the SDK
-    interrupt itself."""
+    """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
+    wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
+    this turn as an ordinary ResultMessage. Legacy preempt_mode="interrupt" only: the
+    queue-watcher sets `state.interrupt_event` and this loop fires the SDK interrupt itself."""
     assert state.client is not None
     client = state.client
 
@@ -304,7 +293,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     state.active_tools.clear()
     turn = _open_turn(state, show_output=show_output)
     if pre_sent:
-        state.preempt_outstanding = max(0, state.preempt_outstanding - 1)
+        state.preempt_outstanding -= 1
         if state.preempt_orphaned_results > 0:
             # The pre-sent turn already ran to its result before this open (banked by the
             # consumer); its output was emitted live, so complete immediately with no texts.

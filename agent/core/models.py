@@ -45,8 +45,8 @@ class QueuedTurn(tp.NamedTuple):
     `interruptible=False` marks a boot turn — boot-time control-flow that must run to completion;
     a later-queued message waits its turn instead of preempting it.
 
-    `pre_sent=True` records that the producer already delivered this prompt to the CLI as a
-    priority:"now" preempt (client.send_preempt), so converse must wait for its turn without
+    `pre_sent=True` records that the queue-watcher already delivered this prompt to the CLI as
+    a priority:"now" preempt (client.send_preempt), so converse must wait for its turn without
     sending a second query."""
 
     text: str
@@ -127,15 +127,11 @@ class State:
     # fires the SDK interrupt. Dormant (never set) in the default "message" mode, where
     # preemption is the producer's priority:"now" pre-send (client.send_preempt).
     interrupt_event: asyncio.Event | None = None
-    # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet: send_preempt
-    # increments, converse(pre_sent=True) decrements at open. While non-zero, process_message
-    # skips the dash-correction turn (its query would land behind the queued preempt CLI-side
-    # and cross turn attribution) and the stream consumer banks a ResultMessage arriving with
-    # no open turn (below) instead of dropping it.
+    # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet (send_preempt
+    # increments, converse(pre_sent=True) decrements at open), and the results of pre-sent
+    # turns that finished before their Vesta turn opened (banked by the stream consumer,
+    # claimed at open). Why each exists: see send_preempt and _dispatch_message.
     preempt_outstanding: int = 0
-    # ResultMessages of pre-sent turns that landed before their Vesta turn opened (the CLI ran
-    # the preempt fast). converse(pre_sent=True) claims one at open and completes immediately,
-    # instead of waiting out the silence timeout on a turn nothing will ever close.
     preempt_orphaned_results: int = 0
     # The currently open turn's signals; written by the stream consumer, waited on by converse /
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
