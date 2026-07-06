@@ -9,11 +9,24 @@ import { persist } from "zustand/middleware";
 // reminder — the change is already saved server-side, and a lost reminder means the user never
 // restarts and the edit stays silently inert. Cleared when the agent is restarted (see
 // SelectedAgentProvider).
+// The reason vocabulary is the withdraw contract: clearReason only matches an identical key,
+// so the store owns the spelling. "settings" only labels flags migrated from the un-keyed v0 store.
+export type RestartReason = "host-access" | "files" | "preempt-mode" | "settings";
+
 interface RestartPendingState {
-  pending: Record<string, string[]>;
-  markPending: (agent: string, reason: string) => void;
-  clearReason: (agent: string, reason: string) => void;
+  pending: Record<string, RestartReason[]>;
+  markPending: (agent: string, reason: RestartReason) => void;
+  clearReason: (agent: string, reason: RestartReason) => void;
   clearPending: (agent: string) => void;
+}
+
+function without(
+  pending: Record<string, RestartReason[]>,
+  agent: string,
+): Record<string, RestartReason[]> {
+  const next = { ...pending };
+  delete next[agent];
+  return next;
 }
 
 export const useRestartPending = create<RestartPendingState>()(
@@ -33,17 +46,14 @@ export const useRestartPending = create<RestartPendingState>()(
           const reasons = state.pending[agent];
           if (!reasons?.includes(reason)) return state;
           const remaining = reasons.filter((r) => r !== reason);
-          const next = { ...state.pending };
-          if (remaining.length === 0) delete next[agent];
-          else next[agent] = remaining;
-          return { pending: next };
+          if (remaining.length === 0)
+            return { pending: without(state.pending, agent) };
+          return { pending: { ...state.pending, [agent]: remaining } };
         }),
       clearPending: (agent) =>
         set((state) => {
           if (!state.pending[agent]) return state;
-          const next = { ...state.pending };
-          delete next[agent];
-          return { pending: next };
+          return { pending: without(state.pending, agent) };
         }),
     }),
     {
@@ -52,10 +62,9 @@ export const useRestartPending = create<RestartPendingState>()(
       // v0 stored Record<string, boolean>; carry the reminder over under a generic reason.
       migrate: (persisted: unknown) => {
         const state = persisted as { pending?: Record<string, unknown> };
-        const pending: Record<string, string[]> = {};
+        const pending: Record<string, RestartReason[]> = {};
         for (const [agent, value] of Object.entries(state.pending ?? {})) {
           if (value === true) pending[agent] = ["settings"];
-          else if (Array.isArray(value)) pending[agent] = value as string[];
         }
         return { pending };
       },

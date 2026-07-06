@@ -21,8 +21,6 @@ const MODE_HINT: Record<PreemptMode, (agent: string) => string> = {
     `${agent} drops everything and answers right away, but work in progress in the background is lost.`,
 };
 
-const RESTART_REASON = "preempt-mode";
-
 // How an interrupting notification preempts a running turn. A pref: saved on change, applies on
 // the agent's next restart (flagged via the shared restart-pending store, offered in the navbar).
 // Toggling back to the mode that was loaded withdraws this card's flag — the loaded value is the
@@ -34,7 +32,7 @@ export function PreemptModeCard() {
   const [mode, setMode] = useState<PreemptMode | null>(null);
   const [appliedMode, setAppliedMode] = useState<PreemptMode | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const displayName = agentName || "your agent";
+  const displayName = agentName || "the agent";
 
   useEffect(() => {
     if (!agentName) return;
@@ -63,8 +61,8 @@ export function PreemptModeCard() {
     setError(null);
     setPreemptMode(agentName, next)
       .then(() => {
-        if (next === appliedMode) clearRestartReason(agentName, RESTART_REASON);
-        else markRestartPending(agentName, RESTART_REASON);
+        if (next === appliedMode) clearRestartReason(agentName, "preempt-mode");
+        else markRestartPending(agentName, "preempt-mode");
       })
       .catch((e: unknown) => {
         setMode(previous);
