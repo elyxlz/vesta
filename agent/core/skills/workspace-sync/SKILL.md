@@ -20,9 +20,10 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 
 ```bash
 cd ~
-git add -A && git commit -m checkpoint    # only if `git status` shows changes
+git add -A --sparse && git commit -m checkpoint    # only if `git status` shows changes
 bash ~/agent/core/skills/workspace-sync/scripts/fetch-workspace.sh
 git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running (see top)
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh   # cone covers your tracked dirs
 ```
 
 - Conflicts: edit each conflicted file so both sides survive, `git add <file>`, then

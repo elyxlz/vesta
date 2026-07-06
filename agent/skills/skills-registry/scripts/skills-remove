@@ -9,5 +9,5 @@ if ! git sparse-checkout list 2>/dev/null | grep -qx "$DEST"; then
     echo "Skill '$SKILL_NAME' is not installed."
     exit 0
 fi
-git sparse-checkout list | grep -vx "$DEST" | git sparse-checkout set --cone --stdin
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --remove "$DEST"
 echo "Removed '$SKILL_NAME'. Restart Vesta to deactivate it."

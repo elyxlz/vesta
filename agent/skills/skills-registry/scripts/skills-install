@@ -15,10 +15,10 @@ fi
 # installs from local history must stay offline.
 [ -d .git ] || bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
 
-git sparse-checkout add "$DEST"
+bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --add "$DEST"
 if [ ! -d "$DEST" ]; then
-    # Unknown skill: drop the dead cone entry again.
-    git sparse-checkout list | grep -vx "$DEST" | git sparse-checkout set --cone --stdin
+    # Unknown skill: recompute drops the dead entry (the dir never materialized).
+    bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh
     echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
     exit 1
 fi
