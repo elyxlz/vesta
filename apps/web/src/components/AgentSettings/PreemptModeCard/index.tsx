@@ -62,7 +62,10 @@ export function PreemptModeCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Urgent message handling</CardTitle>
+        <CardTitle>
+          <Zap className="size-4 text-muted-foreground" />
+          interrupt handling
+        </CardTitle>
         <CardDescription>
           How an interrupting message cuts into work already in progress.
           Applies after a restart.
