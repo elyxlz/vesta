@@ -226,7 +226,7 @@ for byte identical and still fails is it not the link.
 
 A completed invite only credits this account (you earn 50% of their first month)
 if `onboard verify-send` sends a referral code with it. That code is not yours to
-know or store; it lives with the `vesta-cloud-account` skill, which is the source of truth
+know or store; it lives with the `account` skill, which is the source of truth
 for it (the control plane issues it, not this box). So:
 
 1. **Set it up once.** Run `vesta-cloud-account referral` to get this box's code,

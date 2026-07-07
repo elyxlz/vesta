@@ -8,6 +8,10 @@
     "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
   },
   {
+    "name": "account",
+    "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
+  },
+  {
     "name": "agentmail",
     "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent, free tier). Use for \"email\", \"send email\", or \"agent inbox\" without a custom domain; inbound mail arrives as a notification."
   },
@@ -158,10 +162,6 @@
   {
     "name": "upstream-pr",
     "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
-  },
-  {
-    "name": "vesta-cloud-account",
-    "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
   },
   {
     "name": "video-use",

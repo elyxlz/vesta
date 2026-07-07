@@ -1,7 +1,7 @@
 """Shared on-disk referral code — the bridge between this skill and `onboard`.
 
-The vesta-cloud-account skill and the onboard skill are separate Python packages (they can't
-import each other), so this file is the contract between them: `vesta-cloud-account` is the
+The account skill and the onboard skill are separate Python packages (they can't
+import each other), so this file is the contract between them: `account` is the
 only place the code is ever SET (`vesta-cloud-account set-referral`); `onboard`
 only reads it, once, when it needs to attribute a completed invite. Plain UTF-8
 text = the code, stripped. A missing or empty file means "no code configured".

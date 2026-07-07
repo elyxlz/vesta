@@ -9,7 +9,7 @@ Most of it is read from the environment:
   token, so a self-hosted box can onboard too.
 
 The non-secret referral code that attributes a completed signup to this account
-is the one exception: it comes from the shared on-disk file the `vesta-cloud-account` skill
+is the one exception: it comes from the shared on-disk file the `account` skill
 writes (see `referral_store.py`), not the environment, so a changed/reissued
 code takes effect without redeploying the box.
 

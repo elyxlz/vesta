@@ -200,7 +200,7 @@ Your final two steps compact this conversation and restart into it, so you wake 
 Continuity prompt (for `prompt`):
 
 ```
-Preserve continuity across the restart: the user's current state and tone, every open thread and commitment, and each in-flight task with its next action. Memory is already curated to disk, so drop resolved threads, verbose tool output, and file contents. Keep exact values (names, dates, amounts, paths) for anything still unresolved.
+You are summarizing the recent history between a user and their AI guardian angel: their conversations, the tasks the angel has been doing, and the notifications that came in, important and less important. Your summary replaces everything before it, and the angel continues from it. Preserve everything the angel needs to pick up seamlessly: what has been going on, where things stand, and the exact details that matter. Drop the noise.
 ```
 
 Wake-up note (for `followup`):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vc_account_cli import referral_store
+from account_cli import referral_store
 
 
 def test_get_returns_none_when_unset(tmp_path, monkeypatch):
