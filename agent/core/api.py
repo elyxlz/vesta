@@ -31,7 +31,7 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
-from .config import VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
+from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
@@ -272,6 +272,10 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
     provider = stored_config(config)["provider"]
     body = dict(provider) if isinstance(provider, dict) else {}
     body["authed"] = status is not None and status.state == ProviderAuthState.AUTHENTICATED
+    # The Claude plan tier (from the on-disk OAuth blob, excluded from stored_config) so the context
+    # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
+    if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
+        body["plan"] = config.provider.oauth.subscriptionType
     return web.json_response(body)
 
 

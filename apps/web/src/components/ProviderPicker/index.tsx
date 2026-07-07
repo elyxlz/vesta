@@ -8,6 +8,7 @@ import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
+import { planContextOptions, planFromCredentials } from "./context-plan";
 import { AuthStep } from "./AuthStep";
 import { ClaudeLogo, OpenRouterLogo } from "./logos";
 import type { ProviderMode } from "./types";
@@ -195,15 +196,28 @@ export function ProviderPicker({
             onCancel={cancelToChoice}
           />
         )}
-        {step === "context" && provider && (
-          <ContextStep
-            presets={manifest.providers[provider]?.context.presets ?? []}
-            initial={manifest.providers[provider]?.context.default ?? 0}
-            onSubmit={handleContextSubmit}
-            logo={stepLogo}
-            onCancel={cancelToChoice}
-          />
-        )}
+        {step === "context" &&
+          provider &&
+          (() => {
+            const context = manifest.providers[provider]?.context;
+            // Claude gates >200K windows on the plan tier, read from the stashed OAuth blob.
+            const plan =
+              provider === "claude" && credentials !== null
+                ? planFromCredentials(credentials)
+                : null;
+            const { presets, initial } = context
+              ? planContextOptions(context, plan)
+              : { presets: [], initial: 0 };
+            return (
+              <ContextStep
+                presets={presets}
+                initial={initial}
+                onSubmit={handleContextSubmit}
+                logo={stepLogo}
+                onCancel={cancelToChoice}
+              />
+            );
+          })()}
       </div>
     </div>
   );

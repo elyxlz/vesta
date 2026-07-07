@@ -4,11 +4,16 @@ export interface ContextPreset {
   tokens: number;
   label: string;
   note: string;
+  // Plan tiers this preset is offered to; absent means every plan. The 1M/500K Claude windows carry
+  // ["max"] because the 1M-context beta is a Max-only entitlement.
+  plans?: string[];
 }
 
 export interface ProviderContext {
   default: number;
   presets: ContextPreset[];
+  // Per-plan default window; the picker prefers this over `default` when it knows the plan tier.
+  defaults_by_plan?: Record<string, number>;
 }
 
 export interface ProviderEntry {

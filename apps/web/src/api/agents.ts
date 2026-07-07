@@ -99,6 +99,9 @@ export interface ProviderInfo {
   model: string | null;
   max_context_tokens: number | null;
   authed: boolean;
+  // Claude plan tier ("free" | "pro" | "max"), null for OpenRouter or when unknown; gates the
+  // context-window presets (the 1M beta is Max-only).
+  plan: string | null;
 }
 
 /// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
@@ -110,12 +113,14 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
     model: string | null;
     max_context_tokens: number | null;
     authed?: boolean;
+    plan?: string | null;
   }>(`/agents/${encodeURIComponent(name)}/provider`);
   return {
     kind: provider.kind ?? "none",
     model: provider.model,
     max_context_tokens: provider.max_context_tokens,
     authed: provider.authed ?? false,
+    plan: provider.plan ?? null,
   };
 }
 

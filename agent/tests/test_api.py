@@ -331,6 +331,26 @@ async def test_status_reports_readiness_separate_from_provider(config):
 
 
 @pytest.mark.anyio
+async def test_provider_get_surfaces_claude_plan_tier():
+    # The context picker gates >200K windows on the Max entitlement, so /provider surfaces the plan
+    # tier read from the on-disk OAuth blob (which stored_config otherwise strips).
+    import core.api as api_mod
+    from core.config import ClaudeConfig, ClaudeOAuth
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    cfg = vm.VestaConfig.model_construct(provider=ClaudeConfig(oauth=ClaudeOAuth(subscriptionType="pro")))
+    state = vm.State()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    class _Req:
+        app = {"state": state, "config": cfg}
+
+    resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
+    body = json.loads(typing.cast("str", resp.text))
+    assert body["plan"] == "pro"
+
+
+@pytest.mark.anyio
 async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config):
     # A fresh agent (no provider chosen) reports provider_configured=False, so vestad can show
     # "needs first sign-in" rather than "re-authenticate".

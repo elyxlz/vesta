@@ -159,6 +159,9 @@ class ClaudeOAuth(pyd.BaseModel):
     accessToken: str | None = None  # noqa: N815  (mirrors the on-disk camelCase verbatim)
     refreshToken: str | None = None  # noqa: N815
     expiresAt: int | None = None  # noqa: N815
+    # The plan tier ("free" | "pro" | "max"); drives the context-window presets the picker offers,
+    # since the 1M-context beta is a Max-only entitlement.
+    subscriptionType: str | None = None  # noqa: N815
 
 
 def _read_claude_oauth() -> "ClaudeOAuth | None":

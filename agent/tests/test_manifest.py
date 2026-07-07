@@ -41,3 +41,14 @@ def test_provider_shape_invariants():
     assert "key" not in ClaudeConfig.model_fields  # claude has no key
     assert "thinking" in ClaudeConfig.model_fields  # claude carries the thinking knob
     assert "thinking" not in OpenRouterConfig.model_fields  # openrouter can't set thinking
+
+
+def test_claude_context_gates_large_windows_by_plan():
+    # The 1M-context beta is a Max-only entitlement, so the picker maps plan -> default and marks the
+    # >200K windows Max-only; the 200K window is offered to every plan.
+    context = _manifest()["providers"]["claude"]["context"]
+    assert context["defaults_by_plan"] == {"max": 1000000, "pro": 200000, "free": 200000}
+    plans_by_tokens = {preset["tokens"]: preset["plans"] for preset in context["presets"] if "plans" in preset}
+    assert plans_by_tokens == {1000000: ["max"], 500000: ["max"]}
+    window_200k = next(preset for preset in context["presets"] if preset["tokens"] == 200000)
+    assert "plans" not in window_200k
