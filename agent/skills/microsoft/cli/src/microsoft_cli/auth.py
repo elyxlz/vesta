@@ -47,9 +47,6 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
 
 def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
     settings = get_settings()
-    if not settings.microsoft_mcp_client_id:
-        raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
-
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"
 
     cache = msal.SerializableTokenCache()
