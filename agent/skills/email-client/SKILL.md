@@ -11,7 +11,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-Do not use it when the user wants the full Gmail API surface (use the `google` skill), calendar/contacts/Graph or an M365 *work* account with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Do not use it when the user wants the full Gmail API surface (use the `google` skill), calendar/contacts/Graph or an M365 *work* account with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 
@@ -76,10 +76,6 @@ email-client attachments --uid 12345 --download --out-dir /tmp/x  # custom dir
 email-client attachments --uid 12345 --download --part 2          # one specific
 ```
 
-Listing returns `{part_index, name, content_type, size_bytes}` per attachment. A part counts as an attachment when it has `Content-Disposition: attachment`, OR a filename, OR is an inline `image/*` with a name; plain-text and HTML body parts are excluded unless explicitly tagged as attachments.
-
-`--download` writes to `$EMAIL_CLIENT_DIR/attachments/<uid>/` (override with `--out-dir`). `--part <index>` saves a single attachment using its `part_index` from the listing. Filenames are sanitized and de-duplicated; saved paths print as JSON.
-
 ## Folder counts
 
 ```bash
@@ -107,8 +103,6 @@ email-client delete --uid 12345                # soft delete to Deleted (recover
 email-client delete --uid 12345 --hard         # permanently expunge
 ```
 
-All accept comma-separated UIDs and combine flags in one call. `mark` sets/clears the IMAP system flags `\Seen` (`--read`/`--unread`), `\Flagged` (`--flagged`/`--unflagged`), `\Answered` (`--answered`/`--unanswered`), `\Draft` (`--draft`/`--undraft`), and arbitrary keywords (`--keyword`/`--unkeyword`, both repeatable). A custom keyword is how Outlook stores **Categories**, so `--keyword Receipts` tags a message in a way Outlook surfaces as a category. `\Flagged` shows as a star in Gmail and a flag in Apple Mail/Outlook. `move` uses IMAP `MOVE` when advertised, else `COPY` + `STORE +Deleted` + `EXPUNGE`. `archive` and `delete` (soft) auto-detect their destination from the server's RFC 6154 SPECIAL-USE attributes (`\Archive`, `\Trash`), falling back to `Archive` / `Deleted`; `delete --hard` expunges in place. Soft-delete lets the user recover from trash. All of these are server-side and sync to every client on the account.
-
 ## Manage folders
 
 ```bash
@@ -132,11 +126,7 @@ email-client-send --account personal --to recipient@example.com --subject "Slide
 email-client-send --account personal --to recipient@example.com --subject "Pics" --body "two of them" --attach first.png --attach second.jpg
 ```
 
-Sends as the configured user for the account. The `From` header uses the configured display name + the user's address. OAuth providers use SMTP STARTTLS XOAUTH2; app-password providers use plain LOGIN over STARTTLS.
-
-- `--cc` / `--bcc`: repeat the flag for multiple addresses.
-- `--body-html`: send HTML. Combine with `--body` for multipart/alternative; pass `--body-html` alone and a plain-text fallback is synthesized.
-- `--attach <path>`: repeat for multiple. MIME type guessed by extension (fallback `application/octet-stream`). Total capped at 25 MB - the send aborts with a clear error past that, since most providers reject larger.
+Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HTML (combine with `--body` for multipart/alternative, or pass it alone for a synthesized plain-text fallback). Attachments are capped at 25 MB total; the send aborts with a clear error past that, since most providers reject larger.
 
 After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
@@ -210,55 +200,4 @@ email-client notify remove --folder INBOX             # stop notifying on INBOX
 
 `notify add --folder` validates the folder exists on the server before saving; `notify add --all` replaces the watch list with every folder on the server (handy as a default, but it includes noisy ones like Sent/Spam/Trash; prune with `notify remove`). Removing every folder mutes the account. The watch list lives in `accounts/<name>/config.json` under `notify_folders`.
 
-The supervisor recomputes the watch set periodically and starts/stops workers as accounts or folders change. Each watched `(account, folder)` keeps its own watermark (`high_uid.txt` for INBOX, `high_uid_<folder>.txt` otherwise); the first run for a folder seeds it with the latest UID to avoid a backlog flood, and later runs emit only new arrivals. Filenames look like `email-client-personal-INBOX-1746480000000-abc123.json` so concurrent notifications never collide. Workers reconnect on error and on a periodic refresh so the OAuth access token stays current.
-
-## State layout
-
-```
-$EMAIL_CLIENT_DIR/                # default ~/.email-client
-  accounts.json                   # {"accounts": ["personal","work"], "default": "personal"}
-  accounts/
-    personal/
-      config.json                 # {"user", "provider", optional host overrides, "notify_folders"}
-      token.json                  # OAuth token or {"app_password": "..."} (mode 600)
-      high_uid.txt                # INBOX watermark
-      high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
-    work/ ...
-```
-
-`token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.
-
-## Configuration
-
-Settings live per account in `accounts/<name>/config.json`. Env vars provide defaults applied to whichever account is in use:
-
-- `EMAIL_CLIENT_DIR` - token + state location (default `~/.email-client`)
-- `EMAIL_CLIENT_USER` - default email address (used at `auth add` when `--user` is omitted)
-- `EMAIL_CLIENT_PROVIDER` - default provider key
-- `EMAIL_CLIENT_HOST` - IMAP host override
-- `EMAIL_CLIENT_SMTP_HOST` / `EMAIL_CLIENT_SMTP_PORT` - SMTP host / port (default 587 STARTTLS)
-- `EMAIL_CLIENT_OAUTH_CLIENT_ID` - OAuth client ID override
-- `EMAIL_CLIENT_OAUTH_AUTHORITY` - Microsoft authority override (e.g. `/common` for mixed work+personal)
-- `EMAIL_CLIENT_OAUTH_SCOPES` - whitespace-separated scope override
-- `EMAIL_CLIENT_FROM_NAME` - display name on outbound mail (default: username portion of the email)
-- `EMAIL_CLIENT_POLL_INTERVAL` - seconds between polls (default 15)
-- `EMAIL_CLIENT_APP_PASSWORD` - pre-supply the app password to `auth add` instead of prompting (for scripts)
-
-## Microsoft 365 with a custom domain
-
-For an address on a custom domain hosted by M365 (e.g. `you@yourcompany.com`, mailbox on Exchange Online), use the `microsoft-work` provider:
-
-```bash
-email-client auth add --account work --provider microsoft-work --user you@yourcompany.com
-```
-
-This profile ships with the right `outlook.office365.com` IMAP/SMTP hosts, the `Sent Items` folder name M365 work mailboxes use, the Thunderbird multi-tenant OAuth client ID, and `https://login.microsoftonline.com/organizations` as the authority. The authority matters: `/common` mints a usable access token the first time but fails refresh ~1 hour later with `AADSTS7000012: The grant was obtained for a different tenant`, because `/common` accepts any account type and the refresh has to resolve to the specific tenant. `/organizations` binds the grant to the AAD tenant up front, so refresh works.
-
-Approve the device-flow code at https://www.microsoft.com/link. Three org-side blockers can stop this (none fixable from the skill):
-
-1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it (the env override still applies on top of any provider).
-2. **IMAP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
-3. **SMTP AUTH disabled on the tenant** → outbound returns `535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`. This is the M365 default. Reading and saving drafts still work over IMAP; outbound is blocked until an admin runs `Set-TransportConfig -SmtpClientAuthenticationDisabled $false` (tenant-wide) or `Set-CASMailbox -Identity user@... -SmtpClientAuthenticationDisabled $false` (per-mailbox). If you can't change it, use `--draft` and let the user send from their normal client, or switch outbound to the `microsoft` (Graph) skill.
-4. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
-
-If 1-4 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.
+State layout, the full environment-variable list, and Microsoft 365 custom-domain setup live in [SETUP.md](SETUP.md).

@@ -197,6 +197,57 @@ Repeat for each connected account. Don't rush this. Go through many hundreds of 
 - **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and the daemon shows in `screen -ls`.
 - **`list --limit 200` is slow on a huge mailbox**: expected; IMAP `SEARCH ALL` + `FETCH` is O(n). Scope with `search --query 'SINCE <date>'`.
 - **`unknown account 'foo'`**: run `email-client auth list`; add the missing one with `email-client auth add --account foo`.
-- **Microsoft 365 custom domain** (`you@yourcompany.com`): use `--provider microsoft-work`. See SKILL.md "Microsoft 365 with a custom domain" for the four org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, SMTP AUTH disabled, Conditional Access).
+- **Microsoft 365 custom domain** (`you@yourcompany.com`): use `--provider microsoft-work`. See "Microsoft 365 with a custom domain" below for the four org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, SMTP AUTH disabled, Conditional Access).
 - **`AADSTS7000012: The grant was obtained for a different tenant`** on refresh ~1h after a working first auth: account was authed against `/common` but resolves to a work tenant. Re-auth via `--provider microsoft-work` (or `EMAIL_CLIENT_OAUTH_AUTHORITY=https://login.microsoftonline.com/organizations`) and the refresh sticks.
-- **`535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`** on send: tenant blocks SMTP AUTH. IMAP read and `--draft` still work; outbound needs an admin to flip the tenant or per-mailbox switch (see SKILL.md M365 troubleshooting #3).
+- **`535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`** on send: tenant blocks SMTP AUTH. IMAP read and `--draft` still work; outbound needs an admin to flip the tenant or per-mailbox switch (see "Microsoft 365 with a custom domain" #3 below).
+
+## State layout
+
+```
+$EMAIL_CLIENT_DIR/                # default ~/.email-client
+  accounts.json                   # {"accounts": ["personal","work"], "default": "personal"}
+  accounts/
+    personal/
+      config.json                 # {"user", "provider", optional host overrides, "notify_folders"}
+      token.json                  # OAuth token or {"app_password": "..."} (mode 600)
+      high_uid.txt                # INBOX watermark
+      high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
+    work/ ...
+```
+
+`token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.
+
+## Configuration
+
+Settings live per account in `accounts/<name>/config.json`. Env vars provide defaults applied to whichever account is in use:
+
+- `EMAIL_CLIENT_DIR` - token + state location (default `~/.email-client`)
+- `EMAIL_CLIENT_USER` - default email address (used at `auth add` when `--user` is omitted)
+- `EMAIL_CLIENT_PROVIDER` - default provider key
+- `EMAIL_CLIENT_HOST` - IMAP host override
+- `EMAIL_CLIENT_SMTP_HOST` / `EMAIL_CLIENT_SMTP_PORT` - SMTP host / port (default 587 STARTTLS)
+- `EMAIL_CLIENT_OAUTH_CLIENT_ID` - OAuth client ID override
+- `EMAIL_CLIENT_OAUTH_AUTHORITY` - Microsoft authority override (e.g. `/common` for mixed work+personal)
+- `EMAIL_CLIENT_OAUTH_SCOPES` - whitespace-separated scope override
+- `EMAIL_CLIENT_FROM_NAME` - display name on outbound mail (default: username portion of the email)
+- `EMAIL_CLIENT_POLL_INTERVAL` - seconds between polls (default 15)
+- `EMAIL_CLIENT_APP_PASSWORD` - pre-supply the app password to `auth add` instead of prompting (for scripts)
+
+## Microsoft 365 with a custom domain
+
+For an address on a custom domain hosted by M365 (e.g. `you@yourcompany.com`, mailbox on Exchange Online), use the `microsoft-work` provider:
+
+```bash
+email-client auth add --account work --provider microsoft-work --user you@yourcompany.com
+```
+
+This profile ships with the right `outlook.office365.com` IMAP/SMTP hosts, the `Sent Items` folder name M365 work mailboxes use, the Thunderbird multi-tenant OAuth client ID, and `https://login.microsoftonline.com/organizations` as the authority. The authority matters: `/common` mints a usable access token the first time but fails refresh ~1 hour later with `AADSTS7000012: The grant was obtained for a different tenant`, because `/common` accepts any account type and the refresh has to resolve to the specific tenant. `/organizations` binds the grant to the AAD tenant up front, so refresh works.
+
+Approve the device-flow code at https://www.microsoft.com/link. Three org-side blockers can stop this (none fixable from the skill):
+
+1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it (the env override still applies on top of any provider).
+2. **IMAP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
+3. **SMTP AUTH disabled on the tenant** → outbound returns `535 5.7.139 SmtpClientAuthentication is disabled for the Tenant`. This is the M365 default. Reading and saving drafts still work over IMAP; outbound is blocked until an admin runs `Set-TransportConfig -SmtpClientAuthenticationDisabled $false` (tenant-wide) or `Set-CASMailbox -Identity user@... -SmtpClientAuthenticationDisabled $false` (per-mailbox). If you can't change it, use `--draft` and let the user send from their normal client, or switch outbound to the `microsoft` (Graph) skill.
+4. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
+
+If 1-4 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.
