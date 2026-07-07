@@ -80,7 +80,7 @@ class NotificationEvent(_BaseEvent):
     # so the rule editor + the skill's `facets` can surface what an interrupt rule can match beyond
     # source/type/sender. NotRequired (events predating it, and notifications with no such extras, omit it).
     fields: tp.NotRequired[dict[str, str]]
-    decided: tp.NotRequired[tp.Literal["interrupt", "pool"]]
+    decided: tp.NotRequired[tp.Literal["interrupt", "pool", "trash"]]
     notif_id: tp.NotRequired[str]
 
 

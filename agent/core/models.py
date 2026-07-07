@@ -180,7 +180,7 @@ class Notification(pyd.BaseModel):
     source: str
     type: str
     # The producing skill's default disposition, used when no user rule matches (True -> interrupt,
-    # False -> pool). See notification_interrupt_policy.should_interrupt.
+    # False -> pool). See notification_interrupt_policy.notif_disposition.
     interrupt: bool = True
     body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)

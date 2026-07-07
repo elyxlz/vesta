@@ -51,7 +51,7 @@ describe("NotificationInterruptRulesCard", () => {
     expect(screen.queryByRole("button", { name: /add rule/i })).toBeNull();
   });
 
-  it("toggles a rule's action and auto-saves", async () => {
+  it("cycles a rule's action snooze -> trash and auto-saves", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
       { id: "a", source: "twitter", action: "pool" },
     ]);
@@ -59,8 +59,24 @@ describe("NotificationInterruptRulesCard", () => {
       .spyOn(api, "setNotificationInterruptRules")
       .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
+    // pool renders as "snooze"; the action badge cycles interrupt -> snooze -> trash.
     await userEvent.click(
       await screen.findByRole("button", { name: /action: snooze/i }),
+    );
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("trash");
+  });
+
+  it("renders a trash rule and cycles it back to interrupt", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "whatsapp", action: "trash" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /action: trash/i }),
     );
     await waitFor(() => expect(setSpy).toHaveBeenCalled());
     expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("interrupt");

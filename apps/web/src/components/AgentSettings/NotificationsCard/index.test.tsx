@@ -66,6 +66,29 @@ describe("NotificationsCard", () => {
     expect(screen.getByText("snooze")).toBeTruthy();
   });
 
+  it("renders a trashed notification's disposition", async () => {
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [
+        {
+          type: "notification",
+          source: "whatsapp",
+          summary:
+            '<notification source="whatsapp" type="message">status update</notification>',
+          notif_type: "message",
+          sender: "someone",
+          decided: "trash",
+          ts: new Date().toISOString(),
+        },
+      ],
+      cursor: null,
+    });
+    render(<NotificationsCard />);
+
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    // decided=trash renders the "trashed" disposition badge.
+    expect(screen.getByText("trashed")).toBeTruthy();
+  });
+
   it("loads older notifications when there's a cursor", async () => {
     const spy = vi
       .spyOn(api, "getNotificationHistory")

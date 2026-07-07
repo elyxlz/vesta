@@ -1,6 +1,6 @@
 ---
 name: notifications
-description: Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage. Use when the user says what should or shouldn't interrupt you ("don't let Twitter interrupt you", "always let my wife's messages through right away"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications.
+description: Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage vs. get dropped entirely. Use when the user says what should or shouldn't interrupt you ("don't let Twitter interrupt you", "always let my wife's messages through right away"), when the user wants a kind of notification ignored/trashed outright so it never reaches you ("stop showing me WhatsApp status updates", "always ignore X"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications.
 ---
 
 # Notifications
@@ -8,6 +8,8 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 ## What these rules do
 
 These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **pool** one (shown as **"snooze"** in the app) does not touch your current work, it waits and is gathered into a triage pass once you have been idle a little while. Pooling changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you triage it (below). Each rule is about **timing**, not visibility: "worth dropping everything for right now" vs. "this can wait until I'm free". Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
+
+A third disposition, **trash**, is different in kind: it drops the notification entirely. It never reaches you, never becomes a turn, never enters the pool, so it changes *whether* you ever see something, not just when. It still shows in the notification history (marked "trashed") and the file is moved to a trash folder rather than deleted, so a too-aggressive rule stays recoverable. Use it only for high-volume noise the user has said to *always* ignore (e.g. WhatsApp status broadcasts) where even a pooled triage glance is wasted attention, so **only add a trash rule when the user has explicitly said to ignore that kind of notification outright**; when unsure, pool instead.
 
 ## Your active role
 
@@ -22,6 +24,7 @@ Tune the rules **with the user** (they judge what's important, you feel what's p
 A rule has two dedicated fields (`source`, `type`) plus any number of `match` conditions over the
 notification's other fields. Every field/condition you set must hold (AND); whatever you omit is ignored.
 
+- `--action` is `interrupt`, `pool`, or `trash` (drop entirely; see the mental model).
 - `source`/`type` are exact (case-insensitive), e.g. `--source whatsapp --type message`.
 - Each `match` targets one field: `--match 'FIELD<op>VALUE'`, ops (case-insensitive):
   - `=` substring, e.g. `--match 'chat_name=Bride squad'`
@@ -63,6 +66,10 @@ notifications add --source email --keyword urgent --action interrupt
 
 # Snooze one busy group chat by name, while 1:1s and other groups still interrupt (target chat_name)
 notifications add --source whatsapp --match 'chat_name=Bride squad' --action pool
+
+# Drop noise the user always wants ignored, so it never costs a turn (here: WhatsApp status broadcasts).
+# Still visible in history (marked "trashed"); only do this when the user has said to ignore it outright.
+notifications add --source whatsapp --match 'chat_name=status' --action trash
 
 # Combine conditions (AND): pool only group chats from whatsapp, leaving DMs alone
 notifications add --source whatsapp --match 'chat_type=group' --action pool

@@ -1,10 +1,12 @@
 """Arrival-time notification interrupt policy.
 
-An ordered ruleset decides whether an incoming notification preempts the agent's current turn
-(`interrupt`) or waits in the passive pool until the agent is idle (`pool`). First matching rule wins;
-with no match the decision falls back to the notification's own `interrupt` flag — the default the
-producing skill ships for its own notifications (whatsapp/chat interrupt, email/finance pool), so a
-fresh agent with no rules already behaves sensibly. The user's rules exist to override those defaults.
+An ordered ruleset decides an incoming notification's disposition: preempt the agent's current turn
+(`interrupt`), wait in the passive pool until the agent is idle (`pool`), or drop without ever reaching
+the agent (`trash`). First matching rule wins; with no match the decision falls back to the
+notification's own `interrupt` flag — the default the producing skill ships for its own notifications
+(whatsapp/chat interrupt, email/finance pool), so a fresh agent with no rules already behaves sensibly.
+A notification is never trashed by default, only by an explicit user rule. The user's rules exist to
+override those defaults.
 The ruleset lives on the agent config
 (`VestaConfig.notification_rules`); both the user (PUT /config) and the agent (the notifications skill,
 via the same config API) edit it, and monitor_loop reads it from the config store each tick, so edits
@@ -89,7 +91,7 @@ class NotificationInterruptRule(pyd.BaseModel):
     source: str | None = None
     type: str | None = None
     match: list[FieldPredicate] = []
-    action: tp.Literal["interrupt", "pool"]
+    action: tp.Literal["interrupt", "pool", "trash"]
 
     @pyd.model_validator(mode="before")
     @classmethod
@@ -218,13 +220,15 @@ def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
 
 
-def should_interrupt(notif: "vm.Notification", rules: list[NotificationInterruptRule]) -> bool:
-    """True -> preempt the agent's current turn; False -> pool until idle.
+def notif_disposition(notif: "vm.Notification", rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "pool", "trash"]:
+    """The effective disposition for an arriving notification: `interrupt` (preempt the current turn now),
+    `pool` (wait for the idle triage pass), or `trash` (drop without ever reaching the agent).
 
-    First matching rule wins; with no match the notification's own `interrupt` flag (the producing
-    skill's default) decides. Core notifications never reach here: loops.py decides their disposition
-    from the type."""
+    First matching rule wins and supplies its action; with no match the notification's own `interrupt`
+    flag (the producing skill's default) decides interrupt-vs-pool. A notification is never trashed by
+    default, only by an explicit user rule. Core notifications never reach here: loops.py decides their
+    disposition from the type."""
     for rule in rules:
         if _matches(rule, notif):
-            return rule.action == "interrupt"
-    return notif.interrupt
+            return rule.action
+    return "interrupt" if notif.interrupt else "pool"

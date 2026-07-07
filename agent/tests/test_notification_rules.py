@@ -23,46 +23,46 @@ def _rule(**fields) -> npn.NotificationInterruptRule:
     return npn.NotificationInterruptRule(**fields)
 
 
-# --- matching + should_interrupt ---
+# --- matching + notif_disposition ---
 
 
 def test_no_rules_defaults_to_interrupt():
-    assert npn.should_interrupt(_notif(), []) is True
+    assert npn.notif_disposition(_notif(), []) == "interrupt"
 
 
 def test_no_rules_honors_producer_pool_default():
     # A skill that ships interrupt=False (email, finance) pools when no rule matches — the fallback is
     # the producer's default, not an unconditional interrupt.
-    assert npn.should_interrupt(_notif(interrupt=False), []) is False
+    assert npn.notif_disposition(_notif(interrupt=False), []) == "pool"
 
 
 def test_matching_rule_overrides_producer_pool_default():
     notif = _notif(source="finance", interrupt=False)
-    assert npn.should_interrupt(notif, [_rule(source="finance", action="interrupt")]) is True
+    assert npn.notif_disposition(notif, [_rule(source="finance", action="interrupt")]) == "interrupt"
 
 
 def test_source_rule_pools():
-    assert npn.should_interrupt(_notif(), [_rule(source="twitter", action="pool")]) is False
+    assert npn.notif_disposition(_notif(), [_rule(source="twitter", action="pool")]) == "pool"
 
 
 def test_source_rule_interrupts():
-    assert npn.should_interrupt(_notif(), [_rule(source="twitter", action="interrupt")]) is True
+    assert npn.notif_disposition(_notif(), [_rule(source="twitter", action="interrupt")]) == "interrupt"
 
 
 def test_source_match_is_case_insensitive():
     notif = _notif(source="Twitter")
-    assert npn.should_interrupt(notif, [_rule(source="twitter", action="pool")]) is False
+    assert npn.notif_disposition(notif, [_rule(source="twitter", action="pool")]) == "pool"
 
 
 def test_type_rule_matches():
-    assert npn.should_interrupt(_notif(type="tweet"), [_rule(type="tweet", action="pool")]) is False
+    assert npn.notif_disposition(_notif(type="tweet"), [_rule(type="tweet", action="pool")]) == "pool"
 
 
 def test_conditions_are_anded_within_a_rule():
     # source matches but type does not -> rule does not apply -> falls back to the default interrupt.
     notif = _notif(source="twitter", type="dm")
     rules = [_rule(source="twitter", type="tweet", action="pool")]
-    assert npn.should_interrupt(notif, rules) is True
+    assert npn.notif_disposition(notif, rules) == "interrupt"
 
 
 def test_sender_substring_over_identity_fields():
@@ -71,36 +71,36 @@ def test_sender_substring_over_identity_fields():
     )
     # A source rule pools whatsapp; a sender rule earlier interrupts alice specifically.
     rules = [_rule(sender="alice", action="interrupt"), _rule(source="whatsapp", action="pool")]
-    assert npn.should_interrupt(notif, rules) is True
+    assert npn.notif_disposition(notif, rules) == "interrupt"
 
 
 def test_keyword_matches_body():
     notif = _notif(body="this is URGENT")
-    assert npn.should_interrupt(notif, [_rule(source="twitter", action="pool"), _rule(keyword="urgent", action="interrupt")]) is False
+    assert npn.notif_disposition(notif, [_rule(source="twitter", action="pool"), _rule(keyword="urgent", action="interrupt")]) == "pool"
 
 
 def test_keyword_matches_message_extra_field():
     notif = vm.Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "message": "ping about taxes"}
     )
-    assert npn.should_interrupt(notif, [_rule(keyword="taxes", action="pool")]) is False
+    assert npn.notif_disposition(notif, [_rule(keyword="taxes", action="pool")]) == "pool"
 
 
 def test_keyword_regex_alternation():
     rule = _rule(keyword="invoice|payment", action="pool")
-    assert npn.should_interrupt(_notif(body="your payment is due"), [rule]) is False
-    assert npn.should_interrupt(_notif(body="nothing relevant"), [rule]) is True
+    assert npn.notif_disposition(_notif(body="your payment is due"), [rule]) == "pool"
+    assert npn.notif_disposition(_notif(body="nothing relevant"), [rule]) == "interrupt"
 
 
 def test_keyword_regex_anchor():
     rule = _rule(keyword=r"^\$\d+", action="pool")
-    assert npn.should_interrupt(_notif(body="$500 received"), [rule]) is False
+    assert npn.notif_disposition(_notif(body="$500 received"), [rule]) == "pool"
     # The anchor requires the amount at the start, so a mid-body match does not count.
-    assert npn.should_interrupt(_notif(body="received $500"), [rule]) is True
+    assert npn.notif_disposition(_notif(body="received $500"), [rule]) == "interrupt"
 
 
 def test_keyword_regex_is_case_insensitive():
-    assert npn.should_interrupt(_notif(body="ALERT: down"), [_rule(keyword="alert", action="pool")]) is False
+    assert npn.notif_disposition(_notif(body="ALERT: down"), [_rule(keyword="alert", action="pool")]) == "pool"
 
 
 def test_invalid_keyword_regex_is_rejected():
@@ -121,68 +121,68 @@ def test_match_targets_a_concrete_extra_field():
     # The whole point: pool one group chat by its chat_name, which is neither sender nor body.
     notif = _wa(chat_name="Bride squad")
     rule = _rule(source="whatsapp", match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
-    assert npn.should_interrupt(notif, [rule]) is False
+    assert npn.notif_disposition(notif, [rule]) == "pool"
 
 
 def test_match_concrete_field_is_substring_and_case_insensitive():
     notif = _wa(chat_name="The Bride Squad 2024")
     rule = _rule(match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
-    assert npn.should_interrupt(notif, [rule]) is False
+    assert npn.notif_disposition(notif, [rule]) == "pool"
 
 
 def test_match_does_not_apply_when_field_absent():
     # A 1:1 message has no chat_name; the group rule must not touch it.
     notif = _wa(contact_name="Alice")
     rule = _rule(match=[{"field": "chat_name", "value": "bride squad"}], action="pool")
-    assert npn.should_interrupt(notif, [rule]) is True
+    assert npn.notif_disposition(notif, [rule]) == "interrupt"
 
 
 def test_match_regex_op_on_concrete_field():
     rule = _rule(match=[{"field": "chat_name", "op": "regex", "value": "^proj-"}], action="pool")
-    assert npn.should_interrupt(_wa(chat_name="proj-vesta"), [rule]) is False
-    assert npn.should_interrupt(_wa(chat_name="my proj-vesta"), [rule]) is True
+    assert npn.notif_disposition(_wa(chat_name="proj-vesta"), [rule]) == "pool"
+    assert npn.notif_disposition(_wa(chat_name="my proj-vesta"), [rule]) == "interrupt"
 
 
 def test_match_negate_inverts():
     # interrupt for everything whose chat_name is NOT the snoozed group; pool the rest via a later rule.
     rules = [_rule(match=[{"field": "chat_name", "value": "bride squad", "negate": True}], action="interrupt"), _rule(action="pool")]
-    assert npn.should_interrupt(_wa(chat_name="Work standup"), rules) is True
-    assert npn.should_interrupt(_wa(chat_name="Bride squad"), rules) is False
+    assert npn.notif_disposition(_wa(chat_name="Work standup"), rules) == "interrupt"
+    assert npn.notif_disposition(_wa(chat_name="Bride squad"), rules) == "pool"
 
 
 def test_match_negate_on_absent_field_counts_as_not_matching():
     # No chat_name -> does not contain "x" -> negated predicate holds.
     rule = _rule(match=[{"field": "chat_name", "value": "x", "negate": True}], action="pool")
-    assert npn.should_interrupt(_wa(), [rule]) is False
+    assert npn.notif_disposition(_wa(), [rule]) == "pool"
 
 
 def test_match_coerces_non_string_fields():
     # is_group is a bool; chat targeting by a bool/int field still works via str-coercion.
     notif = _wa(is_group=True)
     rule = _rule(match=[{"field": "is_group", "value": "true"}], action="pool")
-    assert npn.should_interrupt(notif, [rule]) is False
+    assert npn.notif_disposition(notif, [rule]) == "pool"
 
 
 def test_match_predicates_are_anded():
     notif = _wa(chat_name="Bride squad", is_group=True)
     # Both predicates hold -> pool.
     both = _rule(match=[{"field": "chat_name", "value": "bride"}, {"field": "is_group", "value": "true"}], action="pool")
-    assert npn.should_interrupt(notif, [both]) is False
+    assert npn.notif_disposition(notif, [both]) == "pool"
     # One predicate fails -> rule does not apply -> default interrupt.
     one = _rule(match=[{"field": "chat_name", "value": "bride"}, {"field": "is_group", "value": "false"}], action="pool")
-    assert npn.should_interrupt(notif, [one]) is True
+    assert npn.notif_disposition(notif, [one]) == "interrupt"
 
 
 def test_match_sender_alias_searches_identity_fields():
     notif = _wa(contact_name="Alice Smith")
     rule = _rule(match=[{"field": "sender", "value": "alice"}], action="pool")
-    assert npn.should_interrupt(notif, [rule]) is False
+    assert npn.notif_disposition(notif, [rule]) == "pool"
 
 
 def test_match_text_alias_searches_body_and_message():
     rule = _rule(match=[{"field": "text", "op": "regex", "value": "taxes"}], action="pool")
-    assert npn.should_interrupt(_wa(message="ping about taxes"), [rule]) is False
-    assert npn.should_interrupt(_notif(body="taxes due"), [rule]) is False
+    assert npn.notif_disposition(_wa(message="ping about taxes"), [rule]) == "pool"
+    assert npn.notif_disposition(_notif(body="taxes due"), [rule]) == "pool"
 
 
 def test_match_invalid_regex_predicate_is_rejected():
@@ -220,17 +220,31 @@ def test_legacy_null_sender_keyword_are_dropped_not_predicates():
     assert rule.match == []
 
 
-# --- should_interrupt ordering / catch-all ---
+# --- notif_disposition ordering / catch-all ---
 
 
 def test_first_matching_rule_wins():
     notif = _notif(source="twitter")
     rules = [_rule(source="twitter", action="interrupt"), _rule(source="twitter", action="pool")]
-    assert npn.should_interrupt(notif, rules) is True
+    assert npn.notif_disposition(notif, rules) == "interrupt"
 
 
 def test_empty_conditions_rule_is_catch_all():
-    assert npn.should_interrupt(_notif(), [_rule(action="pool")]) is False
+    assert npn.notif_disposition(_notif(), [_rule(action="pool")]) == "pool"
+
+
+def test_matching_trash_rule_trashes():
+    notif = _notif(source="whatsapp", chat_name="status")
+    assert (
+        npn.notif_disposition(notif, [_rule(source="whatsapp", action="trash", match=[npn.FieldPredicate(field="chat_name", value="status")])])
+        == "trash"
+    )
+
+
+def test_never_trashes_without_a_matching_rule():
+    # trash is only ever an explicit user rule; the producer default is only ever interrupt/pool.
+    assert npn.notif_disposition(_notif(interrupt=True), []) == "interrupt"
+    assert npn.notif_disposition(_notif(interrupt=False), []) == "pool"
 
 
 # --- config store: load_notification_rules ---
@@ -270,27 +284,34 @@ def test_load_round_trips_a_written_store(tmp_path):
     assert loaded[0].source == "twitter"
     assert loaded[0].action == "pool"
     # And the loaded rule drives the decision.
-    assert npn.should_interrupt(_notif(), loaded) is False
+    assert npn.notif_disposition(_notif(), loaded) == "pool"
 
 
-# --- core routing via loops._notif_interrupts ---
+# --- core routing via loops._notif_disposition ---
 
 
 def test_core_type_interrupts_despite_catch_all_pool_rule():
     # A non-pool core type (migration) preempts even under a broad user pool rule.
     notif = _notif(source=vm.CORE_SOURCE, type="migration")
-    assert loops._notif_interrupts(notif, [_rule(action="pool")]) is True
+    assert loops._notif_disposition(notif, [_rule(action="pool")]) == "interrupt"
 
 
 def test_core_pool_type_pools():
     notif = _notif(source=vm.CORE_SOURCE, type=vm.TYPE_PROACTIVE_CHECK)
-    assert loops._notif_interrupts(notif, []) is False
+    assert loops._notif_disposition(notif, []) == "pool"
 
 
 def test_non_core_goes_through_rules():
     notif = _notif(source="twitter")
-    assert loops._notif_interrupts(notif, [_rule(source="twitter", action="pool")]) is False
-    assert loops._notif_interrupts(notif, []) is True
+    assert loops._notif_disposition(notif, [_rule(source="twitter", action="pool")]) == "pool"
+    assert loops._notif_disposition(notif, []) == "interrupt"
+
+
+def test_core_notification_is_never_trashed():
+    # Core disposition is control-flow (type-derived) and exempt from user rules, so a broad trash rule
+    # can't drop a core notification.
+    notif = _notif(source=vm.CORE_SOURCE, type="migration")
+    assert loops._notif_disposition(notif, [_rule(action="trash")]) == "interrupt"
 
 
 # --- notif_sender ---

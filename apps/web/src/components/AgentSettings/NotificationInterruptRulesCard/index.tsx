@@ -29,6 +29,29 @@ import { cn } from "@/lib/utils";
 
 const SAVE_DEBOUNCE_MS = 500;
 
+type RuleAction = NotificationInterruptRule["action"];
+
+// The action badge cycles on click. interrupt/snooze only change *timing*; trash is different in kind:
+// it drops the notification entirely (it never reaches the agent), so it reads as destructive.
+const ACTION_CYCLE: Record<RuleAction, RuleAction> = {
+  interrupt: "pool",
+  pool: "trash",
+  trash: "interrupt",
+};
+const ACTION_LABEL: Record<RuleAction, string> = {
+  interrupt: "interrupt",
+  pool: "snooze",
+  trash: "trash",
+};
+const ACTION_BADGE_VARIANT: Record<
+  RuleAction,
+  "default" | "outline" | "destructive"
+> = {
+  interrupt: "default",
+  pool: "outline",
+  trash: "destructive",
+};
+
 // One predicate -> a read-only badge. The sender/text aliases render under their friendly names;
 // any other field shows its name with a relation hint (~ regex, "not" when negated).
 function predicateBadge(p: FieldPredicate): { label: string; value: string } {
@@ -130,15 +153,10 @@ export function NotificationInterruptRulesCard() {
     [save],
   );
 
-  const toggleAction = (index: number) =>
+  const cycleAction = (index: number) =>
     commit(
       (rules ?? []).map((rule, i) =>
-        i === index
-          ? {
-              ...rule,
-              action: rule.action === "interrupt" ? "pool" : "interrupt",
-            }
-          : rule,
+        i === index ? { ...rule, action: ACTION_CYCLE[rule.action] } : rule,
       ),
     );
 
@@ -246,24 +264,14 @@ export function NotificationInterruptRulesCard() {
                         <ItemActions>
                           <Badge
                             asChild
-                            variant={
-                              rule.action === "interrupt"
-                                ? "default"
-                                : "outline"
-                            }
+                            variant={ACTION_BADGE_VARIANT[rule.action]}
                           >
                             <button
                               type="button"
-                              onClick={() => toggleAction(index)}
-                              aria-label={`action: ${
-                                rule.action === "interrupt"
-                                  ? "interrupt"
-                                  : "snooze"
-                              }, click to toggle`}
+                              onClick={() => cycleAction(index)}
+                              aria-label={`action: ${ACTION_LABEL[rule.action]}, click to change`}
                             >
-                              {rule.action === "interrupt"
-                                ? "interrupt"
-                                : "snooze"}
+                              {ACTION_LABEL[rule.action]}
                             </button>
                           </Badge>
                           <Button
