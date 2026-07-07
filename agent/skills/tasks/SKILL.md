@@ -53,6 +53,11 @@ tasks remind "Bills" --recurring monthly --at "2025-12-15T09:00:00" --tz "Americ
 tasks remind "Birthday" --recurring yearly --at "2025-03-14T12:00:00" --tz "America/New_York"
 tasks remind "Check inbox" --recurring hourly
 
+# Recurring on a custom schedule (standard cron)
+tasks remind "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
+tasks remind "Every 15 min, 9-5" --cron "*/15 9-17 * * *" --tz "America/New_York"
+tasks remind "1st of the month" --cron "0 8 1 * *" --tz "America/New_York"
+
 # List, delete, update
 tasks remind list                        # all active reminders
 tasks remind list --task <id>            # reminders linked to a task
@@ -65,6 +70,8 @@ tasks remind update <id> --message "New message"
 - `--at` + `--tz`: absolute datetime (both required together)
 - `--recurring`: hourly | daily | weekly | monthly | yearly
   - hourly needs no datetime; others require `--at` + `--tz`
+- `--cron "<expr>"`: standard 5-field cron (`min hour day-of-month month day-of-week`) for schedules the presets can't express. Supports `*`, ranges (`1-5`), lists (`1,3,5`), steps (`*/15`), and day-of-week names (`mon-fri`). Day-of-week uses **standard cron numbering** (`0` or `7` = Sunday, `1` = Monday), so `--cron "0 9 * * 1-5"` fires 9am Mon-Fri as expected. Requires `--tz`; cannot combine with `--recurring`/`--at`/`--in-*`.
+  - Both `--recurring` and `--cron` schedules are DST-aware: they store your IANA timezone and keep firing at the same wall-clock time across clock changes.
 - Always use the user's timezone from MEMORY.md section 4, not UTC
 - `--task <id>`: link reminder to a task (optional)
 - `--message`: alternative to positional message argument

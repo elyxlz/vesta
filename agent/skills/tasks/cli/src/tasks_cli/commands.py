@@ -12,10 +12,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# trigger_data stores UTC hour/minute, so CronTrigger must be interpreted in UTC.
-# Without timezone=, APScheduler uses the scheduler's local TZ, which mis-fires by the local-UTC offset.
-_UTC_ZI = ZoneInfo("UTC")
-
 from .config import Config
 from . import db
 from .scheduler import write_reminder_notification
@@ -30,13 +26,10 @@ logger = logging.getLogger(__name__)
 
 class TriggerData(TypedDict, total=False):
     type: str
-    run_date: str
-    month: int
-    day: int
-    day_of_week: str
-    hour: int
-    minute: int
-    hours: int
+    run_date: str  # "date": one-shot ISO-8601 UTC instant
+    expr: str  # "cron": normalized 5-field cron expression (day-of-week as an APScheduler name list)
+    tz: str  # "cron": IANA timezone the expression is interpreted in (DST-aware)
+    hours: int  # "interval": fixed hour spacing
 
 
 # Overdue pending tasks (past due_date) always float to the top, ordered by most
@@ -54,14 +47,70 @@ def _now_utc() -> datetime:
 
 
 def _cron_trigger_from_data(trigger_data: TriggerData) -> CronTrigger:
-    return CronTrigger(
-        month=trigger_data["month"] if "month" in trigger_data else None,
-        day=trigger_data["day"] if "day" in trigger_data else None,
-        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
-        hour=trigger_data["hour"] if "hour" in trigger_data else None,
-        minute=trigger_data["minute"] if "minute" in trigger_data else None,
-        timezone=_UTC_ZI,
-    )
+    return CronTrigger.from_crontab(trigger_data["expr"], timezone=ZoneInfo(trigger_data["tz"]))
+
+
+# Standard cron numbers the day-of-week field 0-7 with 0 and 7 both Sunday (1=Mon .. 6=Sat) and is
+# what every crontab, doc, and LLM assumes. APScheduler's from_crontab instead uses 0=Mon .. 6=Sun and
+# rejects 7, so "* * * * 1-5" would silently fire Tue-Sat. We normalize the day-of-week field to an
+# unambiguous list of APScheduler weekday names, which both dialects agree on, before handing it over.
+_VIXIE_DOW_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")  # index = standard-cron number, 0=Sunday
+_DOW_NAME_TO_INDEX = {name: i for i, name in enumerate(_VIXIE_DOW_NAMES)}
+_APSCHEDULER_DOW_ORDER = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _dow_single(token: str) -> int:
+    tok = token.strip().lower()
+    if tok in _DOW_NAME_TO_INDEX:
+        return _DOW_NAME_TO_INDEX[tok]
+    if not tok.isdigit():
+        raise ValueError(f"Invalid day-of-week value: '{token}' (use 0-7 or sun-sat)")
+    number = int(tok)
+    if number == 7:
+        return 0
+    if 0 <= number <= 6:
+        return number
+    raise ValueError(f"Invalid day-of-week value: '{token}' (use 0-7 or sun-sat)")
+
+
+def _dow_part_to_indices(part: str) -> list[int]:
+    """Expand one comma-separated piece of a standard-cron day-of-week field to indices (0=Sun .. 6=Sat)."""
+    step = 1
+    if "/" in part:
+        part, _, step_str = part.partition("/")
+        if not step_str.isdigit() or int(step_str) <= 0:
+            raise ValueError(f"Invalid day-of-week step: '{step_str}'")
+        step = int(step_str)
+
+    if part.strip() in ("*", "?"):
+        low, high = 0, 6
+    elif "-" in part:
+        low_str, _, high_str = part.partition("-")
+        low, high = _dow_single(low_str), _dow_single(high_str)
+    else:
+        low = high = _dow_single(part)
+
+    span = (high - low) % 7  # standard cron allows wrap-around ranges like fri-mon
+    return [(low + offset) % 7 for offset in range(0, span + 1, step)]
+
+
+def _normalize_dow(field: str) -> str:
+    if field.strip() in ("*", "?"):
+        return "*"
+    indices: set[int] = set()
+    for part in field.split(","):
+        indices.update(_dow_part_to_indices(part))
+    names = sorted((_VIXIE_DOW_NAMES[i] for i in indices), key=_APSCHEDULER_DOW_ORDER.index)
+    return ",".join(names)
+
+
+def _normalize_cron_expr(expr: str) -> str:
+    """Validate a 5-field cron expression and rewrite its day-of-week field to standard-cron semantics."""
+    fields = expr.split()
+    if len(fields) != 5:
+        raise ValueError(f"Cron expression must have 5 fields (min hour day month dow), got {len(fields)}: '{expr}'")
+    fields[4] = _normalize_dow(fields[4])
+    return " ".join(fields)
 
 
 def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
@@ -514,41 +563,52 @@ def remind_set(
     in_hours: int | None = None,
     in_days: int | None = None,
     recurring: str | None = None,
+    cron: str | None = None,
     notif_dir: Path | None = None,
 ) -> dict:
     reminder_id = str(uuid.uuid4())[:8]
     trigger_data = None
 
-    if recurring == "hourly":
+    if cron is not None:
+        if recurring or scheduled_datetime or in_minutes or in_hours or in_days:
+            raise ValueError("--cron cannot be combined with --recurring, --at, or --in-* options")
+        if not tz:
+            raise ValueError("tz is required when cron is provided")
+        expr = _normalize_cron_expr(cron)
+        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(tz))
+        schedule_info = f"cron: {cron} ({tz})"
+        trigger_data = {"type": "cron", "expr": expr, "tz": tz}
+        next_run = trigger.get_next_fire_time(None, _now_utc())
+    elif recurring == "hourly":
         schedule_info = "hourly"
         trigger_data = {"type": "interval", "hours": 1}
         next_run = None
     elif recurring in ("daily", "weekly", "monthly", "yearly"):
         if not scheduled_datetime or not tz:
             raise ValueError(f"scheduled_datetime and tz are required for {recurring} reminders")
+        # Build the cron expression from the user's wall-clock time and store the IANA tz alongside it,
+        # so APScheduler recomputes the correct UTC instant on every fire and the reminder holds its
+        # wall-clock time across DST transitions instead of drifting by the offset.
         local_dt = _parse_local_dt(scheduled_datetime, tz)
-        utc_dt = local_dt.astimezone(UTC)
-        h, m = utc_dt.hour, utc_dt.minute
-        local_h, local_m = local_dt.hour, local_dt.minute
+        h, m = local_dt.hour, local_dt.minute
 
         if recurring == "daily":
-            trigger = CronTrigger(hour=h, minute=m, timezone=_UTC_ZI)
-            schedule_info = f"daily at {local_h:02d}:{local_m:02d} {tz}"
-            trigger_data = {"type": "cron", "hour": h, "minute": m}
+            expr = f"{m} {h} * * *"
+            schedule_info = f"daily at {h:02d}:{m:02d} {tz}"
         elif recurring == "weekly":
-            day_name = utc_dt.strftime("%a").lower()
-            local_day_name = local_dt.strftime("%a").lower()
-            trigger = CronTrigger(day_of_week=day_name, hour=h, minute=m, timezone=_UTC_ZI)
-            schedule_info = f"weekly on {local_day_name} at {local_h:02d}:{local_m:02d} {tz}"
-            trigger_data = {"type": "cron", "day_of_week": day_name, "hour": h, "minute": m}
+            dow = local_dt.strftime("%a").lower()
+            expr = f"{m} {h} * * {dow}"
+            schedule_info = f"weekly on {dow} at {h:02d}:{m:02d} {tz}"
         elif recurring == "monthly":
-            trigger = CronTrigger(day=utc_dt.day, hour=h, minute=m, timezone=_UTC_ZI)
-            schedule_info = f"monthly on day {local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
-            trigger_data = {"type": "cron", "day": utc_dt.day, "hour": h, "minute": m}
+            expr = f"{m} {h} {local_dt.day} * *"
+            schedule_info = f"monthly on day {local_dt.day} at {h:02d}:{m:02d} {tz}"
         else:  # yearly
-            trigger = CronTrigger(month=utc_dt.month, day=utc_dt.day, hour=h, minute=m, timezone=_UTC_ZI)
-            schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
-            trigger_data = {"type": "cron", "month": utc_dt.month, "day": utc_dt.day, "hour": h, "minute": m}
+            expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
+            schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d} {tz}"
+
+        expr = _normalize_cron_expr(expr)
+        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(tz))
+        trigger_data = {"type": "cron", "expr": expr, "tz": tz}
         next_run = trigger.get_next_fire_time(None, _now_utc())
     elif scheduled_datetime:
         if not tz:

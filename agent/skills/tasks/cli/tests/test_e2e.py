@@ -176,18 +176,18 @@ class TestAddTask:
 class TestListTasks:
     def test_list_returns_tasks(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "list"))
+        items = parse(tasks_cli(home, "list", "--json"))
         assert isinstance(items, list)
         assert len(items) >= 1
 
     def test_list_has_metadata_path(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "list"))
+        items = parse(tasks_cli(home, "list", "--json"))
         assert all("metadata_path" in i for i in items)
 
     def test_list_sorted_by_priority(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "list"))
+        items = parse(tasks_cli(home, "list", "--json"))
         priorities = [i["priority"] for i in items]
         assert priorities == sorted(priorities, reverse=True)
 
@@ -305,7 +305,7 @@ class TestDeleteTask:
         home, _, _ = shared_env
         added = parse(tasks_cli(home, "add", "delete me 2"))
         tasks_cli(home, "delete", added["id"])
-        items = parse(tasks_cli(home, "list"))
+        items = parse(tasks_cli(home, "list", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_delete_removes_metadata_file(self, shared_env):
@@ -337,18 +337,18 @@ class TestSearchTasks:
     def test_search_finds_match(self, shared_env):
         home, _, _ = shared_env
         parse(tasks_cli(home, "add", "unique_searchterm_xyz"))
-        items = parse(tasks_cli(home, "search", "unique_searchterm_xyz"))
+        items = parse(tasks_cli(home, "search", "unique_searchterm_xyz", "--json"))
         assert len(items) >= 1
         assert any("unique_searchterm_xyz" in i["title"] for i in items)
 
     def test_search_no_match(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "search", "zzznonexistent999"))
+        items = parse(tasks_cli(home, "search", "zzznonexistent999", "--json"))
         assert items == []
 
     def test_search_via_flag(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "search", "--query", "unique_searchterm_xyz"))
+        items = parse(tasks_cli(home, "search", "--query", "unique_searchterm_xyz", "--json"))
         assert len(items) >= 1
 
     def test_search_requires_query(self, shared_env):
@@ -360,12 +360,12 @@ class TestSearchTasks:
         home, _, _ = shared_env
         added = parse(tasks_cli(home, "add", "searchdone_abc"))
         tasks_cli(home, "update", added["id"], "--status", "done")
-        items = parse(tasks_cli(home, "search", "searchdone_abc"))
+        items = parse(tasks_cli(home, "search", "searchdone_abc", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_search_show_completed(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "search", "searchdone_abc", "--show-completed"))
+        items = parse(tasks_cli(home, "search", "searchdone_abc", "--show-completed", "--json"))
         assert any("searchdone_abc" in i["title"] for i in items)
 
 
@@ -374,12 +374,12 @@ class TestCompletedFiltering:
         home, _, _ = shared_env
         added = parse(tasks_cli(home, "add", "will complete"))
         tasks_cli(home, "update", added["id"], "--status", "done")
-        items = parse(tasks_cli(home, "list"))
+        items = parse(tasks_cli(home, "list", "--json"))
         assert not any(i["id"] == added["id"] for i in items)
 
     def test_list_show_completed(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "list", "--show-completed"))
+        items = parse(tasks_cli(home, "list", "--show-completed", "--json"))
         assert any(i["status"] == "done" for i in items)
 
 
@@ -477,7 +477,7 @@ class TestRemindSetRecurring:
 class TestRemindList:
     def test_list_returns_items(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "remind", "list"))
+        items = parse(tasks_cli(home, "remind", "list", "--json"))
         assert isinstance(items, list)
         assert len(items) >= 1
 
@@ -486,12 +486,12 @@ class TestRemindList:
         task = parse(tasks_cli(home, "add", "filter task"))
         parse(tasks_cli(home, "remind", "linked reminder", "--task", task["id"], "--in-hours", "2"))
         parse(tasks_cli(home, "remind", "unlinked reminder", "--in-hours", "2"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert all(i["task_id"] == task["id"] for i in items)
 
     def test_list_has_auto_generated_field(self, shared_env):
         home, _, _ = shared_env
-        items = parse(tasks_cli(home, "remind", "list"))
+        items = parse(tasks_cli(home, "remind", "list", "--json"))
         assert all("auto_generated" in i for i in items)
 
 
@@ -506,7 +506,7 @@ class TestRemindDelete:
         home, _, _ = shared_env
         s = parse(tasks_cli(home, "remind", "bye2", "--in-minutes", "60"))
         tasks_cli(home, "remind", "delete", s["id"])
-        items = parse(tasks_cli(home, "remind", "list"))
+        items = parse(tasks_cli(home, "remind", "list", "--json"))
         assert not any(i["id"] == s["id"] for i in items)
 
     def test_delete_nonexistent(self, shared_env):
@@ -550,7 +550,7 @@ class TestCascadeDeletion:
 
         tasks_cli(home, "delete", task["id"])
 
-        items = parse(tasks_cli(home, "remind", "list"))
+        items = parse(tasks_cli(home, "remind", "list", "--json"))
         ids = [i["id"] for i in items]
         assert r1["id"] not in ids
         assert r2["id"] not in ids
@@ -564,7 +564,7 @@ class TestAutoReminders:
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "add", "auto reminder task", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
         # Should have reminders for 1 week, 1 day, 1 hour, 15 min before
         assert len(auto) >= 3  # at least 1 week, 1 day, 1 hour (15 min depends on timing)
@@ -574,7 +574,7 @@ class TestAutoReminders:
         # Due in 30 minutes: only 15-min auto-reminder should be created (others are in the past)
         future = (datetime.now(UTC) + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "add", "soon task", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
         assert len(auto) == 1
         assert "15 minutes" in auto[0]["message"]
@@ -584,12 +584,12 @@ class TestAutoReminders:
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "add", "done cleanup", "--due-datetime", future, "--timezone", "UTC"))
         # Verify auto reminders exist
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert any(i["auto_generated"] for i in items)
         # Mark done
         tasks_cli(home, "update", task["id"], "--status", "done")
         # Auto reminders should be gone
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
         assert len(auto) == 0
 
@@ -597,11 +597,11 @@ class TestAutoReminders:
         home, _, _ = shared_env
         future = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "add", "cascade auto", "--due-datetime", future, "--timezone", "UTC"))
-        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"]))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         assert len(items) >= 1
         tasks_cli(home, "delete", task["id"])
         # All reminders for this task should be gone
-        all_items = parse(tasks_cli(home, "remind", "list"))
+        all_items = parse(tasks_cli(home, "remind", "list", "--json"))
         assert not any(i["task_id"] == task["id"] for i in all_items)
 
 
@@ -641,7 +641,7 @@ class TestDaemonNotifications:
             s = parse(tasks_cli(home, "remind", "hourly check", "--recurring", "hourly"))
             rid = s["id"]
             time.sleep(2)
-            items = parse(tasks_cli(home, "remind", "list"))
+            items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert any(i["id"] == rid for i in items)
         finally:
             stop_daemon(proc)
@@ -693,10 +693,10 @@ class TestMissedReminders:
             notif_files = list(notif_dir.glob("*-tasks-reminder.json"))
             assert len(notif_files) >= 1
             data = json.loads(notif_files[0].read_text())
-            assert data["message"] == "you missed this"
+            assert data["message"].splitlines()[0] == "you missed this"
             assert data["missed"] is True
 
-            items = parse(tasks_cli(home, "remind", "list"))
+            items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert not any(i["id"] == "pastdue01" for i in items)
         finally:
             stop_daemon(proc)
@@ -716,7 +716,7 @@ class TestMissedReminders:
         try:
             time.sleep(3)
             # Recurring reminder should be active, not marked completed or missed
-            items = parse(tasks_cli(home, "remind", "list"))
+            items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert any(i["id"] == "recur01" for i in items)
             # No missed notification should be written for recurring reminders
             notif_files = list(notif_dir.glob("*-tasks-reminder.json"))
@@ -795,7 +795,7 @@ class TestRecurringNextRun:
         original_time = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         conn.execute(
             "INSERT INTO reminders (id, message, schedule_type, scheduled_time, completed, trigger_data) VALUES (?, ?, ?, ?, 0, ?)",
-            ("cron01", "daily standup", "daily at 10:30 UTC", original_time, json.dumps({"type": "cron", "hour": 10, "minute": 30})),
+            ("cron01", "daily standup", "daily at 10:30 UTC", original_time, json.dumps({"type": "cron", "expr": "30 10 * * *", "tz": "UTC"})),
         )
         conn.commit()
         conn.close()
@@ -987,7 +987,7 @@ class TestRecurringNextRun:
                 "friday review",
                 "weekly on fri at 17:00 UTC",
                 original_time,
-                json.dumps({"type": "cron", "day_of_week": "fri", "hour": 17, "minute": 0}),
+                json.dumps({"type": "cron", "expr": "0 17 * * fri", "tz": "UTC"}),
             ),
         )
         conn.commit()
@@ -1020,7 +1020,7 @@ class TestRecurringNextRun:
                 "pay bills",
                 "monthly on day 15 at 09:00 UTC",
                 original_time,
-                json.dumps({"type": "cron", "day": 15, "hour": 9, "minute": 0}),
+                json.dumps({"type": "cron", "expr": "0 9 15 * *", "tz": "UTC"}),
             ),
         )
         conn.commit()
@@ -1089,7 +1089,7 @@ class TestRecurringNextRun:
 
         notif_files = list(notif_dir.glob("*-tasks-reminder.json"))
         data = next(json.loads(f.read_text()) for f in notif_files if json.loads(f.read_text())["reminder_id"] == "msg01")
-        assert data["message"] == "db message"
+        assert data["message"].splitlines()[0] == "db message"
 
     def test_empty_db_message_falls_back_to_kwarg(self, test_home):
         """If DB message is empty string, the kwarg message should be used."""
@@ -1108,7 +1108,7 @@ class TestRecurringNextRun:
 
         notif_files = list(notif_dir.glob("*-tasks-reminder.json"))
         data = next(json.loads(f.read_text()) for f in notif_files if json.loads(f.read_text())["reminder_id"] == "msg02")
-        assert data["message"] == "fallback msg"
+        assert data["message"].splitlines()[0] == "fallback msg"
 
 
 # === Daemon lifecycle ===

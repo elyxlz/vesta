@@ -159,6 +159,33 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
     logger.info("Migrated schema v1 -> v2")
 
 
+def _migrate_v2_to_v3(conn: sqlite3.Connection):
+    """v2 -> v3: rewrite legacy cron reminders from UTC-baked fields to the {expr, tz} form.
+
+    Old recurring reminders stored a fixed UTC hour/minute (plus optional day/month/day_of_week)
+    with no timezone, so they silently drifted by an hour across every DST transition. Rewrite each
+    to an equivalent cron expression tagged tz='UTC', which preserves their exact current firing
+    instants; reminders created after this upgrade carry the user's real IANA timezone and stay put
+    across DST. Idempotent: rows already in {expr, tz} form are skipped."""
+    rows = conn.execute("SELECT id, trigger_data FROM reminders WHERE trigger_data IS NOT NULL").fetchall()
+    migrated = 0
+    for row in rows:
+        data = json.loads(row["trigger_data"])
+        if "type" not in data or data["type"] != "cron" or "expr" in data:
+            continue
+        minute = data["minute"] if "minute" in data else "*"
+        hour = data["hour"] if "hour" in data else "*"
+        day = data["day"] if "day" in data else "*"
+        month = data["month"] if "month" in data else "*"
+        dow = data["day_of_week"] if "day_of_week" in data else "*"
+        new_data = {"type": "cron", "expr": f"{minute} {hour} {day} {month} {dow}", "tz": "UTC"}
+        conn.execute("UPDATE reminders SET trigger_data = ? WHERE id = ?", (json.dumps(new_data), row["id"]))
+        migrated += 1
+    if migrated:
+        logger.info(f"Migrated {migrated} legacy cron reminders to tz-aware form")
+    logger.info("Migrated schema v2 -> v3")
+
+
 AUTO_REMINDER_WINDOWS = [
     ("1 week", timedelta(weeks=1)),
     ("1 day", timedelta(days=1)),
@@ -242,6 +269,11 @@ def init_db(data_dir: Path):
         if version < 2:
             _migrate_v1_to_v2(data_dir, conn)
             conn.execute("UPDATE schema_version SET version = 2")
+            version = 2
+
+        if version < 3:
+            _migrate_v2_to_v3(conn)
+            conn.execute("UPDATE schema_version SET version = 3")
 
         conn.commit()
 
