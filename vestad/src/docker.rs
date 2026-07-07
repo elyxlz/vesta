@@ -976,7 +976,7 @@ pub fn write_agent_env_file(
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
-    // the control plane and the account skill reads it via GET /api/account.)
+    // the control plane and the vesta-cloud-account skill reads it via GET /api/account.)
     append_optional(
         "VESTA_CLOUD_CONTROL_URL",
         std::env::var("VESTA_CLOUD_CONTROL_URL").ok().as_deref(),

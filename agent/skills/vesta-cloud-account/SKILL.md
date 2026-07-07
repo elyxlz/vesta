@@ -1,9 +1,9 @@
 ---
-name: account
+name: vesta-cloud-account
 description: Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices).
 ---
 
-# account, CLI: `vesta-cloud-account`
+# vesta-cloud-account, CLI: `vesta-cloud-account`
 
 Lets you, the owner's own vesta, answer questions about **this** box's hosting
 plan and help the owner manage their subscription, without ever holding their
