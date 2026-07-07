@@ -227,6 +227,7 @@ def _main_remind():
             p.add_argument("--in-hours", type=int, default=None)
             p.add_argument("--in-days", type=int, default=None)
             p.add_argument("--recurring", default=None, choices=["hourly", "daily", "weekly", "monthly", "yearly"])
+            p.add_argument("--cron", default=None)
             args = p.parse_args(remind_args)
             message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
             result = commands.remind_set(
@@ -239,6 +240,7 @@ def _main_remind():
                 in_hours=args.in_hours,
                 in_days=args.in_days,
                 recurring=args.recurring,
+                cron=args.cron,
             )
 
         print(json.dumps(result, indent=2))
@@ -258,6 +260,7 @@ Set a reminder (default):
   tasks remind "call mom" --in-minutes 30
   tasks remind "check this" --task <id> --at <datetime> --tz <tz>
   tasks remind "standup" --recurring daily --at <datetime> --tz <tz>
+  tasks remind "weekdays 9am" --cron "0 9 * * 1-5" --tz <tz>
 
 options:
   --message MSG         Message (alternative to positional)
@@ -268,6 +271,7 @@ options:
   --in-hours N          Fire in N hours
   --in-days N           Fire in N days
   --recurring TYPE      hourly|daily|weekly|monthly|yearly
+  --cron EXPR           Standard 5-field cron "min hour dom month dow" (requires --tz)
 
 subcommands:
   list                  List active reminders
