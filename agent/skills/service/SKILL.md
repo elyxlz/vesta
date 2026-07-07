@@ -28,3 +28,8 @@ single line that re-registers and starts, e.g.:
 ```bash
 PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
 ```
+
+vestad's API may still be coming up when the daemon block runs, so `register-service` polls
+until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
+exits non-zero with a stderr message and no port. Keep the `&&` between registration and start:
+a failed registration short-circuits the chain, so the daemon never launches portless.
