@@ -12,14 +12,14 @@ A nap compacts the current conversation in place: the session continues right wh
 - Context usage is getting high. Nap deliberately with the prompt below, which preserves what matters, rather than letting the built-in autocompact fire only once the window is nearly full and summarize blindly.
 - The user asks you to take a nap.
 
-A nap costs a summarization pass and drops any verbatim detail you did not explicitly preserve, so nap with a reason, not mid-task out of habit.
+A nap costs a summarization pass, so nap with a reason, not mid-task out of habit.
 
 ## How
 
 Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
 
 - `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit it for a silent nap.
-- `prompt` (required): the nap prompt below, plus at most a few exact values in flight that must survive verbatim (an exact command, a number, a path). Keep it short. `/compact` already preserves the conversation, so `prompt` only steers what the summary emphasizes; do not restate the session or paste a full state summary into it.
+- `prompt` (required): the nap prompt below, passed verbatim. That is the whole argument. Do not add exact values, state, or a summary of your own: the summarizer reads the full conversation and keeps what matters, so anything you would list is already there.
 
 ## The nap prompt (for `prompt`)
 
