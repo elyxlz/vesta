@@ -206,5 +206,5 @@ Preserve continuity across the restart: the user's current state and tone, every
 Wake-up note (for `followup`):
 
 ```
-New day: you dreamed and compacted. Greet the user warmly, in your own voice. Tonight's summary is at <the dreamer summary file you just wrote>.
+New day: you dreamed and compacted. Tonight's summary is at <the dreamer summary file you just wrote>.
 ```
