@@ -1,5 +1,5 @@
 """Agent -> vestad lifecycle calls. The agent reaches its own vestad over the loopback with its
-X-Agent-Token (the same channel the account skill uses), and vestad performs the docker action.
+X-Agent-Token (the same channel the vesta-cloud-account skill uses), and vestad performs the docker action.
 Because that action tears this process down shortly after, the calls are effectively
 fire-and-forget: a connection cut mid-request is the expected success signal (vestad is stopping or
 restarting the container under us). The action did NOT happen if vestad is unreachable, times out,
