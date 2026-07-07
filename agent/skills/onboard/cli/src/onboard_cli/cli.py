@@ -59,12 +59,12 @@ def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> i
     # Public onboarding (issue #79): record the invitee's pending intent, attributed
     # to our referral code, then send their OTP. The account is created when they
     # verify (below). Self-hosted boxes can onboard too, no server-identity gate.
-    code = (args.referral.strip() if getattr(args, "referral", None) else None) or cfg.referral_code
-    resp = client.create_account(email, code)
+    referral_code = (args.referral.strip() if getattr(args, "referral", None) else None) or cfg.referral_code
+    resp = client.create_account(email, referral_code)
     if "error" in resp:
         raise _Invalid(resp)  # e.g. a malformed email
     client.send_otp(email)
-    _print({"sent": True, "email": email, "code_applied": bool(resp.get("code_applied"))})
+    _print({"sent": True, "email": email, "referral_code_applied": bool(resp.get("referral_code_applied"))})
     return 0
 
 
@@ -97,7 +97,7 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         token=token,
         plan=PLAN,
         price=price,
-        code=(args.code.strip() if args.code else None),
+        discount_code=(args.code.strip() if args.code else None),
     )
     if "url" in result:
         # Stash the assigned subdomain + server id (both returned by checkout) so
