@@ -24,5 +24,5 @@ Call the `compact_context` tool once. It schedules the compaction for after the 
 ## The nap prompt (for `instructions`)
 
 ```
-Preserve whatever you would need to pick up seamlessly, in substance and in tone. Drop the noise.
+Preserve what this conversation is about and whatever you would need to pick up seamlessly, in substance and in tone. Drop the noise.
 ```
