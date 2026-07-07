@@ -24,5 +24,5 @@ Call the `compact_context` tool once. It schedules the compaction for after the 
 ## The nap prompt (for `instructions`)
 
 ```
-You are compacting an ongoing conversation between a user and their AI guardian angel into a summary that replaces the earlier messages; the angel then continues from your summary. Preserve everything the angel needs to pick up seamlessly: what this conversation is about, where things stand, and the exact details that matter. Drop the noise.
+You are summarizing an ongoing conversation between a user and their AI guardian angel. Your summary replaces the earlier messages, and the angel continues from it. Preserve everything the angel needs to pick up seamlessly: what this conversation is about, where things stand, and the exact details that matter. Drop the noise.
 ```
