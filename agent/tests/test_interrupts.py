@@ -759,6 +759,34 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
     assert state.turn is None
 
 
+def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
+    """The /compact summary is read back from the session transcript for logging: pick the latest
+    isCompactSummary entry and join its text blocks."""
+    import json
+    import pathlib as pl
+    from core import client
+
+    proj = tmp_path / ".claude" / "projects" / "-root-agent"
+    proj.mkdir(parents=True)
+    lines = [
+        {"type": "assistant", "message": {"content": "not a summary"}},
+        {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "an older summary"}]}},
+        {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "the latest summary"}]}},
+    ]
+    (proj / "sess-xyz.jsonl").write_text("\n".join(json.dumps(line) for line in lines))
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+
+    assert client._read_compaction_summary("sess-xyz") == "the latest summary"
+
+
+def test_read_compaction_summary_returns_none_when_absent(tmp_path, monkeypatch):
+    import pathlib as pl
+    from core import client
+
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+    assert client._read_compaction_summary("no-such-session") is None
+
+
 # --- Converse auth handling ---
 
 

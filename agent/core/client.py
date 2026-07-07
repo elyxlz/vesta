@@ -2,7 +2,9 @@
 
 import asyncio
 import datetime as dt
+import json
 import os
+import pathlib as pl
 import time
 import typing as tp
 
@@ -393,6 +395,33 @@ _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
 _COMPACT_TIMEOUT_S = 600.0  # day-sized contexts can take minutes to summarize
 
 
+def _read_compaction_summary(session_id: str) -> str | None:
+    """Best-effort: pull the latest /compact summary text from the CLI's session transcript, for
+    logging. The summary is written to ~/.claude/projects/<encoded-cwd>/<session_id>.jsonl (tagged
+    isCompactSummary), not streamed, so we glob by session_id to avoid reconstructing the cwd
+    encoding. The transcript format is undocumented, so any failure just returns None."""
+    try:
+        matches = sorted(pl.Path.home().glob(f".claude/projects/*/{session_id}.jsonl"))
+        if not matches:
+            return None
+        text: str | None = None
+        for line in matches[-1].read_text().splitlines():
+            entry = json.loads(line)
+            if not ("isCompactSummary" in entry and entry["isCompactSummary"]):
+                continue
+            if "message" not in entry or "content" not in entry["message"]:
+                continue
+            content = entry["message"]["content"]
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = [block["text"] for block in content if isinstance(block, dict) and "text" in block]
+                text = "\n".join(parts) if parts else text
+        return text
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 async def compact_session(*, state: vm.State, prompt: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
@@ -415,6 +444,12 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:
             raise turn.error
+        # Surface what the compaction produced: the summary is written to the session transcript,
+        # not streamed, so read it back for the log (best-effort, never fatal).
+        if state.persisted.session_id:
+            summary = await asyncio.to_thread(_read_compaction_summary, state.persisted.session_id)
+            if summary:
+                logger.client(f"Compaction summary ({len(summary)} chars):\n{summary}")
     finally:
         _close_turn(state, turn)
 
