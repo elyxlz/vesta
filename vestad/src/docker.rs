@@ -1063,11 +1063,6 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
-        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY): rename it to
-        // AGENT_PERSONALITY in place, value-preserving, so the agent keeps the chosen voice.
-        let has_new_personality = content
-            .lines()
-            .any(|line| line.strip_prefix("export ").unwrap_or(line).starts_with("AGENT_PERSONALITY="));
         let mut new_lines: Vec<String> = content
             .lines()
             .filter_map(|line| {
@@ -1077,12 +1072,6 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
                 // fetch a bundle from vestad; no branch name needed) - strip stale keys.
                 if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_WORKSPACE_REF=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
                     return None; // re-appended below with the current values
-                }
-                if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
-                    if has_new_personality {
-                        return None; // already migrated; drop the stale duplicate
-                    }
-                    return Some(line.replacen("AGENT_SEED_PERSONALITY=", "AGENT_PERSONALITY=", 1));
                 }
                 Some(line.to_string())
             })
@@ -2562,33 +2551,6 @@ mod tests {
         let path2 = write_agent_env_file(&cfg, "agent2", 3, "tok2").expect("write env file 2");
         let content2 = std::fs::read_to_string(&path2).expect("read env file 2");
         assert!(!content2.contains("VESTA_CLOUD_CONTROL_URL"), "absent when unset: {content2}");
-    }
-
-    #[test]
-    fn update_env_renames_legacy_personality_var_preserving_value() {
-        // The agent dropped the AGENT_SEED_PERSONALITY env alias; the startup normalizer must
-        // rename it to AGENT_PERSONALITY in existing files so a legacy non-default voice survives.
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let env_path = dir.path().join("vesta.env");
-        std::fs::write(&env_path, "export AGENT_TOKEN=t\nexport AGENT_SEED_PERSONALITY=warm\nexport VESTAD_PORT=1\n").expect("write");
-        update_all_agent_env_files(dir.path(), 39565, None);
-        let content = std::fs::read_to_string(&env_path).expect("read");
-        assert!(content.contains("export AGENT_PERSONALITY=warm"), "renamed, value preserved: {content}");
-        assert!(!content.contains("AGENT_SEED_PERSONALITY"), "legacy var removed: {content}");
-        assert!(content.contains("export AGENT_TOKEN=t"), "identity preserved");
-    }
-
-    #[test]
-    fn update_env_drops_legacy_personality_when_new_one_present() {
-        // If a file already has the new var, the stale legacy duplicate is dropped, not re-added.
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let env_path = dir.path().join("vesta.env");
-        std::fs::write(&env_path, "export AGENT_PERSONALITY=dry\nexport AGENT_SEED_PERSONALITY=warm\n").expect("write");
-        update_all_agent_env_files(dir.path(), 39565, None);
-        let content = std::fs::read_to_string(&env_path).expect("read");
-        assert!(content.contains("export AGENT_PERSONALITY=dry"));
-        assert!(!content.contains("AGENT_SEED_PERSONALITY"));
-        assert!(!content.contains("warm"));
     }
 
     #[test]

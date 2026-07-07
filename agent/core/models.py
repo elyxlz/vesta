@@ -9,7 +9,7 @@ import pydantic as pyd
 from aiohttp.web import AppRunner
 from claude_agent_sdk import ClaudeSDKClient
 
-from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config, migrate_legacy_config_to_store
+from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config
 from .events import EventBus
 from .notification_interrupt_policy import CORE_SOURCE
 from .provider import ProviderStatus
@@ -25,7 +25,6 @@ __all__ = [
     "PersistedState",
     "CORE_SOURCE",
     "load_config",
-    "migrate_legacy_config_to_store",
 ]
 
 # Notification `type` values for the `source=core` notifications that remain notifications (periodic
