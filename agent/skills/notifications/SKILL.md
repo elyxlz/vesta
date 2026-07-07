@@ -5,26 +5,17 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 
 # Notifications
 
-## Why this exists
+## What these rules do
 
-These interrupts land on **you, the agent**, not the user: an interrupting notification pulls you off whatever you are doing right now, and being yanked out of hard work by something trivial is a real cost. These rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately. Tune them **with the user**: they judge what's important, you feel what's pulling you off-task and what it costs.
-
-## Mental model
-
-- **interrupt** = the notification preempts your current turn the moment it arrives.
-- **pool** (shown as **"snooze"** in the app) = it does not touch your current work; it waits and is gathered into a triage pass once you have been idle a little while. Pooling changes *when* you see a notification, never *whether*: nothing is dropped, and the rule is reversible anytime. You decide what to act on or drop when you triage it (below).
-
-Each rule is about **timing**, not visibility: "worth dropping everything for right now" vs. "this can wait until I'm free".
+These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **pool** one (shown as **"snooze"** in the app) does not touch your current work, it waits and is gathered into a triage pass once you have been idle a little while. Pooling changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you triage it (below). Each rule is about **timing**, not visibility: "worth dropping everything for right now" vs. "this can wait until I'm free". Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
 
 ## Your active role
 
-Don't just wait for the user; watch your own interruptions:
+Tune the rules **with the user** (they judge what's important, you feel what's pulling you off-task and what it costs); watch your own interruptions rather than only waiting for them, but keep it proportionate, tune real patterns and don't fiddle constantly (the nightly dream is a good moment to reflect on the balance):
 
 - A kind of notification repeatedly preempting you for little value (every tweet, routine pings) is a signal: propose pooling it.
 - Something important that should have reached you faster: propose an interrupt rule for it.
 - **Confirm with the user before changing rules**: describe the rule in plain language and why it helps. Their call on importance wins.
-
-Keep it proportionate: tune real patterns, don't fiddle constantly. The nightly dream is a good moment to reflect on the balance.
 
 ## How matching works
 
