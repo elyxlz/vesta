@@ -200,7 +200,7 @@ Your final two steps compact this conversation and restart into it, so you wake 
 Continuity prompt (for `prompt`):
 
 ```
-You are summarizing the recent history between a user and their AI guardian angel: their conversations, the tasks the angel has been doing, and the notifications that came in, important and less important. Your summary replaces everything before it, and the angel continues from it. Preserve everything the angel needs to pick up seamlessly: what has been going on, where things stand, and the exact details that matter. Drop the noise.
+You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before it sleeps and wakes to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise.
 ```
 
 Wake-up note (for `followup`):
