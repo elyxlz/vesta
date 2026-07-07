@@ -103,43 +103,14 @@ for round = 1, 2, 3, ...:
   scores.json               (running tally, latest round at top)
 ```
 
-## Workflow steps
+## Running the skill
 
-### Step 1: approach session
+The two phases above are the whole workflow. In order:
 
-Run the approach session described in Phase 1 above: gather what's available, surface the plan, and wait for user OK before drafting. If the user wants to edit the plan, iterate the plan first.
-
-### Step 2: initial draft
-
-Write to `<task_id>_essay/draft.md`. If user provided an existing draft, copy it in and treat as v0.
-
-### Step 3: spawn four reviewers in parallel
-
-Each reviewer gets the current draft, the corpus or rubric needed for its job, and outputs strict JSON. See:
-
-. `rubric_prompt.md` for A
-. `adversarial_prompt.md` for B
-. `citation_prompt.md` for C
-. `gptzero.py` for D (function `score(text)` returning the JSON response)
-
-Save each reviewer's JSON output to `iterations/round_<N>/`.
-
-### Step 4: aggregate + edit
-
-Identify the weakest axis. Write the next draft addressing it first, then sweep the other axes. Save the diff and a `summary.md` per round describing what changed.
-
-### Step 5: convergence check
-
-If all four reviewers pass thresholds, present the final draft + summary of all rounds to the user. Otherwise loop.
-
-### Step 6: present to user
-
-Once converged or capped at 5 rounds:
-
-. final draft
-. table of round-by-round scores per axis
-. residual gaps (if any) flagged honestly
-. user submits, or asks for another round
+1. **Approach session** (Phase 1): gather what's available, surface the plan, wait for user OK. Iterate the plan first if the user wants edits.
+2. **Initial draft**: write to `<task_id>_essay/draft.md`, or copy the user's existing draft in as v0.
+3. **Run the loop** (Phase 2): each round spawns the active reviewers in parallel, saves their JSON to `iterations/round_<N>/`, then writes the next draft weakest-axis-first with a `summary.md`. The loop's own exit conditions (all thresholds passed, or 5 rounds elapsed) end it.
+4. **Present to user**: final draft, round-by-round score table per axis, and any residual gaps flagged honestly. The user submits or asks for another round.
 
 ## Reviewer prompt templates
 
@@ -160,7 +131,7 @@ The AI detector is a Python module, not a sub-agent: `python ~/agent/skills/essa
   . **all citation dates** in both in-text citations and reference list. Replace `(Smith, 2024)` with `(Smith, YEAR)` and the reference list `Smith, J. (2024) Title.` with `Smith, J. (YEAR) Title.`. Apply consistently across user's draft AND every reference essay. This prevents the critic from cheating by picking the essay with the newest sources as the odd one out (which is a non-signal, not an actual quality differentiator).
   . any URL or DOI that gives away publication year or accessed date
   . file metadata if essays are PDFs (export as plain text first)
-. When real references aren't available, generate synthetic ones up front. Save them so the same corpus is used across rounds.
+. When no real references and no quasi-exemplar exist, drop the in-distribution reviewer and run on 3 reviewers. Do not synthesize references: a sub-agent judging "in-distribution" against essays another sub-agent wrote is a fake signal, not evidence the draft would pass a real marker.
 . The citation reviewer can take a while (web lookups). Run it last in parallel, or accept that a round takes longer.
 . Cap iterations at 5. If unconverged, stop and surface honestly.
 . Save state every round. The loop should be resumable after a crash.
