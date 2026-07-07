@@ -38,6 +38,11 @@ def main() -> None:
     send_p = sub.add_parser("send", help="Send a message to the app")
     send_p.add_argument("--message", "-m", required=True, help="Message text")
     send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.app-chat/app-chat.sock)")
+    send_p.add_argument(
+        "--longform",
+        action="store_true",
+        help="Bypass the bubble lint for genuine reference material (a brief, code block, or list they asked for)",
+    )
 
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")

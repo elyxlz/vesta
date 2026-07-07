@@ -11,6 +11,8 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
+from app_chat_cli.bubblelint import bubble_lint_reason
+
 
 def _default_agent_url() -> str:
     port = os.environ.get("WS_PORT")
@@ -22,6 +24,13 @@ def _default_agent_url() -> str:
 
 def cmd_send(args: argparse.Namespace) -> None:
     message = args.message
+
+    if not getattr(args, "longform", False):
+        reason = bubble_lint_reason(message)
+        if reason:
+            print(json.dumps({"error": reason}))
+            sys.exit(1)
+
     sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
 
     if not sock_path.exists():
