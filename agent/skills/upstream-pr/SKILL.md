@@ -26,20 +26,18 @@ Two gotchas learned the hard way:
 
 Three gates before opening a worktree.
 
-**1. Is it worth filing?** Default lean: **everything is upstreamable unless it's personal information or super niche to one user.** If a change would help any vesta instance, it belongs upstream. Concretely:
+**1. Is it worth filing?** The rule for everything below: **generalizable goes upstream, user-specific stays local.** Everything is upstreamable unless it's personal information or super niche to one user; if a change would help any vesta instance, it belongs upstream. Concretely:
 - Bug fixes in agent code, skills, or prompts
 - New skills (strip personal config first) (can be specific skills, they are opt in for new vestas)
 - Prompt or SKILL.md or MEMORY.md improvements
-- **Personality / voice improvements** (the `personality` SKILL.md shared rules, the `presets/*.md` preset files, the bubble_lint hook). These are NOT per-instance: the presets and the hook ship with every vesta, so a fix or a sharpened rule that isn't glued to one user's specifics benefits everyone. Upstream the generalizable rule, keep only the user-specific tuning local.
+- **Personality / voice improvements** (the `personality` SKILL.md shared rules, the `presets/*.md` preset files, the bubble_lint hook). These ship with every vesta, so a sharpened rule that isn't glued to one user's specifics benefits everyone.
 - Infrastructure or tooling improvements
-
-Never file: personal config, the user's own memory content, credentials, user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks).
 
 **2. Issue, PR, or both?**
 - You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `pr.py --body "...fixes #N"` is enough.
 - You don't have a fix yet: **issue only**.
 
-**3. Strip personal information.** Upstream is public; the user must not be identifiable. No names, contact details, private context, or specifics tied to the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
+**3. Strip personal information.** Upstream is public, so the user must not be identifiable: never file personal config, their own memory content, credentials, or user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks). Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
 ## Attribution (REQUIRED)
 
@@ -101,6 +99,4 @@ uv run ~/agent/skills/upstream-pr/pr.py --token-only
 
 ## Formatting Python before pushing
 
-CI's `agent-tests` runs `uv run --project core ruff format --check` and `uv run --project core ruff check` from `agent/`. Format new/changed `.py` the same way before pushing: `cd ~/agent && uv run --project core ruff format <path>` then `uv run --project core ruff check <path>`.
-
-Use `uv run --project core ruff`, never `uvx ruff`. `uv run` uses the ruff version locked in `agent/core/uv.lock` and the config (line-length, etc.) in `agent/ruff.toml`, so it matches CI exactly. `uvx ruff` pulls a standalone latest ruff that ignores both the lock and the config, so it can format a file differently (e.g. wrap a line CI would leave alone) and fail CI's `--check` on otherwise-correct code. Likewise, don't format from a directory where `agent/ruff.toml` isn't visible, or ruff misses the config and falls back to defaults.
+Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `agent-tests`: `cd ~/agent && uv run --project core ruff format <path> && uv run --project core ruff check <path>`. Run `uv run --project core ruff` from that dir, never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
