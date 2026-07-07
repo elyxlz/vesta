@@ -19,7 +19,7 @@ def _tmp_state(tmp_path, monkeypatch):
     """Point the session store at a throwaway dir so tests don't touch ~/.config."""
     monkeypatch.setattr(state_mod, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(state_mod, "_STATE_FILE", tmp_path / "sessions.json")
-    # Same for the shared referral file (written by the account skill): point it at
+    # Same for the shared referral file (written by the vesta-cloud-account skill): point it at
     # a throwaway path, absent by default, so tests never touch ~/.config.
     monkeypatch.setattr(referral_store, "PATH", tmp_path / "referral_code")
 

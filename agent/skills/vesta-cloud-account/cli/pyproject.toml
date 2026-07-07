@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vesta-cloud-account = "account_cli.cli:main"
+vesta-cloud-account = "vc_account_cli.cli:main"
 
 [dependency-groups]
 dev = [
@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/account_cli"]
+packages = ["src/vc_account_cli"]
 
 [build-system]
 requires = ["hatchling"]

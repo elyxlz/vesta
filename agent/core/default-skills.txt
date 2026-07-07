@@ -1,4 +1,3 @@
-account
 birth
 browser
 claude-code
@@ -17,5 +16,6 @@ skills-registry
 tasks
 timezone
 upstream-pr
+vesta-cloud-account
 voice
 what-day
