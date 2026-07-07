@@ -62,31 +62,8 @@ spotify organize watch --interval 30     # custom poll interval in seconds
 spotify organize watch --init            # initialize state file without processing
 ```
 
-**How it works:**
-1. **sync**: Fetches all playlists owned by the user, collects every track, and likes any that aren't already saved
-2. **sort**: Finds liked songs that aren't in any own playlist, looks up artist genres via Spotify API, and matches them to playlists using keyword rules (e.g. "jazz" → Jazz playlist, "rock" → Rock playlist)
-3. Songs can go into multiple playlists if their genres match multiple rules
-4. **watch**: Runs as a daemon, polling the most recent 20 liked songs every 60 seconds. Detects new likes, fetches genre info, and writes a notification file for the agent to process.
-
-**Watch daemon details:**
-- The daemon only DETECTS and NOTIFIES. Playlist sorting decisions are left to the agent
-- Run `spotify organize watch --init` once first to snapshot your existing liked songs (otherwise the daemon auto-inits on first start)
-- After init, only songs liked AFTER the daemon starts will be detected, not the full backlog
-- Notification includes: track name, artist, track ID, track URI, and artist genres from Spotify
-- Logs progress to stderr, works well in a screen session: `screen -S spotify-watch spotify organize watch`
-- State file: `~/.spotify/watch_state.json` - tracks known liked IDs and last poll time
-- Notifications written to: `~/agent/notifications/spotify_liked_{timestamp}.json`
-
-**Config** lives at `~/.spotify/organize.json`:
-- `skip_playlists` - playlist names to exclude from auto-sorting (queues, mixtapes, ambiguous ones)
-- `genre_rules` - list of `{keywords: [...], playlist: "name"}` mappings (used by `sort` command, NOT by watch daemon)
-
-**Important notes:**
-- Only processes playlists owned by the user, not followed playlists
-- Always use `--dry-run` first to preview what would change
-- The sort step can take a few minutes for large libraries (artist genre lookups)
-- Unmatched tracks stay as liked-only. Review them manually and consider creating new playlists
-- After creating new playlists, run `spotify organize config --init` to refresh defaults, or edit `~/.spotify/organize.json` directly to add new genre rules
+- `sync` likes every track in your own playlists; `sort` matches orphan liked songs to playlists by artist genre keywords (`~/.spotify/organize.json` holds `genre_rules` + `skip_playlists`); only playlists you own are touched. Always `--dry-run` first.
+- `watch` only DETECTS newly liked songs and writes a notification to `~/agent/notifications/spotify_liked_{timestamp}.json` (track name, artist, IDs, artist genres); the sorting decision is left to the agent. Run in a screen session; state lives at `~/.spotify/watch_state.json`.
 
 ### Playlists
 ```bash
@@ -170,13 +147,6 @@ spotify playback repeat context
 spotify playback transfer --device-id <ID> --play
 ```
 
-### Auth
-```bash
-spotify auth status    # Check if authenticated
-spotify auth login     # Start OAuth flow
-spotify auth setup     # Save app credentials
-```
-
 ## Playback Gotchas
 - **Playlists use `--context`, not `--uri`**: `spotify playback play --context spotify:playlist:xxx`. The `--uri` flag is for individual tracks only. Playlist URIs (especially `playlist_v2` type) fail with `--uri`.
 - **Device flag is `--device`**, not `--device-id`: `spotify playback play --device <ID> --context spotify:playlist:xxx`
@@ -186,7 +156,5 @@ spotify auth setup     # Save app credentials
 ## Notes
 - Playback control requires Spotify Premium + at least one Spotify client open
 - All output is JSON
-- CLI built with spotipy (Python Spotify Web API wrapper)
 - Install via: `uv tool install <path-to-skill>/cli`
-- Spotify API doesn't expose playlist folders (client-side only feature)
 - To delete/unfollow a playlist, use the Spotify API directly via spotipy (no CLI command yet, use `sp.current_user_unfollow_playlist(id)`)
