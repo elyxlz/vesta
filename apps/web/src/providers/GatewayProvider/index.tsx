@@ -20,6 +20,7 @@ import type {
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import { GatewayContext, disconnectedValue } from "./context";
 
 export { useGateway } from "./context";
@@ -166,8 +167,11 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               break;
             }
             case "agents": {
-              setAgents(msg.agents ?? []);
+              const agents: AgentInfo[] = msg.agents ?? [];
+              setAgents(agents);
               setAgentsFetched(true);
+              // Clear any "restart to apply" flag whose agent has since restarted (by any path).
+              useRestartPending.getState().reconcile(agents);
               break;
             }
           }

@@ -30,6 +30,7 @@ export const vestadApiFixtures = {
             "rev": 3
           }
         },
+        "startedAt": "2026-01-01T00:00:00Z",
         "status": "alive",
         "ws_port": 4200
       },

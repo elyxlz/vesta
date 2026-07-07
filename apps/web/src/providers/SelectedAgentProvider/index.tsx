@@ -60,8 +60,12 @@ export function SelectedAgentProvider({
   const start = op("starting", () => startAgent(name), "start failed");
   const stop = op("stopping", () => stopAgent(name), "stop failed");
   // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
-  // success (the run callback throws on failure, so a failed op keeps the reminder). This is the single
-  // owner of clearing it, whichever surface (navbar button, agent menu) triggers the op.
+  // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
+  // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
+  // restart by any path — and this optimistic clear only hides the ~3s status-poll latency so the
+  // button vanishes immediately instead of flickering back. For host-access, which reconcile leaves
+  // alone (its mount needs a recreate a boot-time change can't confirm), this button IS the owner:
+  // it runs restartAgent, which recreates on mount drift and thus actually applies the grant.
   const applyPending = (
     operation: AgentOperation,
     run: () => Promise<unknown>,

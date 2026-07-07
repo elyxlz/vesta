@@ -40,7 +40,7 @@ function folderName(path: string): string {
 // can-edit toggle); an "add a folder" cell opens a dialog for the add flow (suggestions +
 // path). PUTs the whole list on every change.
 export function HostAccessCard() {
-  const { name: agentName } = useSelectedAgent();
+  const { name: agentName, agent } = useSelectedAgent();
   const markRestartPending = useRestartPending((s) => s.markPending);
   const [mounts, setMounts] = useState<HostMount[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,7 +96,8 @@ export function HostAccessCard() {
     try {
       const result = await setAgentMounts(agentName, next);
       setMounts(result.mounts);
-      if (result.restartRequired) markRestartPending(agentName, "host-access");
+      if (result.restartRequired)
+        markRestartPending(agentName, "host-access", agent.startedAt);
       return true;
     } catch (e) {
       setSaveError(errorMessage(e, "failed to update host access"));

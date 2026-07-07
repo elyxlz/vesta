@@ -26,7 +26,7 @@ const MODE_HINT: Record<PreemptMode, (agent: string) => string> = {
 // Toggling back to the mode that was loaded withdraws this card's flag — the loaded value is the
 // best available stand-in for what the running agent applied.
 export function PreemptModeCard() {
-  const { name: agentName } = useSelectedAgent();
+  const { name: agentName, agent } = useSelectedAgent();
   const markRestartPending = useRestartPending((s) => s.markPending);
   const clearRestartReason = useRestartPending((s) => s.clearReason);
   const [mode, setMode] = useState<PreemptMode | null>(null);
@@ -62,7 +62,7 @@ export function PreemptModeCard() {
     setPreemptMode(agentName, next)
       .then(() => {
         if (next === appliedMode) clearRestartReason(agentName, "preempt-mode");
-        else markRestartPending(agentName, "preempt-mode");
+        else markRestartPending(agentName, "preempt-mode", agent.startedAt);
       })
       .catch((e: unknown) => {
         setMode(previous);

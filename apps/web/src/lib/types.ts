@@ -19,6 +19,9 @@ export interface AgentInfo {
   status: AgentStatus;
   activityState: AgentActivityState;
   services: Record<string, ServiceInfo>;
+  // Container start time (RFC3339), absent for an agent that has never started. Changes on every
+  // restart, so it is the signal that clears a "restart to apply" flag (see use-restart-pending).
+  startedAt?: string;
 }
 
 export type AgentActivityState = "idle" | "thinking";
