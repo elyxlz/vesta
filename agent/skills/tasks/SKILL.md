@@ -46,11 +46,8 @@ tasks remind "Meeting" --at "2025-12-01T10:00:00" --tz "Europe/London"
 # Linked to a task
 tasks remind "Check progress" --task <id> --in-hours 1
 
-# Recurring
+# Recurring (hourly needs no datetime; daily/weekly/monthly/yearly take --at + --tz)
 tasks remind "Standup" --recurring daily --at "2025-12-01T10:30:00" --tz "America/New_York"
-tasks remind "Review" --recurring weekly --at "2025-12-06T17:00:00" --tz "America/New_York"
-tasks remind "Bills" --recurring monthly --at "2025-12-15T09:00:00" --tz "America/New_York"
-tasks remind "Birthday" --recurring yearly --at "2025-03-14T12:00:00" --tz "America/New_York"
 tasks remind "Check inbox" --recurring hourly
 
 # List, delete, update
@@ -70,47 +67,28 @@ tasks remind update <id> --message "New message"
 - `--message`: alternative to positional message argument
 
 ### Recurring Automations
-Recurring reminders double as scheduled automations. The message is delivered as a notification:
-```bash
-tasks remind "Summarize week ahead" --recurring weekly --at "2025-12-01T08:00:00" --tz "Europe/London"
-tasks remind "Archive completed tasks" --recurring weekly --at "2025-12-05T17:00:00" --tz "Europe/London"
-tasks remind "Check inbox" --recurring hourly
-```
-When a recurring reminder fires, treat the message as an instruction and act on it.
+Recurring reminders double as scheduled automations (see the `--recurring` examples above): the message is delivered as a notification, so when one fires, treat the message as an instruction and act on it.
 
 ## Behavior
 
 ### Auto-Generated Reminders
-When a task has a due date, 4 auto-generated reminders are created:
-- 1 week before due
-- 1 day before due
-- 1 hour before due
-- 15 minutes before due
+When a task has a due date, 4 auto-generated reminders fire: 1 week, 1 day, 1 hour, and 15 minutes before due.
 
 There is **no at-due fire**: when the due time itself is reached, no notification is emitted. If you want a fire at the exact due time (e.g. user says "remind me at 6pm to X"), set an explicit reminder with `tasks remind "X" --at "..." --tz "..."` instead of relying on `tasks add --due-datetime`.
 
-These are skipped if the trigger time is already in the past. They are cleaned up when:
-- The task is marked done (`--status done`)
-- The task is deleted (FK cascade)
-- They can also be individually deleted with `tasks remind delete <id>`
+Skipped if the trigger time is already past. Cleaned up when the task is marked done (`--status done`) or deleted (FK cascade); each can also be deleted individually with `tasks remind delete <id>`.
 
 ### Cascade Deletion
-- Deleting a task deletes all linked reminders (FK ON DELETE CASCADE)
-- Deleting a reminder does NOT affect the linked task
+Deleting a task deletes all linked reminders (FK ON DELETE CASCADE); deleting a reminder does NOT affect the linked task.
 
 ### Missed Reminders
 When the daemon restarts, any one-time reminders that should have fired while the daemon was down are immediately sent as missed notifications.
 
 ### Notification Files
-Written to the notifications directory as JSON:
-- Reminder: `*-tasks-reminder.json` with type `reminder`
-- Daemon death: `*-tasks-daemon_died.json` with type `daemon_died`
+JSON in the notifications dir: `*-tasks-reminder.json` (type `reminder`), `*-tasks-daemon_died.json` (type `daemon_died`).
 
 ## Data
-- SQLite DB: `~/.tasks/tasks.db`
-- Task metadata files: `~/.tasks/metadata/<id>.md`
-- Logs: `~/.tasks/logs/daemon.log`
-- PID file: `~/.tasks/serve.pid`
+DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; PID `~/.tasks/serve.pid`.
 
 ## Setup
 ```bash
