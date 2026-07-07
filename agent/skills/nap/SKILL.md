@@ -19,9 +19,9 @@ A nap costs a summarization pass and drops any verbatim detail you did not expli
 Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
 
 - `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit it for a silent nap.
-- `instructions` (required): the nap prompt below, plus at most a few exact values in flight that must survive verbatim (an exact command, a number, a path). Keep it short. `/compact` already preserves the conversation, so `instructions` only steers what the summary emphasizes; do not restate the session or paste a full state summary into it.
+- `prompt` (required): the nap prompt below, plus at most a few exact values in flight that must survive verbatim (an exact command, a number, a path). Keep it short. `/compact` already preserves the conversation, so `prompt` only steers what the summary emphasizes; do not restate the session or paste a full state summary into it.
 
-## The nap prompt (for `instructions`)
+## The nap prompt (for `prompt`)
 
 ```
 You are summarizing the recent history between a user and their AI guardian angel: their conversations, the tasks the angel has been doing, and the notifications that came in, important and less important. Your summary replaces everything before it, and the angel continues from it. Preserve everything the angel needs to pick up seamlessly: what has been going on, where things stand, and the exact details that matter. Drop the noise.

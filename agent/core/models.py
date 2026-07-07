@@ -107,11 +107,11 @@ class TurnSignals:
 @dc.dataclass(frozen=True)
 class PendingCompaction:
     """A deferred /compact scheduled between turns (compact_session only runs on an idle
-    session). instructions guide the summarizer; followup is an optional turn delivered after
+    session). prompt guides the summarizer; followup is an optional turn delivered after
     compacting; restart means restart into the compacted session afterward. The drain routes
     the followup to a restart-safe channel."""
 
-    instructions: str | None
+    prompt: str | None
     followup: str | None
     restart: bool
 

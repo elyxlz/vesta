@@ -363,7 +363,7 @@ async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -
     state.compacting = True
     compacted_ok = True
     try:
-        await compact_session(state=state, instructions=pending.instructions)
+        await compact_session(state=state, prompt=pending.prompt)
     except (ClaudeSDKError, OSError, RuntimeError, TimeoutError) as exc:
         compacted_ok = False
         logger.warning(f"compaction failed: {exc}")

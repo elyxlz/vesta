@@ -195,9 +195,9 @@ Your final two steps compact this conversation and restart into it, so you wake 
 2. Call `compact_context` with:
    - `followup`: the wake-up note below, with tonight's summary path filled in. Core delivers it to you on the far side of the restart.
    - `restart`: true, so Vesta restarts into the compacted session.
-   - `instructions`: the continuity prompt below, kept short. `/compact` already preserves the conversation, so `instructions` only steers what the summary emphasizes; do not paste a full state summary into it.
+   - `prompt`: the continuity prompt below, kept short. `/compact` already preserves the conversation, so `prompt` only steers what the summary emphasizes; do not paste a full state summary into it.
 
-Continuity prompt (for `instructions`):
+Continuity prompt (for `prompt`):
 
 ```
 Preserve continuity across the restart: the user's current state and tone, every open thread and commitment, and each in-flight task with its next action. Memory is already curated to disk, so drop resolved threads, verbose tool output, and file contents. Keep exact values (names, dates, amounts, paths) for anything still unresolved.

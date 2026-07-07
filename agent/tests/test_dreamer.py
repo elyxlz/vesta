@@ -125,9 +125,9 @@ async def test_compact_context_sets_nap_descriptor(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
 
-    await _tool_handler(state, config, "compact_context")({"instructions": "keep threads", "followup": "reflect briefly"})
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep threads", "followup": "reflect briefly"})
 
-    assert state.pending_compaction == vm.PendingCompaction(instructions="keep threads", followup="reflect briefly", restart=False)
+    assert state.pending_compaction == vm.PendingCompaction(prompt="keep threads", followup="reflect briefly", restart=False)
 
 
 @pytest.mark.anyio
@@ -135,17 +135,17 @@ async def test_compact_context_defaults_followup_none_and_restart_false(tmp_path
     config = _setup(tmp_path)
     state = vm.State()
 
-    await _tool_handler(state, config, "compact_context")({"instructions": "keep threads"})
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep threads"})
 
-    assert state.pending_compaction == vm.PendingCompaction(instructions="keep threads", followup=None, restart=False)
+    assert state.pending_compaction == vm.PendingCompaction(prompt="keep threads", followup=None, restart=False)
 
 
 @pytest.mark.anyio
-async def test_compact_context_rejects_empty_instructions(tmp_path):
+async def test_compact_context_rejects_empty_prompt(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
 
-    result = await _tool_handler(state, config, "compact_context")({"instructions": "   "})
+    result = await _tool_handler(state, config, "compact_context")({"prompt": "   "})
 
     assert state.pending_compaction is None
     assert "error" in result["content"][0]["text"]
@@ -161,7 +161,7 @@ async def test_compact_context_restart_only_true_on_real_true(tmp_path, restart_
     config = _setup(tmp_path)
     state = vm.State()
 
-    await _tool_handler(state, config, "compact_context")({"instructions": "keep", "restart": restart_arg})
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep", "restart": restart_arg})
 
     assert state.pending_compaction is not None
     assert state.pending_compaction.restart is expected
@@ -173,21 +173,21 @@ async def test_compact_context_null_followup_treated_as_absent(tmp_path):
     config = _setup(tmp_path)
     state = vm.State()
 
-    await _tool_handler(state, config, "compact_context")({"instructions": "keep", "followup": None})
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep", "followup": None})
 
     assert state.pending_compaction is not None
     assert state.pending_compaction.followup is None
 
 
 @pytest.mark.anyio
-async def test_compact_context_rejects_followup_leaked_into_instructions(tmp_path):
+async def test_compact_context_rejects_followup_leaked_into_prompt(tmp_path):
     """Malformed call (as seen in production): the model emits followup as an inline tool-call tag
-    inside the instructions string. The tool rejects it so the agent retries with proper args."""
+    inside the prompt string. The tool rejects it so the agent retries with proper args."""
     config = _setup(tmp_path)
     state = vm.State()
-    leaked = 'Preserve open threads.</instructions>\n<parameter name="followup">Tell the user you cleared your head.</parameter>'
+    leaked = 'Preserve open threads.</prompt>\n<parameter name="followup">Tell the user you cleared your head.</parameter>'
 
-    result = await _tool_handler(state, config, "compact_context")({"instructions": leaked})
+    result = await _tool_handler(state, config, "compact_context")({"prompt": leaked})
 
     assert state.pending_compaction is None
     assert "error" in result["content"][0]["text"]
@@ -236,7 +236,7 @@ async def _drain(tmp_path, *, followup, restart, restart_ok=True, compact_exc=No
     config = _setup(tmp_path)
     state = vm.State()
     state.client = _mock_compact_client()
-    state.pending_compaction = vm.PendingCompaction(instructions="keep", followup=followup, restart=restart)
+    state.pending_compaction = vm.PendingCompaction(prompt="keep", followup=followup, restart=restart)
     with (
         patch("core.loops.compact_session", new_callable=AsyncMock, side_effect=compact_exc),
         patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=restart_ok) as restart_mock,
@@ -350,7 +350,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     assert dying_queue.qsize() == 1, "message is in the queue"
 
     # Compaction finishes: the drain compacts, then requests the restart (via vestad).
-    state.pending_compaction = vm.PendingCompaction(instructions=None, followup="new day", restart=True)
+    state.pending_compaction = vm.PendingCompaction(prompt=None, followup="new day", restart=True)
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
         await _run_with_compaction_stream(state, config, lambda: drain_compaction_request(state=state, config=config), pre_tokens=1)
     restart.assert_awaited_once()  # restart fires after compaction (via vestad)

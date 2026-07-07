@@ -109,30 +109,28 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         "Compact this conversation at the next idle point (it needs an idle session). `followup` "
         "(optional) is a short instruction to your own next turn after compacting. `restart=true` "
         "(optional) restarts into the compacted session (the nightly dream); omit it for an in-place nap. "
-        "`instructions` is SHORT guidance for the summarizer, not a place to restate the conversation: "
+        "`prompt` is SHORT guidance for the summarizer, not a place to restate the conversation: "
         "/compact already preserves the history, so just steer what it keeps and name a few exact values "
         "that must survive verbatim. Do not paste a full state summary into it.",
         {
             "type": "object",
-            "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "instructions": {"type": "string"}},
-            "required": ["instructions"],
+            "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "prompt": {"type": "string"}},
+            "required": ["prompt"],
         },
     )
     async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        instructions = _opt_str(args["instructions"])
-        if not instructions:
-            return {"content": [{"type": "text", "text": "error: instructions required"}]}
+        prompt = _opt_str(args["prompt"])
+        if not prompt:
+            return {"content": [{"type": "text", "text": "error: prompt required"}]}
         # Reject a malformed call where followup/restart leaked in as tool-call tags inside the
-        # instructions string; the agent sees this and retries with proper separate arguments.
-        if "<parameter name=" in instructions or "</instructions>" in instructions:
-            return {
-                "content": [{"type": "text", "text": "error: pass followup and restart as separate arguments, not inside instructions. Retry."}]
-            }
+        # prompt string; the agent sees this and retries with proper separate arguments.
+        if "<parameter name=" in prompt or "</prompt>" in prompt:
+            return {"content": [{"type": "text", "text": "error: pass followup and restart as separate arguments, not inside prompt. Retry."}]}
         followup = _opt_str(args["followup"] if "followup" in args else None)
         # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
         raw_restart = args["restart"] if "restart" in args else False
         restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")
-        state.pending_compaction = vm.PendingCompaction(instructions=instructions, followup=followup or None, restart=restart)
+        state.pending_compaction = vm.PendingCompaction(prompt=prompt, followup=followup or None, restart=restart)
         logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
         return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
 
