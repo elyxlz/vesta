@@ -307,7 +307,28 @@ func toMarkdownV2(text string) string {
 	return b.String()
 }
 
+// requireManualContact blocks sending to an individual user unless they are a
+// saved contact, mirroring the WhatsApp guard. Individual users have positive
+// chat IDs; groups and channels have non-positive IDs and are exempt. Stops the
+// agent from messaging strangers it was never told to contact.
+func (tc *TelegramClient) requireManualContact(chatID int64) error {
+	if chatID <= 0 {
+		return nil
+	}
+	contact, err := tc.store.GetManualContact(chatID)
+	if err != nil {
+		return fmt.Errorf("failed to verify saved contacts: %v", err)
+	}
+	if contact == nil {
+		return fmt.Errorf("no saved contact found for chat %d. Ask the user who this is, then run add-contact --name <name> --chat-id %d", chatID, chatID)
+	}
+	return nil
+}
+
 func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	// Split long messages
 	if len(text) > MaxMessageLength {
 		chunks := splitMessage(text, MaxMessageLength)
@@ -361,6 +382,9 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 }
 
 func (tc *TelegramClient) SendFile(recipientID int64, filePath, caption string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return 0, fmt.Errorf("file not found: %s", filePath)
@@ -502,6 +526,9 @@ func parseInlineKeyboard(spec string) (tgbotapi.InlineKeyboardMarkup, bool) {
 // reply-to. Used when buttons/reply are present (no chunking: a button message is a single unit).
 // Plain sends with neither option still go through SendMessage so long-text chunking is preserved.
 func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, buttons string, replyTo int64) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	if buttons == "" && replyTo == 0 {
 		return tc.SendMessage(recipientID, text)
 	}
@@ -581,6 +608,9 @@ func (tc *TelegramClient) AnswerCallback(callbackID, text string, alert bool) er
 
 // SendVoice sends a voice note (best with .ogg/opus; other audio is sent as-is).
 func (tc *TelegramClient) SendVoice(recipientID int64, filePath, caption string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	if _, err := os.Stat(filePath); err != nil {
 		return 0, fmt.Errorf("file not found: %s", filePath)
 	}
