@@ -122,6 +122,12 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         instructions = _opt_str(args["instructions"])
         if not instructions:
             return {"content": [{"type": "text", "text": "error: instructions required"}]}
+        # Reject a malformed call where followup/restart leaked in as tool-call tags inside the
+        # instructions string; the agent sees this and retries with proper separate arguments.
+        if "<parameter name=" in instructions or "</instructions>" in instructions:
+            return {
+                "content": [{"type": "text", "text": "error: pass followup and restart as separate arguments, not inside instructions. Retry."}]
+            }
         followup = _opt_str(args["followup"] if "followup" in args else None)
         # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
         raw_restart = args["restart"] if "restart" in args else False

@@ -179,6 +179,20 @@ async def test_compact_context_null_followup_treated_as_absent(tmp_path):
     assert state.pending_compaction.followup is None
 
 
+@pytest.mark.anyio
+async def test_compact_context_rejects_followup_leaked_into_instructions(tmp_path):
+    """Malformed call (as seen in production): the model emits followup as an inline tool-call tag
+    inside the instructions string. The tool rejects it so the agent retries with proper args."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    leaked = 'Preserve open threads.</instructions>\n<parameter name="followup">Tell the user you cleared your head.</parameter>'
+
+    result = await _tool_handler(state, config, "compact_context")({"instructions": leaked})
+
+    assert state.pending_compaction is None
+    assert "error" in result["content"][0]["text"]
+
+
 # --- drain_compaction_request: compact, then route the follow-up ---
 
 
