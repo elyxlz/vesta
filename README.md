@@ -2,14 +2,15 @@
 
 A personal AI agent that lives in a Docker container, powered by Claude.
 
+Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. Invite-only.
+
 ## Why Vesta
 
 - **Opinionated and easy to set up.** One command to install, one command to start. No gateway, no infrastructure to manage.
-- **Bitter lesson pilled.** Nothing is hardcoded. Every way Vesta reaches the world (messaging, email, calendars) is just a skill it can read and rewrite. It can even edit its own code: by default it stays in sync with official updates, but you can let it fully rewrite itself.
-- **Self-improving.** Vesta has a powerful self-improvement core. It can edit its own source code, write new skills, and fix its own bugs.
+- **Self-improving.** Every way Vesta reaches the world (messaging, email, calendars) is a skill Vesta can read and rewrite. Vesta can edit their own source code, write new skills, and fix their own bugs: by default Vesta stays in sync with official updates, but you can let them fully rewrite themselves.
 - **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
 - **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic; the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
-- **Self-proliferating.** A Vesta can encourage and help other users onboard and create their own Vestas.
+- **Spreads by invitation.** Your Vesta can walk your friends through getting their own.
 - **Secure by default.** You write a constitution that Vesta must follow and can never edit, so your rules always hold. A security layer that screens for prompt-injection attacks and can only be overridden by you is on the roadmap.
 - **Built on Claude's own harness.** Benefits from Anthropic RL-maxing their models on it.
 
@@ -82,11 +83,12 @@ Use `vestad serve --standalone` to run in the foreground without systemd (for CI
 
 ### 2. Client
 
-Copy the host URL and API key from the server output:
+Copy the connect link from the server output:
 
 ```bash
-vesta connect https://<host>#<api-key>
+vesta connect <connect-link>
 vesta setup
 ```
 
-Or in the desktop app, enter the host URL and API key on the onboarding screen.
+Or in the desktop app, paste the connect link from the server output on the
+onboarding screen.

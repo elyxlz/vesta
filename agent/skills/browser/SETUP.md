@@ -28,11 +28,15 @@ with aggressive bot detection, run headed on a virtual display:
 
 ```bash
 apt-get install -y xvfb                                  # one-time
-screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
-DISPLAY=:99 browser launch --stealth
+browser launch --stealth                                 # that's it
 ```
 
-Add the Xvfb start line to the `## Services` section of `~/agent/skills/restart/SKILL.md` so it comes back up on container restart.
+No daemon, no `DISPLAY` export, no restart-skill entry. `browser launch --stealth` provisions the
+display itself: it defaults to `:99` (override with `DISPLAY`), checks whether an X server is up, and
+if not, clears any stale lock (an unclean shutdown leaves `/tmp/.X99-lock` + `/tmp/.X11-unix/X99`,
+which makes Xvfb refuse to start with "Server is already active") and starts Xvfb, flock-serialised so
+concurrent launches don't race. If it still can't come up, it degrades to headless instead of failing.
+One mechanism, lazy, self-healing: nothing to keep alive between calls.
 
 ## Remote assist (user takeover)
 

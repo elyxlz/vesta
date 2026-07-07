@@ -1,4 +1,5 @@
 import { setConnection } from "@/lib/connection";
+import { jsonInit } from "./client";
 
 export async function connectToServer(
   url: string,
@@ -11,15 +12,14 @@ export async function connectToServer(
     throw new Error("could not reach server");
   }
 
-  const resp = await fetch(`${normalized}/auth/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: apiKey }),
-  });
+  const resp = await fetch(
+    `${normalized}/auth/session`,
+    jsonInit("POST", { api_key: apiKey }),
+  );
 
   if (!resp.ok) {
     throw new Error(
-      resp.status === 401 ? "invalid API key" : "session creation failed",
+      resp.status === 401 ? "invalid api key" : "session creation failed",
     );
   }
 

@@ -3,7 +3,6 @@ import logging
 import threading
 from pathlib import Path
 from dataclasses import dataclass
-from .settings import MicrosoftSettings
 
 
 @dataclass
@@ -23,7 +22,7 @@ class MicrosoftContext:
     base_url: str
     upload_chunk_size: int
     folders: dict[str, str]
-    settings: MicrosoftSettings
+    notify_file: Path | None = None
     calendar_notify_thresholds: list[int] | None = None
 
     def get_calendar_notify_thresholds(self) -> list[int]:

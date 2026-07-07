@@ -103,17 +103,14 @@ def auth_setup(api_key: str) -> None:
 
 
 def auth_status() -> None:
-    source = None
-    key: str | None = None
     if os.environ.get("EXA_API_KEY"):
-        source = "env:EXA_API_KEY"
-        key = os.environ["EXA_API_KEY"]
-    elif _load_key_from_file():
-        source = f"file:{CONFIG_FILE}"
-        key = _load_key_from_file()
-    elif _load_key_from_keeper():
-        source = "keeper:Exa API"
-        key = _load_key_from_keeper()
+        source, key = "env:EXA_API_KEY", os.environ["EXA_API_KEY"]
+    elif file_key := _load_key_from_file():
+        source, key = f"file:{CONFIG_FILE}", file_key
+    elif keeper_key := _load_key_from_keeper():
+        source, key = "keeper:Exa API", keeper_key
+    else:
+        source, key = None, None
 
     if not key:
         print(
@@ -325,7 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
     auth_sub = auth.add_subparsers(dest="auth_cmd", required=True)
     auth_setup_p = auth_sub.add_parser("setup", help="Save API key to ~/.exa/config.json")
     auth_setup_p.add_argument("--api-key", required=True)
-    auth_sub.add_parser("status", help="Show auth status")
+    auth_setup_p.set_defaults(func=lambda args: auth_setup(args.api_key))
+    auth_sub.add_parser("status", help="Show auth status").set_defaults(func=lambda args: auth_status())
 
     # search
     s = sub.add_parser("search", help="Search the web")
@@ -338,11 +336,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--start-published", default=None, help="YYYY-MM-DD")
     s.add_argument("--end-published", default=None, help="YYYY-MM-DD")
     _add_content_flags(s)
+    s.set_defaults(func=cmd_search)
 
     # answer
     a = sub.add_parser("answer", help="Get a cited answer to a question")
     a.add_argument("question")
     a.add_argument("--text", action="store_true", help="Include full text of citations")
+    a.set_defaults(func=cmd_answer)
 
     # similar
     sim = sub.add_parser("similar", help="Find pages similar to a URL")
@@ -352,6 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--include-domain", action="append", default=None)
     sim.add_argument("--exclude-domain", action="append", default=None)
     _add_content_flags(sim)
+    sim.set_defaults(func=cmd_similar)
 
     # contents
     c = sub.add_parser("contents", help="Fetch text/highlights/summary for URLs")
@@ -366,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="QUERY",
     )
     c.add_argument("--max-chars", type=int, default=None)
+    c.set_defaults(func=cmd_contents)
 
     # research
     r = sub.add_parser("research", help="Deep research (async)")
@@ -379,10 +381,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="exa-research",
     )
     r.add_argument("--wait", action="store_true", help="Poll until task completes (up to 10 min)")
+    r.set_defaults(
+        func=lambda args: (
+            cmd_research(args) if args.topic else parser.error("exa research requires a topic (or use `exa research status <id>`)")
+        )
+    )
 
     # `exa research status <id>`
     r_status = r_sub.add_parser("status", help="Poll a research task by ID")
     r_status.add_argument("id")
+    r_status.set_defaults(func=cmd_research_status)
 
     return parser
 
@@ -390,32 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-
-    if args.command == "auth":
-        if args.auth_cmd == "setup":
-            auth_setup(args.api_key)
-        elif args.auth_cmd == "status":
-            auth_status()
-        return
-
-    if args.command == "search":
-        cmd_search(args)
-    elif args.command == "answer":
-        cmd_answer(args)
-    elif args.command == "similar":
-        cmd_similar(args)
-    elif args.command == "contents":
-        cmd_contents(args)
-    elif args.command == "research":
-        if getattr(args, "research_cmd", None) == "status":
-            cmd_research_status(args)
-        else:
-            if not args.topic:
-                parser.error("exa research requires a topic (or use `exa research status <id>`)")
-            cmd_research(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+    args.func(args)
 
 
 if __name__ == "__main__":

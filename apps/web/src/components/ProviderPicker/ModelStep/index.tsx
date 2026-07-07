@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldDescription,
-} from "@/components/ui/field";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
 
 type OpenRouterModelOption = openrouterProvider.OpenRouterModelOption;
 import { formatTokens } from "@/lib/format";
 import { ProviderIcon } from "../ProviderIcon";
+import { ProviderStep } from "../ProviderStep";
 import { fuzzyMatch } from "../fuzzy";
 
 export function ModelStep({
@@ -21,6 +16,8 @@ export function ModelStep({
   models,
   allowCustom = true,
   submitLabel = "continue",
+  logo,
+  onCancel,
 }: {
   initialModel: string;
   onModelChange?: (model: string) => void;
@@ -30,6 +27,8 @@ export function ModelStep({
   models?: OpenRouterModelOption[];
   allowCustom?: boolean;
   submitLabel?: string;
+  logo?: ReactNode;
+  onCancel?: () => void;
 }) {
   const isFixed = models !== undefined;
   const [model, setModelInternal] = useState(
@@ -81,24 +80,22 @@ export function ModelStep({
 
   const canContinue = model.trim() !== "";
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canContinue) return;
-    onSubmit(model.trim());
-  };
-
   return (
-    <form onSubmit={submit} className="flex w-full flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">pick a model</h2>
-        <FieldDescription>
-          {isFixed ? "choose a model." : "top models on OpenRouter this week."}
-        </FieldDescription>
-      </div>
-
+    <ProviderStep
+      logo={logo}
+      title="pick a model"
+      subtitle={
+        isFixed ? "choose a model." : "top models on OpenRouter this week."
+      }
+      submitLabel={submitLabel}
+      submitDisabled={!canContinue}
+      onSubmit={() => {
+        if (canContinue) onSubmit(model.trim());
+      }}
+      onCancel={onCancel}
+    >
       <FieldGroup className="w-full gap-3">
         <Field>
-          <FieldLabel htmlFor="or-model-search">Model</FieldLabel>
           {isFixed ? (
             <ModelCardList
               models={filtered}
@@ -150,11 +147,7 @@ export function ModelStep({
           )}
         </Field>
       </FieldGroup>
-
-      <Button type="submit" className="w-full" disabled={!canContinue}>
-        {submitLabel}
-      </Button>
-    </form>
+    </ProviderStep>
   );
 }
 
@@ -220,17 +213,23 @@ function ModelCard({
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
         <span className="truncate text-[11px] text-muted-foreground">
-          {model.author}
-          {model.context_length
-            ? ` · ${formatTokens(model.context_length)} ctx`
-            : ""}
-          {formatPrice(
-            model.input_price,
-            model.output_price,
-            model.cache_read_price,
-          )
-            ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
-            : ""}
+          {model.note ? (
+            model.note
+          ) : (
+            <>
+              {model.author}
+              {model.context_length
+                ? ` · ${formatTokens(model.context_length)} ctx`
+                : ""}
+              {formatPrice(
+                model.input_price,
+                model.output_price,
+                model.cache_read_price,
+              )
+                ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
+                : ""}
+            </>
+          )}
         </span>
       </div>
     </button>

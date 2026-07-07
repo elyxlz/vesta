@@ -18,9 +18,6 @@ class ClaudeSDKError(Exception):
     """Base error raised by the transport (resume failure, CLI crash, timeouts)."""
 
 
-# --- Content blocks ---
-
-
 @dc.dataclass
 class TextBlock:
     text: str
@@ -42,13 +39,14 @@ class ToolUseBlock:
 ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock
 
 
-# --- Messages ---
-
-
 @dc.dataclass
 class AssistantMessage:
     content: list[ContentBlock]
     model: str | None = None
+    # True when the claude CLI recorded this turn as an upstream API error (transcript
+    # `isApiErrorMessage`), so callers can distinguish a real error from the agent merely
+    # writing about one.
+    is_api_error: bool = False
 
 
 @dc.dataclass
@@ -81,9 +79,6 @@ class ResultMessage:
 Message = AssistantMessage | ResultMessage | SystemMessage | RateLimitEvent
 
 
-# --- Hooks ---
-
-
 @dc.dataclass
 class HookContext:
     """Opaque context handed to hook callbacks. Empty, like the SDK's."""
@@ -95,18 +90,16 @@ class HookMatcher:
     hooks: list[HookCallback] = dc.field(default_factory=list)
 
 
-# --- Client options ---
-
-
 @dc.dataclass
 class ClaudeAgentOptions:
     system_prompt: str | None = None
     model: str | None = None
     betas: list[str] = dc.field(default_factory=list)
-    # Effective context window, when the user has chosen one. Drives the context-usage
-    # percentage; None falls back to the 200k/1M heuristic. claude-code itself is told
-    # via CLAUDE_CODE_MAX_CONTEXT_TOKENS in the launch env (see client.build_client_options).
-    max_context_tokens: int | None = None
+    # The window the context-usage percentage is reported against, supplied by the caller so
+    # cc_sdk holds no model-specific constants. claude-code's own autocompact threshold is told
+    # separately via CLAUDE_CODE_MAX_CONTEXT_TOKENS in the launch env (see
+    # client.build_client_options). None -> usage reports a 0 window (nothing to report against).
+    context_window: int | None = None
     hooks: dict[HookEvent, list[HookMatcher]] = dc.field(default_factory=dict)
     permission_mode: str = "default"
     can_use_tool: tp.Callable[..., tp.Any] | None = None

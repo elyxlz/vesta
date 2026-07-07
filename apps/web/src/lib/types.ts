@@ -1,7 +1,9 @@
 export type AgentStatus =
   | "alive"
   | "starting"
+  | "setting_up"
   | "not_authenticated"
+  | "unprovisioned"
   | "restarting"
   | "stopped"
   | "dead"
@@ -17,11 +19,12 @@ export interface AgentInfo {
   status: AgentStatus;
   activityState: AgentActivityState;
   services: Record<string, ServiceInfo>;
+  // Container start time (RFC3339), absent for an agent that has never started. Changes on every
+  // restart, so it is the signal that clears a "restart to apply" flag (see use-restart-pending).
+  startedAt?: string;
 }
 
 export type AgentActivityState = "idle" | "thinking";
-
-export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
 
 export type InputMethod = "voice" | "typed";
 
@@ -41,7 +44,23 @@ export type VestaEvent =
     })
   | (BaseEvent & { type: "tool_end"; tool: string; subagent?: boolean })
   | (BaseEvent & { type: "error"; text: string })
-  | (BaseEvent & { type: "notification"; source: string; summary: string })
+  | (BaseEvent & {
+      type: "notification";
+      source: string;
+      summary: string;
+      // Enriched fields (present on notifications emitted since the history feature shipped).
+      notif_type?: string;
+      sender?: string;
+      fields?: Record<string, string>; // targetable structured extras, e.g. { chat_name: "Bride squad" }
+      decided?: "interrupt" | "pool"; // effective decision given the rules
+      notif_id?: string; // file stem; pending while its file is on disk, cleared once processed
+    })
+  | (BaseEvent & {
+      // Live broadcast-only delta: emitted when the agent processes a notification and deletes its
+      // file. The view seeds pending from the connect snapshot, then removes this id when it arrives.
+      type: "notification_cleared";
+      notif_id: string;
+    })
   | (BaseEvent & {
       type: "subagent_start";
       agent_id: string;
@@ -53,10 +72,12 @@ export type VestaEvent =
       agent_type: string;
     })
   | (BaseEvent & {
-      type: "history";
-      events: VestaEvent[];
+      // The connect handshake: one event seeding a client with current agent state. Each domain
+      // (chat, notifications, …) is its own object so new connect-time state extends without churn.
+      type: "snapshot";
       state: AgentActivityState;
-      cursor: number | null;
+      chat: { events: VestaEvent[]; cursor: number | null };
+      notifications: { pending: string[] };
     });
 
 export type LogEvent =
@@ -74,4 +95,5 @@ export interface GatewayVersionInfo {
   update_available: boolean | null;
   branch?: string | null;
   channel?: ReleaseChannel;
+  auto_update?: boolean;
 }

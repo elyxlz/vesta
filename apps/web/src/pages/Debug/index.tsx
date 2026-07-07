@@ -1,4 +1,5 @@
 import { ChatBubble } from "@/components/Chat/ChatBubble";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Orb } from "@/components/Orb";
 import { orbColors, type OrbVisualState } from "@/components/Orb/styles";
 import type { VestaEvent } from "@/lib/types";
@@ -6,13 +7,9 @@ import type { VestaEvent } from "@/lib/types";
 const states: OrbVisualState[] = [
   "alive",
   "thinking",
-  "booting",
-  "authenticating",
-  "starting",
-  "stopping",
+  "busy",
+  "off",
   "deleting",
-  "dead",
-  "loading",
 ];
 
 const ts = "2026-04-19T12:34:00Z";
@@ -158,6 +155,7 @@ const mockChat: { label: string; events: VestaEvent[] }[] = [
 ];
 
 export function Debug() {
+  const isMobile = useIsMobile();
   return (
     <div className="flex flex-1 flex-col gap-12 overflow-y-auto p-8">
       <section className="flex flex-col gap-6">
@@ -198,7 +196,7 @@ export function Debug() {
               </span>
               <div className="flex flex-col gap-1.5 rounded-lg border border-border p-3">
                 {events.map((event, i) => (
-                  <ChatBubble key={i} event={event} />
+                  <ChatBubble key={i} event={event} isMobile={isMobile} />
                 ))}
               </div>
             </div>

@@ -33,7 +33,7 @@ vestad/tests/                   (the actual suites — run via `cargo test -p ve
     ports.rs        WS port uniqueness across users
     lifecycle.rs    independent stop/destroy across users
 
-  live/           live agent e2e — requires Claude credentials (4 tests)
+  live/           live agent e2e — requires Claude credentials (5 tests)
     common.rs       shared live agent setup, notifications, container helpers
     file_ops.rs     notification-driven file create/modify
     interrupt.rs    interrupt mid-task: counting task aborted, redirect task completes
@@ -49,19 +49,19 @@ vestad/tests/                   (the actual suites — run via `cargo test -p ve
 
 ```bash
 ./check.sh integration                    # what CI runs: server + multi_user + oauth
-./check.sh live                           # live e2e (needs credentials)
+./check.sh live                           # live e2e (needs CLAUDE_CREDENTIALS)
 cargo test -p vestad --test server        # server tests only (builds vestad first)
 cargo test -p vestad --test multi_user    # multi-user tests only
-cargo test -p vestad --test live          # live e2e (needs credentials)
+cargo test -p vestad --test live          # live e2e (needs CLAUDE_CREDENTIALS)
 cargo test -p vestad --test oauth         # oauth endpoint checks
 cargo test -p vestad --bins               # vestad unit tests only (NOT these suites)
 ```
 
 ## Notes
 
-- Live tests skip when `~/.claude/.credentials.json` is missing. Locally they use your own Claude session; agents run with `AGENT_MODEL=sonnet` (the harness restarts each agent after credential injection so the override applies to the whole run).
+- Live tests skip when `CLAUDE_CREDENTIALS` is unset (no `~/.claude/.credentials.json`). Set it from a Claude OAuth blob to run them; agents sign in to Claude on `sonnet` (override with `LIVE_TEST_MODEL`), and the harness restarts each agent after sign-in so the provider applies to the whole run.
 - All live tests share ONE agent (`lock_shared_live_agent` in common.rs): real first-start runs once for the whole suite, the harness then waits for the agent to settle (first-start keeps going after the agent reports alive, so tests must not start until the log goes quiet), and the tests serialize against it via a mutex (notifications, especially interrupts, are global to the agent's conversation).
-- In CI, the `test-live` job runs **only on the release event** (not on PRs — live tests are slow and spend API tokens) and **gates the release**: the `release` and `push-image` jobs depend on it, so a live-test failure blocks publishing artifacts and the `:latest` image. It injects the `CLAUDE_CREDENTIALS` secret, which must hold its **own dedicated OAuth lineage** (seeded once from a separate `claude.ai/oauth/authorize` login, never copied from a developer's `~/.claude` — refresh tokens can rotate on use, so a shared lineage dies as soon as the other party refreshes). The `refresh-credentials.yml` workflow is the only thing allowed to refresh it: every 6h it refreshes whenever <8h of validity remain, so the secret always carries >=2h. A **missing** secret (forks) skips the live tests; a **present-but-stale/malformed** secret **fails** the release, since shipping without live coverage having run means the credential pipeline is broken.
+- In CI, the `test-live` job runs **only on the release event** (not on PRs — live tests are slow and spend API tokens) and **gates the release**: the `release` and `push-image` jobs depend on it, so a live-test failure blocks publishing artifacts and the `:latest` image. It writes the `CLAUDE_CREDENTIALS` secret (a Claude OAuth blob) to `~/.claude/.credentials.json`; the SDK refreshes the access token at runtime from the refresh token. A **missing** secret (forks) skips the live tests.
 - All tests require a working local Docker daemon.
 - The agent image: vestad builds `vesta:local` from the checkout automatically (it finds `vestad/Dockerfile`). Set `VESTAD_AGENT_IMAGE` to pin a specific image instead — CI does this to test the image built from the PR.
 - Multi-user and live tests use `unique_user()` for Docker container isolation across concurrent and repeated runs.

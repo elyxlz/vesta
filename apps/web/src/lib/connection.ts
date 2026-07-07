@@ -3,11 +3,43 @@ import type { VestaEvent } from "@/lib/types";
 
 const STORAGE_KEY = "vesta-connection";
 
+/** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
+ * `vestad status` embeds so opening the link connects without pasting the key.
+ * Pure (takes the raw hash) so it unit-tests without a DOM. Null when absent. */
+export function parseConnectKey(hash: string): string | null {
+  if (!hash.startsWith("#")) return null;
+  return new URLSearchParams(hash.slice(1)).get("k");
+}
+
+/** Split a full connect link (`https://host/app#k=<key>`, printed by `vestad
+ * status`) into the vestad origin and the key, so the native app's self-host
+ * form can take a single paste instead of two fields. Drops the `/app` path
+ * and the fragment to recover the origin. Null when the input isn't a link. */
+export function parseConnectLink(
+  input: string,
+): { host: string; key: string } | null {
+  const trimmed = input.trim();
+  const hashIndex = trimmed.indexOf("#");
+  if (hashIndex === -1) return null;
+  const key = parseConnectKey(trimmed.slice(hashIndex));
+  if (!key) return null;
+  const host = trimmed
+    .slice(0, hashIndex)
+    .replace(/\/+$/, "")
+    .replace(/\/app$/, "");
+  if (!host) return null;
+  return { host, key };
+}
+
 export interface ConnectionConfig {
   url: string;
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  // Hosted (vesta.run) connections carry NO refresh token — the apex session
+  // cookie is the refresh root. On expiry the app re-runs the PKCE authorize
+  // flow (see token-refresh.ts) instead of calling vestad /auth/refresh.
+  hosted?: boolean;
 }
 
 // ── Storage backend ────────────────────────────────────────────
@@ -30,7 +62,8 @@ let cached: ConnectionConfig | null | undefined;
 async function readFromStore(): Promise<ConnectionConfig | null> {
   const store = await getStore();
   const val = await store.get<ConnectionConfig>(STORAGE_KEY);
-  if (val && val.url && val.accessToken && val.refreshToken) return val;
+  if (val && val.url && val.accessToken && (val.refreshToken || val.hosted))
+    return val;
   return null;
 }
 
@@ -51,13 +84,12 @@ function readFromLocalStorage(): ConnectionConfig | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // LEGACY-CLEANUP(#726): drop this branch once pre-token (apiKey) installs are
-    // assumed cleared; it discards the old auth format so it can't be misread.
-    if (parsed.apiKey && !parsed.accessToken) {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    if (parsed.url && parsed.accessToken && parsed.refreshToken) return parsed;
+    if (
+      parsed.url &&
+      parsed.accessToken &&
+      (parsed.refreshToken || parsed.hosted)
+    )
+      return parsed;
     return null;
   } catch {
     return null;
@@ -80,6 +112,18 @@ export function getConnection(): ConnectionConfig | null {
     cached = readFromLocalStorage();
   }
   return cached;
+}
+
+/** Display hostname of the current connection (falls back to the raw url if it
+ * doesn't parse, "" when not connected). */
+export function connectionHostname(): string {
+  const conn = getConnection();
+  if (!conn) return "";
+  try {
+    return new URL(conn.url).hostname;
+  } catch {
+    return conn.url;
+  }
 }
 
 export function setConnection(
@@ -105,6 +149,31 @@ export function setConnection(
   localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 }
 
+/**
+ * Persist a hosted (vesta.run) connection: the PKCE-minted access token, no
+ * refresh token. `url` is this box's own origin (the SPA talks to its own
+ * vestad). On expiry the app re-authorizes rather than refreshing.
+ */
+export function setHostedConnection(
+  url: string,
+  accessToken: string,
+  expiresIn: number,
+): void {
+  const normalized = url.replace(/\/+$/, "");
+  const config: ConnectionConfig = {
+    url: normalized,
+    accessToken,
+    refreshToken: "",
+    expiresAt: Date.now() + expiresIn * 1000,
+    hosted: true,
+  };
+  cached = config;
+  if (isTauri) {
+    writeToStore(config);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+}
+
 export function updateTokens(
   accessToken: string,
   refreshToken: string,
@@ -121,10 +190,6 @@ export function clearConnection(): void {
   if (isTauri) {
     deleteFromStore();
   }
-}
-
-export function isConnected(): boolean {
-  return getConnection() !== null;
 }
 
 export function isTokenExpiringSoon(): boolean {

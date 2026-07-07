@@ -23,7 +23,7 @@ export function NewAgent() {
   const step = useOnboarding((s) => s.step);
   const setStep = useOnboarding((s) => s.setStep);
   const [agentName, setAgentName] = useState("");
-  const [seedPersonality, setSeedPersonality] = useState<string | null>(null);
+  const [personality, setPersonality] = useState<string | null>(null);
   // The full provider result from the picker — carries credentials/key plus the
   // chosen model and context window, all forwarded verbatim to setProvider.
   const [providerResult, setProviderResult] = useState<ProviderResult | null>(
@@ -37,27 +37,26 @@ export function NewAgent() {
   }, []);
 
   useEffect(() => {
-    if (
-      step !== "creating" ||
-      !agentName ||
-      !seedPersonality ||
-      !providerResult
-    )
+    if (step !== "creating" || !agentName || !personality || !providerResult)
       return;
     let cancelled = false;
     (async () => {
       try {
         // Phase 1: create the empty agent container.
-        await createAgent(agentName, seedPersonality);
+        await createAgent(agentName);
         if (cancelled) return;
 
         // Phase 2: wait for the agent's HTTP server to be reachable.
         await waitUntilRunning(agentName, START_TIMEOUT_MS);
         if (cancelled) return;
 
-        // Phase 3: provision the provider via POST /agents/{name}/provider.
-        // The picker's result carries the chosen model + context window.
-        await setProvider(agentName, providerResult);
+        // Phase 3: set credentials + preferences (provider, personality, model, context, timezone).
+        await setProvider(
+          agentName,
+          providerResult,
+          personality ?? undefined,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
         if (cancelled) return;
 
         // Phase 4: wait for the provision-triggered restart to settle.
@@ -75,7 +74,7 @@ export function NewAgent() {
     return () => {
       cancelled = true;
     };
-  }, [step, agentName, seedPersonality, providerResult, setStep]);
+  }, [step, agentName, personality, providerResult, setStep]);
 
   const content = (() => {
     if (step === "provider")
@@ -94,7 +93,7 @@ export function NewAgent() {
       return (
         <PersonalityStep
           onPicked={(name) => {
-            setSeedPersonality(name);
+            setPersonality(name);
             setStep("creating");
           }}
         />

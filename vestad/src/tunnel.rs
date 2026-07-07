@@ -12,12 +12,6 @@ pub struct TunnelConfig {
     pub dns_record_id: Option<String>,
 }
 
-struct CloudflareEnv {
-    api_token: String,
-    account_id: String,
-    zone_id: String,
-}
-
 /// Self-hosted (BYOK) Cloudflare credentials, persisted to `cloudflare.json`.
 ///
 /// The public vestad binary ships **no** Cloudflare token — a self-hoster brings
@@ -43,18 +37,23 @@ pub fn has_cf_creds(config_dir: &Path) -> bool {
             && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
 }
 
-fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    let path = cf_creds_path(config_dir);
-    std::fs::write(&path, serde_json::to_string_pretty(creds).unwrap())
-        .map_err(|e| format!("failed to write cloudflare creds: {}", e))?;
+/// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
+/// "persist a secret config file" pattern; `what` names the file in write errors.
+fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+    }
+    std::fs::write(path, contents).map_err(|e| format!("failed to write {what}: {}", e))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).ok();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
     }
     Ok(())
+}
+
+fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
+    write_secret_file(&cf_creds_path(config_dir), &serde_json::to_string_pretty(creds).unwrap(), "cloudflare creds")
 }
 
 /// Resolve Cloudflare credentials for self-hosted tunnel management.
@@ -62,14 +61,10 @@ fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), Strin
 /// Order: the saved `cloudflare.json` (written by `vestad connect` /
 /// first-run setup), then env vars (power users + CI). There is NO baked
 /// build-time token anymore — the public binary carries no shared credential.
-fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
+fn cf_env(config_dir: &Path) -> Result<CloudflareCreds, String> {
     if let Ok(data) = std::fs::read_to_string(cf_creds_path(config_dir)) {
-        if let Ok(c) = serde_json::from_str::<CloudflareCreds>(&data) {
-            return Ok(CloudflareEnv {
-                api_token: c.api_token,
-                account_id: c.account_id,
-                zone_id: c.zone_id,
-            });
+        if let Ok(creds) = serde_json::from_str::<CloudflareCreds>(&data) {
+            return Ok(creds);
         }
     }
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
@@ -79,7 +74,7 @@ fn cf_env(config_dir: &Path) -> Result<CloudflareEnv, String> {
         std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
     let zone_id =
         std::env::var("CLOUDFLARE_ZONE_ID").map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
-    Ok(CloudflareEnv { api_token, account_id, zone_id })
+    Ok(CloudflareCreds { api_token, account_id, zone_id })
 }
 
 fn prompt(label: &str) -> Result<String, String> {
@@ -202,7 +197,7 @@ fn cf_request(
     Ok(resp)
 }
 
-fn get_zone_domain(env: &CloudflareEnv) -> Result<String, String> {
+fn get_zone_domain(env: &CloudflareCreds) -> Result<String, String> {
     let url = format!("{}/zones/{}", CF_API_BASE, env.zone_id);
     let resp = cf_request("GET", &url, &env.api_token, None)?;
     resp["result"]["name"]
@@ -211,7 +206,7 @@ fn get_zone_domain(env: &CloudflareEnv) -> Result<String, String> {
         .ok_or_else(|| "failed to get domain name from zone".to_string())
 }
 
-fn delete_tunnel_if_exists(env: &CloudflareEnv, tunnel_name: &str) {
+fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
     let list_url = format!(
         "{}/accounts/{}/cfd_tunnel?name={}",
         CF_API_BASE, env.account_id, tunnel_name
@@ -233,7 +228,7 @@ fn delete_tunnel_if_exists(env: &CloudflareEnv, tunnel_name: &str) {
     }
 }
 
-fn delete_dns_record_if_exists(env: &CloudflareEnv, subdomain: &str) {
+fn delete_dns_record_if_exists(env: &CloudflareCreds, subdomain: &str) {
     let domain = match get_zone_domain(env) {
         Ok(d) => d,
         Err(_) => return,
@@ -266,6 +261,14 @@ pub fn get_tunnel_config(config_dir: &Path) -> Option<TunnelConfig> {
     let path = tunnel_config_path(config_dir);
     let data = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&data).ok()
+}
+
+/// Drop the saved tunnel config WITHOUT touching Cloudflare. Used when the box
+/// can't manage the remote tunnel (no creds — e.g. an orphaned `*.vesta.run`
+/// tunnel left behind on a now-self-hosted box) so future boots stop retrying a
+/// tunnel that can never register.
+pub fn forget_tunnel(config_dir: &Path) {
+    std::fs::remove_file(tunnel_config_path(config_dir)).ok();
 }
 
 const ANIMALS: &[&str] = &[
@@ -339,7 +342,7 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // seeded config as-is. This is the load-bearing half of removing the baked
     // fleet-wide token: a managed box can run its one tunnel but cannot touch the
     // zone or any other tunnel.
-    if std::env::var("VESTA_MANAGED").is_ok() {
+    if crate::is_cloud_managed() {
         return get_tunnel_config(config_dir).ok_or_else(|| {
             "managed mode: no tunnel.json seeded by the control plane".to_string()
         });
@@ -433,17 +436,7 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         dns_record_id,
     };
 
-    let config_path = tunnel_config_path(config_dir);
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| format!("failed to write tunnel config: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).ok();
-    }
+    write_secret_file(&tunnel_config_path(config_dir), &serde_json::to_string_pretty(&config).unwrap(), "tunnel config")?;
 
     tracing::info!(hostname = %hostname, "tunnel ready");
     Ok(config)
@@ -549,10 +542,12 @@ fn set_executable(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("chmod failed: {}", e))
 }
 
-pub async fn start_tunnel(
+/// Spawn one cloudflared run for the configured tunnel. Returns the child and
+/// the loopback port of its metrics server (for /ready probing).
+async fn start_tunnel(
     config_dir: &Path,
     port: u16,
-) -> Result<(tokio::process::Child, String), String> {
+) -> Result<(tokio::process::Child, u16), String> {
     let tc = get_tunnel_config(config_dir)
         .ok_or("no tunnel configured — run `vestad tunnel setup <subdomain>` first")?;
 
@@ -574,17 +569,29 @@ pub async fn start_tunnel(
     std::fs::write(&cf_config_path, &cf_config)
         .map_err(|e| format!("failed to write cloudflared config: {}", e))?;
 
+    // Loopback metrics server: exposes cloudflared's /ready endpoint, which the
+    // supervisor probes for registered edge connections. Bind-and-drop to pick a
+    // free port; if something grabs it before cloudflared does, cloudflared exits
+    // and the supervisor respawns with a fresh port.
+    let metrics_port = alloc_loopback_port()?;
+    let metrics_addr = format!("127.0.0.1:{metrics_port}");
+
     // Force HTTP/2 over TCP instead of the QUIC/UDP default. Home and laptop NAT
     // devices aggressively time out idle UDP flows, which silently drops the
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
     let mut child = tokio::process::Command::new(cloudflared)
         .args([
-            "tunnel", "--protocol", "http2", "--config", cf_config_path.to_str().unwrap(),
+            "tunnel", "--protocol", "http2", "--metrics", &metrics_addr,
+            "--config", cf_config_path.to_str().unwrap(),
             "run", "--token", &tc.tunnel_token,
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
+        // SIGKILL the child if its handle is dropped without an explicit kill
+        // (supervisor task aborted, runtime torn down by a panic) so cloudflared
+        // is never orphaned holding the hostname.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("failed to start cloudflared: {}", e))?;
 
@@ -605,8 +612,261 @@ pub async fn start_tunnel(
         });
     }
 
-    let url = format!("https://{}", tc.hostname);
-    Ok((child, url))
+    Ok((child, metrics_port))
+}
+
+/// Bind-and-drop an ephemeral loopback port for cloudflared's metrics server.
+fn alloc_loopback_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("failed to allocate metrics port: {}", e))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("failed to read metrics port: {}", e))?;
+    Ok(addr.port())
+}
+
+/// How long boot-time pre-flight waits for cloudflared to register an edge
+/// connection before declaring the saved tunnel dead. Generous enough to absorb
+/// a slow first connect, short enough not to stall startup.
+const PREFLIGHT_READY_TIMEOUT_SECS: u64 = 20;
+const PREFLIGHT_POLL_INTERVAL_MS: u64 = 500;
+
+/// Credential-free boot check that the saved tunnel can actually register.
+///
+/// Spawns one short-lived cloudflared and polls its /ready endpoint until it
+/// reports a registered edge connection, then kills it (the supervisor owns the
+/// long-lived child). Returns `false` if cloudflared exits early — e.g.
+/// "Unauthorized: Tunnel not found" when the tunnel was deleted server-side or
+/// its token revoked — or never registers within PREFLIGHT_READY_TIMEOUT_SECS.
+/// This relies only on cloudflared's local /ready, so it works on a box that
+/// holds no Cloudflare credentials and can't query the API.
+pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
+    let (mut child, metrics_port) = match start_tunnel(config_dir, port).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!("tunnel pre-flight could not start cloudflared: {e}");
+            return false;
+        }
+    };
+    let probe_client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(READY_PROBE_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("tunnel pre-flight probe client unavailable: {e}");
+            child.kill().await.ok();
+            return false;
+        }
+    };
+    let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(PREFLIGHT_READY_TIMEOUT_SECS);
+    let ready = loop {
+        // cloudflared gave up on its own (dead tunnel / revoked token).
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            break false;
+        }
+        let registered = match probe_client.get(&probe_url).send().await {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        };
+        if registered {
+            break true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(PREFLIGHT_POLL_INTERVAL_MS)).await;
+    };
+    child.kill().await.ok();
+    ready
+}
+
+// --- Tunnel supervision ---
+//
+// cloudflared is the one long-running child vestad owns, and a dead tunnel is
+// invisible from the inside: vestad stays healthy, systemd sees nothing wrong,
+// and every request to the hostname gets Cloudflare error 1033 until someone
+// restarts vestad by hand. Two failure modes, two layers:
+//   - the process exits (crash, OOM, fatal give-up) -> respawn after a fixed delay
+//   - the process wedges with its edge connections dead -> cloudflared's own
+//     /ready endpoint (loopback metrics port) reports no registered connection;
+//     after consecutive failures the child is killed and respawned.
+// The probe is deliberately LOCAL. Probing the public hostname through the
+// Cloudflare edge would conflate probe-path failures (host DNS/egress, an edge
+// incident) with a wedged connector and kill a healthy tunnel — dropping every
+// live session through it. /ready measures exactly the thing a restart fixes.
+// Config-level death (tunnel deleted server-side, token revoked) is NOT
+// self-healed here: cloudflared exits with the reason, which lands in
+// `vestad logs` via the stderr forwarder; recovery is `vestad connect`.
+
+/// Delay between cloudflared respawns. Fixed rather than exponential: the one
+/// child vestad owns rarely dies, and a constant delay recovers promptly
+/// without the backoff/healthy-reset bookkeeping. Permanent failure (a revoked
+/// token) loops at this cadence with cloudflared's reason in `vestad logs`.
+const TUNNEL_RESPAWN_DELAY_SECS: u64 = 15;
+const READY_PROBE_INTERVAL_SECS: u64 = 30;
+const READY_PROBE_TIMEOUT_SECS: u64 = 5;
+/// Consecutive failed /ready probes before cloudflared is restarted.
+const READY_PROBE_MAX_FAILURES: u32 = 3;
+/// How long the tunnel must stay unregistered before the supervisor reports it
+/// down to status.json. Longer than a normal restart-recovery cycle, so transient
+/// blips the supervisor heals on its own keep the status showing "enabled".
+const TUNNEL_DOWN_SUSTAINED_SECS: u64 = 120;
+
+pub struct TunnelSupervisor {
+    shutdown: tokio::sync::watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl TunnelSupervisor {
+    /// Kill the current cloudflared and stop supervising (graceful shutdown).
+    pub async fn shutdown(self) {
+        self.shutdown.send(true).ok();
+        self.task.await.ok();
+    }
+}
+
+/// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
+/// on a failed edge probe streak, after a fixed delay between attempts.
+///
+/// `on_tunnel_up(bool)` is invoked on SUSTAINED edge changes (debounced) so the
+/// caller can mirror tunnel health into status.json: `true` as soon as the tunnel
+/// re-registers, `false` only after it has been unregistered for
+/// `TUNNEL_DOWN_SUSTAINED_SECS` (so transient blips the supervisor heals don't
+/// flip status). Kept as a plain `Fn(bool)` to keep this module free of caller
+/// types.
+pub fn supervise_tunnel(
+    config_dir: PathBuf,
+    port: u16,
+    on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync>,
+) -> TunnelSupervisor {
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(async move {
+        // One client for every probe across respawns. Build failure is
+        // near-impossible; if it happens, degrade to exit-only supervision and
+        // say so once instead of silently skipping every probe.
+        let probe_client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(READY_PROBE_TIMEOUT_SECS))
+            .build()
+        {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::warn!("tunnel ready probe disabled, supervising exits only: {e}");
+                None
+            }
+        };
+        // Edge state for status.json, carried across cloudflared restarts. The
+        // supervisor only runs once the tunnel was verified up, so we start
+        // "reported up" with `now` as the last registered time.
+        let mut reported_up = true;
+        let mut last_registered = tokio::time::Instant::now();
+        loop {
+            match start_tunnel(&config_dir, port).await {
+                Ok((mut child, metrics_port)) => {
+                    let reason = tokio::select! {
+                        _ = shutdown_rx.changed() => {
+                            child.kill().await.ok();
+                            return;
+                        }
+                        reason = run_until_unhealthy(
+                            &mut child,
+                            probe_client.as_ref(),
+                            metrics_port,
+                            on_tunnel_up.as_ref(),
+                            &mut reported_up,
+                            &mut last_registered,
+                        ) => reason,
+                    };
+                    child.kill().await.ok();
+                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel unhealthy ({reason}), restarting cloudflared");
+                }
+                Err(e) => {
+                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel start failed: {e}");
+                }
+            }
+            tokio::select! {
+                _ = shutdown_rx.changed() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(TUNNEL_RESPAWN_DELAY_SECS)) => {}
+            }
+        }
+    });
+    TunnelSupervisor { shutdown: shutdown_tx, task }
+}
+
+/// Watch one cloudflared run; returns the reason it must be replaced (process
+/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row). Drives the
+/// debounced `on_tunnel_up` edge callback via `reported_up`/`last_registered`,
+/// which persist across restarts.
+async fn run_until_unhealthy(
+    child: &mut tokio::process::Child,
+    probe_client: Option<&reqwest::Client>,
+    metrics_port: u16,
+    on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
+    reported_up: &mut bool,
+    last_registered: &mut tokio::time::Instant,
+) -> String {
+    let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
+    let probe_interval = std::time::Duration::from_secs(READY_PROBE_INTERVAL_SECS);
+    // First probe only after a full interval, so cloudflared has time to register.
+    let mut probe_ticks =
+        tokio::time::interval_at(tokio::time::Instant::now() + probe_interval, probe_interval);
+    // Don't burst queued ticks after a host suspend/resume: three instant
+    // probes would read as a failure streak and kill a tunnel that is still
+    // reconnecting on its own.
+    probe_ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut consecutive_failures = 0u32;
+    loop {
+        tokio::select! {
+            status = child.wait() => {
+                return match status {
+                    Ok(s) => format!("cloudflared exited: {s}"),
+                    Err(e) => format!("cloudflared wait failed: {e}"),
+                };
+            }
+            _ = probe_ticks.tick() => {
+                let Some(client) = probe_client else { continue };
+                // /ready is 200 iff cloudflared has a registered edge connection.
+                let ok = match client.get(&probe_url).send().await {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(_) => false,
+                };
+                // Mirror health into status.json on sustained edges only: "up" the
+                // moment it re-registers, "down" only after a sustained outage.
+                if ok {
+                    *last_registered = tokio::time::Instant::now();
+                    if !*reported_up {
+                        on_tunnel_up(true);
+                        *reported_up = true;
+                    }
+                } else if *reported_up
+                    && last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS)
+                {
+                    on_tunnel_up(false);
+                    *reported_up = false;
+                }
+                let (failures, restart) = record_probe(consecutive_failures, ok);
+                consecutive_failures = failures;
+                if !ok {
+                    tracing::warn!(consecutive_failures, "tunnel ready probe failed (no registered edge connection)");
+                }
+                if restart {
+                    return format!("no ready edge connection for {consecutive_failures} consecutive probes");
+                }
+            }
+        }
+    }
+}
+
+/// Pure probe accounting: a success clears the failure streak; a failure
+/// extends it, demanding a restart at READY_PROBE_MAX_FAILURES.
+fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
+    if ok {
+        return (0, false);
+    }
+    let failures = consecutive_failures + 1;
+    (failures, failures >= READY_PROBE_MAX_FAILURES)
 }
 
 fn which(name: &str) -> Result<PathBuf, ()> {
@@ -662,6 +922,31 @@ mod tests {
         assert_eq!(sanitize("Alice.Bob"), "alice-bob");
         assert_eq!(sanitize("--test--"), "test");
         assert_eq!(sanitize("a_b@c"), "a-b-c");
+    }
+
+    #[test]
+    fn probe_success_clears_the_failure_streak() {
+        assert_eq!(record_probe(READY_PROBE_MAX_FAILURES - 1, true), (0, false));
+    }
+
+    #[test]
+    fn probe_failures_demand_restart_only_at_threshold() {
+        let mut failures = 0;
+        for expected in 1..READY_PROBE_MAX_FAILURES {
+            let (count, restart) = record_probe(failures, false);
+            assert_eq!(count, expected);
+            assert!(!restart, "no restart before the threshold");
+            failures = count;
+        }
+        let (count, restart) = record_probe(failures, false);
+        assert_eq!(count, READY_PROBE_MAX_FAILURES);
+        assert!(restart, "restart at the threshold");
+    }
+
+    #[test]
+    fn alloc_loopback_port_returns_a_usable_port() {
+        let port = alloc_loopback_port().expect("allocation succeeds");
+        assert_ne!(port, 0);
     }
 }
 

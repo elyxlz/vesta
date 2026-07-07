@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
-from . import graph, auth, notifications
+from . import graph, auth, notifications, notify, folders
 from .context import MicrosoftContext
 
 
@@ -119,60 +119,68 @@ def run(ctx: MicrosoftContext):
 
             new_check_time = datetime.now(UTC)
 
-            for acc in auth.list_accounts(ctx.cache_file, settings=ctx.settings):
+            for acc in auth.list_accounts(ctx.cache_file):
                 logger.info(f"Checking account: {acc.username}")
 
-                try:
-                    result = graph.request(
-                        ctx.http_client,
-                        ctx.cache_file,
-                        ctx.scopes,
-                        ctx.settings,
-                        ctx.base_url,
-                        "GET",
-                        "/me/mailFolders/inbox/messages",
-                        acc.account_id,
-                        params={
-                            "$filter": f"receivedDateTime gt {last_check}",
-                            "$select": "subject,from,bodyPreview,receivedDateTime",
-                            "$top": 50,
-                        },
-                    )
-
-                    if not result or "value" not in result:
-                        logger.warning(f"Unexpected email API response: {result}")
-                        continue
-                    emails = result["value"]
-                    logger.info(f"Found {len(emails)} new emails for {acc.username}")
-
-                    for email in emails:
-                        email_from = email["from"] if "from" in email else None
-                        if not email_from or "emailAddress" not in email_from:
-                            logger.warning(f"Email missing sender info: {email['id'] if 'id' in email else '?'}")
-                            continue
-                        sender = email_from["emailAddress"]
-                        sender_name = sender["name"] if "name" in sender else None
-                        sender_addr = sender["address"] if "address" in sender else None
-                        if not sender_addr:
-                            logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
-                            continue
-
-                        logger.info(f"Writing notification for email from {sender_addr}")
-                        display_name = sender_name or sender_addr
-                        # Only include sender_address when it adds info beyond the display name.
-                        extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
-                        notifications.write_notification(
-                            ctx.notif_dir,
-                            "email",
-                            sender=display_name,
-                            subject=email["subject"] if "subject" in email else None,
-                            preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
-                            sender_address=extra_addr,
-                            account=acc.username,
-                            missed=catching_up or None,
+                watch_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
+                for folder_token in watch_folders:
+                    try:
+                        folder_id = folders.resolve_folder_id(
+                            ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url, ctx.folders, acc.account_id, folder_token
                         )
-                except Exception as e:
-                    logger.error(f"Error fetching emails for {acc.username}: {e}")
+                        result = graph.request(
+                            ctx.http_client,
+                            ctx.cache_file,
+                            ctx.scopes,
+                            ctx.base_url,
+                            "GET",
+                            f"/me/mailFolders/{folder_id}/messages",
+                            acc.account_id,
+                            params={
+                                "$filter": f"receivedDateTime gt {last_check}",
+                                "$select": "subject,from,bodyPreview,receivedDateTime",
+                                "$top": 50,
+                            },
+                        )
+
+                        if not result or "value" not in result:
+                            logger.warning(f"Unexpected email API response: {result}")
+                            continue
+                        emails = result["value"]
+                        logger.info(f"Found {len(emails)} new emails for {acc.username} in {folder_token}")
+
+                        for email in emails:
+                            email_from = email["from"] if "from" in email else None
+                            if not email_from or "emailAddress" not in email_from:
+                                logger.warning(f"Email missing sender info: {email['id'] if 'id' in email else '?'}")
+                                continue
+                            sender = email_from["emailAddress"]
+                            sender_name = sender["name"] if "name" in sender else None
+                            sender_addr = sender["address"] if "address" in sender else None
+                            if not sender_addr:
+                                logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
+                                continue
+
+                            logger.info(f"Writing notification for email from {sender_addr}")
+                            display_name = sender_name or sender_addr
+                            # Only include sender_address when it adds info beyond the display name.
+                            extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
+                            notifications.write_notification(
+                                ctx.notif_dir,
+                                "email",
+                                # Email pools by default (calendar reminders keep interrupting); the user adds
+                                # interrupt rules for the senders/keywords that should reach them right away.
+                                interrupt=False,
+                                sender=display_name,
+                                subject=email["subject"] if "subject" in email else None,
+                                preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
+                                sender_address=extra_addr,
+                                account=acc.username,
+                                folder=folder_token,
+                                missed=catching_up or None,
+                            )
+                    except Exception as e:
+                        logger.error(f"Error fetching emails for {acc.username} folder {folder_token}: {e}")
 
                 try:
                     max_threshold = max(ctx.get_calendar_notify_thresholds())
@@ -181,7 +189,6 @@ def run(ctx: MicrosoftContext):
                         ctx.http_client,
                         ctx.cache_file,
                         ctx.scopes,
-                        ctx.settings,
                         ctx.base_url,
                         "GET",
                         "/me/calendarView",

@@ -5,9 +5,10 @@ import collections
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from core.cc_sdk import ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
+from conftest import idle_message_stream
 from core.diagnostics import format_crash_detail
 from wait_util import wait_for_condition
 
@@ -21,38 +22,47 @@ class FakeProcessError(ClaudeSDKError):
         self.exit_code = exit_code
 
 
-def test_format_crash_detail_with_exit_code():
-    exc = FakeProcessError("CLI died", exit_code=1)
-    buf: collections.deque[str] = collections.deque(["line1", "line2"], maxlen=50)
-    exit_code, stderr_tail = format_crash_detail(exc, buf)
-    assert exit_code == 1
-    assert stderr_tail == "line1\nline2"
-
-
-def test_format_crash_detail_no_exit_code():
-    exc = RuntimeError("generic error")
-    buf: collections.deque[str] = collections.deque(["some stderr"], maxlen=50)
-    exit_code, stderr_tail = format_crash_detail(exc, buf)
-    assert exit_code is None
-    assert stderr_tail == "some stderr"
-
-
-def test_format_crash_detail_empty_buffer():
-    exc = RuntimeError("boom")
-    buf: collections.deque[str] = collections.deque(maxlen=50)
-    exit_code, stderr_tail = format_crash_detail(exc, buf)
-    assert exit_code is None
-    assert stderr_tail == "(no stderr captured)"
-
-
-def test_format_crash_detail_custom_fallback():
-    exc = RuntimeError("boom")
-    buf: collections.deque[str] = collections.deque(maxlen=50)
-    _, stderr_tail = format_crash_detail(exc, buf, fallback="")
-    assert stderr_tail == ""
+@pytest.mark.parametrize(
+    "exc,lines,kwargs,expected_exit,expected_tail",
+    [
+        (FakeProcessError("CLI died", exit_code=1), ["line1", "line2"], {}, 1, "line1\nline2"),
+        (RuntimeError("generic error"), ["some stderr"], {}, None, "some stderr"),
+        (RuntimeError("boom"), [], {}, None, "(no stderr captured)"),  # empty buffer -> default fallback
+        (RuntimeError("boom"), [], {"fallback": ""}, None, ""),  # custom fallback overrides
+    ],
+)
+def test_format_crash_detail(exc, lines, kwargs, expected_exit, expected_tail):
+    buf: collections.deque[str] = collections.deque(lines, maxlen=50)
+    exit_code, stderr_tail = format_crash_detail(exc, buf, **kwargs)
+    assert exit_code == expected_exit
+    assert stderr_tail == expected_tail
 
 
 # --- Session resume fallback in message_processor ---
+
+
+def _mock_client(enter):
+    """Build a ClaudeSDKClient stand-in whose async __aenter__ runs `enter`."""
+    client = MagicMock()
+    client.return_value = client
+    client.receive_messages = idle_message_stream
+    client.__aenter__ = enter
+    client.__aexit__ = AsyncMock(return_value=None)
+    return client
+
+
+def _processor_config_state(tmp_path, session_id=None):
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
+    # These tests exercise the client-session/resume path, which message_processor runs only for an
+    # authenticated provider (it idles otherwise).
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    state.persisted.session_id = session_id
+    state.shutdown_event = asyncio.Event()
+    return config, state
 
 
 @pytest.mark.anyio
@@ -61,17 +71,11 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
     from core import state_store
     from core.loops import message_processor
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
-    state = vm.State()
-    state.persisted.session_id = "stale-session-id-1234567890"
+    config, state = _processor_config_state(tmp_path, session_id="stale-session-id-1234567890")
     state_store.save_state(state.persisted, config)
-    state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     enter_count = 0
-    mock_client = MagicMock()
 
     async def mock_enter(self):
         nonlocal enter_count
@@ -80,9 +84,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
             raise ClaudeSDKError("session not found")
         return mock_client
 
-    mock_client.return_value = mock_client
-    mock_client.__aenter__ = mock_enter
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client = _mock_client(mock_enter)
 
     async def shutdown_after_retry():
         await wait_for_condition(lambda: enter_count >= 2, message="client __aenter__ retry never happened")
@@ -103,60 +105,27 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_resume_fallback_raises_without_session(tmp_path):
-    """When __aenter__ fails and there's no session_id, it should raise immediately."""
+@pytest.mark.parametrize(
+    "session_id,error",
+    [
+        (None, "connection failed"),  # no session: __aenter__ failure raises immediately
+        ("stale-session-1234567890", "always fails"),  # session set but the retry also fails
+    ],
+)
+async def test_resume_fallback_raises_when_enter_always_fails(tmp_path, session_id, error):
     from core.loops import message_processor
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
-
-    mock_client = MagicMock()
+    config, state = _processor_config_state(tmp_path, session_id=session_id)
+    queue: asyncio.Queue[vm.QueuedTurn] = asyncio.Queue()
 
     async def mock_enter(self):
-        raise ClaudeSDKError("connection failed")
-
-    mock_client.return_value = mock_client
-    mock_client.__aenter__ = mock_enter
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+        raise ClaudeSDKError(error)
 
     with (
-        patch("core.loops.ClaudeSDKClient", mock_client),
+        patch("core.loops.ClaudeSDKClient", _mock_client(mock_enter)),
         patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
-        with pytest.raises(ClaudeSDKError, match="connection failed"):
-            await message_processor(queue, state=state, config=config)
-
-
-@pytest.mark.anyio
-async def test_resume_fallback_raises_on_second_failure(tmp_path):
-    """When retry also fails, it should raise."""
-    from core.loops import message_processor
-
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
-    state = vm.State()
-    state.persisted.session_id = "stale-session-1234567890"
-    state.shutdown_event = asyncio.Event()
-    queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
-
-    mock_client = MagicMock()
-
-    async def mock_enter(self):
-        raise ClaudeSDKError("always fails")
-
-    mock_client.return_value = mock_client
-    mock_client.__aenter__ = mock_enter
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch("core.loops.ClaudeSDKClient", mock_client),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
-    ):
-        with pytest.raises(ClaudeSDKError, match="always fails"):
+        with pytest.raises(ClaudeSDKError, match=error):
             await message_processor(queue, state=state, config=config)
 
 
@@ -181,19 +150,20 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
         patch("core.main.message_processor", side_effect=crashing_processor),
         patch("core.main.monitor_loop", new_callable=AsyncMock),
-        patch("core.main.input_handler", new_callable=AsyncMock),
-        patch("core.main.drop_greeting_notification", return_value=False),
-        patch("core.main.drop_pending_migrations", return_value=0),
+        patch("core.main.collect_boot_turns", return_value=[]),
     ):
         mock_runner = MagicMock()
         mock_runner.cleanup = AsyncMock()
         mock_ws.return_value = mock_runner
 
-        await run_vesta(config, state=state)
+        crashed = await run_vesta(config, state=state)
 
     reason = state.persisted.last_restart_reason or ""
     assert "crash" in reason
     assert "RuntimeError" in reason
+    # run_vesta reports the crash so the entry point exits non-zero and Docker's on-failure
+    # policy restarts the container.
+    assert crashed is True
 
 
 # --- stderr buffer ---

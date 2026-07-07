@@ -1,4 +1,4 @@
-import { apiJson } from "../client";
+import { apiJson, jsonInit } from "../client";
 
 export interface OAuthStartResult {
   auth_url: string;
@@ -18,23 +18,7 @@ export async function completeOAuth(
 ): Promise<string> {
   const resp = await apiJson<{ credentials: string }>(
     "/providers/claude/oauth/complete",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, code }),
-    },
+    jsonInit("POST", { session_id: sessionId, code }),
   );
   return resp.credentials;
-}
-
-export interface ClaudeModelOption {
-  /// The alias stored in AGENT_MODEL, e.g. "opus".
-  id: string;
-  label: string;
-  note: string;
-}
-
-/// The curated Claude model list, served by vestad (opus / sonnet / haiku).
-export async function fetchModels(): Promise<ClaudeModelOption[]> {
-  return apiJson<ClaudeModelOption[]>("/providers/claude/models");
 }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use vesta_tests::exec_in_container;
 
-use super::common::{lock_shared_live_agent, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{create_file_request, lock_live_agent_b, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// Poll a container shell command until its stdout contains `needle`, or time out.
 fn wait_for_exec_contains(container: &str, script: &str, needle: &str, timeout: Duration) -> Result<String, String> {
@@ -41,7 +41,7 @@ fn read_session_id(container: &str) -> String {
 /// than waking up on a blank slate. This is the behavior that replaced the old hard session reset.
 #[test]
 fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
+    let Some((_shared, container)) = lock_live_agent_b() else {
         return;
     };
 
@@ -73,7 +73,7 @@ fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
     // again after the restart, so the marker's appearance proves it came back alive on a resumed
     // session. (Passive notifications survive the restart; the monitor loop flushes them when idle.)
     let marker = format!("{E2E_FILES_DIR}/dream-resumed.txt");
-    write_notification(&container, &format!("Create the file \"{marker}\" containing only: DREAM_RESUMED"), false)
+    write_notification(&container, &create_file_request(&marker, "DREAM_RESUMED"), false)
         .expect("write resume marker task");
     wait_for_file_contains(&container, &marker, "DREAM_RESUMED", Duration::from_secs(300))
         .expect("agent did not come back alive after the dreamer restart");

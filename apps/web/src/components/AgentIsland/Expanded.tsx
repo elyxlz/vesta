@@ -1,70 +1,52 @@
-import { motion } from "motion/react";
 import { Orb } from "@/components/Orb";
 import { CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { OrbVisualState } from "@/components/Orb/styles";
-import { useProvider } from "@/hooks/use-provider";
-import { agentIslandContentTransition } from "./transitions";
 
 type AgentIslandExpandedProps = {
   name: string;
   orbState: OrbVisualState;
   statusLabel: string;
   error: string;
+  model: string | null;
 };
 
+// Self-sized content view (no motion / no layoutId). The shell crossfades whole
+// views, so the model just lives here and fades in/out with the rest.
 export function AgentIslandExpanded({
   name,
   orbState,
   statusLabel,
   error,
+  model,
 }: AgentIslandExpandedProps) {
-  const { provider } = useProvider(name);
-  const model = provider && provider.kind !== "none" ? provider.model : null;
   return (
-    <div className="flex h-[168px] w-[168px] flex-col items-center justify-center gap-2 will-change-transform">
-      <motion.div
-        layoutId="agent-island-orb"
-        layout
-        className="flex shrink-0 items-center justify-center will-change-transform"
-        transition={agentIslandContentTransition}
-      >
-        <Orb state={orbState} size={100} enableTracking />
-      </motion.div>
-      <div className="-mt-2 flex flex-col items-center justify-center gap-1 text-center will-change-transform">
-        <motion.div
-          layoutId="agent-island-name"
-          layout
-          transition={agentIslandContentTransition}
-        >
-          <CardTitle className="line-clamp-2 px-0.5 text-center font-serif font-medium leading-tight tracking-tight">
-            {name}
-          </CardTitle>
-        </motion.div>
-        <motion.div
+    <div className="relative -top-2 flex h-[168px] w-[168px] flex-col items-center justify-center gap-2">
+      <div className="flex shrink-0 items-center justify-center">
+        <Orb
+          state={orbState}
+          size={100}
+          enableTracking
+          label={`${name}: ${statusLabel || orbState}`}
+        />
+      </div>
+      <div className="-mt-4 flex flex-col items-center justify-center gap-1 text-center">
+        <CardTitle className="line-clamp-2 px-0.5 text-center font-serif text-base font-medium leading-tight tracking-tight sm:text-lg">
+          {name}
+        </CardTitle>
+        <CardDescription
           aria-live="polite"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ ...agentIslandContentTransition, delay: 0.1 }}
+          className={cn(
+            "mt-0.5 line-clamp-3 w-full px-0.5 text-xs leading-snug",
+            error ? "text-destructive" : "text-muted-foreground",
+          )}
         >
-          <CardDescription
-            className={cn(
-              "line-clamp-3 w-full px-0.5 text-xs leading-snug",
-              error ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {statusLabel}
-          </CardDescription>
-        </motion.div>
+          {statusLabel}
+        </CardDescription>
         {model && (
-          <motion.span
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ ...agentIslandContentTransition, delay: 0.1 }}
-            className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground"
-          >
+          <span className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground">
             {model}
-          </motion.span>
+          </span>
         )}
       </div>
     </div>

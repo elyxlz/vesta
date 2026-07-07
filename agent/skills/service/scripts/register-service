@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Register a background service with vestad and print the assigned port.
+# Pass --public for services that need a public tunnel route (no token), omit
+# it for token-only services. Registration is idempotent: vestad returns the
+# same port for a given name on every call.
+#
+# Usage: register-service <name> [--public]
+#   PORT=$(~/agent/skills/service/scripts/register-service tasks)
+#   PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
+
+NAME="${1:?Usage: register-service <name> [--public]}"
+PUBLIC="false"
+if [ "${2:-}" = "--public" ]; then
+    PUBLIC="true"
+fi
+
+curl -sk -X POST "https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services" \
+    -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"name\":\"$NAME\",\"public\":$PUBLIC}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])"

@@ -1,7 +1,20 @@
 """Playback control (requires Spotify Premium)."""
 
+from collections.abc import Callable
+
 from .config import Config
 from .auth import get_client
+
+
+def _guard_device(action: Callable[[], object]) -> dict | None:
+    """Run a playback action, returning a structured error if no device is active, else None."""
+    try:
+        action()
+    except Exception as e:
+        if "NO_ACTIVE_DEVICE" in str(e):
+            return {"error": "no_active_device", "message": "No active Spotify device found."}
+        raise
+    return None
 
 
 def _format_track(track: dict | None) -> dict | None:
@@ -92,77 +105,39 @@ def play(
 def pause(config: Config) -> dict:
     """Pause playback."""
     sp = get_client(config)
-    try:
-        sp.pause_playback()
-        return {"status": "paused"}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    return _guard_device(sp.pause_playback) or {"status": "paused"}
 
 
 def skip(config: Config, direction: str = "next") -> dict:
     """Skip to next or previous track."""
     sp = get_client(config)
-    try:
-        if direction == "previous":
-            sp.previous_track()
-        else:
-            sp.next_track()
-        return {"status": "skipped", "direction": direction}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    action = sp.previous_track if direction == "previous" else sp.next_track
+    return _guard_device(action) or {"status": "skipped", "direction": direction}
 
 
 def volume(config: Config, level: int, device_id: str | None = None) -> dict:
     """Set playback volume (0-100)."""
     sp = get_client(config)
     level = max(0, min(100, level))
-    try:
-        sp.volume(level, device_id=device_id)
-        return {"status": "volume_set", "volume": level}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    return _guard_device(lambda: sp.volume(level, device_id=device_id)) or {"status": "volume_set", "volume": level}
 
 
 def queue_add(config: Config, uri: str, device_id: str | None = None) -> dict:
     """Add a track to the playback queue."""
     sp = get_client(config)
-    try:
-        sp.add_to_queue(uri=uri, device_id=device_id)
-        return {"status": "queued", "uri": uri}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    return _guard_device(lambda: sp.add_to_queue(uri=uri, device_id=device_id)) or {"status": "queued", "uri": uri}
 
 
 def shuffle(config: Config, state: bool) -> dict:
     """Set shuffle on or off."""
     sp = get_client(config)
-    try:
-        sp.shuffle(state)
-        return {"status": "shuffle_set", "shuffle": state}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    return _guard_device(lambda: sp.shuffle(state)) or {"status": "shuffle_set", "shuffle": state}
 
 
 def repeat(config: Config, state: str = "off") -> dict:
     """Set repeat mode: off, track, or context."""
     sp = get_client(config)
-    try:
-        sp.repeat(state)
-        return {"status": "repeat_set", "repeat": state}
-    except Exception as e:
-        if "NO_ACTIVE_DEVICE" in str(e):
-            return {"error": "no_active_device", "message": "No active Spotify device found."}
-        raise
+    return _guard_device(lambda: sp.repeat(state)) or {"status": "repeat_set", "repeat": state}
 
 
 def transfer(config: Config, device_id: str, force_play: bool = False) -> dict:

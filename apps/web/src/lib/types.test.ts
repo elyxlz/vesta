@@ -12,9 +12,10 @@ describe("VestaEvent contract", () => {
     "tool_end",
     "error",
     "notification",
+    "notification_cleared",
     "subagent_start",
     "subagent_stop",
-    "history",
+    "snapshot",
   ] as const;
 
   it("covers all expected event types", () => {
@@ -23,50 +24,21 @@ describe("VestaEvent contract", () => {
     expect(typeCheck).toHaveLength(EXPECTED_TYPES.length);
   });
 
-  it("tool_start includes subagent field", () => {
-    const event: VestaEvent = {
-      type: "tool_start",
-      tool: "Bash",
-      input: "ls",
-      subagent: false,
-    };
-    expect(event.type).toBe("tool_start");
-  });
-
-  it("tool_end includes subagent field", () => {
-    const event: VestaEvent = {
-      type: "tool_end",
-      tool: "Bash",
-      subagent: true,
-    };
-    expect(event.type).toBe("tool_end");
-  });
-
-  it("subagent_start has required fields", () => {
-    const event: VestaEvent = {
-      type: "subagent_start",
-      agent_id: "abc",
-      agent_type: "browser",
-    };
-    expect(event.type).toBe("subagent_start");
-  });
-
-  it("subagent_stop has required fields", () => {
-    const event: VestaEvent = {
-      type: "subagent_stop",
-      agent_id: "abc",
-      agent_type: "browser",
-    };
-    expect(event.type).toBe("subagent_stop");
-  });
-
-  it("history event includes events array and cursor", () => {
-    const event: VestaEvent = {
-      type: "history",
-      events: [{ type: "user", text: "hello" }],
+  // The `VestaEvent` annotation on each row is the real assertion: a missing or
+  // mistyped field fails to compile. The runtime check just confirms the row ran.
+  it.each<VestaEvent>([
+    { type: "tool_start", tool: "Bash", input: "ls", subagent: false },
+    { type: "tool_end", tool: "Bash", subagent: true },
+    { type: "subagent_start", agent_id: "abc", agent_type: "browser" },
+    { type: "subagent_stop", agent_id: "abc", agent_type: "browser" },
+    { type: "notification_cleared", notif_id: "email-123" },
+    {
+      type: "snapshot",
       state: "idle",
-      cursor: null,
-    };
-    expect(event.type).toBe("history");
+      chat: { events: [{ type: "user", text: "hello" }], cursor: null },
+      notifications: { pending: ["email-123"] },
+    },
+  ])("$type satisfies the VestaEvent shape", (event) => {
+    expect(event.type).toBeTruthy();
   });
 });

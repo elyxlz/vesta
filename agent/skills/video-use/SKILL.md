@@ -1,6 +1,6 @@
 ---
 name: video-use
-description: Use for "edit video", "video editing", "remove filler words", "cut dead space", "color grade", "add subtitles", "burn captions", "B-roll overlay", "launch video", or whenever the user wants footage turned into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor that handles filler removal, auto color grading, 30ms audio fades, burned subtitles, and Manim/Remotion/PIL overlays.
+description: Use for "edit video", "remove filler words", "cut dead space", "color grade", "add subtitles", "burn captions", "B-roll overlay", or turning raw footage into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor.
 ---
 
 # Video-Use - Claude-Code-Powered Video Editor

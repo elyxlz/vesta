@@ -1,6 +1,5 @@
 import {
-  createContext,
-  useContext,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -8,14 +7,23 @@ import {
 } from "react";
 import { apiFetch, apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
+import {
+  connectReconnectingWs,
+  type ReconnectingWsHandle,
+} from "@/lib/reconnecting-ws";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
+import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
+import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { useRestartPending } from "@/stores/use-restart-pending";
+import { GatewayContext, disconnectedValue } from "./context";
+
+export { useGateway } from "./context";
 
 const VERSION_FETCH_TIMEOUT_MS = 5000;
 // A manual check fetches from GitHub server-side, so allow longer than the
@@ -48,47 +56,11 @@ async function fetchManaged(): Promise<boolean> {
   }
 }
 
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
-
 const VERSION_POLL_MS = 60000;
 
-interface GatewayContextValue {
-  reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
-  managed: boolean;
-  gatewayVersion: string;
-  gatewayBranch: string | null;
-  gatewayChannel: ReleaseChannel;
-  gatewayPort: number;
-  versionChecked: boolean;
-  updateAvailable: boolean;
-  latestVersion: string | null;
-  agents: AgentInfo[];
-  agentsFetched: boolean;
-  send: (event: object) => boolean;
-  triggerGatewayUpdate: () => Promise<boolean>;
-  checkForUpdate: () => Promise<void>;
-}
-
-const GatewayContext = createContext<GatewayContextValue | null>(null);
-
-const disconnectedValue: GatewayContextValue = {
-  reachable: false,
-  managed: false,
-  gatewayVersion: "",
-  gatewayBranch: null,
-  gatewayChannel: "stable",
-  gatewayPort: 0,
-  versionChecked: true,
-  updateAvailable: false,
-  latestVersion: null,
-  agents: [],
-  agentsFetched: false,
-  send: () => false,
-  triggerGatewayUpdate: async () => false,
-  checkForUpdate: async () => {},
-};
+// Brief grace before the disconnect overlay appears, so quick WS blips and the
+// gap between the initial version fetch and the first socket open don't flash it.
+const DISCONNECT_GRACE_MS = 750;
 
 function controlWsUrl(): string {
   const conn = getConnection();
@@ -98,13 +70,14 @@ function controlWsUrl(): string {
 }
 
 function ConnectedGateway({ children }: { children: ReactNode }) {
-  const { loading } = useAuth();
+  const { loading, expireSession } = useAuth();
   const [reachable, setReachable] = useState(false);
   const [managed, setManaged] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
   const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
   const [gatewayChannel, setGatewayChannel] =
     useState<ReleaseChannel>("stable");
+  const [gatewayAutoUpdate, setGatewayAutoUpdate] = useState(true);
   const [gatewayPort, setGatewayPort] = useState(0);
 
   const [versionChecked, setVersionChecked] = useState(false);
@@ -112,10 +85,18 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [showDisconnected, setShowDisconnected] = useState(false);
+  const wsRef = useRef<ReconnectingWsHandle | null>(null);
 
   const [connectEpoch, setConnectEpoch] = useState(0);
   const skipVersionGateRef = useRef(false);
+
+  const applyUpdateInfo = useCallback((data: GatewayVersionInfo) => {
+    setUpdateAvailable(!!data.update_available);
+    setLatestVersion(data.latest_version ?? null);
+    setGatewayChannel(data.channel ?? "stable");
+    setGatewayAutoUpdate(data.auto_update ?? true);
+  }, []);
 
   const triggerGatewayUpdate = async (): Promise<boolean> => {
     try {
@@ -135,9 +116,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         method: "POST",
         signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
       });
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
+      applyUpdateInfo(data);
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
@@ -145,59 +124,41 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = RECONNECT_BASE_MS;
 
-    const doConnect = async () => {
-      if (cancelled) return;
+    const handle = connectReconnectingWs({
+      beforeConnect: async () => {
+        // A dead session (refresh token expired/revoked) can never reconnect:
+        // bail out to the connect screen instead of retrying forever with a
+        // token vestad will keep rejecting. Transient failures keep the loop.
+        if ((await ensureFreshToken()) === "expired") {
+          if (!cancelled) expireSession();
+          return "stop";
+        }
 
-      await ensureFreshToken();
+        // Fetch version early via HTTP before WS connects.
+        const data = await fetchVersionInfo();
+        if (!cancelled && data?.version) {
+          setGatewayVersion(data.version);
+          setGatewayBranch(data.branch ?? null);
+          applyUpdateInfo(data);
+          setVersionChecked(true);
+          if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
+            return "stop";
+        }
+        if (!cancelled) setVersionChecked(true);
 
-      let url: string;
-      try {
-        url = controlWsUrl();
-      } catch {
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-        return;
-      }
+        // Hosted vs self-hosted — non-blocking, never gates the connection.
+        void fetchManaged().then((m) => {
+          if (!cancelled) setManaged(m);
+        });
 
-      // Fetch version early via HTTP before WS connects
-      const data = await fetchVersionInfo();
-      if (!cancelled && data?.version) {
-        setGatewayVersion(data.version);
-        setGatewayBranch(data.branch ?? null);
-        setGatewayChannel(data.channel ?? "stable");
-        setUpdateAvailable(!!data.update_available);
-        setLatestVersion(data.latest_version ?? null);
-        setVersionChecked(true);
-        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
-          return;
-      }
-      if (!cancelled) setVersionChecked(true);
-
-      // Hosted vs self-hosted — non-blocking, never gates the connection.
-      void fetchManaged().then((m) => {
-        if (!cancelled) setManaged(m);
-      });
-
-      if (cancelled) return;
-
-      socket = new WebSocket(url);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        if (cancelled) return;
-        reconnectDelay = RECONNECT_BASE_MS;
-        setReachable(true);
-      };
-
-      socket.onmessage = (e) => {
-        if (cancelled) return;
-        if (typeof e.data !== "string") return;
+        return "open";
+      },
+      url: controlWsUrl,
+      onOpen: () => setReachable(true),
+      onMessage: (data) => {
         try {
-          const msg = JSON.parse(e.data);
+          const msg = JSON.parse(data);
           switch (msg.type) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
@@ -206,41 +167,28 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               break;
             }
             case "agents": {
-              setAgents(msg.agents ?? []);
+              const agents: AgentInfo[] = msg.agents ?? [];
+              setAgents(agents);
               setAgentsFetched(true);
+              // Clear any "restart to apply" flag whose agent has since restarted (by any path).
+              useRestartPending.getState().reconcile(agents);
               break;
             }
           }
         } catch {
-          console.warn("ws: bad message", e.data);
+          console.warn("ws: bad message", data);
         }
-      };
-
-      socket.onclose = () => {
-        if (cancelled) return;
-        socket = null;
-        wsRef.current = null;
-        setReachable(false);
-        reconnectTimer = setTimeout(doConnect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-      };
-
-      socket.onerror = () => {};
-    };
-
-    void doConnect();
+      },
+      onClose: () => setReachable(false),
+    });
+    wsRef.current = handle;
 
     return () => {
       cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-        socket = null;
-      }
+      handle.close();
       wsRef.current = null;
     };
-  }, [connectEpoch]);
+  }, [connectEpoch, expireSession, applyUpdateInfo]);
 
   useEffect(() => {
     if (!reachable) return;
@@ -249,9 +197,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     const pollVersion = async () => {
       const data = await fetchVersionInfo();
       if (cancelled || !data) return;
-      setUpdateAvailable(!!data.update_available);
-      setLatestVersion(data.latest_version ?? null);
-      setGatewayChannel(data.channel ?? "stable");
+      applyUpdateInfo(data);
     };
 
     const timer = setInterval(pollVersion, VERSION_POLL_MS);
@@ -259,10 +205,26 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reachable]);
+  }, [reachable, applyUpdateInfo]);
+
+  // Surface a blocking overlay once the gateway has been unreachable past a
+  // brief grace period, and dismiss it the moment it reconnects. The grace
+  // avoids flashing on quick reconnects and during initial connect, where
+  // `reachable` is false until the first socket opens.
+  useEffect(() => {
+    if (loading || reachable) {
+      setShowDisconnected(false);
+      return;
+    }
+    const timer = setTimeout(
+      () => setShowDisconnected(true),
+      DISCONNECT_GRACE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [loading, reachable]);
 
   const send = (event: object): boolean => {
-    const ws = wsRef.current;
+    const ws = wsRef.current?.current();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
@@ -279,6 +241,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         gatewayVersion,
         gatewayBranch,
         gatewayChannel,
+        gatewayAutoUpdate,
         gatewayPort,
         versionChecked,
         updateAvailable,
@@ -291,13 +254,14 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchDialog
+        <VersionMismatchScreen
           gatewayVersion={gatewayVersion}
           onUpdateGateway={triggerGatewayUpdate}
         />
       ) : (
         children
       )}
+      {showDisconnected && <DisconnectedOverlay />}
     </GatewayContext.Provider>
   );
 }
@@ -314,12 +278,4 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       {children}
     </GatewayContext.Provider>
   );
-}
-
-export function useGateway() {
-  const context = useContext(GatewayContext);
-  if (!context) {
-    throw new Error("useGateway must be used within GatewayProvider");
-  }
-  return context;
 }

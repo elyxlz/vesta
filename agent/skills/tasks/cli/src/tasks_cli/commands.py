@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, UTC
 from contextlib import closing
 from pathlib import Path
 from typing import Any, TypedDict
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import logging
 import uuid
@@ -39,13 +39,32 @@ class TriggerData(TypedDict, total=False):
     hours: int
 
 
+# Overdue pending tasks (past due_date) always float to the top, ordered by most
+# overdue first. Non-overdue tasks keep their existing priority/due/created order.
+_TASK_ORDER_BY = (
+    " ORDER BY"
+    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN 0 ELSE 1 END ASC,"
+    " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN due_date END ASC,"
+    " priority DESC, due_date ASC NULLS LAST, created_at DESC"
+)
+
+
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+def _cron_trigger_from_data(trigger_data: TriggerData) -> CronTrigger:
+    return CronTrigger(
+        month=trigger_data["month"] if "month" in trigger_data else None,
+        day=trigger_data["day"] if "day" in trigger_data else None,
+        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
+        hour=trigger_data["hour"] if "hour" in trigger_data else None,
+        minute=trigger_data["minute"] if "minute" in trigger_data else None,
+        timezone=_UTC_ZI,
+    )
 
+
+def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
     try:
         local_tz = ZoneInfo(timezone_str)
     except (ZoneInfoNotFoundError, KeyError):
@@ -132,6 +151,13 @@ def _delete_metadata(data_dir: Path, task_id: str):
     _get_metadata_path(data_dir, task_id).unlink(missing_ok=True)
 
 
+def _require_task_row(conn, task_id: str):
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+    return row
+
+
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:
     task = dict(row)
     task_id = task["id"]
@@ -189,14 +215,7 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
         query = "SELECT * FROM tasks"
         if not show_completed:
             query += " WHERE status != 'done'"
-        # Overdue pending tasks (past due_date) always float to the top,
-        # ordered by most overdue first. Non-overdue tasks keep their existing sort order.
-        query += (
-            " ORDER BY"
-            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN 0 ELSE 1 END ASC,"
-            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN due_date END ASC,"
-            " priority DESC, due_date ASC NULLS LAST, created_at DESC"
-        )
+        query += _TASK_ORDER_BY
         cursor = conn.execute(query)
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
@@ -226,10 +245,7 @@ def update_task(
         due_date_changed = True
 
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        result = cursor.fetchone()
-        if not result:
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        result = _require_task_row(conn, task_id)
 
         updates = []
         params = []
@@ -281,10 +297,7 @@ def update_task(
 
 def get_task(config: Config, *, task_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        result = cursor.fetchone()
-        if not result:
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        result = _require_task_row(conn, task_id)
         return _task_with_metadata(config.data_dir, dict(result), include_content=True)
 
 
@@ -308,15 +321,12 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
         raise ValueError(f"Unknown field(s): {', '.join(unknown)}. Valid: {', '.join(TASK_FIELDS)}")
 
     want_metadata = "metadata" in fields
-    want_db = [f for f in fields if f in TASK_FIELDS and f not in ("metadata", "metadata_path")]
+    want_db = [f for f in fields if f not in ("metadata", "metadata_path")]
 
     out: dict[str, Any] = {}
     if want_db or "metadata_path" in fields:
         with closing(db.get_db(config.data_dir)) as conn:
-            cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-            if not row:
-                raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+            row = _require_task_row(conn, task_id)
             for f in want_db:
                 out[f] = row[f]
             if "metadata_path" in fields:
@@ -330,9 +340,7 @@ def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
 
 def delete_task(config: Config, *, task_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        if not cursor.fetchone():
-            raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+        _require_task_row(conn, task_id)
         # FK CASCADE handles linked reminders automatically
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         conn.commit()
@@ -345,12 +353,7 @@ def search_tasks(config: Config, *, query: str, show_completed: bool = False) ->
         sql = "SELECT * FROM tasks WHERE title LIKE ?"
         if not show_completed:
             sql += " AND status != 'done'"
-        sql += (
-            " ORDER BY"
-            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN 0 ELSE 1 END ASC,"
-            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN due_date END ASC,"
-            " priority DESC, due_date ASC NULLS LAST, created_at DESC"
-        )
+        sql += _TASK_ORDER_BY
         cursor = conn.execute(sql, (f"%{query}%",))
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
@@ -388,15 +391,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                     conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                     conn.commit()
                 elif trigger_type == "cron":
-                    trigger = CronTrigger(
-                        month=trigger_data["month"] if "month" in trigger_data else None,
-                        day=trigger_data["day"] if "day" in trigger_data else None,
-                        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
-                        hour=trigger_data["hour"] if "hour" in trigger_data else None,
-                        minute=trigger_data["minute"] if "minute" in trigger_data else None,
-                        timezone=_UTC_ZI,
-                    )
-                    next_fire = trigger.get_next_fire_time(None, _now_utc())
+                    next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
                     if next_fire is not None:
                         conn.execute(
                             "UPDATE reminders SET scheduled_time = ? WHERE id = ?",
@@ -445,14 +440,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             trigger = DateTrigger(run_date=run_date)
 
         elif trigger_type == "cron":
-            trigger = CronTrigger(
-                month=trigger_data["month"] if "month" in trigger_data else None,
-                day=trigger_data["day"] if "day" in trigger_data else None,
-                day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
-                hour=trigger_data["hour"] if "hour" in trigger_data else None,
-                minute=trigger_data["minute"] if "minute" in trigger_data else None,
-                timezone=_UTC_ZI,
-            )
+            trigger = _cron_trigger_from_data(trigger_data)
 
         elif trigger_type == "interval":
             trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)

@@ -1,12 +1,14 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use vesta_tests::exec_in_container;
+use super::common::{lock_live_agent_a, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
-use super::common::{lock_shared_live_agent, write_notification, wait_for_file_contains, E2E_FILES_DIR};
-
+/// Basic file operations end to end against real claude. Create and modify share the same
+/// notification -> file mechanism, so one conversation exercises both: the agent creates a file
+/// with exact content from one notification, then appends to that same file from a second
+/// notification without losing the original content.
 #[test]
-fn agent_notification_e2e_creates_file_via_vestad() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
+fn agent_notification_e2e_creates_then_modifies_file_via_vestad() {
+    let Some((_shared, container)) = lock_live_agent_a() else {
         return;
     };
 
@@ -17,47 +19,27 @@ fn agent_notification_e2e_creates_file_via_vestad() {
             .unwrap()
             .as_secs()
     );
-    let created = format!("{E2E_FILES_DIR}/single-{uid}.txt");
+    let file = format!("{E2E_FILES_DIR}/file-{uid}.txt");
     let expected = format!("E2E content {uid}");
 
     write_notification(
         &container,
-        &format!("Create the file \"{created}\" containing only:\n{expected}"),
+        &format!("Create the file \"{file}\" containing only:\n{expected}"),
         true,
     )
     .expect("write create notification");
-
-    let created_content = wait_for_file_contains(&container, &created, &expected, Duration::from_secs(180))
+    let created_content = wait_for_file_contains(&container, &file, &expected, Duration::from_secs(180))
         .expect("wait for created file");
     assert!(created_content.contains(&expected));
-}
 
-#[test]
-fn agent_notification_e2e_modifies_file_via_vestad() {
-    let Some((_shared, container)) = lock_shared_live_agent() else {
-        return;
-    };
-
-    let uid = format!(
-        "{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    );
-    let modified = format!("{E2E_FILES_DIR}/modify-{uid}.txt");
-
-    exec_in_container(&container, &format!("printf '%s\n' 'original content' > {modified}"))
-        .expect("seed file");
     write_notification(
         &container,
-        &format!("Append the text \"--- APPENDED ---\" to the file \"{modified}\""),
+        &format!("Append the text \"--- APPENDED ---\" to the file \"{file}\""),
         true,
     )
     .expect("write modify notification");
-
-    let modified_content = wait_for_file_contains(&container, &modified, "APPENDED", Duration::from_secs(180))
+    let modified_content = wait_for_file_contains(&container, &file, "APPENDED", Duration::from_secs(180))
         .expect("wait for modified file");
-    assert!(modified_content.contains("original content"));
+    assert!(modified_content.contains(&expected), "append must preserve the original content");
     assert!(modified_content.contains("APPENDED"));
 }

@@ -1,7 +1,7 @@
 ---
 name: voice
 description: Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json.
-serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)
@@ -37,7 +37,7 @@ Once configured, the user can manage voice settings directly from the **agent se
    Let them know they can browse all voices and listen to previews in the app settings later.
 6. **Ensure the voice server is running.** The app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
    ```bash
-   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+   PORT=$(~/agent/skills/service/scripts/register-service voice)
    SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."

@@ -46,7 +46,7 @@
    mkdir -p ~/onedrive
    rclone mount onedrive: ~/onedrive --daemon --vfs-cache-mode full
    ```
-8. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+8. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
    rclone mount onedrive: ~/onedrive --daemon --vfs-cache-mode full
    ```

@@ -10,8 +10,10 @@ export const vestadApiFixtures = {
   },
   "agent_statuses": [
     "alive",
+    "setting_up",
     "starting",
     "not_authenticated",
+    "unprovisioned",
     "stopped",
     "dead",
     "not_found"
@@ -28,6 +30,7 @@ export const vestadApiFixtures = {
             "rev": 3
           }
         },
+        "startedAt": "2026-01-01T00:00:00Z",
         "status": "alive",
         "ws_port": 4200
       },
@@ -82,14 +85,6 @@ export const vestadApiFixtures = {
       "size": 1234567890
     }
   ],
-  "personality": {
-    "description": "Calm and wise",
-    "emoji": "🦉",
-    "name": "sage",
-    "order": 1,
-    "sample": "Let me think about that.",
-    "title": "The Sage"
-  },
   "tree_entry": {
     "is_dir": false,
     "mode": 420,
@@ -97,6 +92,7 @@ export const vestadApiFixtures = {
   },
   "version": {
     "api_compat": "0.2",
+    "auto_update": true,
     "channel": "stable",
     "dev_mode": false,
     "latest_version": "0.1.1",

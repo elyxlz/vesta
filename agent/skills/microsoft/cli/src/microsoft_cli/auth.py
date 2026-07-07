@@ -1,7 +1,7 @@
 import msal
 import pathlib as pl
 from typing import NamedTuple
-from .settings import MicrosoftSettings
+from .settings import get_settings
 
 
 class Account(NamedTuple):
@@ -45,9 +45,8 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings, client_id: str | None = None) -> msal.PublicClientApplication:
-    client_id = client_id or settings.graph_client_id
-
+def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
+    settings = get_settings()
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"
 
     cache = msal.SerializableTokenCache()
@@ -55,20 +54,13 @@ def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings, client_id: str 
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(client_id, authority=authority, token_cache=cache)
+    app = msal.PublicClientApplication(settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
 
     return app
 
 
-def get_token(
-    cache_file: pl.Path,
-    scopes: list[str],
-    settings: MicrosoftSettings,
-    *,
-    account_id: str | None = None,
-    client_id: str | None = None,
-) -> str:
-    app = get_app(cache_file, settings=settings, client_id=client_id)
+def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
+    app = get_app(cache_file)
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
@@ -77,12 +69,20 @@ def get_token(
 
     if not result:
         result = _run_device_flow(app, scopes, cache_file)
+    else:
+        # Persist the cache after a silent acquisition. MSAL rotates the refresh
+        # token in-memory on refresh; if we never write it back, the on-disk token
+        # is never renewed, so its 90-day inactivity clock never advances and it
+        # eventually dies with AADSTS700082 even under constant daemon polling.
+        cache = app.token_cache
+        if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+            _write_cache(cache_file, content=cache.serialize())
 
     return result["access_token"]
 
 
-def list_accounts(cache_file: pl.Path, *, settings: MicrosoftSettings) -> list[Account]:
-    app = get_app(cache_file, settings=settings)
+def list_accounts(cache_file: pl.Path) -> list[Account]:
+    app = get_app(cache_file)
     seen_usernames = set()
     accounts = []
     for a in app.get_accounts():
@@ -93,9 +93,9 @@ def list_accounts(cache_file: pl.Path, *, settings: MicrosoftSettings) -> list[A
     return accounts
 
 
-def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: MicrosoftSettings) -> str:
+def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
     """Map email address to account_id. Raises ValueError if email not found."""
-    accounts = list_accounts(cache_file, settings=settings)
+    accounts = list_accounts(cache_file)
     email_lower = email.lower()
     for account in accounts:
         if account.username.lower() == email_lower:
@@ -108,9 +108,9 @@ def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: Micros
         raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
-def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings: MicrosoftSettings) -> Account | None:
+def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:
     """Authenticate a new account interactively"""
-    app = get_app(cache_file, settings=settings)
+    app = get_app(cache_file)
     result = _run_device_flow(app, scopes, cache_file)
 
     # Get the newly added account

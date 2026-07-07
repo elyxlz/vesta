@@ -87,6 +87,9 @@ def write_notification(account: str, folder: str, meta: dict) -> None:
     notif = {
         "source": "email-client",
         "type": "email",
+        # Email pools by default so routine mail doesn't preempt the agent; the user adds interrupt rules
+        # (e.g. --keyword urgent, a specific sender) for the messages that should reach them immediately.
+        "interrupt": False,
         "account": account,
         "folder": folder,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),

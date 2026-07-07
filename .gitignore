@@ -22,8 +22,10 @@ target/
 vestad/vendored/
 
 # Claude Code
-.claude/
+.claude/*
 !.claude/skills/
+!.claude/workflows/
+!.claude/settings.json
 
 # Cursor / editor config
 .cursor/
@@ -31,3 +33,9 @@ vestad/vendored/
 
 # Personal notes
 ROADMAP.md
+
+# Local MCP server config — holds secret tokens, never commit
+.mcp.json
+
+# Superpowers planning scratch (specs/plans) — kept local, never committed
+docs/superpowers/

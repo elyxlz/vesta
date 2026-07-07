@@ -28,20 +28,13 @@ fn format_size(bytes: u64) -> String {
 
 fn try_open_browser(url: &str) {
     #[cfg(target_os = "linux")]
-    let _child = process::Command::new("xdg-open")
-        .arg(url)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn();
+    let (program, args): (&str, &[&str]) = ("xdg-open", &[url]);
     #[cfg(target_os = "macos")]
-    let _child = process::Command::new("open")
-        .arg(url)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn();
+    let (program, args): (&str, &[&str]) = ("open", &[url]);
     #[cfg(target_os = "windows")]
-    let _child = process::Command::new("cmd")
-        .args(["/c", "start", "", url])
+    let (program, args): (&str, &[&str]) = ("cmd", &["/c", "start", "", url]);
+    let _child = process::Command::new(program)
+        .args(args)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .spawn();
@@ -163,6 +156,11 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
+    /// Manage host filesystem access for an agent
+    Mount {
+        #[command(subcommand)]
+        cmd: MountCommand,
+    },
     /// View or change agent settings. With no flags, prints model + context window
     /// (manage_agent_code is fixed at create time and read-only here).
     Settings {
@@ -174,6 +172,16 @@ enum Command {
         /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
         #[arg(long)]
         context_window: Option<u64>,
+        /// How urgent messages preempt a running turn: message (background work survives,
+        /// waits for a running tool) or interrupt (immediate, kills background subagents)
+        #[arg(long)]
+        preempt_mode: Option<PreemptMode>,
+    },
+    /// Sign out an agent: clear its provider credentials. It stays running but can't respond
+    /// until you reconnect a provider with `vesta auth`.
+    Logout {
+        /// Agent name
+        name: String,
     },
     /// View or edit an agent's constitution (a charter prepended to its memory; the agent
     /// cannot edit it). With no flags, prints the current constitution.
@@ -189,6 +197,14 @@ enum Command {
         /// Clear the constitution
         #[arg(long, conflicts_with_all = ["edit", "file"])]
         clear: bool,
+    },
+    /// View or edit an agent's notification interrupt policy: which incoming notifications
+    /// preempt the agent's current turn (interrupt) vs. wait in the pool until it's idle (pool).
+    Notifications {
+        /// Agent name
+        name: String,
+        #[command(subcommand)]
+        action: NotificationsAction,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -214,10 +230,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Connect to a remote server (e.g. vesta connect https://host#apikey)
+    /// Connect to a remote server (paste the connect link vestad printed)
     Connect {
-        /// Server URL, optionally with API key after #
-        host: String,
+        /// The connect link vestad printed, e.g. https://host/app#k=key
+        link: String,
     },
     /// Update vesta to the latest version
     Update,
@@ -225,6 +241,11 @@ enum Command {
     Channel {
         /// Channel to switch to: stable or beta. Omit to show the current channel.
         channel: Option<String>,
+    },
+    /// Show or set whether vestad applies updates automatically
+    AutoUpdate {
+        /// Set to "on" or "off" (omit to show current status)
+        toggle: Option<Toggle>,
     },
     /// Uninstall vesta CLI and remove config
     Uninstall,
@@ -236,6 +257,8 @@ enum Command {
 enum GatewayAction {
     /// Restart the remote vestad daemon
     Restart,
+    /// Show the gateway setup: LAN, tunnel, port, auto-update, channel, backups
+    Info,
     /// Stream vestad logs from the remote gateway
     Logs {
         /// Number of lines to show initially
@@ -314,18 +337,175 @@ enum BackupAction {
     },
 }
 
+#[derive(Subcommand)]
+enum MountCommand {
+    /// List host paths this agent can access
+    Ls { agent: String },
+    /// Grant the agent access to a host path (read-only by default)
+    Add {
+        agent: String,
+        host_path: String,
+        /// Container path (defaults to mirroring the host path)
+        #[arg(long = "as")]
+        container_path: Option<String>,
+        /// Allow the agent to write (default read-only)
+        #[arg(long)]
+        writable: bool,
+    },
+    /// Revoke a grant by host path
+    Rm { agent: String, host_path: String },
+}
+
+/// A single host filesystem grant, as returned by / sent to GET|PUT /agents/{name}/mounts.
+/// The server validates and canonicalizes host_path/container_path on PUT.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct MountEntry {
+    host_path: String,
+    container_path: String,
+    #[serde(default)]
+    writable: bool,
+}
+
 #[derive(Clone, clap::ValueEnum)]
 enum Toggle {
     On,
     Off,
 }
 
-fn print_retention(ret: &serde_json::Value) {
-    eprintln!("retention: daily={}, weekly={}, monthly={}",
+#[derive(Subcommand)]
+enum NotificationsAction {
+    /// Print the notification rules as JSON
+    Show,
+    /// Manage the ordered interrupt ruleset (first matching rule wins, so order matters)
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesAction {
+    /// Print the ordered ruleset as JSON
+    List,
+    /// Append a rule (first matching rule wins, so order matters)
+    Add {
+        /// interrupt = preempt the agent's current turn; pool = wait until idle
+        #[arg(long)]
+        action: PolicyAction,
+        /// Exact match on notification source (case-insensitive), e.g. twitter, whatsapp
+        #[arg(long)]
+        source: Option<String>,
+        /// Exact match on notification type (case-insensitive), e.g. message, tweet
+        #[arg(long)]
+        r#type: Option<String>,
+        /// Substring match (case-insensitive) on the sender/contact across identity fields
+        #[arg(long)]
+        sender: Option<String>,
+        /// Case-insensitive regex on the notification body/message, e.g. 'invoice|payment'
+        #[arg(long)]
+        keyword: Option<String>,
+    },
+    /// Remove a rule by id (see `list`)
+    Remove {
+        /// The rule id to remove
+        id: String,
+    },
+    /// Remove all rules
+    Clear,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PolicyAction {
+    Interrupt,
+    Pool,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PreemptMode {
+    Message,
+    Interrupt,
+}
+
+impl PreemptMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            PreemptMode::Message => "message",
+            PreemptMode::Interrupt => "interrupt",
+        }
+    }
+}
+
+impl PolicyAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            PolicyAction::Interrupt => "interrupt",
+            PolicyAction::Pool => "pool",
+        }
+    }
+}
+
+/// A fresh 32-hex-char rule id from the system CSPRNG. The server assigns one to rules missing it,
+/// but the CLI stamps its own so the id is stable/printable before the round-trip.
+fn new_rule_id() -> String {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 16];
+    ring::rand::SystemRandom::new().fill(&mut bytes).expect("system CSPRNG");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Build a new interrupt rule from the match flags + action, stamped with a client-side id. Unset
+/// match fields are omitted (the engine folds `sender`/`keyword` into match predicates itself).
+fn build_rule(action: PolicyAction, source: Option<String>, r#type: Option<String>, sender: Option<String>, keyword: Option<String>) -> serde_json::Value {
+    let mut rule = serde_json::Map::new();
+    rule.insert("id".into(), new_rule_id().into());
+    for (field, value) in [("source", source), ("type", r#type), ("sender", sender), ("keyword", keyword)] {
+        if let Some(v) = value {
+            rule.insert(field.into(), v.into());
+        }
+    }
+    rule.insert("action".into(), action.as_str().into());
+    serde_json::Value::Object(rule)
+}
+
+/// Drop the rule with `id`; None if no rule matched (so the caller can report "no such rule").
+fn remove_rule(rules: &[serde_json::Value], id: &str) -> Option<Vec<serde_json::Value>> {
+    let kept: Vec<serde_json::Value> = rules.iter().filter(|rule| rule["id"].as_str() != Some(id)).cloned().collect();
+    (kept.len() != rules.len()).then_some(kept)
+}
+
+/// Pretty-print a JSON list, or an explanatory line on stderr when it's empty.
+fn print_json_list(items: &[serde_json::Value], empty_msg: &str) {
+    if items.is_empty() {
+        eprintln!("{empty_msg}");
+        return;
+    }
+    let value = serde_json::Value::Array(items.to_vec());
+    println!("{}", serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()));
+}
+
+/// Build a `{daily?, weekly?, monthly?}` retention object from the optional flags,
+/// omitting any the user didn't pass.
+fn retention_map(daily: Option<usize>, weekly: Option<usize>, monthly: Option<usize>) -> serde_json::Map<String, serde_json::Value> {
+    let mut ret = serde_json::Map::new();
+    if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
+    if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
+    if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+    ret
+}
+
+/// Pull the `(daily, weekly, monthly)` counts out of a retention object,
+/// defaulting any missing field to 0.
+fn retention_fields(ret: &serde_json::Value) -> (u64, u64, u64) {
+    (
         ret["daily"].as_u64().unwrap_or(0),
         ret["weekly"].as_u64().unwrap_or(0),
         ret["monthly"].as_u64().unwrap_or(0),
-    );
+    )
+}
+
+fn print_retention(ret: &serde_json::Value) {
+    let (daily, weekly, monthly) = retention_fields(ret);
+    eprintln!("retention: daily={daily}, weekly={weekly}, monthly={monthly}");
 }
 
 fn print_agent_backup_settings(result: &serde_json::Value) {
@@ -333,11 +513,20 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
     let has_override = result["has_override"].as_bool().unwrap_or(false);
     eprintln!("  enabled: {} {}", if enabled { "yes" } else { "no" },
         if has_override { "(override)" } else { "(global)" });
-    eprintln!("  retention: daily={}, weekly={}, monthly={}",
-        result["retention"]["daily"].as_u64().unwrap_or(0),
-        result["retention"]["weekly"].as_u64().unwrap_or(0),
-        result["retention"]["monthly"].as_u64().unwrap_or(0),
-    );
+    let (daily, weekly, monthly) = retention_fields(&result["retention"]);
+    eprintln!("  retention: daily={daily}, weekly={weekly}, monthly={monthly}");
+}
+
+fn get_mount_entries(c: &client::Client, agent: &str) -> Vec<MountEntry> {
+    let value = c.get_agent_mounts(agent).unwrap_or_else(|e| platform::die(&e));
+    match value["mounts"].as_array() {
+        Some(entries) => entries
+            .iter()
+            .cloned()
+            .map(|entry| serde_json::from_value(entry).unwrap_or_else(|e| platform::die(&format!("failed to parse mount entry: {e}"))))
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn read_file_or_stdin(path: &std::path::Path) -> String {
@@ -455,7 +644,7 @@ fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_tok
 /// defaults (Opus, 1M window).
 fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_flag: Option<u64>, yes: bool) -> ClaudeOptions {
     let model = model_flag.or_else(|| (!yes).then(|| prompt_claude_model(c)));
-    let max_context_tokens = ctx_flag.or_else(|| (!yes).then(prompt_context_window));
+    let max_context_tokens = ctx_flag.or_else(|| if yes { None } else { prompt_context_window(c) });
     ClaudeOptions { model, max_context_tokens }
 }
 
@@ -482,27 +671,30 @@ fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
 /// Prompt for a Claude model from the curated list (default = first entry, Opus).
 /// Falls back to "opus" if the list can't be fetched.
 fn prompt_claude_model(c: &client::Client) -> String {
-    let models = match c.fetch_claude_models() {
-        Ok(models) if !models.is_empty() => models,
-        _ => return "opus".to_string(),
+    let models = match c.fetch_manifest() {
+        Ok(manifest) => match manifest.providers.get("claude").map(|p| &p.models) {
+            Some(client::ModelCatalog::Static(slugs)) if !slugs.is_empty() => slugs.clone(),
+            _ => return "opus".to_string(),
+        },
+        Err(_) => return "opus".to_string(),
     };
     eprintln!("which Claude model?");
-    let labels: Vec<String> = models.iter().map(|m| format!("{} — {}", m.label, m.note)).collect();
-    models[prompt_indexed_choice(&labels, 0)].id.clone()
+    models[prompt_indexed_choice(&models, 0)].clone()
 }
 
-/// Context-window presets (tokens, label). 1M is the default (largest).
-const CONTEXT_PRESETS: [(u64, &str); 3] = [
-    (200_000, "200K — cheapest prompt-cache reads, compacts soonest"),
-    (500_000, "500K — balanced"),
-    (1_000_000, "1M — most context"),
-];
-
-/// Prompt for a context-window preset. Default = 1M (the largest, last entry).
-fn prompt_context_window() -> u64 {
+/// Prompt for a context-window preset. The presets and the default come from the manifest
+/// (GET /manifest), so the CLI keeps no copy. Returns None if they can't be fetched, letting
+/// the server apply its own default.
+fn prompt_context_window(c: &client::Client) -> Option<u64> {
+    let manifest = c.fetch_manifest().ok()?;
+    let context = &manifest.providers.get("claude")?.context;
+    if context.presets.is_empty() {
+        return None;
+    }
     eprintln!("context window?");
-    let labels: Vec<String> = CONTEXT_PRESETS.iter().map(|(_, label)| label.to_string()).collect();
-    CONTEXT_PRESETS[prompt_indexed_choice(&labels, CONTEXT_PRESETS.len() - 1)].0
+    let labels: Vec<String> = context.presets.iter().map(|p| format!("{} — {}", p.label, p.note)).collect();
+    let default_idx = context.presets.iter().position(|p| p.tokens == context.default).unwrap_or(0);
+    Some(context.presets[prompt_indexed_choice(&labels, default_idx)].tokens)
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
@@ -598,7 +790,7 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
 }
 
 // Agent-less OAuth dance: prints the auth URL, prompts for the pasted code,
-// returns the credentials JSON. Caller passes it to set_provider_credentials.
+// returns the credentials JSON. Caller passes it to update_settings.
 fn oauth_dance(client: &client::Client) -> String {
     let auth = client
         .start_auth_standalone()
@@ -615,9 +807,9 @@ fn oauth_dance(client: &client::Client) -> String {
 
 fn authenticate_agent(client: &client::Client, name: &str) {
     let credentials = oauth_dance(client);
-    // Reauth only: model + context window are preserved server-side (None = keep).
+    // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
     client
-        .set_provider_credentials(name, &credentials, None, None)
+        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None, None)
         .unwrap_or_else(|e| platform::die(&e));
     eprintln!("authenticated!");
 }
@@ -808,9 +1000,9 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
     Some(tmp_dir)
 }
 
-// Resolve the platform target/archive and run the self-update. `target_version`
-// pins a specific version (the gateway's) or is `None` for the latest release.
-fn run_cli_self_update(target_version: Option<&str>) {
+// The release artifact for this platform: (rust target triple, is_zip, binary
+// path inside the archive). The arch→triple match dies on an unsupported CPU.
+fn update_target() -> (&'static str, bool, &'static str) {
     #[cfg(target_os = "linux")]
     {
         let target = match std::env::consts::ARCH {
@@ -818,9 +1010,7 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-unknown-linux-gnu",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "macos")]
     {
@@ -829,17 +1019,20 @@ fn run_cli_self_update(target_version: Option<&str>) {
             "aarch64" => "aarch64-apple-darwin",
             other => platform::die(&format!("unsupported architecture: {other}")),
         };
-        if let Some(tmp_dir) = cli_self_update(target_version, target, false, "vesta") {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        (target, false, "vesta")
     }
     #[cfg(target_os = "windows")]
     {
-        if let Some(tmp_dir) =
-            cli_self_update(target_version, "x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
-        {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-        }
+        ("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe")
+    }
+}
+
+// Resolve the platform target/archive and run the self-update. `target_version`
+// pins a specific version (the gateway's) or is `None` for the latest release.
+fn run_cli_self_update(target_version: Option<&str>) {
+    let (target, is_zip, binary_subpath) = update_target();
+    if let Some(tmp_dir) = cli_self_update(target_version, target, is_zip, binary_subpath) {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }
 
@@ -856,11 +1049,7 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
                         if version_less_than(latest, env!("CARGO_PKG_VERSION")) {
                             let _ = std::fs::remove_file(&cache_file);
                         } else {
-                            eprintln!(
-                                "\nUpdate available: v{} → v{} (run 'vesta update')",
-                                env!("CARGO_PKG_VERSION"),
-                                latest
-                            );
+                            print_update_available(latest);
                         }
                     }
                     return None;
@@ -902,6 +1091,10 @@ fn detect_timezone() -> Option<String> {
     None
 }
 
+fn print_update_available(latest: &str) {
+    eprintln!("\nUpdate available: v{} → v{} (run 'vesta update')", env!("CARGO_PKG_VERSION"), latest);
+}
+
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
@@ -918,12 +1111,7 @@ fn run(cli: Cli) {
         return;
     };
 
-    let is_update = matches!(command, Command::Update);
-    let bg_handle = if is_update {
-        None
-    } else {
-        check_update_cached()
-    };
+    let bg_handle = if matches!(command, Command::Update) { None } else { check_update_cached() };
 
     let host_ref = cli.host.as_deref();
     let token_ref = cli.token.as_deref();
@@ -944,9 +1132,10 @@ fn run(cli: Cli) {
             let plan = resolve_setup_provider(&c, openrouter, claude_token, claude_model, context_window, yes);
             let timezone = detect_timezone();
 
-            // 1. Create an empty agent. Vestad no longer accepts credentials at
-            //    create time — the agent owns its own auth state.
-            let created_name = match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
+            // 1. Create an empty agent. Vestad no longer accepts credentials or timezone at
+            //    create time — the agent owns its own auth state and config store. Timezone rides
+            //    the provider provisioning call below.
+            let created_name = match c.create_agent(&name, !no_manage_core_code) {
                 Ok(n) => { eprintln!("created agent '{n}'"); n }
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
@@ -958,7 +1147,7 @@ fn run(cli: Cli) {
                 Err(e) => platform::die(&e),
             };
 
-            // 2. Wait for the agent's HTTP server to be up so it can receive POST /provider.
+            // 2. Wait for the agent's HTTP server to be up so it can receive PUT /config.
             eprintln!("waiting for agent to start...");
             c.wait_until_running(&created_name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
@@ -968,19 +1157,19 @@ fn run(cli: Cli) {
             //    dance first.
             match plan {
                 ProvisionPlan::OpenRouter(or) => {
-                    c.set_provider_openrouter(&created_name, &or)
+                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
                 ProvisionPlan::ClaudeCredentials { credentials, opts } => {
-                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated (claude)");
                 }
                 ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.set_provider_credentials(&created_name, &credentials, opts.model.as_deref(), opts.max_context_tokens)
+                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("authenticated!");
                 }
@@ -1017,17 +1206,17 @@ fn run(cli: Cli) {
                     .unwrap_or_else(|e| platform::die(&e));
             }
 
-            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref())
+            let name = c.create_agent(&name, !no_manage_core_code)
                 .unwrap_or_else(|e| platform::die(&e));
 
-            // If --openrouter-key was provided, finish provisioning the agent
-            // immediately. Otherwise leave it unprovisioned for the user to run
-            // `vesta auth` later.
+            // If --openrouter-key was provided, finish provisioning the agent immediately, carrying
+            // the timezone in the same call. Otherwise leave it unprovisioned for `vesta auth` later;
+            // the agent boots on UTC and asks for the timezone at first wake.
             if let Some(or) = &openrouter {
                 eprintln!("waiting for agent to start...");
                 c.wait_until_running(&name, START_READY_TIMEOUT)
                     .unwrap_or_else(|e| platform::die(&e));
-                c.set_provider_openrouter(&name, or)
+                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref(), None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("created (running on OpenRouter)");
             } else {
@@ -1035,25 +1224,39 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Settings { name, model, context_window } => {
+        Command::Settings { name, model, context_window, preempt_mode } => {
             let c = get_client(host_ref, token_ref);
-            if model.is_some() || context_window.is_some() {
-                c.set_provider_settings(&name, model.as_deref(), context_window)
+            if model.is_some() || context_window.is_some() || preempt_mode.is_some() {
+                c.update_settings(&name, None, model.as_deref(), context_window, None, preempt_mode.map(PreemptMode::as_str))
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
                 let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
-                if let Ok(provider) = c.get_provider(&name) {
-                    if let Some(m) = provider["model"].as_str() {
-                        eprintln!("model = {m}");
+                if let Ok(config) = c.get_agent_config(&name) {
+                    if let Some(mode) = config["preempt_mode"].as_str() {
+                        eprintln!("preempt_mode = {mode}");
                     }
-                    match provider["max_context_tokens"].as_u64() {
-                        Some(ctx) => eprintln!("context_window = {ctx}"),
-                        None if provider["kind"].as_str() == Some("openrouter") => {
-                            eprintln!("context_window = default (model window, capped at 200K)")
+                }
+                // Only report model/context when a provider is actually configured; a signed-out
+                // agent (kind "none") has a stored default model but no active provider.
+                if let Ok(provider) = c.get_provider(&name) {
+                    if provider["authed"].as_bool() != Some(true) {
+                        eprintln!("provider = not configured (run 'vesta auth {name}')");
+                    } else {
+                        if let Some(m) = provider["model"].as_str() {
+                            eprintln!("model = {m}");
                         }
-                        None => eprintln!("context_window = default (1M for Claude)"),
+                        match provider["max_context_tokens"].as_u64() {
+                            Some(ctx) => eprintln!("context_window = {ctx}"),
+                            None if provider["kind"].as_str() == Some("openrouter") => {
+                                eprintln!("context_window = default (model window, capped at 200K)")
+                            }
+                            None if provider["kind"].as_str() == Some("claude") => {
+                                eprintln!("context_window = default (1M for Claude)")
+                            }
+                            None => eprintln!("context_window = default"),
+                        }
                     }
                 }
             }
@@ -1086,6 +1289,50 @@ fn run(cli: Cli) {
                     c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
                     eprintln!("{name}: constitution updated, agent restarting");
                 }
+            }
+        }
+
+        Command::Notifications { name, action } => {
+            let c = get_client(host_ref, token_ref);
+            let fetch_rules = || {
+                c.get_notification_rules(&name)
+                    .unwrap_or_else(|e| platform::die(&e))
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            match action {
+                NotificationsAction::Show => {
+                    let rules = serde_json::Value::Array(fetch_rules());
+                    println!("{}", serde_json::to_string_pretty(&rules).unwrap_or_else(|_| rules.to_string()));
+                }
+                NotificationsAction::Rules { action } => match action {
+                    RulesAction::List => {
+                        print_json_list(&fetch_rules(), "no rules. every notification interrupts the agent (the default).");
+                    }
+                    RulesAction::Add { action, source, r#type, sender, keyword } => {
+                        let mut rules = fetch_rules();
+                        rules.push(build_rule(action, source, r#type, sender, keyword));
+                        let count = rules.len();
+                        c.set_notification_rules(&name, &serde_json::Value::Array(rules))
+                            .unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("added rule. now {count} rule(s); applies on the agent's next tick.");
+                    }
+                    RulesAction::Remove { id } => match remove_rule(&fetch_rules(), &id) {
+                        None => platform::die(&format!("no rule with id {id}")),
+                        Some(kept) => {
+                            let count = kept.len();
+                            c.set_notification_rules(&name, &serde_json::Value::Array(kept))
+                                .unwrap_or_else(|e| platform::die(&e));
+                            eprintln!("removed rule {id}. now {count} rule(s); applies on the agent's next tick.");
+                        }
+                    },
+                    RulesAction::Clear => {
+                        c.set_notification_rules(&name, &serde_json::json!([]))
+                            .unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("cleared all rules; applies on the agent's next tick.");
+                    }
+                },
             }
         }
 
@@ -1134,6 +1381,12 @@ fn run(cli: Cli) {
             eprintln!("{name}: restarted");
         }
 
+        Command::Logout { name } => {
+            let c = get_client(host_ref, token_ref);
+            c.logout(&name).unwrap_or_else(|e| platform::die(&e));
+            eprintln!("{name}: signed out (reconnect a provider with `vesta auth {name}`)");
+        }
+
         Command::Gateway { action } => match action {
             GatewayAction::Restart => {
                 let c = get_client(host_ref, token_ref);
@@ -1144,12 +1397,38 @@ fn run(cli: Cli) {
                 let c = get_client(host_ref, token_ref);
                 c.stream_gateway_logs(tail, follow).unwrap_or_else(|e| platform::die(&e));
             }
+            GatewayAction::Info => {
+                let c = get_client(host_ref, token_ref);
+                let settings = c.get_gateway_settings().unwrap_or_else(|e| platform::die(&e));
+                let info = c.get_gateway_info().unwrap_or_else(|e| platform::die(&e));
+
+                let lan = &info["lan"];
+                let lan_line = if lan["exposed"].as_bool().unwrap_or(false) {
+                    format!("enabled at {}", lan["url"].as_str().unwrap_or("unknown"))
+                } else {
+                    "disabled".to_string()
+                };
+                eprintln!("lan:          {lan_line}");
+                eprintln!("tunnel:       {}", info["tunnel_url"].as_str().unwrap_or("—"));
+                eprintln!("port:         {}", info["port"].as_u64().unwrap_or(0));
+                eprintln!("auto-update:  {}", if settings["auto_update"].as_bool().unwrap_or(false) { "enabled" } else { "disabled" });
+                eprintln!("channel:      {}", settings["channel"].as_str().unwrap_or("stable"));
+
+                let backup = &settings["auto_backup"];
+                if backup["enabled"].as_bool().unwrap_or(false) {
+                    let hour = backup["hour"].as_u64().unwrap_or(0);
+                    eprintln!("backups:      daily at {hour:02}:00");
+                    print_retention(&backup["retention"]);
+                } else {
+                    eprintln!("backups:      disabled");
+                }
+            }
         },
 
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
-                c.set_provider_credentials(&name, &token_str, None, None)
+                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None, None)
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{name}: authenticated");
             } else {
@@ -1260,15 +1539,11 @@ fn run(cli: Cli) {
                     eprintln!("backup deleted: {backup_id}");
                 }
                 BackupAction::AutoBackup { toggle } => match toggle {
-                    Some(Toggle::On) => {
-                        c.set_auto_backup_settings(&serde_json::json!({"enabled": true}))
+                    Some(toggle) => {
+                        let enabled = matches!(toggle, Toggle::On);
+                        c.set_auto_backup_settings(&serde_json::json!({"enabled": enabled}))
                             .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("auto-backup: enabled");
-                    }
-                    Some(Toggle::Off) => {
-                        c.set_auto_backup_settings(&serde_json::json!({"enabled": false}))
-                            .unwrap_or_else(|e| platform::die(&e));
-                        eprintln!("auto-backup: disabled");
+                        eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
                     }
                     None => {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
@@ -1281,10 +1556,7 @@ fn run(cli: Cli) {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
                     } else {
-                        let mut ret = serde_json::Map::new();
-                        if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                        if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                        if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+                        let ret = retention_map(daily, weekly, monthly);
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
                             .unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
@@ -1306,11 +1578,7 @@ fn run(cli: Cli) {
                             body.insert("enabled".into(), matches!(toggle, Toggle::On).into());
                         }
                         if daily.is_some() || weekly.is_some() || monthly.is_some() {
-                            let mut ret = serde_json::Map::new();
-                            if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
-                            if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
-                            if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
-                            body.insert("retention".into(), serde_json::Value::Object(ret));
+                            body.insert("retention".into(), retention_map(daily, weekly, monthly).into());
                         }
                         let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
                             .unwrap_or_else(|e| platform::die(&e));
@@ -1318,6 +1586,65 @@ fn run(cli: Cli) {
                         print_agent_backup_settings(&result);
                     }
                 },
+            }
+        }
+
+        Command::Mount { cmd } => {
+            let c = get_client(host_ref, token_ref);
+            match cmd {
+                MountCommand::Ls { agent } => {
+                    let mounts = get_mount_entries(&c, &agent);
+                    if mounts.is_empty() {
+                        eprintln!("no host grants for '{agent}'");
+                    } else {
+                        for m in &mounts {
+                            let target = if m.container_path == m.host_path {
+                                String::new()
+                            } else {
+                                format!(" -> {}", m.container_path)
+                            };
+                            println!("  {}{}  [{}]", m.host_path, target, if m.writable { "rw" } else { "ro" });
+                        }
+                    }
+                }
+                MountCommand::Add { agent, host_path, container_path, writable } => {
+                    let mut mounts = get_mount_entries(&c, &agent);
+                    let container_path = container_path.unwrap_or_else(|| host_path.clone());
+                    if mounts.iter().any(|m| m.container_path == container_path) {
+                        eprintln!("a grant already targets {container_path}");
+                    } else {
+                        mounts.push(MountEntry { host_path: host_path.clone(), container_path, writable });
+                        let body = serde_json::json!({ "mounts": mounts });
+                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("granted {host_path}; applies on restart: vesta restart {agent}");
+                    }
+                }
+                MountCommand::Rm { agent, host_path } => {
+                    let mounts = get_mount_entries(&c, &agent);
+                    let matched = mounts.iter().find(|m| m.host_path == host_path || m.container_path == host_path).cloned();
+                    match matched {
+                        Some(entry) => {
+                            let filtered: Vec<MountEntry> = mounts
+                                .into_iter()
+                                .filter(|m| m.host_path != entry.host_path || m.container_path != entry.container_path)
+                                .collect();
+                            let body = serde_json::json!({ "mounts": filtered });
+                            c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                            let target = if entry.container_path == entry.host_path {
+                                String::new()
+                            } else {
+                                format!(" (container path {})", entry.container_path)
+                            };
+                            eprintln!(
+                                "revoked {}{}; access remains until you restart: vesta restart {agent}",
+                                entry.host_path, target
+                            );
+                        }
+                        None => {
+                            eprintln!("no grant for {host_path} — run 'vesta mount ls {agent}' to see stored paths");
+                        }
+                    }
+                }
             }
         }
 
@@ -1340,13 +1667,9 @@ fn run(cli: Cli) {
             eprintln!("{name}: ready");
         }
 
-        Command::Connect { host } => {
-            let (url, key) = if let Some((url, key)) = host.split_once('#') {
-                (url.to_string(), key.to_string())
-            } else {
-                let key = prompt("API key");
-                (host, key)
-            };
+        Command::Connect { link } => {
+            let (url, key) = common::parse_connect_link(&link)
+                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {
@@ -1423,6 +1746,21 @@ fn run(cli: Cli) {
                 }
             }
         }
+
+        Command::AutoUpdate { toggle } => {
+            let c = get_client(host_ref, token_ref);
+            match toggle {
+                Some(toggle) => {
+                    let enabled = matches!(toggle, Toggle::On);
+                    let set = c.set_auto_update(enabled).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("auto-update: {}", if set { "enabled" } else { "disabled" });
+                }
+                None => {
+                    let enabled = c.get_auto_update().unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("auto-update: {}", if enabled { "enabled" } else { "disabled" });
+                }
+            }
+        }
     }
 
     // Check update notification
@@ -1433,11 +1771,7 @@ fn run(cli: Cli) {
         }
         if handle.is_finished() {
             if let Ok(Some(latest)) = handle.join() {
-                eprintln!(
-                    "\nUpdate available: v{} → v{} (run 'vesta update')",
-                    env!("CARGO_PKG_VERSION"),
-                    latest
-                );
+                print_update_available(&latest);
             }
         }
     }
@@ -1476,5 +1810,63 @@ mod tests {
         assert_eq!(classify_version_gate("1.2.3", "2.0.0"), VersionGate::CliOlder);
         assert_eq!(classify_version_gate("1.3.0", "1.2.9"), VersionGate::GatewayOlder);
         assert_eq!(classify_version_gate("2.0.0", "1.9.9"), VersionGate::GatewayOlder);
+    }
+
+    #[test]
+    fn build_rule_omits_unset_fields_and_stamps_id() {
+        let rule = build_rule(PolicyAction::Pool, Some("twitter".into()), None, None, Some("ad|spam".into()));
+        assert_eq!(rule["source"], "twitter");
+        assert_eq!(rule["keyword"], "ad|spam");
+        assert_eq!(rule["action"], "pool");
+        // Unset match fields are omitted entirely (the engine folds sender/keyword into predicates itself).
+        assert!(rule.get("type").is_none());
+        assert!(rule.get("sender").is_none());
+        // The CLI stamps a 32-hex-char id so it's stable before the round-trip.
+        let id = rule["id"].as_str().expect("id is a string");
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn new_rule_id_is_unique_32_hex() {
+        let first = new_rule_id();
+        let second = new_rule_id();
+        assert_eq!(first.len(), 32);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn remove_rule_reports_missing() {
+        let rules = vec![serde_json::json!({ "id": "a" }), serde_json::json!({ "id": "b" })];
+        assert_eq!(remove_rule(&rules, "a").unwrap(), vec![serde_json::json!({ "id": "b" })]);
+        assert!(remove_rule(&rules, "missing").is_none());
+    }
+
+    #[test]
+    fn parses_mount_add_with_flags() {
+        let cli = Cli::try_parse_from(["vesta", "mount", "add", "media", "/mnt/media", "--as", "/mnt/media", "--writable"]).unwrap();
+        match cli.command {
+            Some(Command::Mount {
+                cmd: MountCommand::Add { agent, host_path, container_path, writable },
+            }) => {
+                assert_eq!(agent, "media");
+                assert_eq!(host_path, "/mnt/media");
+                assert_eq!(container_path, Some("/mnt/media".to_string()));
+                assert!(writable);
+            }
+            _ => panic!("expected Command::Mount {{ cmd: MountCommand::Add {{ .. }} }}"),
+        }
+    }
+
+    #[test]
+    fn parses_mount_ls() {
+        let cli = Cli::try_parse_from(["vesta", "mount", "ls", "media"]).unwrap();
+        match cli.command {
+            Some(Command::Mount { cmd: MountCommand::Ls { agent } }) => {
+                assert_eq!(agent, "media");
+            }
+            _ => panic!("expected Command::Mount {{ cmd: MountCommand::Ls {{ .. }} }}"),
+        }
     }
 }

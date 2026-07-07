@@ -119,18 +119,17 @@ uv tool install ~/agent/skills/tasks/cli
 
 ## Background Daemon
 
-Register with vestad to get a port, then start:
+Register with vestad to get a port (see [service](../service/SKILL.md)), then start:
 ```bash
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/service/scripts/register-service tasks)
 screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
 ```
 
 One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
-**Restart**: Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+**Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
 ```
 
 ### Reminder Patterns

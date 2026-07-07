@@ -131,6 +131,27 @@ impl Client {
         check_response(resp)
     }
 
+    fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.put(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
+    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self.agent.patch(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body).map_err(map_error)?;
+        check_response(resp)
+    }
+
+    fn delete(&self, path: &str) -> Result<Response<Body>, String> {
+        let resp = self.agent.delete(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call().map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
         check_response(resp)?;
@@ -191,7 +212,7 @@ impl Client {
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/destroy", name))?;
+        self.delete(&format!("/agents/{}", name))?;
         Ok(())
     }
 
@@ -202,7 +223,7 @@ impl Client {
 
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
-        let resp = self.post_json(&format!("/agents/{}/rename", name), &body)?;
+        let resp = self.patch_json(&format!("/agents/{}", name), &body)?;
         let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(new_name).to_string())
     }
@@ -214,13 +235,33 @@ impl Client {
             let status = self.agent_status(name)?;
             match status.status.as_str() {
                 "alive" => return Ok(()),
-                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                "not_found" | "dead" | "stopped" | "not_authenticated" | "unprovisioned" =>
                     return Err(format!("{}: {}", name, status.status)),
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
                 return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+        }
+    }
+
+    /// Poll until the agent is no longer up (settled to `stopped`/`dead`/`not_found`).
+    /// `stop`/`destroy` are asynchronous — the container takes time to wind down — so
+    /// tests must wait for the transition rather than reading status immediately.
+    pub fn wait_until_stopped(&self, name: &str, timeout_secs: u64) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut backoff = std::time::Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?.status;
+            if !crate::is_up(&status) {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                crate::dump_agent_diagnostics(name);
+                return Err(format!("{}: timeout waiting for stopped (status: {})", name, status));
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
@@ -236,7 +277,7 @@ impl Client {
         loop {
             let status = self.agent_status(name)?.status;
             match status.as_str() {
-                "alive" | "setting_up" | "not_authenticated" => return Ok(status),
+                "alive" | "setting_up" | "not_authenticated" | "unprovisioned" => return Ok(status),
                 "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
                 _ => {}
             }
@@ -263,12 +304,45 @@ impl Client {
         v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
     }
 
-    /// Provision an agent with Claude credentials via the new provider endpoint.
-    /// `token` is the credentials JSON string. The agent must be running (its WS
-    /// port bound) to receive the call, so this waits for it first.
-    pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
+    /// Sign an agent in with an OpenRouter key + model via `PUT /provider`. The write doesn't restart
+    /// — callers (e.g. provision_and_settle) restart afterwards. The agent must be running (its WS
+    /// port bound) to receive the call, so this waits first.
+    pub fn sign_in_openrouter(&self, name: &str, key: &str, model: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"credentials": token});
+        let body = serde_json::json!({"kind": "openrouter", "model": model, "key": key});
+        self.put_json(&format!("/agents/{}/provider", name), &body)?;
+        Ok(())
+    }
+
+    /// LEGACY(remove-when: the upgrade e2e's from-version (`previous_released_tag`) >= 0.1.161 —
+    /// the first release speaking the current PUT `/provider` + `{kind,model,key}` contract; true
+    /// once 0.1.160 is no longer an upgrade-from target): sign in against a pre-0.1.161 daemon,
+    /// which serves `POST /agents/{name}/provider` and whose agent core expects
+    /// `{openrouter_key, openrouter_model}`. The upgrade test provisions on the previous released
+    /// daemon before upgrading, so it must speak whatever contract that daemon shipped.
+    pub fn sign_in_openrouter_legacy_pre_put(&self, name: &str, key: &str, model: &str) -> Result<(), String> {
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"openrouter_key": key, "openrouter_model": model});
+        self.post_json(&format!("/agents/{}/provider", name), &body)?;
+        Ok(())
+    }
+
+    /// Sign an agent in with a Claude OAuth credentials blob + model via `PUT /provider`. The write
+    /// doesn't restart; callers restart afterwards. The agent must be running to receive the call.
+    pub fn sign_in_claude(&self, name: &str, credentials: &str, model: &str) -> Result<(), String> {
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
+        self.put_json(&format!("/agents/{}/provider", name), &body)?;
+        Ok(())
+    }
+
+    /// LEGACY(remove-when: the upgrade e2e's from-version (`previous_released_tag`) >= 0.1.161): sign
+    /// a pre-0.1.161 daemon in with Claude credentials. It serves `POST /agents/{name}/provider` and
+    /// its agent core expects just `{credentials}` (model comes from the `AGENT_MODEL` env the caller
+    /// sets). The upgrade test provisions the previous released daemon, so it must speak that contract.
+    pub fn sign_in_claude_legacy_pre_put(&self, name: &str, credentials: &str) -> Result<(), String> {
+        self.wait_until_running(name, 60)?;
+        let body = serde_json::json!({"credentials": credentials});
         self.post_json(&format!("/agents/{}/provider", name), &body)?;
         Ok(())
     }

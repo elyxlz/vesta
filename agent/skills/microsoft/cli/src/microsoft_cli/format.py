@@ -57,6 +57,15 @@ def format_calendar_event_list(events: list[dict[str, Any]]) -> str:
     )
 
 
+def format_folder_list(folders: list[dict[str, Any]]) -> str:
+    """One line per folder: unread/total  name  id."""
+    if not folders:
+        return "(no folders)"
+    return "\n".join(
+        f"{_pick(f, 'unreadItemCount')}/{_pick(f, 'totalItemCount')}\t{_trunc(_pick(f, 'displayName'), 40)}\t{_pick(f, 'id')}" for f in folders
+    )
+
+
 def format_calendar_name_list(calendars: list[dict[str, Any]]) -> str:
     """One line per calendar: default-marker  name  id."""
     if not calendars:

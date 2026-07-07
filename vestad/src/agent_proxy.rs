@@ -13,7 +13,7 @@ use tokio::time::Instant;
 
 use crate::auth;
 use crate::docker;
-use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
+use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES, WS_KEEPALIVE_INTERVAL_SECS};
 
 // When a freshly-registered service is still binding its port (e.g. `vite preview`
 // takes a couple of seconds), wait briefly for the upstream to start accepting
@@ -84,14 +84,14 @@ pub async fn agent_proxy_handler(
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
-    let (target_port, stripped_path, service) = if !first_segment.is_empty() {
-        if let Some(entry) = resolve_service(&state, &name, first_segment).await {
-            (entry.port, service_subpath.to_string(), Some(entry))
-        } else {
-            (agent_port, format!("/{}", path), None)
-        }
+    let resolved = if first_segment.is_empty() {
+        None
     } else {
-        (agent_port, format!("/{}", path), None)
+        resolve_service(&state, &name, first_segment).await
+    };
+    let (target_port, stripped_path, service) = match resolved {
+        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
+        None => (agent_port, format!("/{}", path), None),
     };
 
     // Public services are fully open; everything else requires auth.
@@ -100,7 +100,6 @@ pub async fn agent_proxy_handler(
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
-    // Append query string.
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
         target_path.push('?');
@@ -175,8 +174,8 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
 
     tracing::info!(port = agent_port, "client websocket connected");
 
-    let (mut client_tx, mut client_rx) = client_ws.split();
-    let (mut agent_tx, mut agent_rx) = agent_ws.split();
+    let (client_tx, mut client_rx) = client_ws.split();
+    let (mut agent_tx, agent_rx) = agent_ws.split();
 
     let client_to_agent = async {
         while let Some(Ok(msg)) = client_rx.next().await {
@@ -193,28 +192,59 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         }
     };
 
-    let agent_to_client = async {
-        while let Some(Ok(msg)) = agent_rx.next().await {
-            let axum_msg = match msg {
-                TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
-                TungMsg::Binary(b) => AxumMsg::Binary(b),
-                TungMsg::Ping(p) => AxumMsg::Ping(p),
-                TungMsg::Pong(p) => AxumMsg::Pong(p),
-                TungMsg::Close(_) => break,
-                _ => continue,
-            };
-            if client_tx.send(axum_msg).await.is_err() {
-                break;
-            }
-        }
-    };
-
+    let keepalive = Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS);
     tokio::select! {
         _ = client_to_agent => {},
-        _ = agent_to_client => {},
+        _ = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
     }
 
     tracing::info!(port = agent_port, "client websocket disconnected");
+}
+
+/// Forward agent frames to the client, and ping the client every `keepalive` when otherwise
+/// idle so the Cloudflare tunnel never sees the socket as idle and reaps it (~100s window).
+/// Only the client hop is tunneled, so only it needs keepalive; the agent hop is local.
+/// Returns when the agent stream ends/closes or the client send fails. Generic over the
+/// sink/stream so it can be exercised in-process with in-memory streams (see tests).
+async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
+    mut client_tx: ClientSink,
+    mut agent_rx: AgentStream,
+    keepalive: Duration,
+) where
+    ClientSink: futures_util::Sink<axum::extract::ws::Message> + Unpin,
+    AgentStream:
+        futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, AgentErr>> + Unpin,
+{
+    use axum::extract::ws::Message as AxumMsg;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as TungMsg;
+
+    let mut ticker = tokio::time::interval(keepalive);
+    ticker.tick().await; // the first tick is immediate; drop it so the first ping waits a full interval
+
+    loop {
+        tokio::select! {
+            agent_msg = agent_rx.next() => {
+                let Some(Ok(msg)) = agent_msg else { break };
+                let axum_msg = match msg {
+                    TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
+                    TungMsg::Binary(b) => AxumMsg::Binary(b),
+                    TungMsg::Ping(p) => AxumMsg::Ping(p),
+                    TungMsg::Pong(p) => AxumMsg::Pong(p),
+                    TungMsg::Close(_) => break,
+                    _ => continue,
+                };
+                if client_tx.send(axum_msg).await.is_err() {
+                    break;
+                }
+            }
+            _ = ticker.tick() => {
+                if client_tx.send(AxumMsg::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 async fn forward_http_to_container(
@@ -276,41 +306,88 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_service_subpath, wait_for_upstream};
+    use super::{pump_agent_to_client, split_service_subpath, wait_for_upstream};
+    use axum::extract::ws::Message as AxumMsg;
+    use futures_util::stream;
+    use std::convert::Infallible;
     use std::net::Ipv4Addr;
     use std::time::Duration;
     use tokio::net::TcpListener;
     use tokio::time::Instant;
+    use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    #[test]
-    fn forwards_nested_asset_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/assets/index-abc.js"),
-            ("dashboard", "/assets/index-abc.js"),
-        );
+    /// A `Sink<AxumMsg>` that records every frame to an unbounded channel, so a test can
+    /// observe exactly what the pump sent to the client.
+    fn recording_client_sink() -> (
+        impl futures_util::Sink<AxumMsg, Error = ()> + Unpin,
+        tokio::sync::mpsc::UnboundedReceiver<AxumMsg>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = futures_util::sink::unfold(tx, |tx, msg: AxumMsg| async move {
+            tx.send(msg).map_err(|_| ())?;
+            Ok(tx)
+        });
+        (Box::pin(sink), rx)
+    }
+
+    #[tokio::test]
+    async fn idle_connection_pings_the_client_every_interval() {
+        let (sink, mut rx) = recording_client_sink();
+        // Agent never speaks: the only frames the client can receive are keepalive pings.
+        let agent_rx = stream::pending::<Result<TungMsg, Infallible>>();
+
+        let keepalive = Duration::from_millis(100);
+        let pump = tokio::spawn(pump_agent_to_client(sink, agent_rx, keepalive));
+
+        let start = Instant::now();
+        let first = rx.recv().await.expect("first keepalive ping");
+        let second = rx.recv().await.expect("second keepalive ping");
+        assert!(matches!(first, AxumMsg::Ping(_)), "expected a ping, got {first:?}");
+        assert!(matches!(second, AxumMsg::Ping(_)), "expected a ping, got {second:?}");
+        // First ping waits a full interval (the immediate tick is dropped), two pings ~= 2 intervals.
+        let elapsed = start.elapsed();
+        assert!(elapsed >= keepalive, "first ping fired too early: {elapsed:?}");
+        assert!(elapsed < keepalive * 6, "pings too slow: {elapsed:?}");
+
+        pump.abort();
+    }
+
+    #[tokio::test]
+    async fn agent_close_ends_the_pump() {
+        let (sink, mut rx) = recording_client_sink();
+        let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Close(None))]);
+
+        // A long keepalive guarantees the pump returns because of the Close, not a tick.
+        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+
+        // The Close is consumed (not forwarded) and the pump has returned, so the channel is empty/closed.
+        assert!(rx.try_recv().is_err(), "Close frame should not be forwarded to the client");
+    }
+
+    #[tokio::test]
+    async fn agent_text_is_forwarded_to_the_client() {
+        let (sink, mut rx) = recording_client_sink();
+        let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Text("hello".into()))]);
+
+        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+
+        let forwarded = rx.try_recv().expect("text frame forwarded");
+        assert!(matches!(forwarded, AxumMsg::Text(ref t) if t.as_str() == "hello"), "got {forwarded:?}");
     }
 
     #[test]
-    fn forwards_deeply_nested_path_to_service() {
-        assert_eq!(
-            split_service_subpath("dashboard/a/b/c/d.png"),
-            ("dashboard", "/a/b/c/d.png"),
-        );
-    }
-
-    #[test]
-    fn forwards_root_with_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard/"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn forwards_root_without_trailing_slash_as_root() {
-        assert_eq!(split_service_subpath("dashboard"), ("dashboard", "/"));
-    }
-
-    #[test]
-    fn empty_path_yields_empty_segment() {
-        assert_eq!(split_service_subpath(""), ("", "/"));
+    fn splits_service_name_from_forwarded_subpath() {
+        // (path, expected service, expected subpath)
+        let cases = [
+            ("dashboard/assets/index-abc.js", ("dashboard", "/assets/index-abc.js")),
+            ("dashboard/a/b/c/d.png", ("dashboard", "/a/b/c/d.png")),
+            ("dashboard/", ("dashboard", "/")),
+            ("dashboard", ("dashboard", "/")),
+            ("", ("", "/")),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(split_service_subpath(path), expected, "split_service_subpath({path:?})");
+        }
     }
 
     #[tokio::test]

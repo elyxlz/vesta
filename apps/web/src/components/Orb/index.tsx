@@ -9,16 +9,10 @@ interface OrbProps {
   suppressMotion?: boolean;
   glowSpreadScale?: number;
   glowGradientFade?: number;
+  label?: string;
 }
 
-const LIVE_STATES = new Set<OrbVisualState>([
-  "alive",
-  "thinking",
-  "booting",
-  "authenticating",
-  "starting",
-  "loading",
-]);
+const LIVE_STATES = new Set<OrbVisualState>(["alive", "thinking", "busy"]);
 
 const COLOR_LERP_SPEED = 3;
 const VALUE_LERP_SPEED = 4;
@@ -285,6 +279,7 @@ export function Orb({
   suppressMotion = false,
   glowSpreadScale = 2,
   glowGradientFade = 60,
+  label,
 }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -578,7 +573,7 @@ export function Orb({
     <div
       ref={containerRef}
       role="img"
-      aria-label={state}
+      aria-label={label ?? `agent ${state}`}
       style={{ width: size, height: size, position: "relative" }}
     >
       <div

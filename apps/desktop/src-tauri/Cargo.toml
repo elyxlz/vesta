@@ -1,6 +1,6 @@
 [package]
 name = "vesta-app"
-version = "0.1.157"
+version = "0.1.169"
 description = "Vesta desktop app"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
@@ -22,6 +22,8 @@ tauri-plugin-updater = "2"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-store = "2"
 tauri-plugin-notification = "2"
+# Loopback server for the native hosted-login redirect (PKCE, see apps/web/src/lib/pkce.ts).
+tauri-plugin-oauth = "2"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [profile.release]

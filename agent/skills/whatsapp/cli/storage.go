@@ -530,27 +530,25 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 	}, nil
 }
 
-func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+// getManualContact loads a manual contact by a single equality column (jid or
+// phone_number); returns (nil, nil) when no row matches.
+func (ms *MessageStore) getManualContact(whereColumn, value string) (*Contact, error) {
+	var jid, phone string
 	var name sql.NullString
-	var phone string
-	err := ms.db.QueryRow(`
-		SELECT name, phone_number
-		FROM contacts
-		WHERE jid = ?
-	`, jid).Scan(&name, &phone)
+	err := ms.db.QueryRow(
+		"SELECT jid, name, phone_number FROM contacts WHERE "+whereColumn+" = ?", value,
+	).Scan(&jid, &name, &phone)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return &Contact{JID: jid, Name: name.String, PhoneNumber: phone, IsManual: true}, nil
+}
 
-	return &Contact{
-		JID:         jid,
-		Name:        name.String,
-		PhoneNumber: phone,
-		IsManual:    true,
-	}, nil
+func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+	return ms.getManualContact("jid", jid)
 }
 
 func (ms *MessageStore) DeleteManualContact(identifier string) error {
@@ -629,17 +627,20 @@ func (ms *MessageStore) ListMessages(
 	senderPhone, chatJID, query string,
 	limit, offset int,
 ) ([]Message, error) {
+	// Try the FTS index first when searching; fall back to a LIKE scan if the
+	// FTS query errors (e.g. a syntactically invalid MATCH expression).
 	if query != "" {
-		messages, err := ms.listMessagesFTS(after, before, senderPhone, chatJID, query, limit, offset)
+		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJID, query, limit, offset)
 		if err == nil {
 			return messages, nil
 		}
 	}
 
-	return ms.listMessagesLike(after, before, senderPhone, chatJID, query, limit, offset)
+	return ms.listMessagesQuery(false, after, before, senderPhone, chatJID, query, limit, offset)
 }
 
-func (ms *MessageStore) listMessagesFTS(
+func (ms *MessageStore) listMessagesQuery(
+	useFTS bool,
 	after, before *time.Time,
 	senderPhone, chatJID, query string,
 	limit, offset int,
@@ -650,11 +651,14 @@ func (ms *MessageStore) listMessagesFTS(
 			m.id, m.chat_jid, c.name, m.sender, m.content,
 			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
 		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		JOIN messages_fts ON messages_fts.rowid = m.rowid
-		WHERE messages_fts MATCH ?
-	`)
-	args := []any{query}
+		JOIN chats c ON m.chat_jid = c.jid`)
+	var args []any
+	if useFTS {
+		qb.WriteString("\n\t\tJOIN messages_fts ON messages_fts.rowid = m.rowid\n\t\tWHERE messages_fts MATCH ?")
+		args = append(args, query)
+	} else {
+		qb.WriteString("\n\t\tWHERE 1=1")
+	}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -672,46 +676,7 @@ func (ms *MessageStore) listMessagesFTS(
 		qb.WriteString(" AND m.chat_jid = ?")
 		args = append(args, chatJID)
 	}
-
-	qb.WriteString(" ORDER BY m.timestamp DESC LIMIT ? OFFSET ?")
-	args = append(args, limit, offset)
-
-	return ms.scanMessages(ms.db.Query(qb.String(), args...))
-}
-
-func (ms *MessageStore) listMessagesLike(
-	after, before *time.Time,
-	senderPhone, chatJID, query string,
-	limit, offset int,
-) ([]Message, error) {
-	qb := strings.Builder{}
-	qb.WriteString(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE 1=1
-	`)
-	args := []any{}
-
-	if after != nil {
-		qb.WriteString(" AND m.timestamp >= ?")
-		args = append(args, *after)
-	}
-	if before != nil {
-		qb.WriteString(" AND m.timestamp <= ?")
-		args = append(args, *before)
-	}
-	if senderPhone != "" {
-		qb.WriteString(" AND m.sender LIKE ?")
-		args = append(args, "%"+senderPhone+"%")
-	}
-	if chatJID != "" {
-		qb.WriteString(" AND m.chat_jid = ?")
-		args = append(args, chatJID)
-	}
-	if query != "" {
+	if !useFTS && query != "" {
 		qb.WriteString(" AND m.content LIKE ?")
 		args = append(args, "%"+query+"%")
 	}
@@ -846,26 +811,7 @@ func (ms *MessageStore) listChatsFiltered(
 }
 
 func (ms *MessageStore) GetManualContactByPhone(phone string) (*Contact, error) {
-	var jid string
-	var name sql.NullString
-	err := ms.db.QueryRow(`
-		SELECT jid, name, phone_number
-		FROM contacts
-		WHERE phone_number = ?
-	`, phone).Scan(&jid, &name, &phone)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &Contact{
-		JID:         jid,
-		Name:        name.String,
-		PhoneNumber: phone,
-		IsManual:    true,
-	}, nil
+	return ms.getManualContact("phone_number", phone)
 }
 
 func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]string, error) {
@@ -943,28 +889,21 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
 	var fileLength sql.NullInt64
 
-	err := ms.db.QueryRow(`
-		SELECT id, chat_jid, media_type, filename, url,
+	const selectCols = `SELECT id, chat_jid, media_type, filename, url,
 			media_key, file_sha256, file_enc_sha256, file_length
-		FROM messages
-		WHERE id = ? AND chat_jid = ?
-	`, messageID, chatJID).Scan(
-		&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
-		&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
-	)
-
-	if err == sql.ErrNoRows {
-		// Fallback: some contacts use LID JIDs (@lid) instead of phone JIDs (@s.whatsapp.net).
-		// Try matching by message ID alone.
-		err = ms.db.QueryRow(`
-			SELECT id, chat_jid, media_type, filename, url,
-				media_key, file_sha256, file_enc_sha256, file_length
-			FROM messages
-			WHERE id = ?
-		`, messageID).Scan(
+		FROM messages WHERE `
+	scan := func(where string, qargs ...any) error {
+		return ms.db.QueryRow(selectCols+where, qargs...).Scan(
 			&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
 			&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
 		)
+	}
+
+	// Fallback: some contacts use LID JIDs (@lid) instead of phone JIDs (@s.whatsapp.net),
+	// so retry by message ID alone if the chat-scoped lookup misses.
+	err := scan("id = ? AND chat_jid = ?", messageID, chatJID)
+	if err == sql.ErrNoRows {
+		err = scan("id = ?", messageID)
 	}
 
 	if err != nil {

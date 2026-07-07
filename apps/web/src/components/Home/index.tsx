@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useGateway } from "@/providers/GatewayProvider";
+import { getLastAgent } from "@/lib/last-agent";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentsCarousel } from "./AgentsCarousel";
@@ -41,7 +43,7 @@ function SkeletonList() {
   return (
     <motion.div
       key="skeletons"
-      className="relative flex min-h-0 w-full flex-1 items-center"
+      className="relative flex min-h-0 w-full flex-1 items-center overflow-hidden"
       style={{
         gap: AGENT_CAROUSEL_GAP,
         paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
@@ -63,6 +65,12 @@ function SkeletonList() {
 
 export function Home() {
   const { agentsFetched, agents } = useGateway();
+
+  // Center the most recently opened agent on load while keeping gateway order.
+  const lastAgentIndex = useMemo(() => {
+    const last = getLastAgent();
+    return last ? agents.findIndex((a) => a.name === last) : -1;
+  }, [agents]);
 
   return (
     <AnimatePresence mode="wait">
@@ -88,7 +96,7 @@ export function Home() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
         >
-          <AgentsCarousel agents={agents} />
+          <AgentsCarousel agents={agents} initialIndex={lastAgentIndex} />
         </motion.div>
       )}
     </AnimatePresence>

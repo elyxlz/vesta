@@ -1,14 +1,16 @@
 """Tests for interrupt system, converse streaming, and drain behavior."""
 
 import asyncio
+import datetime as dt
 import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
-from core.cc_sdk.types import SubagentStartHookInput
+from claude_agent_sdk.types import SubagentStartHookInput
+from conftest import assistant_msg, consuming, idle_message_stream, make_stream_harness, result_msg
 from core.sdk_parsing import _subagent_hook
-from core.events import EventBus, SubagentStartEvent, SubagentStopEvent
+from core.events import SubagentStartEvent, SubagentStopEvent
 from wait_util import wait_for_condition
 
 
@@ -21,7 +23,7 @@ from wait_util import wait_for_condition
     [("started", "subagent_start", "test-123", "research"), ("stopped", "subagent_stop", "test-456", "browser")],
 )
 async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type):
-    from core.cc_sdk import HookContext
+    from claude_agent_sdk import HookContext
 
     state = vm.State()
     hook = _subagent_hook(state, verb=verb, event_type=event_type)
@@ -36,109 +38,64 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
 # --- Converse harness ---
 
 
-def _assistant_msg(content):
-    from core.cc_sdk import AssistantMessage
-
-    msg = MagicMock(spec=AssistantMessage)
-    msg.content = content
-    return msg
-
-
-def _result_msg():
-    from core.cc_sdk import ResultMessage
-
-    msg = MagicMock(spec=ResultMessage)
-    msg.content = []
-    return msg
+async def _set_interrupt_after_consumed(state, consumed, *, count: int = 1) -> None:
+    """Fire the turn's interrupt only after the consumer has dispatched `count` messages."""
+    await wait_for_condition(lambda: len(consumed) >= count, message="consumer never dispatched the first message")
+    assert state.interrupt_event is not None
+    state.interrupt_event.set()
 
 
-def _make_converse_harness(*, use_shared_queue: bool = False):
-    """Build a converse() test harness with tracking and a mock SDK client.
+async def _interrupt_then_winddown(state, mock_client, message_queue, consumed, *, winddown_text: str) -> None:
+    """The #958 seed choreography: a tool message, an interrupt once it's consumed, then the
+    interrupted turn's wind-down (text + result) once converse has fired client.interrupt()."""
+    from claude_agent_sdk import TextBlock, ToolUseBlock
 
-    Returns (state, config, mock_client, emitted, message_queue, consumed). `consumed`
-    records each queued message right after converse's stream loop receives it, giving
-    tests a handshake signal ("converse has seen message N") instead of guessing with sleeps.
-    """
-    import time
-
-    emitted: list[tuple[str, float]] = []
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    state = vm.State()
-    state.event_bus = EventBus()
-
-    original_emit = state.event_bus.emit
-
-    def tracking_emit(event):
-        if isinstance(event, dict) and event.get("type") == "assistant":
-            emitted.append((event["text"], time.monotonic()))
-        original_emit(event)
-
-    state.event_bus.emit = tracking_emit  # ty: ignore[invalid-assignment]
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
-
-    message_queue: asyncio.Queue[tp.Any] | None = None
-    consumed: list[tp.Any] = []
-    if use_shared_queue:
-        message_queue = asyncio.Queue()
-
-        async def _receive_response():
-            from core.cc_sdk import ResultMessage
-
-            while True:
-                msg = await message_queue.get()
-                yield msg
-                # The generator only resumes here once the consumer's async-for advanced
-                # past `msg` — i.e. converse has genuinely received it.
-                consumed.append(msg)
-                if isinstance(msg, ResultMessage):
-                    return
-
-        mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
-
-    return state, config, mock_client, emitted, message_queue, consumed
+    await message_queue.put(assistant_msg([ToolUseBlock("1", "Bash", {})]))
+    await _set_interrupt_after_consumed(state, consumed)
+    await wait_for_condition(lambda: mock_client.interrupt.called, message="converse never called interrupt()")
+    await message_queue.put(assistant_msg([TextBlock(winddown_text)]))
+    await message_queue.put(result_msg())
 
 
 # --- Message processor interrupt ---
 
 
 @pytest.mark.anyio
-async def test_message_processor_interrupts_on_new_message(tmp_path):
+async def test_message_processor_interrupts_on_new_message(config, state):
     """New messages arriving during processing set the interrupt event and are processed after."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.preempt_mode = "interrupt"
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     processing_started = asyncio.Event()
     interrupt_seen = asyncio.Event()
 
-    async def slow_side_effect(msg, *, state, config, is_user):
+    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
         if "slow" in msg:
             processing_started.set()
             await wait_for_condition(lambda: state.interrupt_event is not None and state.interrupt_event.is_set())
             interrupt_seen.set()
         return (["OK"], state)
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True))
+    await queue.put(vm.QueuedTurn("slow processing message", True, []))
 
     processed: list[str] = []
     original = slow_side_effect
 
-    async def tracking(msg, *, state, config, is_user):
+    async def tracking(msg, *, state, config, is_user, pre_sent=False):
         processed.append(msg)
         return await original(msg, state=state, config=config, is_user=is_user)
 
     mock_client = MagicMock()
+    mock_client.receive_messages = idle_message_stream
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True))
+        await queue.put(vm.QueuedTurn("urgent message", True, []))
         await interrupt_seen.wait()
         await wait_for_condition(lambda: "urgent message" in processed, message="urgent message never processed after interrupt")
         assert state.shutdown_event is not None
@@ -162,25 +119,26 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
+async def test_message_processor_sets_busy_flag_during_turn(config, state):
     """processor_busy is True while a turn runs and False once it finishes (gates the proactive check)."""
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     processing_started = asyncio.Event()
     busy_during_turn = False
 
-    async def slow_side_effect(msg, *, state, config, is_user):
+    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
         nonlocal busy_during_turn
         busy_during_turn = state.processor_busy
         processing_started.set()
         return (["OK"], state)
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("message", True))
+    await queue.put(vm.QueuedTurn("message", True, []))
 
     mock_client = MagicMock()
+    mock_client.receive_messages = idle_message_stream
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -206,19 +164,16 @@ async def test_message_processor_sets_busy_flag_during_turn(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
+async def test_run_messages_with_interrupts_cancels_process_task(config, state):
     """Cancelling _run_messages_with_interrupts must cancel its in-flight process_task (no orphaned tasks)."""
     from core.loops import _run_messages_with_interrupts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user):
+    async def hanging_process(msg, *, state, config, is_user, pre_sent=False):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -230,7 +185,7 @@ async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
 
     with patch("core.loops.process_message", hanging_process):
         interruptible_task = asyncio.create_task(
-            _run_messages_with_interrupts("test msg", is_user=True, queue=queue, state=state, config=config)
+            _run_messages_with_interrupts(vm.QueuedTurn("test msg", True, []), queue=queue, state=state, config=config)
         )
         await task_started.wait()
         interruptible_task.cancel()
@@ -241,13 +196,86 @@ async def test_run_messages_with_interrupts_cancels_process_task(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(tmp_path):
+async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
+    """A boot turn (interruptible=False) runs to completion; a message queued mid-turn waits its turn."""
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    processed: list[str] = []
+    boot_started = asyncio.Event()
+    release_boot = asyncio.Event()
+
+    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
+        processed.append(msg)
+        if msg == "boot":
+            boot_started.set()
+            await release_boot.wait()
+        return (["OK"], state)
+
+    with patch("core.loops.process_message", fake_process):
+        task = asyncio.create_task(
+            _run_messages_with_interrupts(vm.QueuedTurn("boot", False, [], interruptible=False), queue=queue, state=state, config=config)
+        )
+        await boot_started.wait()
+        await queue.put(vm.QueuedTurn("user message", True, []))
+        # The boot turn must not be interrupted: the interrupt event stays unset and the message waits.
+        await asyncio.sleep(0.1)
+        assert processed == ["boot"], "the queued message must not preempt the boot turn"
+        assert state.interrupt_event is not None and not state.interrupt_event.is_set()
+        release_boot.set()
+        await task
+
+    assert processed == ["boot", "user message"], f"the queued message must run after the boot turn, got: {processed}"
+
+
+@pytest.mark.anyio
+async def test_process_batch_does_not_sdk_abort_a_boot_turn(config, state, tmp_path):
+    """While a non-interruptible boot turn is in flight, process_batch must NOT fire client.interrupt()
+    (the SDK-level path), but must still queue the batch so it runs after the boot turn."""
+    from core.loops import process_batch
+
+    config.preempt_mode = "interrupt"
+    state.client = MagicMock()  # a live SDK client; attempt_interrupt would otherwise abort the turn
+    state.noninterruptible_turn_active = True
+    queue: asyncio.Queue = asyncio.Queue()
+
+    notif_file = tmp_path / "n.json"
+    notif_file.write_text("x")
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+
+    with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=queue, state=state, config=config)
+
+    mock_interrupt.assert_not_called()
+    assert not queue.empty(), "the notification batch must still be queued to run after the boot turn"
+
+
+@pytest.mark.anyio
+async def test_process_batch_sdk_aborts_a_normal_turn(config, state, tmp_path):
+    """The gate is specific to boot turns: with no boot turn in flight, process_batch still interrupts."""
+    from core.loops import process_batch
+
+    config.preempt_mode = "interrupt"
+    state.client = MagicMock()
+    state.noninterruptible_turn_active = False
+    queue: asyncio.Queue = asyncio.Queue()
+
+    notif_file = tmp_path / "n.json"
+    notif_file.write_text("x")
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+
+    with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=queue, state=state, config=config)
+
+    mock_interrupt.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(config, state):
     """While state.compacting is True, new messages must be queued, not interrupt the in-flight task."""
     from core.loops import _run_messages_with_interrupts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
+    config.preempt_mode = "interrupt"
     state.compacting = True
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -255,7 +283,7 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(t
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user):
+    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
         processed.append(msg)
         if msg == "first":
             first_started.set()
@@ -263,9 +291,9 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(t
         return (["OK"], state)
 
     with patch("core.loops.process_message", fake_process):
-        task = asyncio.create_task(_run_messages_with_interrupts("first", is_user=True, queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
-        await queue.put(("second", True))
+        await queue.put(vm.QueuedTurn("second", True, []))
         # Negative assertion: prove "second" does NOT run while compaction holds the interrupt.
         # Waiting for absence requires a real time window; this sleep is intentional.
         await asyncio.sleep(0.1)
@@ -277,13 +305,11 @@ async def test_run_messages_with_interrupts_defers_interrupt_during_compaction(t
 
 
 @pytest.mark.anyio
-async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
+async def test_run_vesta_force_exits_on_hung_cleanup(config, state):
     """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
 
     force_exit_called_with: list[int] = []
     exit_event = asyncio.Event()
@@ -306,20 +332,18 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
     with (
         patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
-        patch("core.main.input_handler", hanging_on_cancel),
         patch("core.main.message_processor", hanging_on_cancel),
         patch("core.main.monitor_loop", hanging_on_cancel),
-        patch("core.main.drop_greeting_notification", return_value=False),
-        patch("core.main.drop_pending_migrations", return_value=0),
+        patch("core.main.collect_boot_turns", return_value=[]),
         patch("os._exit", fake_exit),
     ):
         mock_ws.return_value = MagicMock()
         mock_ws.return_value.cleanup = AsyncMock()
 
         async def trigger_shutdown():
-            # All three patched workers (input_handler, message_processor, monitor_loop) running
+            # Both patched workers (message_processor, monitor_loop) running
             # means run_vesta is fully started and waiting on graceful_shutdown.
-            await wait_for_condition(lambda: len(started_tasks) >= 3, message="run_vesta worker tasks never started")
+            await wait_for_condition(lambda: len(started_tasks) >= 2, message="run_vesta worker tasks never started")
             assert state.graceful_shutdown is not None
             state.graceful_shutdown.set()
             await exit_event.wait()
@@ -333,17 +357,18 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
-    """When client.interrupt() times out, attempt_interrupt SIGTERMs the process, then force-exits.
+async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path, state, event_bus):
+    """When client.interrupt() times out, attempt_interrupt warns and returns False
+    instead of SIGTERMing the process.
 
-    Mirrors the os._exit-patching style of test_run_vesta_force_exits_on_hung_cleanup: the
-    supervised-restart model depends on the container actually exiting when the SDK is wedged."""
+    The 5s timeout fires more often during heavy thinking than during a real hang, so a
+    false-positive must not kill the whole container; converse's response-timeout path owns
+    ending a genuinely dead turn (see issue #737)."""
     from core.client import attempt_interrupt
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
-    state = vm.State()
-    state.event_bus = vm.EventBus(data_dir=tmp_path)
-    queue = state.event_bus.subscribe()
+    state.event_bus = event_bus
+    queue = event_bus.subscribe()
 
     mock_client = MagicMock()
 
@@ -356,7 +381,6 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
 
     kills: list[tuple[int, int]] = []
     exits: list[int] = []
-    slept: list[float] = []
 
     def fake_kill(pid, sig):
         kills.append((pid, sig))
@@ -364,130 +388,88 @@ async def test_attempt_interrupt_escalates_to_sigterm_then_hard_exit(tmp_path):
     def fake_exit(code):
         exits.append(code)
 
-    async def fake_sleep(seconds):
-        slept.append(seconds)
-
     with (
         patch("core.client.os.kill", fake_kill),
         patch("core.client.os._exit", fake_exit),
-        patch("core.client.asyncio.sleep", fake_sleep),
     ):
-        await attempt_interrupt(state, config=config, reason="hung SDK")
+        result = await attempt_interrupt(state, config=config, reason="hung SDK")
 
-    import os as _os
-    import signal as _signal
+    assert result is False, "a timed-out interrupt must report failure, not success"
+    assert kills == [], f"timed-out interrupt must not SIGTERM the process, got {kills}"
+    assert exits == [], f"timed-out interrupt must not force-exit, got {exits}"
 
-    assert kills == [(_os.getpid(), _signal.SIGTERM)], f"expected one SIGTERM to our own pid, got {kills}"
-    assert exits == [1], f"expected os._exit(1), got {exits}"
-    assert 10 in slept, "the 10s grace sleep before hard exit must be awaited (patched, not real)"
-
-    errors: list[str] = []
+    events: list[str] = []
     while not queue.empty():
         event = queue.get_nowait()
         if event["type"] == "error":
-            errors.append(event["text"])
-    assert len(errors) == 1, f"unresponsive SDK must emit exactly one error event before SIGTERM, got {errors}"
-    assert "SDK unresponsive" in errors[0]
-    state.event_bus.close()
-
-
-# --- Converse interrupt behavior ---
+            events.append(event["text"])
+    assert len(events) == 1, f"a timed-out interrupt must surface exactly one event, got {events}"
+    assert "SDK interrupt timed out" in events[0]
 
 
 @pytest.mark.anyio
-async def test_converse_breaks_on_interrupt_event():
-    """converse exits promptly when interrupt_event is set."""
-    from core.client import converse
+async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, event_bus):
+    """attempt_interrupt still asks the SDK to interrupt while a tool is executing. The SDK
+    services the request at its next yield point; a timeout no longer SIGTERMs (see issue #737),
+    so there is no reason to suppress the interrupt during tool work."""
+    from core.client import attempt_interrupt
 
-    yielded_count = 0
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
+    state.event_bus = event_bus
+    state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="ls", started_at=0.0)
 
-    async def slow_response():
-        nonlocal yielded_count
-        msg = MagicMock()
-        msg.content = []
-        yielded_count += 1
-        yield msg
-        await asyncio.sleep(10)
-        yielded_count += 1
-        yield msg
+    interrupted = False
 
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    state = vm.State()
-    state.interrupt_event = asyncio.Event()
+    async def interrupt():
+        nonlocal interrupted
+        interrupted = True
 
     mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=slow_response())
-    mock_client.interrupt = AsyncMock()
+    mock_client.interrupt = interrupt
     state.client = mock_client
 
-    async def trigger_interrupt():
-        await wait_for_condition(lambda: yielded_count == 1, message="converse never consumed the first message")
-        assert state.interrupt_event is not None
-        state.interrupt_event.set()
+    result = await attempt_interrupt(state, config=config, reason="notification")
 
-    asyncio.create_task(trigger_interrupt())
+    assert result is True, "a serviced interrupt must report success"
+    assert interrupted is True, "client.interrupt() must be called even while a tool is in flight"
 
-    import time
 
-    start = time.monotonic()
-    await converse("test prompt", state=state, config=config, show_output=False)
-    elapsed = time.monotonic() - start
-
-    assert elapsed < 2.0, f"converse should have exited promptly but took {elapsed:.1f}s"
-    assert mock_client.interrupt.called, "interrupt should have been called"
-    assert yielded_count == 1, "should have only yielded once before interrupt"
+# --- Converse under the long-lived stream consumer ---
 
 
 @pytest.mark.anyio
-async def test_converse_works_normally_without_interrupt():
-    """converse processes all messages when no interrupt is set."""
+async def test_converse_collects_texts_and_ends_on_result():
+    """A normal turn: converse returns every text the consumer attributed to it, in order."""
+    from claude_agent_sdk import TextBlock
     from core.client import converse
 
-    messages_yielded = 0
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
 
-    async def normal_response():
-        nonlocal messages_yielded
-        for _ in range(3):
-            msg = MagicMock()
-            msg.content = []
-            messages_yielded += 1
-            yield msg
+    async with consuming(state, config):
+        await message_queue.put(assistant_msg([TextBlock("one")]))
+        await message_queue.put(assistant_msg([TextBlock("two")]))
+        await message_queue.put(result_msg())
+        responses = await converse("test prompt", state=state, config=config, show_output=True)
 
-    config = vm.VestaConfig()
-    state = vm.State()
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=normal_response())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
-
-    await converse("test prompt", state=state, config=config, show_output=False)
-
-    assert messages_yielded == 3, "all messages should have been processed"
-    assert not mock_client.interrupt.called, "interrupt should not have been called"
-
-
-# --- Converse streaming regression tests ---
+    assert responses == ["one", "two"]
+    assert [t for t, _ in emitted] == ["one", "two"]
+    assert not mock_client.interrupt.called
 
 
 @pytest.mark.anyio
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
-    state, config, mock_client, emitted, _, _ = _make_converse_harness()
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
 
-    async def response_with_tool_use():
-        yield _assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})])
-        yield _assistant_msg([TextBlock("checking status"), ToolUseBlock("2", "Bash", {})])
-        yield _assistant_msg([TextBlock("all done")])
-
-    mock_client.receive_response = MagicMock(return_value=response_with_tool_use())
-
-    await converse("test", state=state, config=config, show_output=True)
+    async with consuming(state, config):
+        await message_queue.put(assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})]))
+        await message_queue.put(assistant_msg([TextBlock("checking status"), ToolUseBlock("2", "Bash", {})]))
+        await message_queue.put(assistant_msg([TextBlock("all done")]))
+        await message_queue.put(result_msg())
+        await converse("test", state=state, config=config, show_output=True)
 
     texts = [t for t, _ in emitted]
     assert texts == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {texts}"
@@ -495,10 +477,10 @@ async def test_converse_emits_text_immediately_with_tool_use():
 
 @pytest.mark.anyio
 async def test_converse_emits_thinking_events():
-    from core.cc_sdk import TextBlock, ThinkingBlock
+    from claude_agent_sdk import TextBlock, ThinkingBlock
     from core.client import converse
 
-    state, config, mock_client, emitted, _, _ = _make_converse_harness()
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
     thinking_events: list[tuple[str, str]] = []
     original_emit = state.event_bus.emit
 
@@ -509,113 +491,109 @@ async def test_converse_emits_thinking_events():
 
     state.event_bus.emit = tracking_emit
 
-    async def response_with_thinking():
-        yield _assistant_msg([ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")])
-        yield _result_msg()
-
-    mock_client.receive_response = MagicMock(return_value=response_with_thinking())
-
-    await converse("test", state=state, config=config, show_output=True)
+    async with consuming(state, config):
+        await message_queue.put(assistant_msg([ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")]))
+        await message_queue.put(result_msg())
+        await converse("test", state=state, config=config, show_output=True)
 
     assert thinking_events == [("step one\nstep two", "sig-123")]
     assert [t for t, _ in emitted] == ["done"]
 
 
 @pytest.mark.anyio
-async def test_interrupt_drains_stream_and_emits_leftovers():
-    """After an interrupt, leftover messages must be emitted (not lost)
-    and must NOT leak into the next converse() call."""
+async def test_converse_exits_promptly_on_interrupt_event():
+    """converse interrupts and returns within the bounded grace even when the interrupted turn's
+    ResultMessage never arrives (the CLI wind-down outliving the grace is the #958 seed)."""
     import time
 
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
-    assert message_queue is not None
-
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
     state.interrupt_event = asyncio.Event()
 
-    async def sim_conv1():
-        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
-        # Handshake: converse received the tool message, now interrupt it.
-        await wait_for_condition(lambda: len(consumed) >= 1, message="converse never consumed the tool message")
-        assert state.interrupt_event is not None
-        state.interrupt_event.set()
-        # Handshake: converse reacted to the interrupt; the drain window is open for leftovers.
-        await wait_for_condition(lambda: mock_client.interrupt.called, message="converse never called interrupt()")
-        await message_queue.put(_assistant_msg([TextBlock("here are the files")]))
-        await message_queue.put(_result_msg())
+    async with consuming(state, config):
+        await message_queue.put(assistant_msg([TextBlock("working on it")]))
+        trigger = asyncio.create_task(_set_interrupt_after_consumed(state, consumed))
+        with patch("core.client._INTERRUPT_TURN_END_GRACE_S", 0.1):
+            start = time.monotonic()
+            responses = await converse("test prompt", state=state, config=config, show_output=True)
+            elapsed = time.monotonic() - start
+        await trigger
 
-    asyncio.create_task(sim_conv1())
-    await converse("list /tmp", state=state, config=config, show_output=True)
+    assert elapsed < 2.0, f"converse should have exited promptly but took {elapsed:.1f}s"
+    assert mock_client.interrupt.called, "interrupt should have been called"
+    assert responses == ["working on it"]
 
-    assert any(t == "here are the files" for t, _ in emitted), f"Leftover must be emitted during drain: {[t for t, _ in emitted]}"
 
-    # Conv 2: must NOT see conv 1's leftovers
-    state.interrupt_event = None
-    n_before = len(emitted)
-    fresh_put_at: list[float] = []
+@pytest.mark.anyio
+async def test_interrupt_winddown_within_grace_stays_attributed():
+    """A wind-down that finishes inside the grace is emitted AND attributed to the interrupted
+    turn, and the next turn starts against a clean stream."""
+    from claude_agent_sdk import TextBlock
+    from core.client import converse
 
-    async def sim_conv2():
-        # Adversarial window: if conv 1's leftovers leaked into conv 2, they would surface
-        # here, before "fresh response" is even queued.
-        await asyncio.sleep(0.3)
-        fresh_put_at.append(time.monotonic())
-        await message_queue.put(_assistant_msg([TextBlock("fresh response")]))
-        await message_queue.put(_result_msg())
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state.interrupt_event = asyncio.Event()
 
-    asyncio.create_task(sim_conv2())
-    await converse("well?", state=state, config=config, show_output=True)
+    async with consuming(state, config):
+        sim = asyncio.create_task(_interrupt_then_winddown(state, mock_client, message_queue, consumed, winddown_text="here are the files"))
+        responses = await converse("list /tmp", state=state, config=config, show_output=True)
+        await sim
 
-    conv2 = emitted[n_before:]
-    assert len(conv2) == 1 and conv2[0][0] == "fresh response", f"Conv 2 got wrong messages: {[t for t, _ in conv2]}"
-    assert conv2[0][1] >= fresh_put_at[0], "Response was emitted before sim_conv2 queued it — leaked from conv 1"
+        assert responses == ["here are the files"], f"wind-down text must be attributed to the interrupted turn: {responses}"
+        assert any(t == "here are the files" for t, _ in emitted), f"wind-down text must be emitted: {[t for t, _ in emitted]}"
+
+        # Conv 2: starts clean, gets exactly its own messages.
+        state.interrupt_event = None
+        n_before = len(emitted)
+
+        async def sim_conv2():
+            await wait_for_condition(lambda: mock_client.query.await_count >= 2, message="conv 2 query never sent")
+            await message_queue.put(assistant_msg([TextBlock("fresh response")]))
+            await message_queue.put(result_msg())
+
+        sim2 = asyncio.create_task(sim_conv2())
+        responses2 = await converse("well?", state=state, config=config, show_output=True)
+        await sim2
+
+    assert responses2 == ["fresh response"], f"Conv 2 got wrong messages: {responses2}"
+    assert [t for t, _ in emitted[n_before:]] == ["fresh response"]
 
 
 @pytest.mark.anyio
 async def test_interrupt_then_response_arrives_without_user_input():
-    """Reproduces the exact bug from docker logs: user conversation is interrupted
-    by a notification, notification does tool calls then responds -- that response
-    must arrive on its own without the user sending another message."""
+    """Reproduces the #958 user-visible bug: a notification turn interrupts the conversation, does
+    tool calls, then responds — that response must arrive on its own, without another user poke."""
     import time
 
-    from core.cc_sdk import TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = _make_converse_harness(use_shared_queue=True)
-    assert message_queue is not None
-
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
     state.interrupt_event = asyncio.Event()
 
-    async def sim_conv1():
-        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
-        await wait_for_condition(lambda: len(consumed) >= 1, message="converse never consumed the tool message")
-        assert state.interrupt_event is not None
-        state.interrupt_event.set()
-        await wait_for_condition(lambda: mock_client.interrupt.called, message="converse never called interrupt()")
-        await message_queue.put(_assistant_msg([TextBlock("checking logs")]))
-        await message_queue.put(_result_msg())
+    async with consuming(state, config):
+        sim = asyncio.create_task(_interrupt_then_winddown(state, mock_client, message_queue, consumed, winddown_text="checking logs"))
+        await converse("i did it instantly", state=state, config=config, show_output=True)
+        await sim
 
-    asyncio.create_task(sim_conv1())
-    await converse("i did it instantly", state=state, config=config, show_output=True)
+        assert any(t == "checking logs" for t, _ in emitted), f"Conv 1 wind-down not emitted: {[t for t, _ in emitted]}"
 
-    assert any(t == "checking logs" for t, _ in emitted), f"Conv 1 leftover not emitted: {[t for t, _ in emitted]}"
+        state.interrupt_event = None
+        n_before = len(emitted)
+        t0 = time.monotonic()
 
-    state.interrupt_event = None
-    n_before = len(emitted)
-    t0 = time.monotonic()
+        async def sim_conv2():
+            consumed_before = len(consumed)
+            await message_queue.put(assistant_msg([ToolUseBlock("2", "Bash", {})]))
+            await wait_for_condition(lambda: len(consumed) > consumed_before, message="conv 2 tool message never consumed")
+            await message_queue.put(assistant_msg([TextBlock("daemon's back up")]))
+            await message_queue.put(result_msg())
 
-    async def sim_conv2():
-        # Simulates the notification turn: a tool call, then the response, paced by
-        # what converse has actually consumed rather than by wall-clock guesses.
-        consumed_before = len(consumed)
-        await message_queue.put(_assistant_msg([ToolUseBlock("2", "Bash", {})]))
-        await wait_for_condition(lambda: len(consumed) > consumed_before, message="conv 2 tool message never consumed")
-        await message_queue.put(_assistant_msg([TextBlock("daemon's back up")]))
-        await message_queue.put(_result_msg())
-
-    asyncio.create_task(sim_conv2())
-    await converse("daemon_died notification", state=state, config=config, show_output=True)
+        sim2 = asyncio.create_task(sim_conv2())
+        await converse("daemon_died notification", state=state, config=config, show_output=True)
+        await sim2
 
     conv2_texts = [t for t, _ in emitted[n_before:]]
     assert "daemon's back up" in conv2_texts, f"Conv 2 response must arrive without user interaction: {conv2_texts}"
@@ -626,42 +604,270 @@ async def test_interrupt_then_response_arrives_without_user_input():
 
 
 @pytest.mark.anyio
-async def test_drain_timeout_does_not_block_forever():
-    """If the SDK is slow to send ResultMessage after interrupt, the drain must
-    time out and not block the next conversation forever."""
-    from core.cc_sdk import ToolUseBlock
+async def test_late_result_after_interrupt_does_not_wedge_later_turns():
+    """The #958 regression: an interrupted turn's ResultMessage lands after the grace, during the
+    next turn. That next turn's label closes early (advisory), but every message still reaches the
+    user in real time, the stray result is dropped, and the stream self-heals by the turn after."""
+    from claude_agent_sdk import TextBlock
     from core.client import converse
 
-    state, config, mock_client, _, _, _ = _make_converse_harness()
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
 
-    call_count = 0
-    first_message_consumed = asyncio.Event()
+    async with consuming(state, config):
+        with patch("core.client._INTERRUPT_TURN_END_GRACE_S", 0.1):
+            # Turn 1: interrupted; its wind-down outlives the grace (no result arrives).
+            state.interrupt_event = asyncio.Event()
+            await message_queue.put(assistant_msg([TextBlock("turn one partial")]))
+            trigger = asyncio.create_task(_set_interrupt_after_consumed(state, consumed))
+            await converse("turn one", state=state, config=config, show_output=True)
+            await trigger
+            assert mock_client.interrupt.called
 
-    async def slow_drain_response():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            yield _assistant_msg([ToolUseBlock("1", "Bash", {})])
-            # Resumed = converse advanced past the first message.
-            first_message_consumed.set()
-            await asyncio.sleep(60)
-        else:
-            await asyncio.sleep(60)
+        # Turn 2: turn 1's stale result lands mid-turn and closes its label early.
+        state.interrupt_event = None
+        conv2 = asyncio.create_task(converse("turn two", state=state, config=config, show_output=True))
+        await wait_for_condition(lambda: mock_client.query.await_count >= 2, message="turn 2 query never sent")
+        stale_result = result_msg()
+        await message_queue.put(stale_result)
+        await conv2  # closed by the stale result — must not hang
 
-    mock_client.receive_response = MagicMock(side_effect=lambda: slow_drain_response())
-    state.client = mock_client
-    state.interrupt_event = asyncio.Event()
+        # Turn 2's real output arrives after its label closed: still emitted in real time...
+        n_before = len(emitted)
+        await message_queue.put(assistant_msg([TextBlock("turn two answer")]))
+        await wait_for_condition(
+            lambda: any(t == "turn two answer" for t, _ in emitted[n_before:]),
+            message="post-close output was not emitted — this is the wedge #958 describes",
+        )
+        # ...and its own result, arriving with no open turn, is dropped without harm.
+        own_result = result_msg()
+        await message_queue.put(own_result)
+        await wait_for_condition(lambda: own_result in consumed, message="stray result never consumed")
 
-    async def trigger():
-        await first_message_consumed.wait()
-        assert state.interrupt_event is not None
-        state.interrupt_event.set()
+        # Turn 3: fully self-healed — a normal turn completes end-to-end.
+        async def feed_turn3():
+            await wait_for_condition(lambda: mock_client.query.await_count >= 3, message="turn 3 query never sent")
+            await message_queue.put(assistant_msg([TextBlock("turn three answer")]))
+            await message_queue.put(result_msg())
 
-    import time
+        feeder = asyncio.create_task(feed_turn3())
+        responses3 = await converse("turn three", state=state, config=config, show_output=True)
+        await feeder
 
-    asyncio.create_task(trigger())
-    t0 = time.monotonic()
-    await converse("test", state=state, config=config, show_output=True)
-    elapsed = time.monotonic() - t0
+    assert responses3 == ["turn three answer"], f"stream did not self-heal: {responses3}"
 
-    assert elapsed < 8.0, f"converse took {elapsed:.1f}s — drain blocked too long"
+
+@pytest.mark.anyio
+async def test_result_with_no_open_turn_is_dropped():
+    """An unprompted ResultMessage (a self-initiated CLI continuation turn) arriving while idle is
+    dropped, its text still emitted, and the next real turn is unaffected."""
+    from claude_agent_sdk import TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+
+    async with consuming(state, config):
+        # Idle: a continuation turn's output + result arrive with no query outstanding.
+        continuation_text = assistant_msg([TextBlock("background task finished")])
+        continuation_result = result_msg()
+        await message_queue.put(continuation_text)
+        await message_queue.put(continuation_result)
+        await wait_for_condition(lambda: continuation_result in consumed, message="continuation messages never consumed")
+        assert any(t == "background task finished" for t, _ in emitted), "idle output must still reach the user"
+
+        # The next real turn sees only its own messages.
+        async def feed():
+            await wait_for_condition(lambda: mock_client.query.await_count >= 1, message="query never sent")
+            await message_queue.put(assistant_msg([TextBlock("real answer")]))
+            await message_queue.put(result_msg())
+
+        feeder = asyncio.create_task(feed())
+        responses = await converse("real question", state=state, config=config, show_output=True)
+        await feeder
+
+    assert responses == ["real answer"], f"continuation result leaked into the next turn: {responses}"
+
+
+@pytest.mark.anyio
+async def test_converse_raises_when_stream_dies_mid_turn():
+    """A stream death mid-turn surfaces through the open turn so run_one's restart path fires."""
+    from claude_agent_sdk import ClaudeSDKError, TextBlock
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+
+    async def dying_stream():
+        yield assistant_msg([TextBlock("partial")])
+        raise ClaudeSDKError("subprocess died")
+
+    mock_client.receive_messages = MagicMock(side_effect=lambda: dying_stream())
+
+    async with consuming(state, config):
+        with pytest.raises(ClaudeSDKError, match="subprocess died"):
+            await converse("test", state=state, config=config, show_output=True)
+
+
+@pytest.mark.anyio
+async def test_converse_times_out_on_stream_silence():
+    """No stream message for response_timeout ends the turn with TimeoutError (restart path),
+    same silence budget the per-message wait enforced before the consumer restructure."""
+    from core.client import converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness(response_timeout=1)
+
+    async with consuming(state, config):
+        with pytest.raises(TimeoutError):
+            await converse("test", state=state, config=config, show_output=True)
+
+    assert mock_client.interrupt.called, "a response timeout must attempt to interrupt the hung turn"
+
+
+@pytest.mark.anyio
+async def test_compact_session_waits_for_result(config):
+    """compact_session blocks until the compaction turn's ResultMessage closes the turn."""
+    from claude_agent_sdk import SystemMessage
+    from core.client import compact_session
+
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+
+    async with consuming(state, config):
+        boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
+        await message_queue.put(boundary)
+        await message_queue.put(result_msg())
+        await asyncio.wait_for(compact_session(state=state), timeout=5.0)
+
+    mock_client.query.assert_awaited_once_with("/compact")
+    assert state.turn is None
+
+
+@pytest.mark.anyio
+async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
+    """A slash command is a single line: multi-line guidance is collapsed so nothing after the
+    first newline is truncated by the CLI parser."""
+    from claude_agent_sdk import SystemMessage
+    from core.client import compact_session
+
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+
+    async with consuming(state, config):
+        boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
+        await message_queue.put(boundary)
+        await message_queue.put(result_msg())
+        multiline = "keep open threads\nand this draft:\nline two"
+        await asyncio.wait_for(compact_session(state=state, prompt=multiline), timeout=5.0)
+
+    mock_client.query.assert_awaited_once_with("/compact keep open threads and this draft: line two")
+    assert state.turn is None
+
+
+def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
+    """The /compact summary is read back from the session transcript for logging: pick the latest
+    isCompactSummary entry and join its text blocks."""
+    import json
+    import pathlib as pl
+    from core import client
+
+    proj = tmp_path / ".claude" / "projects" / "-root-agent"
+    proj.mkdir(parents=True)
+    lines = [
+        {"type": "assistant", "message": {"content": "not a summary"}},
+        {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "an older summary"}]}},
+        {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "the latest summary"}]}},
+    ]
+    (proj / "sess-xyz.jsonl").write_text("\n".join(json.dumps(line) for line in lines))
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+
+    assert client._read_compaction_summary("sess-xyz") == "the latest summary"
+
+
+def test_read_compaction_summary_returns_none_when_absent(tmp_path, monkeypatch):
+    import pathlib as pl
+    from core import client
+
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+    assert client._read_compaction_summary("no-such-session") is None
+
+
+# --- Converse auth handling ---
+
+
+@pytest.mark.anyio
+async def test_converse_flips_to_unauthenticated_on_claude_401(config):
+    """A terminal Claude api-error turn (401) flips the provider to not_authenticated, interrupts the
+    CLI's retries, and ends the turn cleanly (no exception -> no restart loop)."""
+    from claude_agent_sdk import AssistantMessage, TextBlock
+    from core.client import converse
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async with consuming(state, config):
+        await message_queue.put(
+            AssistantMessage(
+                content=[TextBlock(text="Please run /login · API Error: 401 Invalid authentication credentials")],
+                model="opus",
+                error="authentication_failed",
+            )
+        )
+        await asyncio.wait_for(converse("test prompt", state=state, config=config, show_output=False), timeout=5.0)
+
+    # The flip is in-memory only (no persisted auth flag); the live status reflects it this session.
+    assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED
+    assert state.provider_status.model is None
+    assert mock_client.interrupt.called, "should interrupt the CLI's retries on auth loss"
+
+
+@pytest.mark.anyio
+async def test_converse_ignores_transient_api_error(config):
+    """A transient api-error turn (502) must NOT flip auth — it resolves on retry."""
+    from claude_agent_sdk import AssistantMessage, TextBlock
+    from core.client import converse
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async with consuming(state, config):
+        await message_queue.put(
+            AssistantMessage(
+                content=[TextBlock(text="API Error: 502 Bad Gateway. This is a server-side issue, usually temporary")],
+                model="opus",
+                error="server_error",
+            )
+        )
+        await message_queue.put(result_msg())
+        await asyncio.wait_for(converse("test prompt", state=state, config=config, show_output=False), timeout=5.0)
+
+    assert state.provider_status.state == ProviderAuthState.AUTHENTICATED
+    assert not mock_client.interrupt.called
+
+
+@pytest.mark.anyio
+async def test_converse_flips_auth_on_result_api_error_status(config):
+    """A terminal 401/402 may surface on the ResultMessage's HTTP status rather than the assistant
+    turn's error field; that must still flip the agent to not_authenticated."""
+    from claude_agent_sdk import ResultMessage
+    from core.client import converse
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async with consuming(state, config):
+        await message_queue.put(
+            ResultMessage(
+                subtype="error_during_execution",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=True,
+                num_turns=1,
+                session_id="sess-xyz",
+                api_error_status=401,
+            )
+        )
+        await asyncio.wait_for(converse("test prompt", state=state, config=config, show_output=False), timeout=5.0)
+
+    assert state.provider_status.state == ProviderAuthState.NOT_AUTHENTICATED

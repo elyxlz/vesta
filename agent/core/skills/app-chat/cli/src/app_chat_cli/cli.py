@@ -14,28 +14,21 @@ from app_chat_cli.commands import cmd_send, cmd_history
 from app_chat_cli.daemon import cmd_serve
 
 
-def _default_ws_url() -> str:
+def _require_ws_port() -> str:
     port = os.environ.get("WS_PORT")
     if not port:
         print("error: WS_PORT environment variable is not set", file=sys.stderr)
         sys.exit(1)
-    return f"ws://localhost:{port}/ws"
-
-
-def _default_http_url() -> str:
-    port = os.environ.get("WS_PORT")
-    if not port:
-        print("error: WS_PORT environment variable is not set", file=sys.stderr)
-        sys.exit(1)
-    return f"http://localhost:{port}"
+    return port
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app-chat", description="Vesta app chat skill")
     sub = parser.add_subparsers(dest="command")
 
-    ws_default = _default_ws_url()
-    http_default = _default_http_url()
+    port = _require_ws_port()
+    ws_default = f"ws://localhost:{port}/ws"
+    http_default = f"http://localhost:{port}"
 
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon")
     serve_p.add_argument("--notifications-dir", required=True, help="Directory for notification JSON files")
@@ -45,6 +38,11 @@ def main() -> None:
     send_p = sub.add_parser("send", help="Send a message to the app")
     send_p.add_argument("--message", "-m", required=True, help="Message text")
     send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.app-chat/app-chat.sock)")
+    send_p.add_argument(
+        "--longform",
+        action="store_true",
+        help="Bypass the bubble lint for genuine reference material (a brief, code block, or list they asked for)",
+    )
 
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")

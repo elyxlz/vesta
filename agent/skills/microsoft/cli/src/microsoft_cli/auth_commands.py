@@ -5,7 +5,6 @@ import subprocess
 
 from . import auth, owa_rest
 from .config import Config
-from .settings import MicrosoftSettings
 
 # JS that extracts the OWA access token from the browser's MSAL storage.
 # Returns the token secret (a JWT) or the string 'NONE'.
@@ -28,13 +27,28 @@ _OWA_TOKEN_JS = """
 
 
 def list_accounts(config: Config) -> list[dict[str, str]]:
-    settings = MicrosoftSettings()
-    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file, settings=settings)]
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file)]
+
+
+def remove_account(config: Config, *, account_email: str) -> dict[str, str]:
+    app = auth.get_app(config.cache_file)
+    email_lower = account_email.lower()
+    matches = [a for a in app.get_accounts() if (a["username"] if "username" in a else "").lower() == email_lower]
+    if not matches:
+        raise ValueError(f"No account found with email '{account_email}'")
+
+    for account in matches:
+        app.remove_account(account)
+
+    cache = app.token_cache
+    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+        auth._write_cache(config.cache_file, content=cache.serialize())
+
+    return {"status": "removed", "email": account_email}
 
 
 def authenticate_account(config: Config) -> dict[str, str]:
-    settings = MicrosoftSettings()
-    app = auth.get_app(config.cache_file, settings=settings)
+    app = auth.get_app(config.cache_file)
     flow = app.initiate_device_flow(scopes=config.scopes)
 
     if "user_code" not in flow:
@@ -62,14 +76,12 @@ def authenticate_account(config: Config) -> dict[str, str]:
 
 
 def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str]:
-    settings = MicrosoftSettings()
-
     try:
         flow = json.loads(flow_cache)
     except (json.JSONDecodeError, TypeError):
         raise ValueError("Invalid flow cache data")
 
-    app = auth.get_app(config.cache_file, settings=settings)
+    app = auth.get_app(config.cache_file)
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:

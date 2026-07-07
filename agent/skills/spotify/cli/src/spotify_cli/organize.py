@@ -187,11 +187,11 @@ def _load_config() -> dict:
     return {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
 
 
-def _save_config(cfg: dict) -> None:
-    """Save organize config to disk."""
-    ORGANIZE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    with open(ORGANIZE_CONFIG, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+def _write_json(path: Path, data: dict) -> None:
+    """Write data as pretty JSON, creating parent dirs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _chunks(lst, n):
@@ -268,31 +268,9 @@ def _match_genre(genres: list[str], rules: list[dict]) -> str | None:
     """Match artist genres against rules, return target playlist name or None."""
     genres_lower = [g.lower() for g in genres]
     for rule in rules:
-        for kw in rule["keywords"]:
-            for g in genres_lower:
-                if kw in g:
-                    return rule["playlist"]
+        if any(kw in g for kw in rule["keywords"] for g in genres_lower):
+            return rule["playlist"]
     return None
-
-
-def _match_all_genres(genres: list[str], rules: list[dict]) -> list[str]:
-    """Match artist genres against rules, return ALL matching playlist names."""
-    genres_lower = [g.lower() for g in genres]
-    matched = []
-    seen = set()
-    for rule in rules:
-        playlist = rule["playlist"]
-        if playlist in seen:
-            continue
-        for kw in rule["keywords"]:
-            for g in genres_lower:
-                if kw in g:
-                    matched.append(playlist)
-                    seen.add(playlist)
-                    break
-            if playlist in seen:
-                break
-    return matched
 
 
 def _load_watch_state() -> dict:
@@ -305,19 +283,14 @@ def _load_watch_state() -> dict:
 
 def _save_watch_state(state: dict) -> None:
     """Save the watch daemon state file."""
-    WATCH_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(WATCH_STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    _write_json(WATCH_STATE_FILE, state)
 
 
 def _write_notification(data: dict) -> None:
     """Write a notification JSON file to the notifications directory."""
-    NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
     data.setdefault("source", "spotify")
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    filename = NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json"
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    _write_json(NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json", data)
 
 
 def _log(msg: str) -> None:
@@ -332,7 +305,7 @@ def _log(msg: str) -> None:
 def init_config(config: Config) -> dict:
     """Initialize organize config with defaults."""
     cfg = {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
-    _save_config(cfg)
+    _write_json(ORGANIZE_CONFIG, cfg)
     return {
         "status": "initialized",
         "path": str(ORGANIZE_CONFIG),
@@ -368,11 +341,7 @@ def sync_likes(config: Config, dry_run: bool = False) -> dict:
 
     # Collect all liked songs
     liked_items = _paginate_saved(sp)
-    liked_ids = set()
-    for item in liked_items:
-        t = item.get("track")
-        if t and t.get("id"):
-            liked_ids.add(t["id"])
+    liked_ids = {item["track"]["id"] for item in liked_items if item.get("track") and item["track"].get("id")}
 
     to_like = list(playlist_track_ids - liked_ids)
 
@@ -411,11 +380,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
     own_playlists = _get_own_playlists(sp)
 
     # Build name → id mapping for rule targets (only playlists that exist)
-    name_to_id = {}
-    for r in rules:
-        pname = r["playlist"]
-        if pname in own_playlists:
-            name_to_id[pname] = own_playlists[pname]
+    name_to_id = {r["playlist"]: own_playlists[r["playlist"]] for r in rules if r["playlist"] in own_playlists}
 
     # Collect all tracks from own playlists
     playlist_track_ids = set()
@@ -445,10 +410,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
     orphan_ids = [tid for tid in liked_info if tid not in playlist_track_ids]
 
     # Get artist genres
-    all_artist_ids = set()
-    for tid in orphan_ids:
-        _, _, artist_ids = liked_info[tid]
-        all_artist_ids.update(artist_ids)
+    all_artist_ids = {aid for tid in orphan_ids for aid in liked_info[tid][2]}
 
     artist_genres = {}
     for batch in _chunks(list(all_artist_ids), 50):
@@ -477,9 +439,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
         if tid in playlist_existing.get(pid, set()):
             continue
 
-        if match not in additions:
-            additions[match] = []
-        additions[match].append((tid, turi, tname))
+        additions.setdefault(match, []).append((tid, turi, tname))
 
     if dry_run:
         return {
@@ -529,20 +489,7 @@ def init_watch(config: Config) -> dict:
     sp = get_client(config)
     _log("Initializing watch state — fetching current liked songs...")
 
-    resp = sp.current_user_saved_tracks(limit=50, offset=0)
-    liked_ids = []
-    total = resp.get("total", 0)
-    offset = 0
-    while True:
-        for item in resp.get("items", []):
-            t = item.get("track")
-            if t and t.get("id"):
-                liked_ids.append(t["id"])
-        offset += 50
-        if offset >= total:
-            break
-        time.sleep(0.1)
-        resp = sp.current_user_saved_tracks(limit=50, offset=offset)
+    liked_ids = [item["track"]["id"] for item in _paginate_saved(sp) if item.get("track") and item["track"].get("id")]
 
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
@@ -635,6 +582,9 @@ def _poll_cycle(config: Config, state: dict) -> None:
         message = f'Liked "{track_name}" by {artist_name} (genres: {genre_str})'
         notification = {
             "type": "spotify",
+            # A new liked song is ambient, low-value info, so it pools by default rather than preempting
+            # the agent's current work; the user can add an interrupt rule if they want it sooner.
+            "interrupt": False,
             "timestamp": now,
             "message": message,
             "data": {

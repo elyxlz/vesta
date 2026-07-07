@@ -1,7 +1,13 @@
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { type MotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
-import { Home, KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
+import {
+  Home,
+  KeyRound,
+  LayoutDashboard,
+  MessageSquare,
+  RotateCw,
+} from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
@@ -14,9 +20,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -29,12 +37,32 @@ export function AgentNavbar({
   swipeProgress: MotionValue<number>;
 }) {
   const { connected } = useAuth();
-  const { name, agent } = useSelectedAgent();
+  const { reachable } = useGateway();
+  const { name, agent, restart } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
-  const needsAuth = agent?.status === "not_authenticated";
+  const restartPending = useRestartPending((s) =>
+    Boolean(name && s.pending[name]?.reasons.length),
+  );
+  const [restarting, setRestarting] = useState(false);
+  // Route through the provider's restart so clearing the pending flag has a single owner (the
+  // provider), whichever surface triggers a restart. withOp resolves after completion (it handles
+  // failure internally and keeps the flag set), so the spinner ends correctly either way.
+  const applyRestart = async () => {
+    if (!name) return;
+    setRestarting(true);
+    try {
+      await restart();
+    } finally {
+      setRestarting(false);
+    }
+  };
+  const needsAuth =
+    (agent?.status === "not_authenticated" ||
+      agent?.status === "unprovisioned") &&
+    reachable;
 
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
@@ -87,27 +115,27 @@ export function AgentNavbar({
             </Tooltip>
           )
         }
-        center={
-          <>
-            <AgentIsland />
-            {isMobile && needsAuth && (
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center gap-2">
-                <Button
-                  variant="default"
-                  size="lg"
-                  onClick={() => void handleOpenAuth()}
-                >
-                  <KeyRound data-icon="inline-start" />
-                  sign in
-                </Button>
-              </div>
-            )}
-          </>
-        }
+        center={<AgentIsland />}
         trailing={
           connected ? (
             <div className="flex items-center gap-2">
               <StatusPill showHostname={false} />
+              {restartPending && (
+                <Button
+                  variant="default"
+                  size={isMobile ? "icon-lg" : "lg"}
+                  disabled={restarting}
+                  aria-label="restart to apply changes"
+                  onClick={() => void applyRestart()}
+                >
+                  <RotateCw
+                    data-icon={isMobile ? undefined : "inline-start"}
+                    className={restarting ? "animate-spin" : undefined}
+                  />
+                  {!isMobile &&
+                    (restarting ? "restarting…" : "restart to apply")}
+                </Button>
+              )}
               {!isMobile && needsAuth && (
                 <Button
                   variant="default"

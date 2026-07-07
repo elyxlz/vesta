@@ -85,10 +85,6 @@ def _user_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
     _log(f"> [white][USER][/white] - [dim][{phase}][/dim] {msg}", level=level)
 
 
-def _event_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
-    _log(f"! [yellow][EVENT][/yellow] - [dim][{phase}][/dim] {msg}", level=level)
-
-
 # Category loggers
 def init(msg: tp.Any) -> None:
     _system_phase("INIT", msg)
@@ -104,10 +100,6 @@ def client(msg: tp.Any) -> None:
 
 def dreamer(msg: tp.Any) -> None:
     _system_phase("DREAMER", msg)
-
-
-def interrupt(msg: tp.Any) -> None:
-    _system_phase("INTERRUPT", msg, level=logging.DEBUG)
 
 
 def proactive(msg: tp.Any) -> None:
@@ -135,10 +127,6 @@ def thinking(msg: tp.Any) -> None:
 
 def tool(msg: tp.Any) -> None:
     _agent_phase("TOOL CALL", msg)
-
-
-def notification(msg: tp.Any) -> None:
-    _event_phase("NOTIFICATION", msg)
 
 
 def system(msg: tp.Any) -> None:

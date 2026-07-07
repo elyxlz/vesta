@@ -40,9 +40,6 @@ type WhatsAppClient struct {
 	readOnly          bool
 	noNotify          bool
 	skipSenders       map[string]bool
-	interruptSenders  map[string]bool
-	interruptExplicit bool
-	noInterrupt       bool
 	messageSenders    map[string]string
 	senderOrder       []string
 	sendersMutex      sync.RWMutex
@@ -61,7 +58,7 @@ type WhatsAppClient struct {
 	readQueue         map[string]*chatReadBatch // keyed by chatJID|senderJID; coalesces read receipts in order
 }
 
-func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders, interruptSenders map[string]bool, interruptExplicit, noInterrupt bool, logger waLog.Logger) (*WhatsAppClient, error) {
+func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize message store: %v", err)
@@ -101,41 +98,24 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	}
 
 	wac := &WhatsAppClient{
-		client:            client,
-		store:             store,
-		logger:            logger,
-		dataDir:           dataDir,
-		notificationsDir:  notificationsDir,
-		instance:          instance,
-		readOnly:          readOnly,
-		noNotify:          noNotify,
-		skipSenders:       skipSenders,
-		interruptSenders:  interruptSenders,
-		interruptExplicit: interruptExplicit,
-		noInterrupt:       noInterrupt,
-		messageSenders:    make(map[string]string),
-		authStatus:        AuthStatusNotAuthenticated,
-		transcribeSem:     make(chan struct{}, MaxConcurrentTranscriptions),
-		readQueue:         make(map[string]*chatReadBatch),
+		client:           client,
+		store:            store,
+		logger:           logger,
+		dataDir:          dataDir,
+		notificationsDir: notificationsDir,
+		instance:         instance,
+		readOnly:         readOnly,
+		noNotify:         noNotify,
+		skipSenders:      skipSenders,
+		messageSenders:   make(map[string]string),
+		authStatus:       AuthStatusNotAuthenticated,
+		transcribeSem:    make(chan struct{}, MaxConcurrentTranscriptions),
+		readQueue:        make(map[string]*chatReadBatch),
 	}
 
 	client.AddEventHandler(wac.eventHandler)
 
 	return wac, nil
-}
-
-// shouldInterrupt resolves whether a notification from `phone` should set
-// interrupt=true. The second return is whether the daemon was started with
-// --interrupt-senders at all; when false the caller should omit the field
-// entirely so the agent-side default applies.
-func (wac *WhatsAppClient) shouldInterrupt(phone string) (interrupt bool, explicit bool) {
-	if !wac.interruptExplicit {
-		return false, false
-	}
-	if wac.noInterrupt {
-		return false, true
-	}
-	return wac.interruptSenders[phone], true
 }
 
 func (wac *WhatsAppClient) Connect() error {

@@ -1,11 +1,13 @@
 import { getConnection } from "@/lib/connection";
 import type { LogEvent } from "@/lib/types";
+import { openLogStream } from "./log-stream";
 
 const logSources = new Map<string, EventSource>();
 
 export function streamLogs(
   name: string,
   onEvent: (event: LogEvent) => void,
+  opts?: { replay?: boolean },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const conn = getConnection();
@@ -14,34 +16,20 @@ export function streamLogs(
       return;
     }
 
-    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}`;
-    const existing = logSources.get(name);
-    if (existing) existing.close();
-    const es = new EventSource(url);
-    logSources.set(name, es);
-
-    es.onmessage = (e) => {
-      const text = e.data;
-      if (text.startsWith("error:")) {
-        onEvent({ kind: "Error", message: text });
-      } else {
-        onEvent({ kind: "Line", text });
-      }
-    };
-
-    es.addEventListener("agent_stopped", () => {
-      onEvent({ kind: "End" });
-      es.close();
-      logSources.delete(name);
-      resolve();
-    });
-
-    es.onerror = () => {
-      onEvent({ kind: "Error", message: "log stream disconnected" });
-      es.close();
-      logSources.delete(name);
-      resolve();
-    };
+    // A fresh stream replays the recent tail; a reconnect after a transport drop
+    // passes tail=0 so the server follows new lines only and we don't re-append
+    // the same block as duplicates.
+    const replay = opts?.replay ?? true;
+    const tailParam = replay ? "" : "&tail=0";
+    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}${tailParam}`;
+    logSources.get(name)?.close();
+    logSources.set(
+      name,
+      openLogStream(url, "agent_stopped", onEvent, () => {
+        logSources.delete(name);
+        resolve();
+      }),
+    );
   });
 }
 

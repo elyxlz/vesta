@@ -11,7 +11,8 @@ DB = os.path.expanduser("~/agent/data/events.db")
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
-    r"gh[po]_[A-Za-z0-9]{36,}",
+    r"gh[posr]_[A-Za-z0-9]{36,}",
+    r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
     r"AKIA[0-9A-Z]{16}",
     r"PMAK-[A-Za-z0-9-]{20,}",
@@ -31,8 +32,19 @@ def main() -> int:
     delete = "--delete" in sys.argv[1:]
     conn = sqlite3.connect(DB)
     try:
-        cursor = conn.execute("SELECT id, substr(data, 1, 200) FROM events")
-        matches = [(row_id, snippet) for row_id, snippet in cursor if REGEX.search(snippet)]
+        # Scan the FULL event, not just the first 200 chars: secrets often sit
+        # deep inside long bash commands / tool payloads (an old PAT once survived
+        # weeks because substr(data,1,200) never saw it). Show a window around the hit.
+        cursor = conn.execute("SELECT id, data FROM events")
+        matches = []
+        for row_id, data in cursor:
+            if not data:
+                continue
+            m = REGEX.search(data)
+            if m:
+                start = max(0, m.start() - 40)
+                snippet = data[start : m.end() + 40].replace("\n", " ")
+                matches.append((row_id, snippet))
     finally:
         conn.close()
 

@@ -14,7 +14,6 @@ def test_deployment_structure():
 
     expected_skills = [
         "tasks",
-        "upstream-sync",
         "upstream-pr",
         "dream",
         "what-day",
@@ -30,6 +29,10 @@ def test_deployment_structure():
     ]
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
+
+    core_skills_dir = source_root / "core" / "skills"
+    for skill_name in ("app-chat", "workspace-sync"):
+        assert (core_skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing"
 
     for skill_name in ("tasks",):
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
@@ -56,7 +59,7 @@ def test_skills_index_valid():
     index = json.loads((skills_dir / "index.json").read_text())
     assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
     skill_names = {s["name"] for s in index}
-    default_skills_path = skills_dir / "default-skills.txt"
+    default_skills_path = skills_dir.parent / "core" / "default-skills.txt"
     default_skills = set(default_skills_path.read_text().splitlines()) if default_skills_path.exists() else set()
     for skill_md in skills_dir.glob("*/SKILL.md"):
         text = skill_md.read_text()
@@ -70,11 +73,13 @@ def test_skills_index_valid():
 
 
 def test_default_skills_are_real_and_include_runtime_deps():
-    """Every default skill must have a matching directory under skills/, and the skills the core
-    runtime points at (proactive-check, personality) must ship by default. The Dockerfile rm -rf's
-    any skills/ dir not listed here, so a missing entry deletes a skill the runtime references."""
+    """Every default skill named in the version-pinned core list (core/default-skills.txt) must have
+    a matching directory under skills/, and the skills the core runtime points at (proactive-check,
+    personality) must ship by default. The Dockerfile rm -rf's any skills/ dir not listed here, so a
+    missing entry deletes a skill the runtime references."""
     skills_dir = Path(__file__).parent.parent / "skills"
-    default_skills = [line for line in (skills_dir / "default-skills.txt").read_text().splitlines() if line.strip()]
+    default_skills_path = Path(__file__).parent.parent / "core" / "default-skills.txt"
+    default_skills = [line for line in default_skills_path.read_text().splitlines() if line.strip()]
 
     for name in default_skills:
         assert (skills_dir / name).is_dir(), f"default-skills.txt lists '{name}' but skills/{name}/ does not exist"

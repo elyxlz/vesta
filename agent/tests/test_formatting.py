@@ -5,13 +5,11 @@ import datetime as dt
 import pytest
 from core.client import _contains_dashes
 from core.sdk_parsing import (
-    _format_tool_call,
     _parse_agent_input,
     _tool_summary,
     filter_tool_lines,
     parse_sdk_message,
 )
-from core.tools import _format_search_results
 
 
 # --- Agent input parsing ---
@@ -42,18 +40,6 @@ def test_parse_agent_input(input_data, expected):
 )
 def test_tool_summary(tool_name, input_data, expected):
     assert _tool_summary(tool_name, input_data) == expected
-
-
-@pytest.mark.parametrize("tool_name,agent_type", [("Task", "test-agent"), ("Agent", "code-agent")])
-def test_format_tool_call_task_and_agent(tool_name, agent_type):
-    formatted, context = _format_tool_call(
-        tool_name,
-        input_data={"subagent_type": agent_type, "description": "do something"},
-        sub_agent_context=None,
-    )
-    assert "[TASK]" in formatted
-    assert agent_type in formatted
-    assert context == agent_type
 
 
 # --- Build query ---
@@ -126,23 +112,68 @@ def test_contains_dashes_multiple_texts():
 # --- SDK message parsing ---
 
 
-def test_parse_sdk_message_extracts_thinking_blocks():
+def test_parse_sdk_message_extracts_thinking_blocks_and_ignores_tool_use():
     from unittest.mock import MagicMock
 
-    from core.cc_sdk import AssistantMessage, TextBlock, ThinkingBlock
+    from claude_agent_sdk import AssistantMessage, TextBlock, ThinkingBlock, ToolUseBlock
 
     msg = MagicMock(spec=AssistantMessage)
-    msg.content = [ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")]
+    msg.content = [
+        ThinkingBlock("step one\nstep two", "sig-123"),
+        ToolUseBlock(id="t1", name="Bash", input={"command": "ls"}),
+        TextBlock("done"),
+    ]
 
-    texts, thinking_blocks, context, session_id, has_tool_use = parse_sdk_message(msg, sub_agent_context=None)
+    texts, thinking_blocks, session_id = parse_sdk_message(msg)
 
+    # Tool-use blocks contribute no text/thinking: tool activity is surfaced via hooks.
     assert texts == ["done"]
     assert len(thinking_blocks) == 1
     assert thinking_blocks[0].thinking == "step one\nstep two"
     assert thinking_blocks[0].signature == "sig-123"
-    assert context is None
     assert session_id is None
-    assert has_tool_use is False
+
+
+def test_parse_sdk_message_returns_session_id_from_result():
+    from claude_agent_sdk import ResultMessage
+
+    msg = ResultMessage(subtype="success", duration_ms=100, duration_api_ms=80, is_error=False, num_turns=1, session_id="sess-abc")
+    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+
+    assert texts == []
+    assert thinking_blocks == []
+    assert session_id == "sess-abc"
+
+
+def test_parse_sdk_message_returns_session_id_from_init():
+    """The init message carries the session_id first; parse must return it so the caller persists
+    it immediately (resume survives a first-turn crash before any ResultMessage)."""
+    from claude_agent_sdk import SystemMessage
+
+    msg = SystemMessage(subtype="init", data={"session_id": "sess-abc-123", "slash_commands": ["compact"]})
+
+    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+
+    assert session_id == "sess-abc-123"
+    assert texts == []
+
+
+def test_parse_sdk_message_skips_thinking_tokens_system_message():
+    """thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn;
+    parse must drop it without logging so it does not flood the agent log."""
+    from unittest.mock import patch
+
+    from claude_agent_sdk import SystemMessage
+
+    msg = SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5})
+
+    with patch("core.sdk_parsing.logger.system") as mock_system:
+        texts, thinking_blocks, session_id = parse_sdk_message(msg)
+
+    mock_system.assert_not_called()
+    assert texts == []
+    assert thinking_blocks == []
+    assert session_id is None
 
 
 def test_process_message_always_streams():
@@ -160,15 +191,3 @@ def test_process_message_always_streams():
             assert isinstance(val, ast.Constant) and val.value is True, (
                 f"process_message must pass show_output=True to converse(), found show_output={ast.dump(val)}"
             )
-
-
-# --- Search results formatting ---
-
-
-def test_format_search_results():
-    assert _format_search_results([]) == "No results found."
-
-    results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
-    formatted = _format_search_results(results)
-    assert "hello" in formatted
-    assert "user" in formatted

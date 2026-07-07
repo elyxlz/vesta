@@ -63,10 +63,11 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     # Match email-client's header-only notification shape: drop body_text/body_html
     # so inbound mail doesn't dump the full body into the agent's context. The
     # agent fetches the body on demand via `agentmail thread get <thread_id>`.
-    # interrupt=False so newsletters don't preempt whatever the agent is doing.
     notification = {
         "source": "agentmail",
         "type": "message",
+        # Inbound mail pools by default so it doesn't preempt the agent mid-task; the user adds interrupt
+        # rules (e.g. --keyword urgent) for the mail that should reach them right away.
         "interrupt": False,
         "message_id": _field(message, "message_id", _field(payload, "message_id", "")),
         "thread_id": _field(payload, "thread_id", _field(message, "thread_id", "")),

@@ -27,7 +27,7 @@ import {
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
-import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
+import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
@@ -72,37 +72,33 @@ export function SttCard() {
     : null;
 
   return (
-    <Card size="sm">
-      <CardContent>
-        <DomainSection
-          icon={<Mic className="size-4 text-muted-foreground" />}
-          title="speech to text"
-          configured={configured}
-          provider={sttStatus?.provider ?? null}
-          enabled={enabled}
-          onToggleEnabled={toggleEnabled}
-          settings={sttStatus?.settings}
-          domain="stt"
-          agentName={agentName}
-          onSettingChange={(settings) =>
-            patchStt({ settings } as Partial<SttStatus>)
-          }
-          usageContent={
-            <UsageCollapsible onOpen={loadUsage}>
-              <div className="flex items-center justify-between text-xs px-6 pt-2">
-                <span className="text-muted-foreground">hours this month</span>
-                <span className="text-foreground tabular-nums">
-                  {hours !== null && balanceStr !== null
-                    ? `${hours.toFixed(2)} h used · ${balanceStr} left`
-                    : "—"}
-                </span>
-              </div>
-            </UsageCollapsible>
-          }
-          extraSettings={<ToggleIdleTimeoutSetting />}
-        />
-      </CardContent>
-    </Card>
+    <DomainSection
+      icon={<Mic className="size-4 text-muted-foreground" />}
+      title="speech to text"
+      configured={configured}
+      provider={sttStatus?.provider ?? null}
+      enabled={enabled}
+      onToggleEnabled={toggleEnabled}
+      settings={sttStatus?.settings}
+      domain="stt"
+      agentName={agentName}
+      onSettingChange={(settings) =>
+        patchStt({ settings } as Partial<SttStatus>)
+      }
+      usageContent={
+        <UsageCollapsible onOpen={loadUsage}>
+          <div className="flex items-center justify-between text-xs px-6 pt-2">
+            <span className="text-muted-foreground">hours this month</span>
+            <span className="text-foreground tabular-nums">
+              {hours !== null && balanceStr !== null
+                ? `${hours.toFixed(2)} h used · ${balanceStr} left`
+                : "—"}
+            </span>
+          </div>
+        </UsageCollapsible>
+      }
+      extraSettings={<ToggleIdleTimeoutSetting />}
+    />
   );
 }
 
@@ -169,40 +165,51 @@ export function TtsCard() {
   const chars = usageData?.usage;
 
   return (
-    <Card size="sm">
-      <CardContent>
-        <DomainSection
-          icon={<Volume2 className="size-4 text-muted-foreground" />}
-          title="text to speech"
-          configured={configured}
-          provider={ttsStatus?.provider ?? null}
-          enabled={enabled}
-          onToggleEnabled={toggleEnabled}
-          settings={ttsStatus?.settings}
-          domain="tts"
-          agentName={agentName}
-          onSettingChange={(settings) =>
-            patchTts({ settings } as Partial<TtsStatus>)
-          }
-          usageContent={
-            <UsageCollapsible onOpen={loadUsage}>
-              <div className="flex items-center justify-between text-xs px-6 pt-2">
-                <span className="text-muted-foreground">
-                  characters this month
-                </span>
-                <span className="text-foreground tabular-nums">
-                  {chars &&
-                  typeof chars.character_count === "number" &&
-                  typeof chars.character_limit === "number"
-                    ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
-                    : "—"}
-                </span>
-              </div>
-            </UsageCollapsible>
-          }
-        />
-      </CardContent>
-    </Card>
+    <DomainSection
+      icon={<Volume2 className="size-4 text-muted-foreground" />}
+      title="text to speech"
+      configured={configured}
+      provider={ttsStatus?.provider ?? null}
+      enabled={enabled}
+      onToggleEnabled={toggleEnabled}
+      settings={ttsStatus?.settings}
+      domain="tts"
+      agentName={agentName}
+      onSettingChange={(settings) =>
+        patchTts({ settings } as Partial<TtsStatus>)
+      }
+      usageContent={
+        <UsageCollapsible onOpen={loadUsage}>
+          <div className="flex items-center justify-between text-xs px-6 pt-2">
+            <span className="text-muted-foreground">characters this month</span>
+            <span className="text-foreground tabular-nums">
+              {chars &&
+              typeof chars.character_count === "number" &&
+              typeof chars.character_limit === "number"
+                ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
+                : "—"}
+            </span>
+          </div>
+        </UsageCollapsible>
+      }
+    />
+  );
+}
+
+// --- Shared collapsible trigger ---
+
+function CollapsibleChevronButton({ children }: { children: React.ReactNode }) {
+  return (
+    <CollapsibleTrigger asChild>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
+        {children}
+      </Button>
+    </CollapsibleTrigger>
   );
 }
 
@@ -221,16 +228,7 @@ function UsageCollapsible({
         if (isOpen) onOpen();
       }}
     >
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          usage
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>usage</CollapsibleChevronButton>
       <CollapsibleContent>{children}</CollapsibleContent>
     </Collapsible>
   );
@@ -266,45 +264,52 @@ function DomainSection({
   extraSettings?: React.ReactNode;
 }) {
   return (
-    <Field orientation="vertical" className="gap-3">
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="flex items-center gap-2">
-            {icon}
-            {title}
-            {provider && (
-              <span className="text-xs text-muted-foreground font-normal">
-                {provider}
-              </span>
-            )}
-          </FieldLabel>
-        </FieldContent>
-        <Switch
-          checked={enabled && configured}
-          disabled={!configured}
-          onCheckedChange={onToggleEnabled}
-        />
-      </Field>
-
-      {!configured ? (
-        <p className="text-xs text-warning">
-          not configured — ask the agent to set it up
-        </p>
-      ) : enabled ? (
-        <>
-          {usageContent}
-          {settings && settings.length > 0 && (
-            <DynamicSettings
-              settings={settings}
-              domain={domain}
-              agentName={agentName}
-              onSettingChange={onSettingChange}
+    <Card size="sm">
+      <CardContent>
+        <Field orientation="vertical" className="gap-3">
+          <Field
+            orientation="horizontal"
+            className="items-center justify-between"
+          >
+            <FieldContent>
+              <FieldLabel className="flex items-center gap-2">
+                {icon}
+                {title}
+                {provider && (
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {provider}
+                  </span>
+                )}
+              </FieldLabel>
+            </FieldContent>
+            <Switch
+              checked={enabled && configured}
+              disabled={!configured}
+              onCheckedChange={onToggleEnabled}
             />
-          )}
-          {extraSettings}
-        </>
-      ) : null}
-    </Field>
+          </Field>
+
+          {!configured ? (
+            <p className="text-xs text-warning">
+              not configured — ask the agent to set it up
+            </p>
+          ) : enabled ? (
+            <>
+              {usageContent}
+              {settings && settings.length > 0 && (
+                <DynamicSettings
+                  settings={settings}
+                  domain={domain}
+                  agentName={agentName}
+                  onSettingChange={onSettingChange}
+                />
+              )}
+              {extraSettings}
+            </>
+          ) : null}
+        </Field>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -345,16 +350,29 @@ function SettingByType({
   setting: SettingDef;
   updateSetting: (key: string, value: unknown) => void;
 }) {
-  switch (setting.type) {
-    case "bool":
-      return <BoolSetting setting={setting} updateSetting={updateSetting} />;
-    case "number":
-      return <NumberSetting setting={setting} updateSetting={updateSetting} />;
-    case "select":
-      return <SelectSetting setting={setting} updateSetting={updateSetting} />;
-    default:
-      return null;
-  }
+  const control = (() => {
+    switch (setting.type) {
+      case "bool":
+        return <BoolSetting setting={setting} updateSetting={updateSetting} />;
+      case "number":
+        return (
+          <NumberSetting setting={setting} updateSetting={updateSetting} />
+        );
+      case "select":
+        return (
+          <SelectSetting setting={setting} updateSetting={updateSetting} />
+        );
+      default:
+        return null;
+    }
+  })();
+  if (!control) return null;
+  return (
+    <>
+      {control}
+      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+    </>
+  );
 }
 
 function SubSettingsCollapsible({
@@ -369,16 +387,7 @@ function SubSettingsCollapsible({
   const label = setting.config_label ?? "configuration";
   return (
     <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          {label}
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>{label}</CollapsibleChevronButton>
       <CollapsibleContent>
         <div className="flex flex-col gap-3 pt-2 px-6">
           {items.map((child) => (
@@ -409,18 +418,15 @@ function BoolSetting({
     (v) => updateSetting(setting.key, v),
   );
   return (
-    <>
-      <Field orientation="horizontal" className="items-center justify-between">
-        <FieldContent>
-          <FieldLabel className="text-sm">{setting.label}</FieldLabel>
-          {setting.description && (
-            <FieldDescription>{setting.description}</FieldDescription>
-          )}
-        </FieldContent>
-        <Switch checked={value} onCheckedChange={toggle} />
-      </Field>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+    <Field orientation="horizontal" className="items-center justify-between">
+      <FieldContent>
+        <FieldLabel className="text-sm">{setting.label}</FieldLabel>
+        {setting.description && (
+          <FieldDescription>{setting.description}</FieldDescription>
+        )}
+      </FieldContent>
+      <Switch checked={value} onCheckedChange={toggle} />
+    </Field>
   );
 }
 
@@ -461,27 +467,24 @@ function NumberSetting({
   };
 
   return (
-    <>
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-foreground">{setting.label}</span>
-          <span className="text-[10px] text-muted-foreground/70 tabular-nums">
-            {formatValue(localValue)}
-          </span>
-        </div>
-        <Slider
-          min={setting.min ?? 0}
-          max={setting.max ?? 1}
-          step={setting.step ?? 0.01}
-          value={[localValue]}
-          onValueChange={([v]) => handleChange(v)}
-        />
-        {setting.description && (
-          <p className="text-xs text-muted-foreground">{setting.description}</p>
-        )}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-foreground">{setting.label}</span>
+        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+          {formatValue(localValue)}
+        </span>
       </div>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+      <Slider
+        min={setting.min ?? 0}
+        max={setting.max ?? 1}
+        step={setting.step ?? 0.01}
+        value={[localValue]}
+        onValueChange={([v]) => handleChange(v)}
+      />
+      {setting.description && (
+        <p className="text-xs text-muted-foreground">{setting.description}</p>
+      )}
+    </div>
   );
 }
 
@@ -496,51 +499,30 @@ function SelectSetting({
   const hasPreview = options.some((o) => o.preview);
   const onChange = (v: string) => updateSetting(setting.key, v);
 
-  if (hasPreview) {
-    return (
-      <>
-        <VoicePicker setting={setting} onChange={onChange} />
-        <SubSettingsCollapsible
-          setting={setting}
-          updateSetting={updateSetting}
-        />
-      </>
-    );
-  }
+  if (hasPreview) return <VoicePicker setting={setting} onChange={onChange} />;
 
   return (
-    <>
-      <Collapsible>
-        <CollapsibleTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-            {setting.label}:{" "}
-            <span className="text-foreground font-medium">
-              {options.find((o) => o.value === setting.value)?.label ??
-                "Unknown"}
-            </span>
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="flex flex-col gap-1 pt-2 px-6">
-            {options.map((opt) => (
-              <button
-                key={opt.value}
-                className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
-                onClick={() => onChange(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
-      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
-    </>
+    <Collapsible>
+      <CollapsibleChevronButton>
+        {setting.label}:{" "}
+        <span className="text-foreground font-medium">
+          {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
+        </span>
+      </CollapsibleChevronButton>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-1 pt-2 px-6">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
+              onClick={() => onChange(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -595,19 +577,12 @@ function VoicePicker({
 
   return (
     <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          {setting.label}:{" "}
-          <span className="text-foreground font-medium">
-            {selectedOption?.label ?? "Unknown"}
-          </span>
-        </Button>
-      </CollapsibleTrigger>
+      <CollapsibleChevronButton>
+        {setting.label}:{" "}
+        <span className="text-foreground font-medium">
+          {selectedOption?.label ?? "Unknown"}
+        </span>
+      </CollapsibleChevronButton>
 
       <CollapsibleContent>
         <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pt-2">
@@ -615,57 +590,57 @@ function VoicePicker({
             const selected = opt.value === selectedId;
             const playing = playingId === opt.value;
             return (
-              <button
-                key={opt.value}
-                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${
-                  selected
-                    ? "bg-primary/10 ring-1 ring-primary/30"
-                    : "hover:bg-muted"
-                }`}
-                onClick={() => select(opt)}
-              >
-                <div
-                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+              <div key={opt.value} className="group relative">
+                <button
+                  className={`flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer w-full ${
                     selected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
+                      ? "bg-primary/10 ring-1 ring-ring"
+                      : "hover:bg-muted"
                   }`}
+                  onClick={() => select(opt)}
+                  aria-pressed={selected}
                 >
-                  {opt.label[0]}
-                  {opt.preview && (
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      aria-label={playing ? "Stop preview" : "Play preview"}
-                      className="absolute inset-0 size-full rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        playPreview(opt);
-                      }}
-                    >
-                      {playing ? (
-                        <Square className="size-3 text-white" />
-                      ) : (
-                        <Play className="size-3 text-white ml-0.5" />
-                      )}
+                  <div
+                    className={`size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+                      selected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {opt.label[0]}
+                  </div>
+                  <span
+                    className={`text-[10px] leading-tight text-center truncate max-w-full ${
+                      selected
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </span>
+                  {typeof opt.description === "string" && opt.description && (
+                    <span className="text-[11px] leading-tight text-center text-muted-foreground truncate max-w-full">
+                      {opt.description}
                     </span>
                   )}
-                </div>
-                <span
-                  className={`text-[10px] leading-tight text-center truncate max-w-full ${
-                    selected
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {opt.label}
-                </span>
-                {typeof opt.description === "string" && opt.description && (
-                  <span className="text-[9px] leading-tight text-center text-muted-foreground/60 truncate max-w-full">
-                    {opt.description}
-                  </span>
+                </button>
+                {opt.preview && (
+                  <button
+                    aria-label={playing ? "Stop preview" : "Play preview"}
+                    className="absolute top-2 left-1/2 -translate-x-1/2 size-9 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playPreview(opt);
+                    }}
+                  >
+                    {playing ? (
+                      <Square className="size-3 text-white" />
+                    ) : (
+                      <Play className="size-3 text-white ml-0.5" />
+                    )}
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>

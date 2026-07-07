@@ -19,6 +19,19 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   NSIS_VERSION: "3.11"
+  # Harden cargo against transient crates.io registry flakes (sporadic
+  # "curl failed" / partial downloads). Retry network ops well past the
+  # default of 3, and disable HTTP/2 multiplexing, whose connection reuse is
+  # the usual trigger for those mid-download curl errors on CI runners.
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Same hardening for npm: the registry (and the GitHub-hosted tarballs some
+  # deps pull) intermittently 403/502 or drop mid-download. Retry well past
+  # npm's default of 2 so a single transient blip doesn't fail an install.
+  # Honored by every `npm ci` / `npm install` in this workflow.
+  npm_config_fetch_retries: "5"
+  npm_config_fetch_retry_mintimeout: "20000"
+  npm_config_fetch_retry_maxtimeout: "120000"
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
@@ -39,7 +52,7 @@ jobs:
       agent: ${{ steps.filter.outputs.agent }}
       go: ${{ steps.filter.outputs.go }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -71,11 +84,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check version sync across sources
         run: |
-          AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
@@ -119,7 +132,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           TAG="${TAG#v}"
-          VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          VERSION=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           echo "Tag: v$TAG"
           echo "Version: $VERSION"
           if [ "$TAG" != "$VERSION" ]; then
@@ -135,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -152,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -160,7 +173,13 @@ jobs:
       # The cc_sdk e2e transport tests (tests/test_e2e_transport.py) drive a fake
       # claude TUI inside a real tmux server.
       - name: Install tmux
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 15
+          shell: bash
+          command: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
 
       - name: Run agent checks
         run: ./check.sh agent
@@ -171,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -179,12 +198,12 @@ jobs:
       - name: Check lockfile is up to date
         working-directory: agent
         run: |
-          cp uv.lock uv.lock.before
-          uv lock
+          cp core/uv.lock core/uv.lock.before
+          uv lock --project core
 
-          if ! diff -q uv.lock.before uv.lock > /dev/null; then
+          if ! diff -q core/uv.lock.before core/uv.lock > /dev/null; then
             echo "❌ uv.lock is out of date"
-            echo "Please run 'cd agent && uv lock' locally and commit the changes"
+            echo "Please run 'cd agent && uv lock --project core' locally and commit the changes"
             exit 1
           fi
 
@@ -197,7 +216,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -226,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Ensure vite base is "/" (required for Cloudflare Pages)
         run: |
@@ -241,7 +260,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Syntax-check install.ps1 (PowerShell 5.1)
         shell: powershell
@@ -276,7 +295,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check dashboard shared files are in sync
         run: |
@@ -296,7 +315,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -317,12 +336,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
 
       # Hermetic: the agent image is built from THIS checkout (GHA layer cache keeps it
       # fast), so integration tests exercise the PR's agent code and Dockerfile — never
@@ -371,24 +393,27 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────────────────
+  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────
   # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
-  # secret (kept fresh by refresh-credentials.yml). These are slow and spend real
-  # API tokens, so they do NOT run on PRs or master pushes — only on the release
-  # event, where they gate the release (the `release` and `push-image` jobs depend
-  # on this one, so a live-test failure blocks publishing artifacts and the image).
+  # OAuth secret. These are slow and spend real API tokens, so they do NOT
+  # run on PRs or master pushes — only on the release event, where they gate the
+  # release (the `release` and `push-image` jobs depend on this one, so a live-test
+  # failure blocks publishing artifacts and the image).
   test-live:
     needs: [version-check]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
 
       # Live tests must exercise the image being released, not the PREVIOUS release's
       # :latest — build it from this checkout (shares the GHA layer cache with
@@ -406,11 +431,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The token must outlive the whole test run (so agents never need to refresh it
-      # in-container — only refresh-credentials.yml may ever refresh this lineage).
-      # A MISSING secret (forks have no repo secrets) skips the live tests; a PRESENT
-      # but stale/malformed secret FAILS the release — it means the refresh-credentials
-      # pipeline is broken and we must not ship without live coverage having run.
+      # The live suite authenticates to Claude with the CLAUDE_CREDENTIALS secret (an OAuth blob),
+      # written to ~/.claude/.credentials.json where the agent reads it. A MISSING secret (forks have
+      # no repo secrets) makes the tests skip themselves. The SDK refreshes the access token at runtime
+      # from the refresh token, so an expired access token is fine as long as the refresh token is live.
       - name: Write Claude credentials
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
@@ -419,23 +443,17 @@ jobs:
             echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
             exit 0
           fi
-          remaining=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
-          import sys, json, time
-          creds = json.load(sys.stdin)
-          print(int(creds['claudeAiOauth']['expiresAt']/1000 - time.time()))
-          " 2>/dev/null || echo "invalid")
-          if [ "$remaining" = "invalid" ]; then
-            echo "::error::CLAUDE_CREDENTIALS is malformed — re-seed it (see vestad/tests-integration/README.md)"
-            exit 1
-          fi
-          if [ "$remaining" -lt 3600 ]; then
-            echo "::error::CLAUDE_CREDENTIALS expires in ${remaining}s (<1h). The refresh-credentials workflow should keep it >=2h valid; it is broken or its GH_PAT lost secret access. Fix the pipeline before releasing."
+          ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
+          import sys, json
+          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
+          print('ok')" 2>/dev/null || echo "invalid")
+          if [ "$ok" != "ok" ]; then
+            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken — re-seed from a fresh 'claude' login (~/.claude/.credentials.json)"
             exit 1
           fi
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
           chmod 600 ~/.claude/.credentials.json
-          echo "credentials valid for another $((remaining / 60)) minutes"
 
       - name: Build vestad
         working-directory: vestad
@@ -467,15 +485,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: |
             cli
@@ -538,14 +559,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: |
             cli
@@ -594,14 +618,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: vestad
           key: vestad-${{ matrix.target }}
@@ -660,15 +687,18 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: x86_64-pc-windows-msvc
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
@@ -689,14 +719,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
@@ -752,14 +785,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
@@ -828,14 +864,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
@@ -907,12 +946,15 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/desktop/src-tauri
           key: x86_64-pc-windows-msvc
@@ -924,7 +966,7 @@ jobs:
 
       - name: Cache NSIS
         id: cache-nsis
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~\AppData\Local\tauri\NSIS
           key: nsis-${{ env.NSIS_VERSION }}
@@ -987,14 +1029,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         with:
           workspaces: apps/mobile/src-tauri
           key: android
@@ -1008,8 +1053,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      # sdkmanager streams the NDK zip with no internal retry, so a single
+      # corrupted download ("Error reading Zip content from a SeekableByteChannel")
+      # fails the whole job. Retry the download instead of one-shotting it.
       - name: Install Android NDK
-        run: sdkmanager "ndk;27.0.12077973"
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: sdkmanager "ndk;27.0.12077973"
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -1021,8 +1075,13 @@ jobs:
         run: npm install
 
       - name: Initialize Android project
-        working-directory: apps/mobile
-        run: npx tauri android init
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: cd apps/mobile && npx tauri android init
 
       # Tauri's AndroidManifest template only declares INTERNET. Add the
       # microphone permissions the web app's getUserMedia call needs.
@@ -1120,16 +1179,19 @@ jobs:
             echo "SKIP_IOS=true" >> $GITHUB_ENV
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: env.SKIP_IOS != 'true'
 
       - name: Install Rust
         if: env.SKIP_IOS != 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
         with:
           targets: aarch64-apple-ios
 
       - uses: Swatinem/rust-cache@v2
+        # Caching is best-effort: a transient cache-service outage must not fail the
+        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
+        continue-on-error: true
         if: env.SKIP_IOS != 'true'
         with:
           workspaces: apps/mobile/src-tauri
@@ -1173,8 +1235,13 @@ jobs:
 
       - name: Initialize iOS project
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/mobile
-        run: npx tauri ios init
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: cd apps/mobile && npx tauri ios init
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
@@ -1265,7 +1332,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -1299,7 +1366,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
@@ -1391,3 +1458,47 @@ jobs:
           done
           echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
           echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."
+
+  # ── Revert a failed release ───────────────────────────────────────────
+  # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
+  # test-live) leaves a published-but-asset-less release. Updaters that follow
+  # prereleases then pick it up and 404 on the missing binary. Delete the
+  # release and its tag, AND revert the "Bump version to X" commit release.yml
+  # pushed to master — otherwise the version is stranded (master sits at the
+  # bumped version with no release, and the next ./release.sh skips to the next
+  # patch). Reverting it lets a re-run retry the same version.
+  revert-failed-release:
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
+    if: ${{ failure() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Delete the failed release and revert the bump
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          # Undo the bump with a revert commit, not a force-push: branch protection
+          # forbids force-pushes to master (allow_force_pushes: false). Only revert
+          # when the bump is still the tip, so a commit that landed after it is safe.
+          git fetch origin master
+          if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
+            git reset --hard origin/master
+            git revert --no-edit HEAD
+            git push origin master
+          else
+            echo "::warning::master tip is not a 'Bump version to' commit — leaving it for manual cleanup."
+          fi

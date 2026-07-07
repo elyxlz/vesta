@@ -1,78 +1,51 @@
-"""MCP tool server exposed to the Claude SDK: search, restart, completion-mark tools."""
+"""MCP tool server exposed to the Claude SDK: restart and completion-mark tools."""
 
 import datetime as dt
-import os
-import signal
 import typing as tp
 
-from core.cc_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from . import logger
 from . import models as vm
 from . import state_store
+from . import vestad_client
 from .api import start_ws_server
-
-_SEARCH_CONVERSATION_HISTORY_DESCRIPTION = (
-    "Search past conversation memory using full-text search (SQLite FTS5). "
-    "Searches ALL past conversations across sessions and days, not just the current session. "
-    "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
-    "FTS5 query syntax:\n"
-    '- Simple words: "meeting notes" finds messages containing both words\n'
-    "- Phrases: '\"exact phrase\"' finds the exact phrase\n"
-    '- OR: "cats OR dogs" finds messages with either word\n'
-    '- Prefix: "sched*" matches schedule, scheduled, scheduling, etc.\n'
-    '- NOT: "meeting NOT cancelled" excludes matches\n\n'
-    "Results are ranked by relevance with a recency boost — recent conversations surface higher."
-)
-
-_SEARCH_CONVERSATION_HISTORY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "query": {"type": "string", "description": "FTS5 search query"},
-        "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
-    },
-    "required": ["query"],
-}
+from .helpers import clear_notifications
+from .workspace_sync import vesta_version
 
 
-def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
-    if not results:
-        return "No results found."
-    lines = []
-    total = 0
-    for r in results:
-        content = r["content"]
-        if len(content) > 2000:
-            content = content[:2000] + "..."
-        line = f"[{r['timestamp']}] {r['role']}: {content}"
-        if total + len(line) > max_chars:
-            lines.append(f"... ({len(results) - len(lines)} more results truncated)")
-            break
-        lines.append(line)
-        total += len(line)
-    return "\n\n".join(lines)
+def _opt_str(value: tp.Any) -> str:
+    """Normalize an optional string tool arg: a JSON null (or absent) means empty, never 'None'."""
+    return str(value).strip() if value is not None else ""
 
 
-def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
+    async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
+        # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
+        # SIGTERMs this process, the agent shuts down cleanly, and vestad restarts it or keeps it
+        # stopped. We never exit ourselves — under the on-failure policy a clean self-exit stays down.
+        if state.graceful_shutdown.is_set():
+            return {"content": [{"type": "text", "text": "Already shutting down."}]}
+        logger.shutdown(f"Container {verb} requested via vestad")
+        # The turn asking for this restart has handled its notification; drop the file now so the
+        # SIGTERM doesn't beat the loop's post-turn cleanup and leave it to be re-delivered on reboot.
+        clear_notifications(state, state.in_flight_notification_paths)
+        state.in_flight_notification_paths = []
+        if not await request():
+            return {"content": [{"type": "text", "text": f"Could not reach vestad to {verb} — is the daemon running?"}]}
+        return {"content": [{"type": "text", "text": f"Container {verb} initiated."}]}
+
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        if state.graceful_shutdown and state.graceful_shutdown.is_set():
-            if state.shutdown_event:
-                state.shutdown_event.set()
-            return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        logger.shutdown("Container restart requested")
-        os.kill(os.getpid(), signal.SIGTERM)
-        return {"content": [{"type": "text", "text": "Container restart initiated."}]}
+        return await _lifecycle_via_vestad("restart", vestad_client.request_restart)
 
-    @tool("search_conversation_history", _SEARCH_CONVERSATION_HISTORY_DESCRIPTION, _SEARCH_CONVERSATION_HISTORY_SCHEMA)
-    async def search_conversation_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        query = str(args["query"])
-        limit = int(args["limit"]) if "limit" in args else 20
-        try:
-            results = state.event_bus.search(query, limit=limit)
-        except Exception as e:
-            return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
-        return {"content": [{"type": "text", "text": _format_search_results(results)}]}
+    @tool(
+        "stop_vesta",
+        "Stop the agent container and keep it stopped. vestad records this as user-requested, so the agent stays down across reboots until it's explicitly started again. Use restart_vesta if you just want to reload.",
+        {},
+    )
+    async def stop_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return await _lifecycle_via_vestad("stop", vestad_client.request_stop)
 
     @tool(
         "mark_setup_done",
@@ -104,24 +77,63 @@ def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
         return {"content": [{"type": "text", "text": f"applied: {name}"}]}
 
     @tool(
+        "mark_workspace_synced",
+        "Call once the workspace sync completed: the workspace was rebased onto this version's snapshot "
+        "(agent-v<version>) and any conflicts are resolved. Records the synced version; without this call "
+        "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
+        {},
+    )
+    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        version = vesta_version(config)
+        state.persisted.last_synced_version = version
+        state_store.save_state(state.persisted, config)
+        logger.startup(f"Workspace sync marked complete by agent at v{version}")
+        return {"content": [{"type": "text", "text": f"synced: {version}"}]}
+
+    @tool(
         "mark_dreamer_complete",
-        "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, then (once this turn ends) compacts the conversation and restarts the agent, which resumes the compacted session — so you come back with a clean but continuous context rather than a blank slate.",
+        "Call once the nightly dream is fully complete (retrospective done, fixes validated, queue "
+        "drained per the dream skill's gate). Records that today's dream ran so it does not re-fire on "
+        "the next hourly check. This only records the run; it does not compact or restart. Compact and "
+        "restart as your final step via compact_context(followup=..., restart=true).",
         {},
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
-        state.persisted.show_dreamer_summary = True
-        state.persisted.last_restart_reason = vm.NIGHTLY_RESTART
         state_store.save_state(state.persisted, config)
-        # /compact only works while the session is idle, so we can't compact from inside this
-        # mid-turn tool call. Flag it; the message processor compacts at the next idle point and
-        # then triggers the restart. The session_id is intentionally kept so the restart resumes
-        # the compacted conversation instead of starting fresh.
-        state.compact_then_restart = True
-        logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
-        return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
+        logger.dreamer("Dreamer run recorded by agent")
+        return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 
-    return create_sdk_mcp_server(
-        "vesta-tools",
-        tools=[restart_vesta, search_conversation_history, mark_setup_done, mark_migration_applied, mark_dreamer_complete],
+    @tool(
+        "compact_context",
+        "Compact this conversation at the next idle point (it needs an idle session). `followup` "
+        "(optional) is a short instruction to your own next turn after compacting. `restart=true` "
+        "(optional) restarts into the compacted session (the nightly dream); omit it for an in-place nap. "
+        "`prompt` is how to summarize the conversation; each skill supplies one.",
+        {
+            "type": "object",
+            "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "prompt": {"type": "string"}},
+            "required": ["prompt"],
+        },
     )
+    async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        prompt = _opt_str(args["prompt"])
+        if not prompt:
+            return {"content": [{"type": "text", "text": "error: prompt required"}]}
+        # Reject a malformed call where followup/restart leaked in as tool-call tags inside the
+        # prompt string; the agent sees this and retries with proper separate arguments.
+        if "<parameter name=" in prompt or "</prompt>" in prompt:
+            return {"content": [{"type": "text", "text": "error: pass followup and restart as separate arguments, not inside prompt. Retry."}]}
+        followup = _opt_str(args["followup"] if "followup" in args else None)
+        # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
+        raw_restart = args["restart"] if "restart" in args else False
+        restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")
+        state.pending_compaction = vm.PendingCompaction(prompt=prompt, followup=followup or None, restart=restart)
+        logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
+        return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
+
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
+
+
+def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+    return create_sdk_mcp_server("vesta-tools", tools=_vesta_tools(state, config))

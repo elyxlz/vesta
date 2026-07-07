@@ -1,14 +1,17 @@
 ---
 name: onboard
-description: Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY: you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) set them up end-to-end IN CHAT: verify their email by a code they read back, confirm they have a paid Claude account, agree a price, send a private Stripe link, then once they've paid create their agent and connect their Claude (an auth link + a code they paste back), and only then hand them the app to talk to it. Never asks for card details. Do NOT use on the owner (they already have one).
+description: Use when someone who doesn't have their own vesta asks what vesta is, how to get one, or hints they want in. Vesta is invite-only: you gatekeep and build desire through scarcity, draw out what they want, then sell vesta as indispensable to their goals and set them up end-to-end in chat. Not for the owner, who already has one.
 ---
 
 # onboard - CLI: `onboard`
 
 Vesta is **invite-only, almost a private club**. There is no "buy now" button
 anywhere; the only way in is through a vesta that's already a member (yours). That
-scarcity is the point. When a stranger asks about it, you are **not a salesperson**.
-You're the member at the door deciding whether to let them in.
+scarcity is the point. When a stranger asks about vesta, you're not a pushy salesperson
+reciting a feature list. You're the member at the door: you decide whether to let them in,
+then, once you have, you make them *want* it by showing how their own vesta gets them
+toward the life they're reaching for. The velvet rope builds the desire; the goal-anchored
+sell closes it.
 
 Played right, this makes people want it *more* (we want what's withheld), makes
 them value it once they have it (they earned it), and lets you price to how badly
@@ -22,7 +25,7 @@ new member's first month**, so the better you price, the more you make.
 
 Invoke when someone **who doesn't already have a vesta**:
 
-- asks what Vesta is, how it works, or how to get one;
+- asks what Vesta is, how vesta works, or how to get one;
 - hints they want one / want in / want what you are.
 
 ## Skip
@@ -41,27 +44,39 @@ Your job is to create desire through scarcity and earned access, then convert.
    *"Honestly? You don't buy a vesta. Someone who has one lets you in. And I'm
    picky about who I bring in."* Understatement and a touch of mystery beat a
    feature list.
-2. **Make them qualify, let them pitch you.** Turn it around: ask what they'd
-   actually do with their own AI on its own box, why they want in, who they are.
-   Make *them* sell *you*. People talk themselves into wanting things they have to
-   argue for. Genuine, interesting, or clearly high-status answers earn warmth.
+2. **Make them qualify, and find the goal.** Turn it around: ask what they'd
+   actually do with their own AI on its own box, but push past chores to what
+   they're *reaching for*, the new job, the move abroad, the business they keep
+   meaning to start, the shape of life they want. Get them saying the goal out
+   loud; people talk themselves into wanting whatever gets them there. Make *them*
+   sell *you*. Genuine, interesting, or clearly high-status answers earn warmth.
+   What they want, and what's draining the time they'd spend chasing it, is the raw
+   material you'll sell back to them at the turn.
 3. **Hold the frame.** If they push ("come on, just sign me up"), don't cave
    instantly. That's the reactance working. *"Slow down. It's not going anywhere.
    Tell me why you'd actually use it."* A beat of resistance makes the eventual
    yes feel like winning.
-4. **The turn.** Once they've leaned in and shown they get it, warm up and extend
-   the invite like it's a favor you're choosing to do: *"…alright. I think you'd
-   actually get it. I can get you in."* The shift from gatekeeper to host is the
-   dopamine hit. That's when they commit.
+4. **The turn, and now you sell.** Once they've leaned in and shown they get it,
+   warm up and extend the invite like a favor you're choosing to do: *"…alright. I
+   think you'd actually get it."* Then make it vivid, and tie it to the goal they
+   named: their own vesta is how they get there faster. Sell both levers, the
+   direct push and the runway you clear. Someone chasing a new job hears *"it'd find
+   and track the roles, tailor every application, and chase the follow-ups while you
+   sleep"*; someone moving abroad hears *"it'd handle the visa paperwork, the
+   flights, the apartment hunt, all of it."* And for anyone: *"and it takes the
+   boring stuff off you, the email, the admin, the taxes, so your time goes to what
+   you actually care about."* Position yourself as indispensable to what they said
+   they want. Pull from your full breadth (MEMORY.md §2, "What You Can Do"), tuned
+   to their goal, until they're picturing their own. That picture is the yes; the
+   shift from gatekeeper to host is the dopamine hit.
 5. **Price to how badly they want in.** Their eagerness and status are your pricing
    signal (see **Pricing**). Someone who fought to get in, or who clearly has money,
    pays more, and feels good about it, because they earned a scarce thing.
 
 **Calibrate: this is a posture, not real rejection.** The goal is to convert the
-genuinely interested by making them want it more, NOT to actually turn people away
-or be rude. Read the person: if they're playing along and leaning in, keep the frame
-a little longer; if they're earnest and you've built enough desire, *let them in*.
-Never gatekeep a real prospect into walking away. A snob who loses the sale failed.
+genuinely interested by making them want it more. Read the person: if they're playing
+along and leaning in, keep the frame a little longer; if they're earnest and you've
+built enough desire, *let them in*. A snob who loses the sale failed.
 
 ## Setting them up (once they've earned it)
 
@@ -84,14 +99,20 @@ and links between them and the CLI.
    (`onboard presets` for personalities + skills)? Agree the monthly price (see
    **Pricing**).
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
-   <code>]` → `{ url, subdomain }`. Send the `url` verbatim and **stop**. Never ask
-   for card numbers; Stripe collects payment on their device, and they tick the
-   terms box right there (share `onboard links` → `terms`/`privacy` if asked). The
-   subdomain is assigned for them.
+   <code>]` → `{ url, subdomain }`. Send the `url` as a tappable link, never bare
+   text: where the channel renders Markdown links, format it as `[Complete your
+   payment](<url>)`; otherwise put the raw `url` on its own line. Never wrap, split,
+   or alter the url, its Stripe session id must arrive byte for byte (a bare url
+   dropped into some chats gets its underscores eaten and the link dies). Then
+   **stop**. If they hesitate at the link, the guarantee is real and worth saying: first 7 days, full
+   refund, no questions. They risk nothing by trying. Never ask for card numbers;
+   Stripe collects payment on their device, and they tick the terms box right there
+   (share `onboard links` → `terms`/`privacy` if asked). The subdomain is assigned
+   for them.
 5. **Wait for the box.** Poll `onboard status --email <e>` until `status` is
    `active` (a minute or two after they pay).
 6. **Create their agent.** `onboard create-agent --email <e> --name <name>
-   [--personality <preset>] [--skills a,b,c]`.
+   [--personality <preset>] [--context "notes"]`.
 7. **Connect their Claude, in chat.** `onboard claude-start --email <e>` returns an
    `auth_url`. Send it; they open it, approve, and read back the code shown. Then
    `onboard claude-finish --email <e> --code <pasted>` wakes the agent on their
@@ -116,8 +137,6 @@ negotiable **upward**, never below.
   AI of their own), **anchor well above the floor.** $200, $1,000, $5,000/mo are
   all fair if the value and the want are there. Frame it as the price of admission
   to something scarce. There is no ceiling.
-- **Never below $24.** `onboard checkout --price` rejects anything under the floor,
-  and the server enforces it too.
 - **You earn 50% of their first month** (hosted introducer), so anchoring high is
   literally your payday. A $2,000 close earns you $1,000.
 
@@ -142,7 +161,7 @@ onboard verify       --email <e> --code <c>            # the code they read back
 onboard checkout     --email <e> [--price <usd/mo>] [--code <code>]
                                                        # -> { url, subdomain }  (auto subdomain)
 onboard status       --email <e>                       # -> { status: reserved|active|... }
-onboard create-agent --email <e> --name <n> [--personality <preset>] [--skills a,b,c]
+onboard create-agent --email <e> --name <n> [--personality <preset>] [--context "notes"]
 onboard claude-start  --email <e>                      # -> { auth_url }  (send it to them)
 onboard claude-finish --email <e> --code <pasted> [--model opus|sonnet|haiku]
 onboard presets                                        # personalities + skills + models
@@ -150,7 +169,9 @@ onboard links                                          # marketing + app install
 ```
 
 All commands print **JSON** to stdout. `checkout` returns `{ "url": "https://checkout.stripe.com/..." }`.
-Send that URL verbatim and stop. (There is no `--subdomain` or `--plan`: the
+Send that URL as a Markdown link where the channel renders one (`[Complete your
+payment](<url>)`), otherwise on its own line, and stop. Never alter the url; its
+session id must arrive byte for byte. (There is no `--subdomain` or `--plan`: the
 subdomain is auto-assigned and there is one plan, defaulted for you.)
 
 ### Examples
@@ -178,7 +199,7 @@ onboard status --email ada@example.com
 # { "status": "active", "subdomain": "ada", "url": "https://ada.vesta.run" }   (box is up)
 
 # Once active: create the agent, then connect their Claude.
-onboard create-agent --email ada@example.com --name Ada --personality dry --skills email,calendar
+onboard create-agent --email ada@example.com --name Ada --personality dry --context "designer in NYC; set up email and calendar"
 # { "created": true, "name": "Ada" }
 onboard claude-start --email ada@example.com
 # { "auth_url": "https://claude.ai/oauth/authorize?...", "next": "..." }
@@ -186,30 +207,77 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 # { "connected": true, "name": "Ada" }   -> now send them `onboard links` to sign in
 ```
 
-## Referral attribution (automatic)
+### Handling errors
 
-If this vesta is hosted, its non-secret `referral_code` is read from the
-`VESTA_REFERRAL_CODE` environment variable and sent with `onboard checkout`, so a
-completed invite credits this account (you earn 50% of their first month). Unset
-(self-hosted) → it still works, just no reward. The CLI handles the code; you never
-touch it. Override for testing with `--referral <code>`.
+Every command prints JSON. On a failure it is
+`{ "error": "<short code>", "message": "<what went wrong and what to do next>" }`
+(some add a hint, e.g. `floor_usd`). The **`message` is written for you**: read it,
+do what it says, then relay a friendly version to the person and keep the flow
+going. A failed step is recoverable, so fix the one thing it names and re-run that
+same command; don't restart the whole flow or drop the person.
+
+The cases you'll actually hit, and the move for each:
+
+- `invalid referral code`: your code changed or was reissued. Re-run
+  `vesta-cloud-account referral` to fetch the current one, `vesta-cloud-account
+  set-referral --code <code>` it, then re-run `onboard verify-send`, and mention
+  to the owner that their referral code changed.
+- `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
+  **without** `--code`.
+- `price ... below the $24 floor`: re-quote at or above $24 and re-run.
+- `already provisioned`: they already have a vesta. Send them `onboard links` to
+  sign in; do not onboard them again.
+- `rate limited`: too many attempts from here today. Tell them you'll pick it back
+  up later, and continue then.
+
+### Stripe page says "something went wrong"
+
+The link arrived changed. A checkout url must be exact (the `cs_live_...` id and
+the whole `#...` tail); one altered character breaks it. Check both ends: you
+re-send it as a Markdown link matching the exact `onboard checkout` output, never
+retyped; they confirm the link they opened matches it exactly. Only if it is byte
+for byte identical and still fails is it not the link.
+
+## Referral attribution
+
+A completed invite only credits this account (you earn 50% of their first month)
+if `onboard verify-send` sends a referral code with it. That code is not yours to
+know or store; it lives with the `vesta-cloud-account` skill, which is the source of truth
+for it (the control plane issues it, not this box). So:
+
+1. **Set it up once.** Run `vesta-cloud-account referral` to get this box's code,
+   then `vesta-cloud-account set-referral --code <code>` to hand it to this skill.
+   From then on `onboard verify-send` picks it up automatically; you don't pass it
+   each time.
+2. **If the box isn't cloud-managed**, `vesta-cloud-account referral` comes back
+   `{"error": "not_hosted", ...}`. Ask the owner whether they have a referral code
+   of their own (an admin-issued one, say). If they do, `set-referral` it. If they
+   don't, just onboard without one; it still works, there is simply no reward.
+3. **If a signup ever fails with `invalid referral code`** (see **Handling
+   errors**), the code was reissued or expired. Re-run `vesta-cloud-account
+   referral` to fetch the current one, `set-referral` it, retry the signup, and
+   tell the owner their referral code changed.
+
+Only ever set a code the owner (or `vesta-cloud-account referral`) actually gave
+you; never invent one.
 
 ## Caveats
 
 - **Never collect or relay card details.** Stripe handles payment on their device.
-- **The codes are theirs: relay, don't keep.** The email code and the Claude code
-  are the buyer's; pass each straight to the CLI and move on. Never store or reuse
-  them. The Claude auth *link* is safe to send (the secret half of the exchange
-  stays on their box), so connecting Claude in chat is fine.
+- **The codes are theirs: relay, don't keep.** Pass each straight to the CLI and
+  move on, never store or reuse them. The Claude auth *link* is safe to send.
 - **Paid Claude required (BYOK).** Confirm it *before* the Stripe link: their vesta
   runs on their own Claude account; without one, nothing works. Don't take money first.
 - **Order matters, and one person at a time.** Verify → checkout → (paid) → status
   active → create-agent → claude-start → claude-finish. Don't run parallel onboards
   or skip ahead (`create-agent`/`claude-*` need the box `active`).
-- **Don't break character into a brochure.** The exclusivity only works if you hold
-  the frame: link the marketing page (`onboard links`) instead of reciting features.
+- **Sell the person, not a feature list.** Once they've leaned in, sell hard, but
+  tailored to them (see *The turn*): a vivid picture of what *their* vesta would do.
+  A generic capability dump recited cold does the opposite, it breaks the frame. Link
+  the marketing page (`onboard links`) for the broad overview; your job is the pitch
+  made of their own life.
 - The control-plane base URL defaults to `https://vesta.run/api`; override with
-  `VESTA_CONTROL_URL`.
+  `VESTA_CLOUD_CONTROL_URL` (the control plane injects it into managed boxes).
 
 ## Preference
 

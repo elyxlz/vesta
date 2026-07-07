@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, mark_first_start_done, unique_agent};
+use vesta_tests::{TestAgent, SERVER, mark_first_start_done, unique_agent};
 
 #[test]
 fn oauth_start_returns_url() {
@@ -16,15 +16,16 @@ fn oauth_complete_bad_session_fails() {
 }
 
 #[test]
-fn inject_token_marks_authenticated() {
+fn agent_without_credentials_is_not_authenticated() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("inject-tok")).unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("no-creds")).unwrap();
 
-    // Credentials land in the container fs; the agent re-derives provider state
-    // on restart and then reports authenticated.
-    inject_fake_token(&c, &agent.name);
+    // No provider is configured, so the agent re-derives provider state on restart
+    // and settles at unprovisioned. A fake token can't reach `authenticated` (the
+    // agent's first turn 401s upstream and flips it back), so the authenticated path
+    // is covered by the live tests with real credentials, not here.
     mark_first_start_done(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
     let status = c.wait_until_running(&agent.name, 180).unwrap();
-    assert_eq!(status, "alive");
+    assert_eq!(status, "unprovisioned");
 }

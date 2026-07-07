@@ -7,8 +7,10 @@ use axum::{
     Json,
 };
 
+use std::time::Duration;
+
 use crate::docker;
-use crate::serve::{ServiceEntry, SharedState, err_response, ok_json};
+use crate::serve::{ServiceEntry, SharedState, err_response, ok_json, WS_KEEPALIVE_INTERVAL_SECS};
 
 pub async fn invalidate_service_handler(
     State(state): State<SharedState>,
@@ -112,7 +114,11 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         return;
     }
 
-    // 3. Event loop
+    // 3. Event loop. The ping keeps an idle socket alive through the Cloudflare tunnel, which
+    // reaps connections silent for ~100s; without it an idle client is dropped and forced to
+    // reconnect, which tears the whole app tree down and back up.
+    let mut keepalive = tokio::time::interval(Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS));
+    keepalive.tick().await; // the first tick is immediate; drop it so the first ping waits a full interval
     loop {
         tokio::select! {
             result = agents_rx.changed() => { if result.is_err() { break; } }
@@ -124,6 +130,10 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => { continue; }
                 }
+            }
+            _ = keepalive.tick() => {
+                if tx.send(Message::Ping(Default::default())).await.is_err() { break; }
+                continue;
             }
         }
 

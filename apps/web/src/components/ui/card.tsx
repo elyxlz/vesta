@@ -12,7 +12,7 @@ function Card({
       data-slot="card"
       data-size={size}
       className={cn(
-        "group/card flex flex-col gap-6 overflow-hidden rounded-squircle-md [corner-shape:squircle] bg-card py-6 text-sm text-card-foreground shadow-md ring-1 ring-foreground/5 has-[>img:first-child]:pt-0 data-[size=sm]:gap-4 data-[size=sm]:py-4 dark:ring-foreground/10 *:[img:first-child]:rounded-t-squircle-md *:[img:first-child]:[corner-shape:squircle] *:[img:last-child]:rounded-b-squircle-md *:[img:last-child]:[corner-shape:squircle]",
+        "group/card flex flex-col gap-6 overflow-hidden rounded-squircle-md [corner-shape:squircle] bg-card py-6 text-sm text-card-foreground shadow-md ring-1 ring-(color:--card-ring) has-[>img:first-child]:pt-0 data-[size=sm]:gap-4 data-[size=sm]:py-4 *:[img:first-child]:rounded-t-squircle-md *:[img:first-child]:[corner-shape:squircle] *:[img:last-child]:rounded-b-squircle-md *:[img:last-child]:[corner-shape:squircle]",
         className,
       )}
       {...props}
@@ -37,7 +37,10 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("font-heading text-base font-medium", className)}
+      className={cn(
+        "font-heading text-base font-medium group-data-[size=sm]/card:flex group-data-[size=sm]/card:items-center group-data-[size=sm]/card:gap-2 group-data-[size=sm]/card:text-sm",
+        className,
+      )}
       {...props}
     />
   );
@@ -47,7 +50,10 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "text-sm text-muted-foreground group-data-[size=sm]/card:text-xs",
+        className,
+      )}
       {...props}
     />
   );

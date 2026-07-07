@@ -61,12 +61,10 @@ def _flight_to_dict(flight) -> dict:
 
 
 def _roundtrip_to_dict(outbound, inbound) -> dict:
-    out = _flight_to_dict(outbound)
-    ret = _flight_to_dict(inbound)
     return {
         "price_usd": round(outbound.price + inbound.price, 2),
-        "outbound": out,
-        "return": ret,
+        "outbound": _flight_to_dict(outbound),
+        "return": _flight_to_dict(inbound),
     }
 
 
@@ -199,6 +197,14 @@ def _search_dates(
 # ===========================================================================
 
 
+def _sort_by_price(results: list[dict], max_results: int) -> list[dict]:
+    """Sort valid results cheapest-first, keeping any error entries at the end."""
+    valid = [r for r in results if "error" not in r]
+    errors = [r for r in results if "error" in r]
+    valid.sort(key=lambda x: x.get("price_usd", float("inf")))
+    return valid[:max_results] + errors
+
+
 def cmd_search(args):
     """flights search — search specific date(s)."""
     origins = args.origin if isinstance(args.origin, list) else [args.origin]
@@ -209,7 +215,7 @@ def cmd_search(args):
             origin=origin.upper(),
             destination=args.destination.upper(),
             date=args.date,
-            return_date=getattr(args, "return_date", None),
+            return_date=args.return_date,
             stops=args.stops,
             cabin=args.cabin,
             sort=args.sort,
@@ -219,12 +225,9 @@ def cmd_search(args):
             r["origin"] = origin.upper()
         all_results.extend(results)
 
-    # If multiple origins and no errors, sort combined results by price
+    # If multiple origins, sort combined results by price
     if len(origins) > 1:
-        valid = [r for r in all_results if "error" not in r]
-        errors = [r for r in all_results if "error" in r]
-        valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[: args.max_results] + errors
+        all_results = _sort_by_price(all_results, args.max_results)
 
     print(json.dumps(all_results, indent=2))
 
@@ -252,10 +255,7 @@ def cmd_dates(args):
 
     # Sort combined results by price
     if len(origins) > 1:
-        valid = [r for r in all_results if "error" not in r]
-        errors = [r for r in all_results if "error" in r]
-        valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[: args.max_results] + errors
+        all_results = _sort_by_price(all_results, args.max_results)
 
     print(json.dumps(all_results, indent=2))
 
@@ -332,7 +332,7 @@ def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
     conditions = offer.get("conditions") or {}
     refund_info = conditions.get("refund_before_departure") or {}
     change_info = conditions.get("change_before_departure") or {}
-    result = {
+    return {
         "index": idx + 1,
         "offer_id": offer["id"],
         "airline": (offer.get("owner") or {}).get("name", "?"),
@@ -346,7 +346,6 @@ def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
         "changeable": change_info.get("allowed", False),
         "docs_required": offer.get("passenger_identity_documents_required", False),
     }
-    return result
 
 
 def cmd_offer(args):
@@ -390,9 +389,7 @@ def cmd_offer(args):
         # Limit results
         offers = offers[: args.max_results]
 
-        formatted = []
-        for i, offer in enumerate(offers):
-            formatted.append(_fmt_duffel_offer(offer, i))
+        formatted = [_fmt_duffel_offer(offer, i) for i, offer in enumerate(offers)]
 
         output = {
             "offer_request_id": result.get("id"),

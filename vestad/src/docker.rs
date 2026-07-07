@@ -8,7 +8,7 @@ use bollard::query_parameters::{
 use bollard::Docker;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -37,15 +37,11 @@ impl std::error::Error for DockerError {}
 
 impl From<bollard::errors::Error> for DockerError {
     fn from(e: bollard::errors::Error) -> Self {
-        match &e {
-            bollard::errors::Error::DockerResponseServerError { status_code, .. } => {
-                match *status_code {
-                    404 => DockerError::NotFound(e.to_string()),
-                    409 => DockerError::AlreadyExists(e.to_string()),
-                    _ => DockerError::Failed(e.to_string()),
-                }
-            }
-            _ => DockerError::Failed(e.to_string()),
+        let msg = e.to_string();
+        match e {
+            bollard::errors::Error::DockerResponseServerError { status_code: 404, .. } => DockerError::NotFound(msg),
+            bollard::errors::Error::DockerResponseServerError { status_code: 409, .. } => DockerError::AlreadyExists(msg),
+            _ => DockerError::Failed(msg),
         }
     }
 }
@@ -88,25 +84,49 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 // --- Expected container config (single source of truth) ---
 
 const NETWORK_MODE: &str = "host";
-const RESTART_POLICY: &str = "unless-stopped";
+// on-failure (not unless-stopped) so Docker recovers genuine crashes but never auto-starts a
+// stale container on daemon/host boot: vestad owns boot-start (reconcile -> rebuild -> start),
+// so an agent that needs a rebuild is never reachable on its pre-update container. The bound caps
+// a hard crash-loop so a wedged agent eventually stays down instead of thrashing forever.
+const RESTART_MAX_RETRIES: i64 = 5;
 const ENV_MOUNT_DEST: &str = "/run/vestad-env";
 const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// User-authored charter, bind-mounted read-only so the agent reads but cannot edit it.
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
-const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
-pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, "/root/agent/pyproject.toml", "/root/agent/uv.lock", CONSTITUTION_MOUNT_DEST];
+pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
+// INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
+// checkout of the workspace snapshot, and a mount puts a file/dir on disk that the
+// snapshot does not contain -- so git reports it as untracked ("?? path") noise on every
+// box unless it is kept out of git status one of two ways:
+//   - a directory: never listed in the sparse cone (agent/core), so it stays out of cone.
+//   - a file: gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
+// Adding a new /root/agent/ mount without doing this dirties every box's tree. The
+// workspace attach integration test (vestad/tests/server/workspace.rs) asserts a clean
+// tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 10] = [
+    let steps: [String; 11] = [
         "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
+        // The venv must live outside the read-only core mount (uv would default to
+        // /root/agent/core/.venv, inside it).
+        "export UV_PROJECT_ENVIRONMENT=/root/agent/.venv".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // OpenRouter agents get their provider config (AGENT_PROVIDER, ANTHROPIC_*) from this
-        // file; absent for Claude agents. Guard with `[ -f ]`: `.` is a POSIX special
-        // built-in, so sourcing a missing file makes dash exit the whole script (and
-        // `|| true` does NOT catch it), which would crash-loop every Claude agent.
-        "[ -f /root/.claude/vesta-provider.env ] && . /root/.claude/vesta-provider.env".into(),
+        // LEGACY(remove-when: fleet converged to vestad-served workspaces — the workspace
+        // branch never tracks .claude, so migrated workspaces cannot hit this):
+        // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
+        // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
+        // If the git workspace tracks .claude, a `git sparse-checkout reapply` (run by skills-install
+        // and by migrations) sparsifies the out-of-cone .claude/ and, on the image's git (2.39),
+        // deletes the untracked ~/.claude/.credentials.json with it, de-authing the agent. Self-heal
+        // at boot, before the agent runs anything that could reapply: drop .claude from the index and
+        // exclude it locally, so .claude is untracked and no reapply can touch it on ANY git version.
+        // Same rationale as tmux above -- this is the one place the fix reliably reaches already-
+        // snapshotted agents, since the skill scripts only update on a sync (itself a dangerous
+        // reapply). No-op outside a git repo (fresh agents before init); `|| true` never aborts boot.
+        "if gd=$(git -C ~ rev-parse --absolute-git-dir 2>/dev/null); then git -C ~ ls-files -z -- .claude | xargs -0r git -C ~ update-index --force-remove; grep -qxF '/.claude/' \"$gd/info/exclude\" 2>/dev/null || printf '/.claude/\\n' >> \"$gd/info/exclude\"; fi || true".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
         // recreates a container from a `docker export|import` snapshot and never re-runs the
@@ -115,7 +135,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        "uv sync --frozen --project /root/agent".into(),
+        // LEGACY(remove-when: unmanaged boxes have pulled a post-engine-move snapshot):
+        // unmanaged boxes keep the old layout (pyproject at /root/agent) until they rebase
+        // onto an agent-v* snapshot; tolerate both so they never crash-loop.
+        "if [ -f /root/agent/core/pyproject.toml ]; then uv sync --frozen --project /root/agent/core; else uv sync --frozen --project /root/agent; fi".into(),
         // ~/.claude/skills is a real directory of per-skill symlinks. Both
         // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
         // core entries are linked last so they win any name collision. Reset
@@ -123,13 +146,18 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
         "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
-        "cd /root/agent && exec uv run --frozen python -m core.main".into(),
+        "cd /root/agent && if [ -f core/pyproject.toml ]; then exec uv run --frozen --project core python -m core.main; else exec uv run --frozen python -m core.main; fi".into(),
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
 
 const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
+/// `docker rm --force` can return before the container name is actually released, and a transient
+/// daemon error can leave it present; poll-and-retry until it's gone so a follow-up create under the
+/// same name (rebuild_agent) can't collide. Bounded so a genuinely stuck removal fails loudly.
+const CONTAINER_REMOVE_MAX_ATTEMPTS: u32 = 5;
+const CONTAINER_REMOVE_POLL_MS: u64 = 200;
 /// Free space the Docker storage filesystem must have before vestad will rebuild or
 /// restart agent containers at startup. Below this, reconcile is skipped entirely so a
 /// full disk can't corrupt a container's writable layer (events.db, session) mid-restart.
@@ -151,7 +179,7 @@ pub enum ContainerStatus {
     Dead,
 }
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Alive,
@@ -161,9 +189,29 @@ pub enum AgentStatus {
     SettingUp,
     Starting,
     NotAuthenticated,
+    /// Reachable, but no provider is chosen yet (fresh agent, or signed out) — needs first sign-in,
+    /// distinct from `NotAuthenticated` (a chosen provider whose credential is invalid/expired).
+    Unprovisioned,
     Stopped,
     Dead,
     NotFound,
+}
+
+impl AgentStatus {
+    /// Human-readable form for terminal surfaces (the status banner): the
+    /// snake_case wire name with spaces.
+    pub fn human_text(self) -> &'static str {
+        match self {
+            AgentStatus::Alive => "alive",
+            AgentStatus::SettingUp => "setting up",
+            AgentStatus::Starting => "starting",
+            AgentStatus::NotAuthenticated => "not authenticated",
+            AgentStatus::Unprovisioned => "unprovisioned",
+            AgentStatus::Stopped => "stopped",
+            AgentStatus::Dead => "dead",
+            AgentStatus::NotFound => "not found",
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -180,6 +228,10 @@ pub struct ListEntry {
     pub name: String,
     pub status: AgentStatus,
     pub ws_port: u16,
+    // Container start time; the web app watches it change to retire a "restart to apply" flag.
+    // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
+    #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
 }
 
 // --- Docker connection ---
@@ -382,7 +434,13 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub port: Option<u16>,
     pub id: Option<String>,
+    /// Container start time (RFC3339 from Docker `State.StartedAt`), `None` for one that has never
+    /// started. Changes on every restart, so the web app uses it to retire a "restart to apply" flag.
+    pub started_at: Option<String>,
 }
+
+// The Go zero time Docker reports for a container that has never started; not a real boot.
+const NEVER_STARTED_AT: &str = "0001-01-01T00:00:00Z";
 
 pub async fn combined_status(
     http_client: &reqwest::Client,
@@ -396,15 +454,13 @@ pub async fn combined_status(
             if !info.port.is_some_and(is_agent_ready) {
                 return AgentStatus::Starting;
             }
-            // Agent's own /provider/status is the source of truth for provider auth.
-            // If the WS server is up but /provider isn't responding yet (transient
+            // Agent's own GET /config is the source of truth for provider auth.
+            // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
             let agent_name = name_from_cname(cname);
             let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
             match provider.status().await {
-                Ok(s) if s.state == "authenticated" && s.setup_complete => AgentStatus::Alive,
-                Ok(s) if s.state == "authenticated" => AgentStatus::SettingUp,
-                Ok(_) => AgentStatus::NotAuthenticated,
+                Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => AgentStatus::Starting,
             }
         }
@@ -414,18 +470,27 @@ pub async fn combined_status(
     }
 }
 
+/// Map the agent's `GET /status` readiness slice to its `AgentStatus`. An authenticated agent is
+/// `SettingUp` until first-start finishes, then `Alive`; a not-authenticated agent is `Unprovisioned`
+/// when it has no provider chosen at all, else `NotAuthenticated` (a chosen credential is invalid).
+fn status_from_readiness(authed: bool, setup_complete: bool, provider_configured: bool) -> AgentStatus {
+    match (authed, setup_complete, provider_configured) {
+        (true, true, _) => AgentStatus::Alive,
+        (true, false, _) => AgentStatus::SettingUp,
+        (false, _, true) => AgentStatus::NotAuthenticated,
+        (false, _, false) => AgentStatus::Unprovisioned,
+    }
+}
+
 /// Read a value from a per-agent env file by key (e.g. "WS_PORT").
 pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
     let env_path = agents_dir.join(format!("{}.env", agent_name));
     let content = std::fs::read_to_string(&env_path).ok()?;
     let prefix = format!("{key}=");
-    for line in content.lines() {
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        if let Some(val) = line.strip_prefix(&prefix) {
-            return Some(val.to_string());
-        }
-    }
-    None
+    content
+        .lines()
+        .map(|line| line.strip_prefix("export ").unwrap_or(line))
+        .find_map(|line| line.strip_prefix(&prefix).map(str::to_string))
 }
 
 pub(crate) fn container_info_from(cname: &str, info: &bollard::models::ContainerInspectResponse, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
@@ -450,7 +515,10 @@ pub(crate) fn container_info_from(cname: &str, info: &bollard::models::Container
         .unwrap_or_else(|| name_from_cname(cname));
     let port = agents_dir.and_then(|dir| read_env_value(dir, &name, "WS_PORT"))
         .and_then(|v| v.parse().ok());
-    ContainerInfo { status, port, id }
+    let started_at = info.state.as_ref()
+        .and_then(|s| s.started_at.clone())
+        .filter(|t| !t.is_empty() && t != NEVER_STARTED_AT);
+    ContainerInfo { status, port, id, started_at }
 }
 
 pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
@@ -460,6 +528,7 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
             status: ContainerStatus::NotFound,
             port: None,
             id: None,
+            started_at: None,
         },
     }
 }
@@ -477,21 +546,26 @@ pub fn is_agent_ready(port: u16) -> bool {
     .is_ok()
 }
 
-pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    match container_status(docker, cname).await {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
-        _ => Ok(()),
+/// Reject the two terminal container states (`NotFound`, `Dead`) with their standard
+/// errors, passing a live (`Running`/`Stopped`) status through. The single owner of the
+/// "agent not found / broken state" wording and the shared precondition guard every
+/// name-addressed lifecycle op repeats; `name` is the agent name used in the error text.
+fn guard_alive(status: ContainerStatus, name: &str) -> Result<ContainerStatus, DockerError> {
+    match status {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        live => Ok(live),
     }
 }
 
+pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    guard_alive(container_status(docker, cname).await, &name_from_cname(cname)).map(|_| ())
+}
+
 pub async fn ensure_running(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    let cs = container_status(docker, cname).await;
-    match cs {
-        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
-        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+    match guard_alive(container_status(docker, cname).await, &name_from_cname(cname))? {
         ContainerStatus::Running => Ok(()),
-        ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
+        _ => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
     }
 }
 
@@ -780,7 +854,7 @@ fn all_agent_ports(agents_dir: &std::path::Path) -> HashSet<u16> {
 }
 
 /// List agent names that have env files in the agents directory.
-fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
+pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(agents_dir) else { return Vec::new() };
     entries
         .flatten()
@@ -813,9 +887,8 @@ pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
 /// Read the agent's port and token from the per-agent env file in a single read.
 pub fn read_agent_port_and_token(agent_name: &str, agents_dir: &std::path::Path) -> (Option<u16>, Option<String>) {
     let env_path = agents_dir.join(format!("{}.env", agent_name));
-    let content = match std::fs::read_to_string(&env_path) {
-        Ok(content) => content,
-        Err(_) => return (None, None),
+    let Ok(content) = std::fs::read_to_string(&env_path) else {
+        return (None, None);
     };
     let mut port = None;
     let mut token = None;
@@ -846,35 +919,10 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
-/// Compute the upstream ref the agent should sync against.
-///
-/// Dev builds: vestad's current git branch, re-evaluated on every call so that
-/// branch renames / checkouts take effect without a vestad restart.
-/// Release builds: the binary's version tag (`vX.Y.Z`).
-pub fn detect_upstream_ref() -> Option<String> {
-    if cfg!(debug_assertions) {
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-        if branch.is_empty() || branch == "HEAD" {
-            return None;
-        }
-        Some(branch)
-    } else {
-        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
-    }
-}
-
 /// Validate that the config and agents directories exist, are writable, and have
 /// no stale entries (e.g. directories where files should be). Fails fast with a
 /// clear error instead of producing cryptic permission errors later.
 pub fn validate_config_dir(env_config: &AgentEnvConfig) -> Result<(), DockerError> {
-    // Ensure dirs exist
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!(
             "cannot create agents directory {}: {e} — check ownership (try: sudo chown -R $(whoami) {})",
@@ -921,9 +969,6 @@ pub fn write_agent_env_file(
     agent_name: &str,
     ws_port: u16,
     agent_token: &str,
-    timezone: Option<&str>,
-    seed_personality: Option<&str>,
-    seed_skills: Option<&str>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -942,10 +987,16 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
-    append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
-    append_optional("TZ", timezone);
-    append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
-    append_optional("AGENT_SEED_SKILLS", seed_skills);
+    // The control-plane base URL the agent's account/onboard skills call. Comes
+    // from vestad's own env (the cloud-init managed.conf drop-in); absent on
+    // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
+    // the control plane and the vesta-cloud-account skill reads it via GET /api/account.)
+    append_optional(
+        "VESTA_CLOUD_CONTROL_URL",
+        std::env::var("VESTA_CLOUD_CONTROL_URL").ok().as_deref(),
+    );
+    // The env carries only identity; the agent owns model/provider/personality, timezone, and provider
+    // auth in its config store (preferences) and .credentials.json (Claude OAuth blob).
     if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
         return Ok(env_path);
     }
@@ -1006,29 +1057,39 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
+/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
-    let upstream_ref = detect_upstream_ref();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        // LEGACY(remove-when: no agent env file carries AGENT_SEED_PERSONALITY): rename it to
+        // AGENT_PERSONALITY in place, value-preserving, so the agent keeps the chosen voice.
+        let has_new_personality = content
+            .lines()
+            .any(|line| line.strip_prefix("export ").unwrap_or(line).starts_with("AGENT_PERSONALITY="));
         let mut new_lines: Vec<String> = content
             .lines()
-            .filter(|line| {
+            .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                !stripped.starts_with("VESTAD_PORT=")
-                    && !stripped.starts_with("VESTAD_TUNNEL=")
-                    && !stripped.starts_with("VESTA_UPSTREAM_REF=")
+                // LEGACY(remove-when: no agent env file carries VESTA_UPSTREAM_REF or
+                // VESTA_WORKSPACE_REF): the workspace ref moved out of env entirely (boxes
+                // fetch a bundle from vestad; no branch name needed) - strip stale keys.
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") || stripped.starts_with("VESTA_WORKSPACE_REF=") || stripped.starts_with("VESTA_UPSTREAM_REF=") {
+                    return None; // re-appended below with the current values
+                }
+                if stripped.starts_with("AGENT_SEED_PERSONALITY=") {
+                    if has_new_personality {
+                        return None; // already migrated; drop the stale duplicate
+                    }
+                    return Some(line.replacen("AGENT_SEED_PERSONALITY=", "AGENT_PERSONALITY=", 1));
+                }
+                Some(line.to_string())
             })
-            .map(|l| l.to_string())
             .collect();
         new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
-        }
-        if let Some(upstream) = &upstream_ref {
-            new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
@@ -1107,14 +1168,13 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
         return GpuStatus::NoGpu;
     }
 
-    let has_runtime = match docker.info().await {
-        Ok(info) => {
-            info.runtimes
-                .map(|runtimes| runtimes.contains_key("nvidia"))
-                .unwrap_or(false)
-        }
-        Err(_) => false,
-    };
+    let has_runtime = docker
+        .info()
+        .await
+        .ok()
+        .and_then(|info| info.runtimes)
+        .map(|runtimes| runtimes.contains_key("nvidia"))
+        .unwrap_or(false);
 
     if has_runtime { GpuStatus::Ready } else { GpuStatus::NoRuntime }
 }
@@ -1128,6 +1188,36 @@ pub async fn stop_container_with_timeout(docker: &Docker, cname: &str, timeout_s
 
 pub async fn start_container(docker: &Docker, cname: &str) -> bool {
     docker.start_container(cname, None).await.is_ok()
+}
+
+/// Ensure a container carries the `on-failure:N` restart policy, updating in place (`docker
+/// update`, no recreate) only when it differs. Migrates legacy `unless-stopped` agents at reconcile
+/// without a snapshot. `unless-stopped` would auto-start the container on daemon boot, which would
+/// defeat vestad owning boot-start; `on-failure` recovers crashes but never auto-starts on boot.
+pub async fn ensure_on_failure_policy(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    if container_restart_policy(docker, cname).await == "on-failure" {
+        return Ok(());
+    }
+    let update = bollard::models::ContainerUpdateBody {
+        restart_policy: Some(bollard::models::RestartPolicy {
+            name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(RESTART_MAX_RETRIES),
+        }),
+        ..Default::default()
+    };
+    tracing::info!(container = %cname, "migrating restart policy to on-failure");
+    docker.update_container(cname, update).await.map_err(DockerError::from)
+}
+
+/// Read a container's current restart-policy name (lowercased + hyphenated, e.g. "on-failure" /
+/// "unless-stopped"), or empty if unset.
+pub async fn container_restart_policy(docker: &Docker, cname: &str) -> String {
+    docker.inspect_container(cname, None).await.ok()
+        .and_then(|info| info.host_config)
+        .and_then(|h| h.restart_policy)
+        .and_then(|r| r.name)
+        .map(|n| format!("{n:?}").to_lowercase().replace('_', "-"))
+        .unwrap_or_default()
 }
 
 pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerError> {
@@ -1236,6 +1326,30 @@ pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), 
     Ok(())
 }
 
+/// Force-remove a container and confirm it is actually gone before returning. Needed when the name
+/// is reused immediately after (rebuild_agent recreates under the same name): a bare force-remove
+/// can return before the name frees, and a transient daemon error can leave the container present —
+/// either makes the follow-up create collide on the name and silently leaves the agent down. Retry
+/// the remove and poll until docker no longer reports it; error out loudly if it never disappears
+/// rather than letting the caller hit a confusing name conflict.
+pub async fn ensure_container_removed(docker: &Docker, cname: &str) -> Result<(), DockerError> {
+    for _ in 0..CONTAINER_REMOVE_MAX_ATTEMPTS {
+        if container_status(docker, cname).await == ContainerStatus::NotFound {
+            return Ok(());
+        }
+        // Per-attempt remove is best-effort: the authoritative signal is the status check above, so
+        // a transient error just means we retry; a persistent one falls through to the loud error.
+        let _ = docker.remove_container(cname, Some(RemoveContainerOptions { force: true, v: false, link: false })).await;
+        tokio::time::sleep(std::time::Duration::from_millis(CONTAINER_REMOVE_POLL_MS)).await;
+    }
+    if container_status(docker, cname).await == ContainerStatus::NotFound {
+        return Ok(());
+    }
+    Err(DockerError::Failed(format!(
+        "container {cname} still present after {CONTAINER_REMOVE_MAX_ATTEMPTS} force-remove attempts"
+    )))
+}
+
 // --- Snapshot ---
 
 const SNAPSHOT_TIMEOUT_SECS: u64 = 7200; // 2 hours — 25GB+ containers can take a long time
@@ -1324,29 +1438,47 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 
 // --- Container creation ---
 
+/// Assemble the full bind list for a container: base mounts (env, constitution, optional core)
+/// plus user-granted host mounts.
+fn assemble_binds(env_mount: String, constitution_mount: String, core_mount: Option<String>, user_mounts: &[crate::mounts::HostMount]) -> Vec<String> {
+    let mut binds = vec![env_mount, constitution_mount];
+    if let Some(core) = core_mount {
+        binds.push(core);
+    }
+    for m in user_mounts {
+        binds.push(crate::mounts::bind_string(m));
+    }
+    binds
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>) -> Result<(), DockerError> {
+pub async fn create_container(
+    docker: &Docker,
+    cname: &str,
+    image: &str,
+    port: u16,
+    agent_name: &str,
+    env_config: &AgentEnvConfig,
+    manage_core_code: bool,
+    user_mounts: &[crate::mounts::HostMount],
+) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality, seed_skills)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
 
     let constitution_path = ensure_constitution_file(&env_config.agents_dir, agent_name)?;
     let constitution_mount = format!("{}:{}:ro,z", constitution_path.display(), CONSTITUTION_MOUNT_DEST);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
-    let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
-    let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
+    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), CORE_MOUNT_DEST);
 
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
     labels.insert(LABEL_USER.to_string(), current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let mut binds = vec![env_mount, constitution_mount];
-    if manage_core_code {
-        binds.extend([core_mount, pyproject_mount, lock_mount]);
-    }
+    let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
+    let binds = assemble_binds(env_mount, constitution_mount, core_mount_opt, user_mounts);
 
     let mut device_requests = None;
     match gpu_available(docker).await {
@@ -1370,8 +1502,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         binds: Some(binds),
         network_mode: Some(NETWORK_MODE.to_string()),
         restart_policy: Some(bollard::models::RestartPolicy {
-            name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
-            ..Default::default()
+            name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(RESTART_MAX_RETRIES),
         }),
         device_requests,
         devices: Some(vec![bollard::models::DeviceMapping {
@@ -1407,17 +1539,26 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     }
 }
 
+// --- Restart-reason inbox ---
+
+/// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
+/// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
+/// plain text, no schema shared across the crate boundary.
+pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
+
+/// Write `reason` into the agent's boot inbox. Best-effort at every call site: a failed write
+/// only costs a missing greeting line, never the restart itself.
+pub(crate) async fn write_pending_restart_reason(docker: &Docker, cname: &str, reason: &str) -> Result<(), DockerError> {
+    docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+}
+
 // --- Credential injection ---
 
 pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
     // dest is a full path like "/root/.claude.json" — split into dir and filename
     let path = std::path::Path::new(dest);
-    let parent = path.parent()
-        .map(|p| p.to_str().unwrap_or("/"))
-        .unwrap_or("/");
-    let file_name = path.file_name()
-        .map(|f| f.to_str().unwrap_or("file"))
-        .unwrap_or("file");
+    let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("/");
+    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("file");
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
 }
 
@@ -1441,22 +1582,8 @@ pub(crate) fn percent_encode(s: &str) -> String {
 }
 
 fn base64url_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
-        out.push(CHARS[b0 >> 2] as char);
-        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[b2 & 0x3f] as char);
-        }
-    }
-    out
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
 use ring::rand::SecureRandom;
@@ -1607,6 +1734,7 @@ pub async fn list_agents(
             name: agent_name.clone(),
             status: combined_status(http_client, agents_dir, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
+            started_at: info.started_at.clone(),
         });
     }
     entries
@@ -1649,7 +1777,7 @@ impl std::fmt::Debug for BuildProgress {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>, seed_skills: Option<&str>, seed_context: Option<&str>, progress: &BuildProgress) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, progress: &BuildProgress) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1672,18 +1800,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, timezone, seed_personality, seed_skills).await?;
-
-    // Freeform creator-supplied context (e.g. what an onboarding vesta learned about the
-    // user). Delivered into the not-yet-started container's data dir so first-wake setup can
-    // fold it into MEMORY.md. Only at creation — it's consumed once, so no rebuild/rename
-    // persistence is needed. A failure here must not abort an otherwise-good agent: log and
-    // move on, the agent just starts without the head-start context.
-    if let Some(context) = seed_context.filter(|c| !c.trim().is_empty()) {
-        if let Err(e) = docker_cp_content(docker, &cname, context, "/root/agent/data/seed-context.md").await {
-            tracing::warn!(agent = %name, error = %e, "failed to write seed-context file; agent will start without it");
-        }
-    }
+    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, &[]).await?;
 
     Ok(name.to_string())
 }
@@ -1691,12 +1808,8 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => return Ok(()),
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        return Ok(());
     }
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(format!("failed to start '{}'", name)));
@@ -1713,22 +1826,12 @@ pub struct StartAllResult {
 }
 
 pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
-    let agents = list_managed_agents(docker).await;
     let mut results = Vec::new();
-    for ManagedAgent { cname, agent_name } in &agents {
-        if container_status(docker, cname).await != ContainerStatus::Running {
-            if start_container(docker, cname).await {
-                results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
-            } else {
-                results.push(StartAllResult {
-                    name: agent_name.clone(),
-                    ok: false,
-                    error: Some("failed to start".into()),
-                });
-            }
-        } else {
-            results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
-        }
+    for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
+        let ok = container_status(docker, &cname).await == ContainerStatus::Running
+            || start_container(docker, &cname).await;
+        let error = (!ok).then(|| "failed to start".to_string());
+        results.push(StartAllResult { name: agent_name, ok, error });
     }
     results
 }
@@ -1736,23 +1839,85 @@ pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
 pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Stopped => return Ok(()),
-        ContainerStatus::Running => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
+        return Ok(());
     }
     docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+/// Stop every running managed agent (best-effort, graceful). Called on vestad's own shutdown so a
+/// vestad update/restart never leaves an agent running on a soon-to-be-stale container: the next
+/// vestad boot rebuilds-then-starts the desired-running ones. The graceful stop (SIGTERM, then the
+/// stop timeout) lets each agent flush its SQLite/state before exit. Desired-state is untouched —
+/// these agents come back on the next boot unless the user marked them stopped.
+pub async fn stop_all_agents(docker: &Docker) {
+    for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
+        if container_status(docker, &cname).await == ContainerStatus::Running {
+            tracing::info!(agent = %agent_name, "stopping for vestad shutdown");
+            docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+        }
+    }
+}
+
+pub async fn restart_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    reason: Option<String>,
+) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
+
+    // A grant change can't be applied by a plain restart (binds are fixed at creation), so if the
+    // desired mounts drifted from the container, recreate; otherwise a cheap restart.
+    if let Ok(raw) = docker.inspect_container(&cname, None).await {
+        // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
+        // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
+        // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
+        let actual_mounts = actual_user_mounts(&raw);
+        if user_mounts_drifted(&actual_mounts, user_mounts) {
+            // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
+            // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
+            // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
+            // Surface a truthful error instead of reporting success on a grant we didn't apply.
+            let available = docker_storage_available_bytes(docker).await;
+            if reconcile_blocked_by_disk(available) {
+                tracing::error!(agent = %name, "mount grants changed but disk is critically low; cannot recreate to apply them");
+                return Err(DockerError::Failed(format!(
+                    "cannot apply host-folder grants for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+                )));
+            }
+            tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
+            let effective = crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
+            rebuild_agent(docker, name, env_config, user_mounts).await?;
+            // Written into the freshly created container AFTER the rebuild: a write before it
+            // would survive a failed rebuild in the old container, claiming access that was
+            // never applied (and would bake the reason into the rebuild snapshot).
+            write_boot_reason(docker, name, &cname, effective).await;
+            return start_agent(docker, name).await;
+        }
+    } else {
+        tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
+    }
+    // The container's filesystem survives a plain restart, so the inbox written here is read on the
+    // very next boot.
+    write_boot_reason(docker, name, &cname, reason).await;
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
+}
+
+/// Best-effort write of an optional boot reason to the agent's inbox: a failed write only costs a
+/// missing greeting line, never the restart itself.
+async fn write_boot_reason(docker: &Docker, name: &str, cname: &str, reason: Option<String>) {
+    if let Some(text) = reason {
+        if let Err(err) = write_pending_restart_reason(docker, cname, &text).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+        }
+    }
 }
 
 /// Free space (in bytes) on the filesystem backing `path`, or `None` if it can't be read.
@@ -1778,34 +1943,39 @@ fn reconcile_blocked_by_disk(available: Option<u64>) -> bool {
 
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
+/// `agent_code_changed` is true when this boot re-extracted the embedded core (see
+/// `agent_code_is_stale`); running core-mounted agents are restarted to reload it.
 /// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
-pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
+pub async fn reconcile_containers(
+    docker: &Docker,
+    env_config: &AgentEnvConfig,
+    agent_code_changed: bool,
+    manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
+    wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
+    mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
+) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
         return;
     }
 
-    // Refuse to rebuild or restart containers when the disk is critically full: a write
-    // failure mid-restart can corrupt an agent's writable layer (events.db, session_id).
-    // Containers keep running under Docker's `unless-stopped` policy, so skipping here just
-    // defers reconcile to the next startup once space is freed. If Docker doesn't report
-    // free space, proceed rather than lock out normal operation.
+    // Skip REBUILDS when the disk is critically full: a snapshot (docker export|import) writes a
+    // whole image and a failure mid-rebuild can corrupt an agent's writable layer (events.db,
+    // session_id). Starting an existing container is not write-heavy, so boot-start still runs —
+    // important now that vestad owns boot-start (on-failure never auto-starts on daemon boot), or a
+    // disk-full boot would leave every agent down. If Docker doesn't report free space, proceed.
     let available = docker_storage_available_bytes(docker).await;
-    if reconcile_blocked_by_disk(available) {
+    let disk_ok = !reconcile_blocked_by_disk(available);
+    if !disk_ok {
         tracing::error!(
             available_mb = available.unwrap_or(0) / 1_000_000,
             required_mb = MIN_RECONCILE_DISK_BYTES / 1_000_000,
-            "insufficient disk space, skipping container reconcile to avoid corruption; containers left as-is"
+            "insufficient disk space, skipping rebuilds (still starting agents); rebuilds retry next boot once space is freed"
         );
-        return;
     }
 
-    // Phase 1: ensure env files exist, track which are running
-    let mut was_running = std::collections::HashSet::new();
+    // Phase 1: ensure env files exist
     for ManagedAgent { cname, agent_name: name } in &agents {
-        if container_status(docker, cname).await == ContainerStatus::Running {
-            was_running.insert(name.clone());
-        }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
         if env_path.is_file() {
             tracing::info!(agent = %name, "env file ok");
@@ -1823,7 +1993,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None, None, None) {
+                if let Err(e) = write_agent_env_file(env_config, name, port, &token) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -1832,9 +2002,9 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
     }
 
-    // Phase 2: rebuild containers with wrong config. Uses container-derived mount
-    // topology (not settings) so a stale settings.json can't redirect the rebuild
-    // into wiping bind-mounted core code.
+    // Phase 2: rebuild containers with wrong config (skipped when disk is critically full — see the
+    // guard above). Uses container-derived mount topology (not settings) so a stale settings.json
+    // can't redirect the rebuild into wiping bind-mounted core code.
     let mut agent_code_ok = false;
     for ManagedAgent { cname, agent_name: name } in &agents {
         let raw = match docker.inspect_container(cname, None).await {
@@ -1854,8 +2024,13 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 "settings.manage_agent_code disagrees with container, using container as source of truth. fix by destroying and recreating the agent."
             );
         }
-        if !needs_rebuild(cname, &raw) {
+        let desired_mounts = mounts_for(name);
+        if !needs_rebuild(cname, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
+            continue;
+        }
+        if !disk_ok {
+            tracing::warn!(agent = %name, "rebuild needed but disk is full; deferring rebuild to next boot");
             continue;
         }
         tracing::info!(agent = %name, "rebuild needed");
@@ -1868,26 +2043,48 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 }
             }
         }
-        match rebuild_agent(docker, name, env_config).await {
-            Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
+        match rebuild_agent(docker, name, env_config, &desired_mounts).await {
+            Ok(()) => {
+                tracing::info!(agent = %name, "rebuild complete");
+                // Grants can also land here (restart_agent defers to reconcile when disk is low or
+                // inspect fails); tell the agent about the delta, same as the restart path would.
+                let mount_reason = crate::mounts::mount_change_reason(&actual_user_mounts(&raw), &desired_mounts);
+                write_boot_reason(docker, name, cname, mount_reason).await;
+            }
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
     }
 
-    // Phase 3: restart running agents (picks up new env), start rebuilt ones
+    // Phase 3: bring container state in line with the user's desired-run state. vestad owns
+    // boot-start now — `on-failure` never auto-starts a container on daemon boot — so this is
+    // where desired-running agents come up. Rebuilds already happened in phase 2, so a
+    // needs-rebuild agent is started only after it's on its new container (never stale). First
+    // migrate every agent's policy to on-failure in place (legacy agents created with
+    // unless-stopped would otherwise let Docker auto-start them on the next boot, defeating
+    // vestad's ownership); then start the desired-running ones that are down and stop any
+    // user-stopped one that's somehow up.
     for ManagedAgent { cname, agent_name: name } in &agents {
-        match container_status(docker, cname).await {
-            ContainerStatus::Running => {
-                tracing::info!(agent = %name, "restarting");
+        if let Err(e) = ensure_on_failure_policy(docker, cname).await {
+            tracing::warn!(agent = %name, error = %e, "failed to set on-failure restart policy");
+        }
+        let raw = docker.inspect_container(cname, None).await.ok();
+        let running = raw.as_ref().and_then(|r| r.state.as_ref()).and_then(|s| s.running).unwrap_or(false);
+        let has_core_mount = raw.as_ref().map(|r| mounts_have_core_code(r.mounts.as_deref().unwrap_or(&[]))).unwrap_or(false);
+        if wants_running(name) {
+            if !running {
+                tracing::info!(agent = %name, "starting (desired running)");
+                start_container(docker, cname).await;
+            } else if agent_code_changed && has_core_mount {
+                // vestad re-extracted the embedded core this boot. A running agent still holds the
+                // old code in memory and its core mount points at the now-replaced dir, so restart
+                // it to reload the new core and re-bind the mount. (Boot-started agents above came
+                // up fresh already; this catches agents that stayed running across the upgrade.)
+                tracing::info!(agent = %name, "restarting to pick up new agent code");
                 docker.restart_container(cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await.ok();
             }
-            ContainerStatus::Stopped if was_running.contains(name) => {
-                tracing::info!(agent = %name, "starting after rebuild");
-                start_container(docker, cname).await;
-            }
-            status => {
-                tracing::info!(agent = %name, ?status, "not restarting");
-            }
+        } else if running {
+            tracing::info!(agent = %name, "stopping (user-stopped)");
+            docker.stop_container(cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
         }
     }
 
@@ -1912,12 +2109,8 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
 pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => { docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok(); }
-        ContainerStatus::Stopped => {}
+    if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
@@ -1939,18 +2132,40 @@ fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
 /// divergence is intentionally NOT a trigger here: it's reported by reconcile as a
 /// warning. See `rebuild_agent` for why mount topology must come from the container,
 /// not from settings.
-fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) -> bool {
-    let mounts = info.mounts.as_deref().unwrap_or(&[]);
-    let mount_dests: Vec<&str> = mounts.iter()
-        .filter_map(|m| m.destination.as_deref())
-        .collect();
+/// Extract the user-granted bind mounts from a container's inspect data: every bind whose
+/// destination is not one of the reserved dests (env/core/constitution).
+fn actual_user_mounts(info: &bollard::models::ContainerInspectResponse) -> Vec<(String, String, bool)> {
+    info.mounts.as_deref().unwrap_or(&[]).iter()
+        .filter_map(|m| {
+            let dest = m.destination.as_deref()?;
+            if MOUNT_DESTS.contains(&dest) {
+                return None;
+            }
+            let source = m.source.as_deref()?;
+            Some((source.to_string(), dest.to_string(), m.rw.unwrap_or(false)))
+        })
+        .collect()
+}
 
-    if !mount_dests.contains(&ENV_MOUNT_DEST) {
+/// True when the container's actual user mounts differ (by source, dest, or rw) from desired.
+fn user_mounts_drifted(actual: &[(String, String, bool)], desired: &[crate::mounts::HostMount]) -> bool {
+    let mut a: Vec<(String, String, bool)> = actual.to_vec();
+    let mut d: Vec<(String, String, bool)> = desired.iter()
+        .map(|m| (m.host_path.clone(), m.container_path.clone(), m.writable))
+        .collect();
+    a.sort();
+    d.sort();
+    a != d
+}
+
+fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse, desired_mounts: &[crate::mounts::HostMount]) -> bool {
+    let mounts = info.mounts.as_deref().unwrap_or(&[]);
+    let has_env_mount = mounts.iter().any(|m| m.destination.as_deref() == Some(ENV_MOUNT_DEST));
+    if !has_env_mount {
         tracing::info!(container = %cname, "rebuild needed: missing env-file mount");
         return true;
     }
 
-    // Check cmd
     let cmd = info.config.as_ref()
         .and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
@@ -1965,7 +2180,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check network mode
     let network = info.host_config.as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
@@ -1974,18 +2188,10 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check restart policy — bollard returns the enum variant name
-    let restart = info.host_config.as_ref()
-        .and_then(|h| h.restart_policy.as_ref())
-        .and_then(|r| r.name.as_ref())
-        .map(|n| format!("{:?}", n).to_lowercase())
-        .unwrap_or_default();
-    if !restart.contains("unless") {
-        tracing::info!(container = %cname, actual = restart, expected = RESTART_POLICY, "rebuild needed: wrong restart policy");
-        return true;
-    }
+    // Restart policy is intentionally NOT a rebuild trigger: it doubles as the persisted
+    // desired-run marker (on-failure = running, no = user-stopped) and is reconciled in place
+    // with `docker update` (set_restart_policy), so a policy change never costs a snapshot.
 
-    // Check /dev/fuse device
     let devices = info.host_config.as_ref()
         .and_then(|h| h.devices.as_deref())
         .unwrap_or(&[]);
@@ -1997,7 +2203,6 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
-    // Check SYS_ADMIN capability
     let caps = info.host_config.as_ref()
         .and_then(|h| h.cap_add.as_deref())
         .unwrap_or(&[]);
@@ -2006,7 +2211,25 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
         return true;
     }
 
+    if user_mounts_drifted(&actual_user_mounts(info), desired_mounts) {
+        tracing::info!(container = %cname, "rebuild needed: host-mount grants changed");
+        return true;
+    }
+
     false
+}
+
+/// Resolve an existing agent's WS port for a snapshot-and-recreate: prefer the env-file
+/// port, fall back to the container's baked-in WS_PORT, then allocate a fresh one.
+async fn resolve_existing_port(docker: &Docker, cname: &str, info: &ContainerInfo, name: &str, agents_dir: &std::path::Path) -> Result<u16, DockerError> {
+    let baked = read_container_env(docker, cname, "WS_PORT").await.and_then(|v| v.parse::<u16>().ok());
+    match info.port.or(baked) {
+        Some(port) => Ok(port),
+        None => {
+            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
+            allocate_port(agents_dir)
+        }
+    }
 }
 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
@@ -2014,41 +2237,38 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse) 
 /// a new one from the snapshot. Mount topology is preserved from the existing container,
 /// not re-derived from settings: `manage_agent_code` is fixed at create time, so the
 /// running container is the source of truth for which bind mounts to attach.
-pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
+pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, user_mounts: &[crate::mounts::HostMount]) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let raw = docker.inspect_container(&cname, None).await.map_err(DockerError::from)?;
     let info = container_info_from(&cname, &raw, Some(&env_config.agents_dir));
-    match info.status {
-        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
-        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        _ => {}
-    }
+    guard_alive(info.status, name)?;
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    // Get port: try env file first, then container's baked-in env vars, then allocate new
-    let container_port = read_container_env(docker, &cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
+    // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
+    // be the main concern). Best-effort — snapshot will still proceed if stop fails.
+    if info.status == ContainerStatus::Running {
+        tracing::info!(agent = %name, "[1/4] stopping container...");
+        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+    }
+
+    tracing::info!(agent = %name, "[2/4] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
 
-    tracing::info!(agent = %name, "[2/3] removing old container...");
-    remove_container_force(docker, &cname).await.ok();
+    tracing::info!(agent = %name, "[3/4] removing old container...");
+    // Confirm it's actually gone (don't swallow): the snapshot is safely captured, so failing here
+    // and re-running reconcile next boot is far better than letting [4/4] collide on the name and
+    // leave the agent stopped.
+    ensure_container_removed(docker, &cname).await?;
 
-    tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None, None).await?;
+    tracing::info!(agent = %name, "[4/4] creating container with new config...");
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, user_mounts).await?;
 
     Ok(())
 }
@@ -2063,6 +2283,7 @@ pub async fn rename_agent(
     old_name: &str,
     new_name: &str,
     env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(old_name)?;
     validate_name(new_name)?;
@@ -2091,15 +2312,7 @@ pub async fn rename_agent(
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
-    let container_port = read_container_env(docker, &old_cname, "WS_PORT").await
-        .and_then(|v| v.parse::<u16>().ok());
-    let port = match info.port.or(container_port) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(agent = %old_name, "no port found in env file or container, allocating new port");
-            allocate_port(&env_config.agents_dir)?
-        }
-    };
+    let port = resolve_existing_port(docker, &old_cname, &info, old_name, &env_config.agents_dir).await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2126,7 +2339,7 @@ pub async fn rename_agent(
     delete_constitution_file(&env_config.agents_dir, old_name);
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
-    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, None, None, None).await?;
+    create_container(docker, &new_cname, &snapshot_tag, port, new_name, env_config, manage_core_code, user_mounts).await?;
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
@@ -2137,6 +2350,50 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The agent restart policy, as a string for the Docker-gated test helper below. Production
+    // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
+    // need a "normal container" policy to build fixtures with.
+    const RESTART_POLICY: &str = "on-failure";
+
+    #[test]
+    fn pending_restart_reason_path_matches_agent_contract() {
+        // The agent drains this exact path on boot (agent state_store.take_pending_reason).
+        assert_eq!(PENDING_RESTART_REASON_PATH, "/root/agent/data/pending_restart_reason");
+    }
+
+    #[test]
+    fn assemble_binds_appends_user_mounts() {
+        let m = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        let binds = assemble_binds("/e:/run/vestad-env:ro,z".into(), "/c:/root/agent/constitution.md:ro,z".into(), None, std::slice::from_ref(&m));
+        assert_eq!(binds.len(), 3);
+        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro");
+    }
+
+    #[test]
+    fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
+        use AgentStatus::*;
+        // (authed, setup_complete, provider_configured) -> AgentStatus
+        assert_eq!(status_from_readiness(true, true, true), Alive);
+        assert_eq!(status_from_readiness(true, false, true), SettingUp);
+        assert_eq!(status_from_readiness(false, false, true), NotAuthenticated);
+        assert_eq!(status_from_readiness(false, false, false), Unprovisioned);
+    }
+
+    #[test]
+    fn agent_status_human_text_reads_as_words() {
+        assert_eq!(AgentStatus::Alive.human_text(), "alive");
+        assert_eq!(AgentStatus::SettingUp.human_text(), "setting up");
+        assert_eq!(AgentStatus::NotAuthenticated.human_text(), "not authenticated");
+        assert_eq!(AgentStatus::NotFound.human_text(), "not found");
+    }
+
+    #[test]
+    fn agent_status_serializes_unprovisioned_to_snake_case() {
+        let to_str = |s: AgentStatus| serde_json::to_value(s).expect("serialize").as_str().expect("string").to_string();
+        assert_eq!(to_str(AgentStatus::Unprovisioned), "unprovisioned");
+        assert_eq!(to_str(AgentStatus::NotAuthenticated), "not_authenticated");
+    }
 
     #[test]
     fn build_phase_serializes_to_snake_case() {
@@ -2176,6 +2433,90 @@ mod tests {
     }
 
     #[test]
+    fn entrypoint_untracks_claude_from_git_workspace() {
+        // ~/.claude holds the agent's credentials but the repo tracks dev tooling there; if the git
+        // workspace tracks .claude, a sparse-checkout reapply deletes ~/.claude/.credentials.json.
+        // The entrypoint must untrack + exclude .claude at boot, before the agent can reapply.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("update-index --force-remove"), "entrypoint must untrack .claude: {script}");
+        assert!(script.contains("/.claude/"), "entrypoint must exclude .claude: {script}");
+        let untrack_at = script.find("update-index --force-remove").expect("untrack step present");
+        let main_at = script.find("python -m core.main").expect("main step present");
+        assert!(untrack_at < main_at, ".claude untrack must precede launching core.main");
+    }
+
+    #[test]
+    fn entrypoint_pins_venv_and_tolerates_both_engine_layouts() {
+        // The venv must live outside the read-only core mount, and the sync/launch steps
+        // must handle both the new layout (pyproject in core/) and the legacy root layout
+        // so unmanaged boxes never crash-loop before their first workspace sync.
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("UV_PROJECT_ENVIRONMENT=/root/agent/.venv"), "entrypoint must pin the venv outside core: {script}");
+        assert!(script.contains("--project /root/agent/core"), "entrypoint must sync the core project when present: {script}");
+        assert!(script.contains("python -m core.main"), "entrypoint must launch core.main: {script}");
+    }
+
+    #[test]
+    fn mounts_have_core_code_accepts_legacy_and_single_mount_shapes() {
+        let mount_with_dest = |dest: &str| bollard::models::MountPoint { destination: Some(dest.to_string()), ..Default::default() };
+        let single = vec![mount_with_dest(CORE_MOUNT_DEST)];
+        let legacy = vec![
+            mount_with_dest(CORE_MOUNT_DEST),
+            mount_with_dest("/root/agent/pyproject.toml"),
+            mount_with_dest("/root/agent/uv.lock"),
+        ];
+        let none = vec![mount_with_dest(ENV_MOUNT_DEST)];
+        assert!(mounts_have_core_code(&single));
+        assert!(mounts_have_core_code(&legacy));
+        assert!(!mounts_have_core_code(&none));
+    }
+
+    fn inspect_with_started_at(started_at: Option<&str>) -> bollard::models::ContainerInspectResponse {
+        bollard::models::ContainerInspectResponse {
+            state: Some(bollard::models::ContainerState {
+                status: Some(bollard::models::ContainerStateStatusEnum::RUNNING),
+                started_at: started_at.map(str::to_string),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn container_info_from_surfaces_container_start_time() {
+        // The web app clears a "restart to apply" flag by watching this value change, so a running
+        // container must report its StartedAt while a never-started container reports nothing.
+        let running = container_info_from("vesta-bot", &inspect_with_started_at(Some("2026-07-07T10:00:00.5Z")), None);
+        assert_eq!(running.started_at.as_deref(), Some("2026-07-07T10:00:00.5Z"));
+
+        // Docker returns the Go zero time for a container that has never started; treat it as absent
+        // so it never reads as a real boot on the wire.
+        let never = container_info_from("vesta-bot", &inspect_with_started_at(Some("0001-01-01T00:00:00Z")), None);
+        assert_eq!(never.started_at, None);
+
+        let missing = container_info_from("vesta-bot", &inspect_with_started_at(None), None);
+        assert_eq!(missing.started_at, None);
+    }
+
+    #[test]
+    fn guard_alive_rejects_terminal_states_and_passes_live_through() {
+        // The two terminal states map to their standard errors with the exact agent-facing
+        // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
+        let not_found = guard_alive(ContainerStatus::NotFound, "bot").expect_err("not found errors");
+        assert!(matches!(not_found, DockerError::NotFound(_)));
+        assert_eq!(not_found.to_string(), "agent 'bot' not found");
+
+        let dead = guard_alive(ContainerStatus::Dead, "bot").expect_err("dead errors");
+        assert!(matches!(dead, DockerError::BrokenState(_)));
+        assert_eq!(dead.to_string(), "agent 'bot' is in a broken state");
+
+        assert_eq!(guard_alive(ContainerStatus::Running, "bot").expect("running ok"), ContainerStatus::Running);
+        assert_eq!(guard_alive(ContainerStatus::Stopped, "bot").expect("stopped ok"), ContainerStatus::Stopped);
+    }
+
+    #[test]
     fn reconcile_proceeds_when_free_space_unknown() {
         // A failed probe must not lock out normal startup.
         assert!(!reconcile_blocked_by_disk(None));
@@ -2193,6 +2534,61 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert!(available_disk_bytes(dir.path()).expect("stat tempdir") > 0);
         assert_eq!(available_disk_bytes(std::path::Path::new("/no/such/path/vesta-test")), None);
+    }
+
+    #[test]
+    fn write_agent_env_file_forwards_control_url_when_set() {
+        // The cloud-init managed drop-in sets VESTA_CLOUD_CONTROL_URL on vestad's
+        // process; the agent env file must forward it so the on-box skills reach the
+        // right control plane. No other test touches this var, so setting it here is
+        // race-safe.
+        std::env::set_var("VESTA_CLOUD_CONTROL_URL", "https://staging.vesta.run/api");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains("export VESTA_CLOUD_CONTROL_URL=https://staging.vesta.run/api"),
+            "control url forwarded: {content}"
+        );
+        std::env::remove_var("VESTA_CLOUD_CONTROL_URL");
+
+        // When unset, no stray line is written (append_optional skips None).
+        let path2 = write_agent_env_file(&cfg, "agent2", 3, "tok2").expect("write env file 2");
+        let content2 = std::fs::read_to_string(&path2).expect("read env file 2");
+        assert!(!content2.contains("VESTA_CLOUD_CONTROL_URL"), "absent when unset: {content2}");
+    }
+
+    #[test]
+    fn update_env_renames_legacy_personality_var_preserving_value() {
+        // The agent dropped the AGENT_SEED_PERSONALITY env alias; the startup normalizer must
+        // rename it to AGENT_PERSONALITY in existing files so a legacy non-default voice survives.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_TOKEN=t\nexport AGENT_SEED_PERSONALITY=warm\nexport VESTAD_PORT=1\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=warm"), "renamed, value preserved: {content}");
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"), "legacy var removed: {content}");
+        assert!(content.contains("export AGENT_TOKEN=t"), "identity preserved");
+    }
+
+    #[test]
+    fn update_env_drops_legacy_personality_when_new_one_present() {
+        // If a file already has the new var, the stale legacy duplicate is dropped, not re-added.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_path = dir.path().join("vesta.env");
+        std::fs::write(&env_path, "export AGENT_PERSONALITY=dry\nexport AGENT_SEED_PERSONALITY=warm\n").expect("write");
+        update_all_agent_env_files(dir.path(), 39565, None);
+        let content = std::fs::read_to_string(&env_path).expect("read");
+        assert!(content.contains("export AGENT_PERSONALITY=dry"));
+        assert!(!content.contains("AGENT_SEED_PERSONALITY"));
+        assert!(!content.contains("warm"));
     }
 
     #[test]
@@ -2237,8 +2633,18 @@ mod tests {
     }
 
     #[test]
-    fn normalize_simple() {
-        assert_eq!(normalize_name("MyAgent"), "myagent");
+    fn user_mounts_drift_detects_add_remove_and_mode_change() {
+        let media = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        // No actual, one desired -> drift (add).
+        assert!(user_mounts_drifted(&[], std::slice::from_ref(&media)));
+        // Matching -> no drift.
+        let actual = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), false)];
+        assert!(!user_mounts_drifted(&actual, std::slice::from_ref(&media)));
+        // Same paths, rw differs -> drift.
+        let actual_rw = vec![("/mnt/media".to_string(), "/mnt/media".to_string(), true)];
+        assert!(user_mounts_drifted(&actual_rw, std::slice::from_ref(&media)));
+        // Actual present, none desired -> drift (remove).
+        assert!(user_mounts_drifted(&actual, &[]));
     }
 
     #[test]
@@ -2268,38 +2674,20 @@ mod tests {
     }
 
     #[test]
-    fn normalize_spaces_and_underscores() {
-        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
-    }
-
-    #[test]
-    fn normalize_special_chars() {
-        assert_eq!(normalize_name("hello!@#world"), "helloworld");
-    }
-
-    #[test]
-    fn normalize_leading_trailing_hyphens() {
-        assert_eq!(normalize_name("--test--"), "test");
-    }
-
-    #[test]
-    fn normalize_multiple_hyphens() {
-        assert_eq!(normalize_name("a---b"), "a-b");
-    }
-
-    #[test]
-    fn normalize_whitespace() {
-        assert_eq!(normalize_name("  hello  "), "hello");
-    }
-
-    #[test]
-    fn normalize_empty() {
-        assert_eq!(normalize_name(""), "");
-    }
-
-    #[test]
-    fn normalize_all_special() {
-        assert_eq!(normalize_name("!!!"), "");
+    fn normalize_name_lowercases_and_sanitizes() {
+        let cases = [
+            ("MyAgent", "myagent"),
+            ("My Agent_Name", "my-agent-name"),
+            ("hello!@#world", "helloworld"),
+            ("--test--", "test"),
+            ("a---b", "a-b"),
+            ("  hello  ", "hello"),
+            ("", ""),
+            ("!!!", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(normalize_name(input), expected, "input: {input:?}");
+        }
     }
 
     #[test]
@@ -2318,51 +2706,32 @@ mod tests {
     }
 
     #[test]
-    fn validate_ok() {
-        assert!(validate_name("hello").is_ok());
-        assert!(validate_name("a").is_ok());
-        assert!(validate_name("test-agent").is_ok());
-        assert!(validate_name("a1").is_ok());
-        assert!(validate_name("123").is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_empty() {
-        assert!(validate_name("").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_uppercase() {
-        assert!(validate_name("Hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_leading_hyphen() {
-        assert!(validate_name("-hello").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_trailing_hyphen() {
-        assert!(validate_name("hello-").is_err());
+    fn validate_name_accepts_dns_labels_rejects_the_rest() {
+        let cases = [
+            ("hello", true),
+            ("a", true),
+            ("test-agent", true),
+            ("a1", true),
+            ("123", true),
+            ("vesta", true),
+            ("my-vesta", true),
+            ("vesta-agent", true),
+            ("", false),
+            ("Hello", false),
+            ("-hello", false),
+            ("hello-", false),
+            ("hello world", false),
+            ("hello_world", false),
+        ];
+        for (name, ok) in cases {
+            assert_eq!(validate_name(name).is_ok(), ok, "name: {name:?}");
+        }
     }
 
     #[test]
     fn validate_rejects_too_long() {
         let long = "a".repeat(33);
         assert!(validate_name(&long).is_err());
-    }
-
-    #[test]
-    fn validate_rejects_special_chars() {
-        assert!(validate_name("hello world").is_err());
-        assert!(validate_name("hello_world").is_err());
-    }
-
-    #[test]
-    fn validate_allows_vesta_in_name() {
-        assert!(validate_name("vesta").is_ok());
-        assert!(validate_name("my-vesta").is_ok());
-        assert!(validate_name("vesta-agent").is_ok());
     }
 
     #[test]
@@ -2433,75 +2802,91 @@ mod tests {
 
     // --- Dockerignore pattern matching ---
 
-    fn patterns(pats: &[&str]) -> Vec<String> {
-        pats.iter().map(|s| s.to_string()).collect()
+    #[test]
+    fn dockerignore_matches_paths_against_patterns() {
+        // (label, patterns, path, expected)
+        let cases: &[(&str, &[&str], &str, bool)] = &[
+            ("exact dir name", &["target"], "target", true),
+            ("exact dir prefix matches contents", &["target"], "target/debug/foo", true),
+            ("exact must not match plural", &["target"], "targets", false),
+            ("exact must not match nested dir", &["target"], "some/nested/target", false),
+            ("exact must not match nested file", &["target"], "some/nested/target/file.txt", false),
+            ("trailing slash matches root dir", &["app/"], "app", true),
+            ("trailing slash matches root contents", &["app/"], "app/package.json", true),
+            ("trailing slash skips nested dir", &["app/"], "agent/skills/dashboard/app", false),
+            ("trailing slash skips nested contents", &["app/"], "agent/skills/dashboard/app/src/App.tsx", false),
+            ("extension wildcard matches root", &["*.pyc"], "foo.pyc", true),
+            ("extension wildcard matches nested", &["*.pyc"], "dir/bar.pyc", true),
+            ("extension wildcard rejects other ext", &["*.pyc"], "foo.py", false),
+            ("question mark single char", &["?.txt"], "a.txt", true),
+            ("question mark rejects two chars", &["?.txt"], "ab.txt", false),
+            ("doublestar matches root", &["**/logs"], "logs", true),
+            ("doublestar matches one level", &["**/logs"], "a/logs", true),
+            ("doublestar matches two levels", &["**/logs"], "a/b/logs", true),
+            ("doublestar matches contents", &["**/logs"], "a/b/logs/debug.log", true),
+            ("negation re-includes file", &["*.md", "!README.md"], "README.md", false),
+            ("negation leaves others ignored", &["*.md", "!README.md"], "CHANGELOG.md", true),
+            ("slash pattern exact", &["agent/tests"], "agent/tests", true),
+            ("slash pattern contents", &["agent/tests"], "agent/tests/test_unit.py", true),
+            ("slash pattern not nested", &["agent/tests"], "other/agent/tests", false),
+            ("no false prefix match", &["app"], "application", false),
+            ("prefix dir matches contents", &["app"], "app/foo", true),
+        ];
+        for (label, pats, path, expected) in cases {
+            let pats: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
+            assert_eq!(is_dockerignored(path, &pats), *expected, "{label}");
+        }
     }
 
     #[test]
-    fn dockerignore_exact_match() {
-        let pats = patterns(&["target"]);
-        assert!(is_dockerignored("target", &pats));
-        assert!(is_dockerignored("target/debug/foo", &pats));
-        assert!(!is_dockerignored("targets", &pats));
-        assert!(!is_dockerignored("some/nested/target", &pats));
-        assert!(!is_dockerignored("some/nested/target/file.txt", &pats));
+    fn rebuild_agent_stops_running_container_before_snapshot() {
+        // rebuild_agent must quiesce a running container before docker export, for the same
+        // reason rename_agent does: SQLite WAL + atomic state.json tmp+rename can be torn
+        // mid-export if the container is still running, causing silent data loss on rebuild.
+        // rename_agent carries the explicit comment and the stop call; rebuild_agent must too.
+        let src = include_str!("docker.rs");
+
+        let rebuild_start = src.find("pub async fn rebuild_agent").expect("rebuild_agent present");
+        let rename_start = src.find("pub async fn rename_agent").expect("rename_agent present");
+        assert!(rebuild_start < rename_start, "rebuild_agent must appear before rename_agent for this test to slice correctly");
+        let rebuild_body = &src[rebuild_start..rename_start];
+
+        let stop_pos = rebuild_body.find("stop_container");
+        let snapshot_pos = rebuild_body.find("snapshot_container").expect("snapshot_container must be called in rebuild_agent");
+
+        assert!(
+            stop_pos.is_some(),
+            "rebuild_agent does not call stop_container before snapshotting; \
+             a running container is exported live, tearing SQLite WAL and state.json writes \
+             (rename_agent stops first for exactly this reason)"
+        );
+        assert!(
+            stop_pos.unwrap() < snapshot_pos,
+            "rebuild_agent calls stop_container AFTER snapshot_container; \
+             stop must precede the docker export to quiesce the filesystem"
+        );
     }
 
     #[test]
-    fn dockerignore_trailing_slash() {
-        let pats = patterns(&["app/"]);
-        // Matches root-level app/ directory
-        assert!(is_dockerignored("app", &pats));
-        assert!(is_dockerignored("app/package.json", &pats));
-        // Must NOT match nested directories with the same name
-        assert!(!is_dockerignored("agent/skills/dashboard/app", &pats));
-        assert!(!is_dockerignored("agent/skills/dashboard/app/src/App.tsx", &pats));
-    }
+    fn rebuild_agent_confirms_removal_before_create() {
+        // rebuild_agent recreates under the SAME name, so the old container must be confirmed gone
+        // before [4/4] create. A best-effort `remove_container_force(...).await.ok()` silently left
+        // the agent stopped on the old image whenever the remove didn't take (docker rm can return
+        // before the name frees, or fail transiently) — the create then collided on the name.
+        let src = include_str!("docker.rs");
+        let rebuild_start = src.find("pub async fn rebuild_agent").expect("rebuild_agent present");
+        let rename_start = src.find("pub async fn rename_agent").expect("rename_agent present");
+        let rebuild_body = &src[rebuild_start..rename_start];
 
-    #[test]
-    fn dockerignore_wildcard_extension() {
-        let pats = patterns(&["*.pyc"]);
-        assert!(is_dockerignored("foo.pyc", &pats));
-        assert!(is_dockerignored("dir/bar.pyc", &pats));
-        assert!(!is_dockerignored("foo.py", &pats));
-    }
-
-    #[test]
-    fn dockerignore_question_mark() {
-        let pats = patterns(&["?.txt"]);
-        assert!(is_dockerignored("a.txt", &pats));
-        assert!(!is_dockerignored("ab.txt", &pats));
-    }
-
-    #[test]
-    fn dockerignore_doublestar() {
-        let pats = patterns(&["**/logs"]);
-        assert!(is_dockerignored("logs", &pats));
-        assert!(is_dockerignored("a/logs", &pats));
-        assert!(is_dockerignored("a/b/logs", &pats));
-        assert!(is_dockerignored("a/b/logs/debug.log", &pats));
-    }
-
-    #[test]
-    fn dockerignore_negation() {
-        let pats = patterns(&["*.md", "!README.md"]);
-        assert!(!is_dockerignored("README.md", &pats));
-        assert!(is_dockerignored("CHANGELOG.md", &pats));
-    }
-
-    #[test]
-    fn dockerignore_path_with_slash() {
-        let pats = patterns(&["agent/tests"]);
-        assert!(is_dockerignored("agent/tests", &pats));
-        assert!(is_dockerignored("agent/tests/test_unit.py", &pats));
-        assert!(!is_dockerignored("other/agent/tests", &pats));
-    }
-
-    #[test]
-    fn dockerignore_no_false_prefix() {
-        let pats = patterns(&["app"]);
-        assert!(!is_dockerignored("application", &pats));
-        assert!(is_dockerignored("app/foo", &pats));
+        let remove_pos = rebuild_body
+            .find("ensure_container_removed")
+            .expect("rebuild_agent must confirm the old container is gone via ensure_container_removed before recreating");
+        let create_pos = rebuild_body.find("create_container").expect("create_container must be called in rebuild_agent");
+        assert!(remove_pos < create_pos, "rebuild_agent must remove the old container before creating the new one");
+        assert!(
+            !rebuild_body.contains("remove_container_force"),
+            "rebuild_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
     }
 
     // --- Docker integration tests (require Docker daemon) ---
@@ -2519,9 +2904,9 @@ mod tests {
         std::env::var(AGENT_IMAGE_ENV).unwrap_or_else(|_| vesta_image())
     }
 
-    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str) -> bool {
+    async fn inspect_then_needs_rebuild(docker: &Docker, cname: &str, desired: &[crate::mounts::HostMount]) -> bool {
         let info = docker.inspect_container(cname, None).await.expect("inspect");
-        needs_rebuild(cname, &info)
+        needs_rebuild(cname, &info, desired)
     }
 
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
@@ -2554,6 +2939,17 @@ mod tests {
         }
     }
 
+    /// Remove a test host tmpdir on drop, so an assertion panic mid-test doesn't leak it.
+    struct TestHostDir {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for TestHostDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
     /// Clean up a test image on drop.
     struct TestImage {
         tag: String,
@@ -2576,8 +2972,14 @@ mod tests {
         let binds: Vec<String> = mounts.iter()
             .map(|(src, dst)| format!("{}:{}:ro,z", src, dst))
             .collect();
+        create_test_container_with_binds_async(docker, tc, binds, cmd, network, restart).await;
+    }
 
+    /// Like `create_test_container_async`, but takes fully-assembled bind strings instead of
+    /// hardcoding `:ro,z` — needed to exercise a writable grant via `crate::mounts::bind_string`.
+    async fn create_test_container_with_binds_async(docker: &Docker, tc: &TestContainer, binds: Vec<String>, cmd: Vec<String>, network: &str, restart: &str) {
         let restart_policy = match restart {
+            "on-failure" => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
             "unless-stopped" => bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED,
             "no" => bollard::models::RestartPolicyNameEnum::NO,
             "always" => bollard::models::RestartPolicyNameEnum::ALWAYS,
@@ -2672,7 +3074,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "fresh container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "fresh container should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2685,23 +3087,19 @@ mod tests {
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
         std::fs::create_dir_all(code_dir.path().join("core")).unwrap();
-        std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
-        std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("pyproject.toml"), "").unwrap();
+        std::fs::write(code_dir.path().join("core").join("uv.lock"), "").unwrap();
 
         let src_core = code_dir.path().join("core");
-        let pyproject = code_dir.path().join("pyproject.toml");
-        let uv_lock = code_dir.path().join("uv.lock");
 
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
-            (pyproject.to_str().unwrap(), MOUNT_DESTS[2]),
-            (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
         ];
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "container with all mounts should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with all mounts should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2715,7 +3113,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong cmd SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong cmd SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2726,7 +3124,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container without env mount SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container without env mount SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2740,7 +3138,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "missing core code mounts should NOT trigger rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "missing core code mounts should NOT trigger rebuild");
     }
 
     #[tokio::test]
@@ -2754,21 +3152,27 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong network SHOULD need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong network SHOULD need rebuild");
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_needs_rebuild_true_on_wrong_restart() {
+    async fn test_restart_policy_is_not_a_rebuild_trigger_and_reconciles_in_place() {
+        // The restart policy is reconciled in place (docker update, no snapshot): a legacy
+        // unless-stopped container must NOT need a rebuild, and ensure_on_failure_policy must flip
+        // it to on-failure live. (Old behavior treated a policy mismatch as a rebuild trigger.)
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-restart");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "no").await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
 
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "container with wrong restart policy SHOULD need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
+        assert_eq!(container_restart_policy(&docker, &tc.name).await, "unless-stopped");
+        ensure_on_failure_policy(&docker, &tc.name).await.expect("update policy in place");
+        assert_eq!(container_restart_policy(&docker, &tc.name).await, "on-failure", "policy reconciled to on-failure without a rebuild");
     }
 
     #[tokio::test]
@@ -2783,7 +3187,7 @@ mod tests {
 
         // Create with wrong network to force rebuild
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
-        assert!(inspect_then_needs_rebuild(&docker, &tc.name).await, "precondition: should need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "precondition: should need rebuild");
 
         // Snapshot
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
@@ -2792,7 +3196,25 @@ mod tests {
         remove_container_force(&docker, &tc.name).await.ok();
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "rebuilt container should NOT need rebuild");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_container_removed_removes_and_is_idempotent() {
+        let docker = test_docker();
+        let tc = TestContainer::new("ensure-removed");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
+        assert_ne!(container_status(&docker, &tc.name).await, ContainerStatus::NotFound, "precondition: container exists");
+
+        ensure_container_removed(&docker, &tc.name).await.expect("removes a present container");
+        assert_eq!(container_status(&docker, &tc.name).await, ContainerStatus::NotFound, "container must be gone after ensure_container_removed");
+
+        // Idempotent: the name is free, which is exactly what rebuild_agent's create depends on.
+        ensure_container_removed(&docker, &tc.name).await.expect("no-op when already absent");
     }
 
     // Bound on retries while the container's `mkdir` races its start (200ms apart).
@@ -2842,5 +3264,73 @@ mod tests {
         assert_eq!(payload["interrupt"], true);
         assert_eq!(payload["old_name"], "old-name");
         assert_eq!(payload["new_name"], agent_name);
+    }
+
+    /// Result of a `docker exec` invocation against a running test container.
+    struct ExecResult {
+        success: bool,
+        stdout: String,
+    }
+
+    /// Run `docker exec <cname> <args>` via the CLI (same idiom as `docker_cleanup`) and
+    /// capture the outcome for assertions.
+    fn docker_exec(cname: &str, args: &[&str]) -> ExecResult {
+        let output = std::process::Command::new("docker")
+            .arg("exec")
+            .arg(cname)
+            .args(args)
+            .output()
+            .expect("failed to run docker exec");
+        ExecResult { success: output.status.success(), stdout: String::from_utf8_lossy(&output.stdout).trim().to_string() }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn granted_host_path_readable_writable_removable_in_container() {
+        let docker = test_docker();
+
+        // A host tempdir with one file, mirrored 1:1 into the container (matches
+        // validate_mount's default of using the canonicalized host path as the container path).
+        let host_dir = std::env::temp_dir().join(format!("vesta-grant-{}", std::process::id()));
+        std::fs::create_dir_all(&host_dir).expect("create host grant dir");
+        let _host_dir_guard = TestHostDir { path: host_dir.clone() };
+        std::fs::write(host_dir.join("hello.txt"), "hi").expect("write hello.txt");
+        let host_path = host_dir.to_str().expect("host grant path is utf8").to_string();
+        let container_path = host_path.clone();
+        let hello_path = format!("{container_path}/hello.txt");
+        let new_file_path = format!("{container_path}/new.txt");
+        let cmd = vec!["sleep".to_string(), "300".to_string()];
+
+        // Step 1: read-only grant. Built via the real production `bind_string`, not a
+        // hand-written bind spec, so the test exercises our actual mount assembly.
+        let ro_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: false };
+        let tc_ro = TestContainer::new("grant-ro");
+        create_test_container_with_binds_async(&docker, &tc_ro, vec![crate::mounts::bind_string(&ro_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_ro.name).await, "read-only grant container should start");
+
+        let read = docker_exec(&tc_ro.name, &["cat", &hello_path]);
+        assert!(read.success, "cat of granted file should succeed");
+        assert_eq!(read.stdout, "hi", "granted host file must be readable inside the container");
+
+        let blocked_write = docker_exec(&tc_ro.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(!blocked_write.success, "a read-only grant must block writes inside the container");
+
+        // Step 2: the same mount, but writable: true -> the write now succeeds.
+        let rw_mount = crate::mounts::HostMount { host_path: host_path.clone(), container_path: container_path.clone(), writable: true };
+        let tc_rw = TestContainer::new("grant-rw");
+        create_test_container_with_binds_async(&docker, &tc_rw, vec![crate::mounts::bind_string(&rw_mount)], cmd.clone(), NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_rw.name).await, "writable grant container should start");
+
+        let allowed_write = docker_exec(&tc_rw.name, &["sh", "-c", &format!("echo x > {new_file_path}")]);
+        assert!(allowed_write.success, "a writable grant must allow writes inside the container");
+
+        // Step 3: no user mount at all -> the path is absent inside the container (the grant,
+        // not the host directory, controls visibility).
+        let tc_none = TestContainer::new("grant-none");
+        create_test_container_async(&docker, &tc_none, &[], cmd, NETWORK_MODE, RESTART_POLICY).await;
+        assert!(start_container(&docker, &tc_none.name).await, "no-grant container should start");
+
+        let missing = docker_exec(&tc_none.name, &["test", "-f", &hello_path]);
+        assert!(!missing.success, "without a grant, the host path must not appear inside the container");
     }
 }

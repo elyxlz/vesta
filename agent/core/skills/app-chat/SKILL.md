@@ -12,7 +12,7 @@ uv tool install ~/agent/core/skills/app-chat/cli
 ```
 
 **Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications`
-**Restart**: Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+**Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications
 ```

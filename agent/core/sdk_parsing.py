@@ -6,7 +6,7 @@ import time
 import typing as tp
 from collections.abc import Mapping
 
-from core.cc_sdk import (
+from claude_agent_sdk import (
     AssistantMessage,
     HookContext,
     HookMatcher,
@@ -16,9 +16,8 @@ from core.cc_sdk import (
     SystemMessage,
     TextBlock,
     ThinkingBlock,
-    ToolUseBlock,
 )
-from core.cc_sdk.types import (
+from claude_agent_sdk.types import (
     HookCallback,
     HookEvent,
     HookJSONOutput,
@@ -35,7 +34,7 @@ from core.cc_sdk.types import (
 from . import diagnostics
 from . import logger
 from . import models as vm
-from .events import StreamEvent, SubagentStartEvent, SubagentStopEvent
+from .events import StreamEvent
 
 _AGENT_TOOLS = ("Task", "Agent")
 
@@ -57,6 +56,32 @@ def build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
 
+def build_priority_now_message(prompt: str, *, timestamp: dt.datetime) -> dict[str, tp.Any]:
+    """The stream-json envelope for a preempting user message. `priority` is undocumented CLI
+    protocol (verified on 2.1.191/2.1.201, probed live 2026-07-06): a queued "now" prompt makes
+    the CLI end the running turn at its next step boundary with the graceful "interrupt" reason,
+    so background subagents survive — unlike the interrupt control request, whose headless
+    handler kills every backgrounded task (issue #982). A CLI that ignores the field just queues
+    the message to run after the current turn: delayed, never lost."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": build_query(prompt, timestamp=timestamp)},
+        "parent_tool_use_id": None,
+        "priority": "now",
+    }
+
+
+def thinking_tokens_estimate(msg: Message) -> int | None:
+    """The CLI streams SystemMessage(subtype="thinking_tokens") counters throughout extended
+    thinking. Return the running token estimate, or None for any other message (or a payload
+    without the expected int field)."""
+    if not isinstance(msg, SystemMessage) or msg.subtype != "thinking_tokens":
+        return None
+    if isinstance(msg.data, dict) and "estimated_tokens" in msg.data and isinstance(msg.data["estimated_tokens"], int):
+        return msg.data["estimated_tokens"]
+    return None
+
+
 def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
@@ -72,18 +97,10 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
-    input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-
-    if name in _AGENT_TOOLS:
-        agent_type, description = _parse_agent_input(input_data)
-        return f"[TASK] [{agent_type}]: {description or input_str}", agent_type
-
-    prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
-    return f"[TOOL] {prefix}{name}: {input_str}", sub_agent_context
-
-
-def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], list[ThinkingBlock], str | None, str | None, bool]:
+def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None]:
+    """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
+    message. Tool-use blocks carry no output here: tool/subagent activity is surfaced via the native
+    hooks in make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -109,43 +126,46 @@ def parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[l
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
             pass
-        return ([], [], sub_agent_context, session_id, False)
+        return [], [], session_id
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
         log_fn = logger.debug if info.status == "allowed" else logger.warning
         log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
-        return ([], [], sub_agent_context, None, False)
+        return [], [], None
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
-            sid = msg.data["session_id"][:16] if isinstance(msg.data, dict) and "session_id" in msg.data else "?"
-            logger.debug(f"[init] session_id={sid}")
-        else:
-            raw = json.dumps(msg.data, default=str)
-            logger.system(f"[{msg.subtype}] {raw[:500]}")
-        return ([], [], sub_agent_context, None, False)
+            # The init message carries the session_id first, before any ResultMessage. Return it so
+            # the caller persists it immediately: a fresh turn that crashes before completing can
+            # still be resumed (the official client exposes no session_id attribute to fall back on).
+            init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
+            if init_sid:
+                logger.debug(f"[init] session_id={init_sid[:16]}")
+            return [], [], init_sid
+        # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
+        # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
+        if msg.subtype == "thinking_tokens":
+            return [], [], None
+        if msg.subtype == "compact_boundary":
+            logger.client("Compaction boundary reached")
+            return [], [], None
+        raw = json.dumps(msg.data, default=str)
+        logger.system(f"[{msg.subtype}] {raw[:2000]}")
+        return [], [], None
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
+        return ([msg] if isinstance(msg, str) else []), [], None
 
     texts = []
     thinking_blocks = []
-    has_tool_use = False
-    current_context = sub_agent_context
-
     for block in msg.content:
         if isinstance(block, TextBlock):
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
-        elif isinstance(block, ToolUseBlock):
-            has_tool_use = True
-            _, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
-            if new_context:
-                current_context = new_context
 
-    return texts, thinking_blocks, current_context, None, has_tool_use
+    return texts, thinking_blocks, None
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
@@ -155,8 +175,7 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
     if name in _TOOL_KEYS:
         val = tool_input[_TOOL_KEYS[name]] if _TOOL_KEYS[name] in tool_input else "?"
         return f"{name}: {val}"
-    raw = json.dumps(tool_input)
-    return f"{name}: {raw}"
+    return f"{name}: {json.dumps(tool_input)}"
 
 
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
@@ -164,12 +183,7 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
         agent_id = input_data["agent_id"] if "agent_id" in input_data else "?"
         agent_type = input_data["agent_type"] if "agent_type" in input_data else "unknown"
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
-        event: StreamEvent
-        if event_type == "subagent_start":
-            event = SubagentStartEvent(type="subagent_start", agent_id=agent_id, agent_type=agent_type)
-        else:
-            event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
-        state.event_bus.emit(event)
+        state.event_bus.emit(tp.cast(StreamEvent, {"type": event_type, "agent_id": agent_id, "agent_type": agent_type}))
         return tp.cast(HookJSONOutput, {})
 
     return tp.cast(HookCallback, hook)

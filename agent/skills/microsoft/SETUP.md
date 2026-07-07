@@ -1,79 +1,32 @@
 # Microsoft Setup
 
-## No Azure app required (default)
+No Azure setup is required. The skill defaults to the **Microsoft Graph Command Line Tools**
+public client (Microsoft-published, multitenant, device-code capable) and requests the delegated
+Graph scopes it needs (`Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`,
+`MailboxSettings.ReadWrite`) via dynamic consent at sign-in. Just install, start the daemon, and
+authenticate:
 
-By default the skill uses the first-party "Microsoft Office" public client, so it
-works with **zero Azure setup**: just install, authenticate, and go. This is also
-what makes the reverse-engineered OWA fallback usable on locked-down company
-tenants (see "Two backends" in SKILL.md). Skip to step 4.
-
-Note for **personal** Microsoft accounts (outlook.com/hotmail/live): set
-`MICROSOFT_MCP_TENANT_ID=consumers` (the default `organizations` targets
-work/school tenants).
-
-## Optional: bring your own Azure app (least privilege)
-
-A custom Azure app registration is only worth it if you want least-privilege
-scopes, auditability (the app shows up as itself in tenant sign-in logs rather
-than as "Microsoft Office"), or durability. It is **not** required.
-
-1. Create an Azure App Registration at https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
-   - Name: anything (e.g. "Vesta")
-   - Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
-   - Redirect URI: leave blank (device flow doesn't need one)
-   - Under "API permissions": click "Add a permission" → "Microsoft Graph" → **"Delegated permissions"** (not Application permissions) → search and add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
-   - Under "Authentication" (may show as "Authentication (Preview)"): go to the **Settings** tab → toggle "Allow public client flows" to **Yes** → click Save
-2. Copy the **Application (client) ID**
-3. Set environment variable:
-   ```
-   MICROSOFT_MCP_CLIENT_ID=<your-client-id>
-   ```
-   The Graph path will use this app; the OWA fallback always uses the first-party
-   client (a custom app is rarely authorized for the `outlook.office.com` resource
-   EWS needs).
-
-## Install
-
-4. Install: `uv tool install ~/agent/skills/microsoft/cli`
-5. Start background daemon: `screen -dmS microsoft microsoft serve`
-6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+1. Install: `uv tool install ~/agent/skills/microsoft/cli`
+2. Start background daemon: `screen -dmS microsoft microsoft serve`
+3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```
 
-## Choosing a backend per command
+## Optional: your own Azure app registration
 
-`--backend {auto,graph,owa,owa-rest}` (default `auto`) selects the path:
-- `auto`: tries Graph; on a permission failure tries OWA/EWS; if EWS also fails and a REST token is available, uses REST.
-- `graph`: force the official Graph API.
-- `owa`: force the reverse-engineered EWS path.
-- `owa-rest`: force the OWA REST path (requires `microsoft auth owa-login` first).
+Use your own app only if you need to (e.g. a Conditional Access policy blocks the default client,
+or you want to pin a narrower scope set). Create one at
+https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade:
 
-See "Three backends" in SKILL.md.
+- Name: anything (e.g. "Vesta")
+- Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
+- Redirect URI: leave blank (device flow doesn't need one)
+- Under "API permissions": click "Add a permission" → "Microsoft Graph" → **"Delegated permissions"** (not Application permissions) → search and add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
+- Under "Authentication" (may show as "Authentication (Preview)"): go to the **Settings** tab → toggle "Allow public client flows" to **Yes** → click Save
 
-## OWA REST path: one-step setup for locked tenants
-
-If your tenant blocks device-flow grants even for first-party Microsoft clients
-(common at universities), use the browser-capture path instead. Setup is one step:
-
-```bash
-microsoft auth owa-login --account you@university.edu
-```
-
-This opens `https://outlook.office.com/mail/` in the vesta browser, lets you sign
-in (or picks up an existing session), extracts the access token MSAL.js already
-holds in browser storage, decodes its expiry, and stores it. The token lasts ~24 h;
-re-run when it expires.
-
-After setup, `--backend owa-rest` uses this token, and `--backend auto` falls back
-to it automatically when both Graph and EWS are unavailable.
-
-## Escape hatch if a tenant blocks even EWS
-
-The OWA REST path (`owa-rest`) is the escape hatch: it uses the same token the
-Outlook web app holds, so it cannot be blocked without also blocking the user's own
-webmail. The token is short-lived (~24 h) so re-capture is needed periodically.
-Run `microsoft auth owa-login --account <email>` to refresh it.
+Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your-client-id>`
+(a custom client uses `.default`, i.e. exactly the permissions you configured above).
 
 ## Authentication
 

@@ -1,15 +1,18 @@
 export const MEMORY_PATH = "/root/agent/MEMORY.md";
+export const CONSTITUTION_PATH = "/root/agent/constitution.md";
 export const SKILLS_PREFIX = "/root/agent/skills/";
 export const DREAMER_PREFIX = "/root/agent/dreamer/";
 
 export function isSimpleAllowed(path: string): boolean {
   if (path === MEMORY_PATH) return true;
+  if (path === CONSTITUTION_PATH) return true;
   if (path.startsWith(SKILLS_PREFIX) && path.endsWith(".md")) return true;
   return false;
 }
 
 export function friendlyLabel(path: string): string {
   if (path === MEMORY_PATH) return "MEMORY.md";
+  if (path === CONSTITUTION_PATH) return "constitution.md";
   if (path.startsWith(SKILLS_PREFIX)) {
     return path.slice(SKILLS_PREFIX.length).split("/").join(" / ");
   }

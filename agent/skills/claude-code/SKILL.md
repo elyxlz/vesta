@@ -21,15 +21,7 @@ Reach for `claude` when the task is genuinely big:
 
 ## When NOT to use this skill
 
-For everything smaller, do it yourself with Read/Edit/Bash:
-
-- Single-file edits and small tweaks
-- Adding or changing a handful of lines
-- Quick fixes, typos, renames
-- Reading and explaining code
-- Small additions to existing functions
-
-Shelling out has its own overhead (subprocess, JSON parsing, the agent's autonomous turns). For modest work, that overhead exceeds the value of Claude Code's specialized prompt.
+For everything smaller (single-file edits, quick fixes, typos, renames, reading code, small additions to existing functions), do it yourself with Read/Edit/Bash: the subprocess and autonomous-turn overhead exceeds Claude Code's value on modest work.
 
 ## Basic call
 

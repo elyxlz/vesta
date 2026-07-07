@@ -1,4 +1,7 @@
-import { apiJson, apiFetch } from "./client";
+import { apiJson, apiFetch, jsonInit } from "./client";
+import type { VestaEvent } from "@/lib/types";
+
+export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
 
 export interface OpenRouterConfig {
   key: string;
@@ -18,81 +21,137 @@ export type ProviderResult =
       maxContextTokens?: number;
     };
 
-/// Switch (or refresh) an existing agent's provider. Body is either `credentials`
-/// (Claude OAuth blob) or the `openrouter_*` pair, plus an optional `model` (Claude)
-/// and `max_context_tokens`. The agent owns the file writes and clears the obsolete
-/// provider config; vestad proxies the call and restarts.
+/// The nested provider body for `PUT /provider` (sign in / switch). The claude OAuth blob travels as
+/// a transient `credentials` field (written to the SDK file, never stored); openrouter carries `key`.
+type ProviderBody =
+  | {
+      kind: "claude";
+      credentials: string;
+      model?: string;
+      max_context_tokens?: number;
+    }
+  | {
+      kind: "openrouter";
+      model: string;
+      key: string;
+      max_context_tokens?: number;
+    };
+
+/// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
+/// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
+/// existing agent omits timezone/personality to keep the agent's own.
 export async function setProvider(
   name: string,
   result: ProviderResult,
+  personality?: string,
+  timezone?: string,
 ): Promise<void> {
-  const body: Record<string, unknown> =
+  const enc = encodeURIComponent(name);
+  const body: ProviderBody =
     result.kind === "claude"
-      ? { credentials: result.credentials }
+      ? {
+          kind: "claude",
+          credentials: result.credentials,
+          ...(result.model ? { model: result.model } : {}),
+          ...(result.maxContextTokens != null
+            ? { max_context_tokens: result.maxContextTokens }
+            : {}),
+        }
       : {
-          openrouter_key: result.config.key,
-          openrouter_model: result.config.model,
+          kind: "openrouter",
+          model: result.config.model,
+          key: result.config.key,
+          ...(result.maxContextTokens != null
+            ? { max_context_tokens: result.maxContextTokens }
+            : {}),
         };
-  if (result.kind === "claude" && result.model) body.model = result.model;
-  if (result.maxContextTokens != null) {
-    body.max_context_tokens = result.maxContextTokens;
-  }
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
+  await apiFetch(`/agents/${enc}/provider`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const prefs: Record<string, string> = {};
+  if (personality) prefs.agent_personality = personality;
+  if (timezone) prefs.timezone = timezone;
+  if (Object.keys(prefs).length > 0) {
+    await apiFetch(`/agents/${enc}/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    });
+  }
+  await restartAgent(name);
+}
+
+/// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
+/// not_authenticated.
+export async function signOutProvider(name: string): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
+    method: "DELETE",
+  });
+  await restartAgent(name);
 }
 
 export interface ProviderInfo {
-  state: string;
+  /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
+  /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
   kind: "claude" | "openrouter" | "none";
   model: string | null;
   max_context_tokens: number | null;
-  setup_complete: boolean;
+  authed: boolean;
 }
 
-/// Read an agent's current provider (kind + model), proxied from the agent.
+/// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
+/// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
+/// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
-  return apiJson<ProviderInfo>(`/agents/${encodeURIComponent(name)}/provider`);
+  const provider = await apiJson<{
+    kind?: "claude" | "openrouter";
+    model: string | null;
+    max_context_tokens: number | null;
+    authed?: boolean;
+  }>(`/agents/${encodeURIComponent(name)}/provider`);
+  return {
+    kind: provider.kind ?? "none",
+    model: provider.model,
+    max_context_tokens: provider.max_context_tokens,
+    authed: provider.authed ?? false,
+  };
 }
 
-/// Change only the model, keeping the current provider (and, for OpenRouter, the
-/// stored key). Works for both Claude and OpenRouter. Vestad restarts the agent
-/// so the new model takes effect.
-export async function setModel(name: string, model: string): Promise<void> {
+/// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.
+async function patchProvider(
+  name: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(patch),
   });
+  await restartAgent(name);
 }
 
-/// Change only the context window (tokens), keeping the provider, key, and model.
-/// Vestad restarts the agent so the new window takes effect.
+/// Change only the model. Vestad restarts the agent so it takes effect.
+export async function setModel(name: string, model: string): Promise<void> {
+  await patchProvider(name, { model });
+}
+
+/// Change only the context window. Vestad restarts the agent so it takes effect.
 export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_context_tokens: maxContextTokens }),
-  });
+  await patchProvider(name, { max_context_tokens: maxContextTokens });
 }
 
-/// Create an empty agent container. Provider config is sent separately via
-/// `setProvider` once the agent is up — vestad no longer accepts credentials
-/// at create time (the agent owns its own auth state).
-export async function createAgent(
-  name: string,
-  seedPersonality?: string,
-): Promise<void> {
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+/// Create an empty agent container. Credentials and preferences (provider, model, personality,
+/// context, timezone) are sent once it's up, via `setProvider`.
+export async function createAgent(name: string): Promise<void> {
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone, seed_personality: seedPersonality }),
+    body: JSON.stringify({ name }),
   });
 }
 
@@ -100,11 +159,7 @@ export async function createAgent(
 /// the create POST is in flight. The image step (`pulling` on a release build,
 /// `building` from a local checkout) is the dominant wait.
 export type BuildPhase =
-  | "pulling"
-  | "building"
-  | "preparing"
-  | "creating"
-  | "starting";
+  "pulling" | "building" | "preparing" | "creating" | "starting";
 
 const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
   pulling: "downloading the agent image...",
@@ -130,8 +185,8 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
-/// Poll /agents/{name} until it reports "alive" or "not_authenticated".
-/// A brand-new empty agent boots into not_authenticated until provisioned.
+/// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
+/// "unprovisioned" (no provider chosen) until provisioned; a re-auth case reports "not_authenticated".
 export async function waitUntilRunning(
   name: string,
   timeoutMs: number,
@@ -142,7 +197,12 @@ export async function waitUntilRunning(
     const resp = await apiJson<{ status: string }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (resp.status === "alive" || resp.status === "not_authenticated") return;
+    if (
+      resp.status === "alive" ||
+      resp.status === "not_authenticated" ||
+      resp.status === "unprovisioned"
+    )
+      return;
     if (
       resp.status === "dead" ||
       resp.status === "stopped" ||
@@ -170,7 +230,8 @@ export async function waitUntilAlive(
       resp.status === "dead" ||
       resp.status === "stopped" ||
       resp.status === "not_found" ||
-      resp.status === "not_authenticated"
+      resp.status === "not_authenticated" ||
+      resp.status === "unprovisioned"
     ) {
       throw new Error(`${name}: ${resp.status}`);
     }
@@ -198,8 +259,8 @@ export async function restartAgent(name: string): Promise<void> {
 }
 
 export async function deleteAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/destroy`, {
-    method: "POST",
+  await apiJson(`/agents/${encodeURIComponent(name)}`, {
+    method: "DELETE",
   });
 }
 
@@ -247,27 +308,151 @@ export async function deleteBackup(
   );
 }
 
-export interface RateLimit {
-  utilization: number | null;
+/// Normalized, provider-agnostic plan usage (agent's GET /usage). `meters` are
+/// time-windowed quota gauges (Claude rate-limit buckets); `credits` is a spend balance
+/// (OpenRouter, or Claude extra-usage). Both already in display units (% and dollars).
+export interface UsageMeter {
+  label: string;
+  used_pct: number | null;
   resets_at: string | null;
 }
 
-export interface ExtraUsage {
-  is_enabled: boolean;
-  monthly_limit: number | null;
-  used_credits: number | null;
-  utilization: number | null;
+export interface UsageCredits {
+  used: number | null;
+  limit: number | null;
 }
 
-export interface Utilization {
-  five_hour?: RateLimit | null;
-  seven_day?: RateLimit | null;
-  seven_day_oauth_apps?: RateLimit | null;
-  seven_day_opus?: RateLimit | null;
-  seven_day_sonnet?: RateLimit | null;
-  extra_usage?: ExtraUsage | null;
+export interface Usage {
+  meters: UsageMeter[];
+  credits: UsageCredits | null;
 }
 
-export async function fetchUsage(name: string): Promise<Utilization> {
+export async function fetchUsage(name: string): Promise<Usage> {
   return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
+}
+
+// One match condition over a notification field. `field` is a concrete notification key (chat_name,
+// chat_type, …) or an alias ("sender" = the identity fields, "text" = body/message). `op` is a
+// case-insensitive substring ("contains") or regex; `negate` inverts it. Mirrors core's FieldPredicate.
+export interface FieldPredicate {
+  field: string;
+  op: "contains" | "regex";
+  value: string;
+  negate?: boolean;
+}
+
+export interface NotificationInterruptRule {
+  id: string;
+  source?: string | null;
+  type?: string | null;
+  // All conditions beyond source/type (sender, keyword, and any arbitrary field) are predicates here,
+  // ANDed together. Empty = the rule matches every notification of the given source/type.
+  match?: FieldPredicate[];
+  action: "interrupt" | "pool";
+}
+
+/// Read the agent's ordered notification interrupt ruleset from its config (GET /config).
+export async function getNotificationInterruptRules(
+  name: string,
+): Promise<NotificationInterruptRule[]> {
+  const resp = await apiJson<{
+    notification_rules?: NotificationInterruptRule[];
+  }>(`/agents/${encodeURIComponent(name)}/config`);
+  return resp.notification_rules ?? [];
+}
+
+/// Replace the ruleset on the agent's config (PUT /config with {notification_rules}). Live — the agent
+/// applies it on its next tick, no restart. Rule ids are generated client-side, so the saved rules are
+/// exactly what was sent.
+export async function setNotificationInterruptRules(
+  name: string,
+  rules: NotificationInterruptRule[],
+): Promise<NotificationInterruptRule[]> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notification_rules: rules }),
+  });
+  return rules;
+}
+
+export type PreemptMode = "message" | "interrupt";
+
+/// How urgent messages preempt a running turn, from the agent's config (GET /config).
+export async function getPreemptMode(name: string): Promise<PreemptMode> {
+  const resp = await apiJson<{ preempt_mode?: PreemptMode }>(
+    `/agents/${encodeURIComponent(name)}/config`,
+  );
+  return resp.preempt_mode ?? "message";
+}
+
+/// Set how urgent messages preempt a running turn (PUT /config with {preempt_mode}). A pref:
+/// saved immediately but applies on the agent's next restart, so the caller flags restart-pending.
+export async function setPreemptMode(
+  name: string,
+  mode: PreemptMode,
+): Promise<void> {
+  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preempt_mode: mode }),
+  });
+}
+
+/// One page of received notifications, newest first (GET /history?channel=notifications). Pass the
+/// returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
+/// Pending state isn't derived here — it's seeded from the connect snapshot and kept live via
+/// `notification_cleared` deltas.
+export async function getNotificationHistory(
+  name: string,
+  cursor?: number,
+): Promise<{ notifications: NotificationEvent[]; cursor: number | null }> {
+  const params = new URLSearchParams({ channel: "notifications" });
+  if (cursor != null) params.set("cursor", String(cursor));
+  const resp = await apiJson<{ events: VestaEvent[]; cursor: number | null }>(
+    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
+  );
+  const items = resp.events.filter(
+    (event): event is NotificationEvent => event.type === "notification",
+  );
+  // Newest-first for the view; the history endpoint returns ascending within a page.
+  items.reverse();
+  return { notifications: items, cursor: resp.cursor };
+}
+
+/// A user-granted host filesystem access: a host path bind-mounted into the agent's container at
+/// `container_path` (defaults to `host_path` when unset by the caller), read-only unless `writable`.
+export interface HostMount {
+  host_path: string;
+  container_path: string;
+  writable: boolean;
+}
+
+/// Read the agent's host filesystem grants (GET /mounts).
+export async function getAgentMounts(name: string): Promise<HostMount[]> {
+  const resp = await apiJson<{ mounts: HostMount[] }>(
+    `/agents/${encodeURIComponent(name)}/mounts`,
+  );
+  return resp.mounts;
+}
+
+/// Replace the agent's host filesystem grants (PUT /mounts). The server validates each grant
+/// (host path exists, container path isn't protected, no duplicate container paths) and returns the
+/// validated list plus whether a restart is needed to apply it (always true today).
+export async function setAgentMounts(
+  name: string,
+  mounts: HostMount[],
+): Promise<{ mounts: HostMount[]; restartRequired: boolean }> {
+  const resp = await apiJson<{
+    mounts: HostMount[];
+    restart_required: boolean;
+  }>(`/agents/${encodeURIComponent(name)}/mounts`, jsonInit("PUT", { mounts }));
+  return { mounts: resp.mounts, restartRequired: resp.restart_required };
+}
+
+/// Existing host folders vestad suggests sharing (GET /host/folders), so the user doesn't
+/// hand-type a path. Host-level (not agent-scoped) and API-key only.
+export async function getHostFolderSuggestions(): Promise<string[]> {
+  const resp = await apiJson<{ folders: string[] }>("/host/folders");
+  return resp.folders;
 }

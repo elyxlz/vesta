@@ -7,6 +7,7 @@ user messages and accepts CLI commands via Unix socket to send replies.
 import argparse
 import asyncio
 import datetime as dt
+import functools
 import json
 import os
 import pathlib as pl
@@ -128,8 +129,8 @@ def _handle_event(state: DaemonState, raw: str) -> None:
 
     event_type = event["type"]
 
-    if event_type == "history" and "events" in event:
-        _replay_missed(state, event["events"])
+    if event_type == "snapshot" and "chat" in event and "events" in event["chat"]:
+        _replay_missed(state, event["chat"]["events"])
         return
 
     if "ts" in event:
@@ -152,7 +153,6 @@ def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
             continue
         _write_notification(state, str(past["text"]), timestamp=str(ts) if ts else None)
         count += 1
-    # Update last_seen_ts to the latest event in the batch
     for past in reversed(events):
         if "ts" in past:
             _update_last_seen_ts(state, str(past["ts"]))
@@ -181,10 +181,7 @@ def _write_notification(state: DaemonState, message: str, *, timestamp: str | No
 async def _socket_server(state: DaemonState) -> None:
     state.sock_path.unlink(missing_ok=True)
 
-    async def handle_conn(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await _handle_socket_conn(state, reader, writer)
-
-    server = await asyncio.start_unix_server(handle_conn, path=str(state.sock_path))
+    server = await asyncio.start_unix_server(functools.partial(_handle_socket_conn, state), path=str(state.sock_path))
     os.chmod(str(state.sock_path), 0o600)
     _log(f"socket server: {state.sock_path}")
 

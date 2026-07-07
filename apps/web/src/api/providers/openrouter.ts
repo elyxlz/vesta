@@ -1,9 +1,12 @@
-import { apiJson } from "../client";
+import { apiJson, jsonInit } from "../client";
 
 export interface OpenRouterModelOption {
   slug: string;
   label: string;
   author: string;
+  // Tiny strength hint shown in place of the author/price line (Claude opus vs sonnet). Absent for
+  // OpenRouter models, which show author + context + price instead.
+  note?: string;
   context_length?: number;
   // USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
   input_price?: number | null;
@@ -19,9 +22,8 @@ export async function fetchTopModels(): Promise<OpenRouterModelOption[]> {
 // Going through vestad keeps the web and CLI paths symmetric: both clients
 // call the same endpoint, and the validation logic lives in one place.
 export async function validateKey(key: string): Promise<void> {
-  await apiJson("/providers/openrouter/validate-key", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key }),
-  });
+  await apiJson(
+    "/providers/openrouter/validate-key",
+    jsonInit("POST", { key }),
+  );
 }

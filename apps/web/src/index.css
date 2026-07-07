@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/public-sans";
 @import "@fontsource-variable/outfit";
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -13,9 +14,12 @@
   --foreground: oklch(0.147 0.005 80);
   --card: oklch(0.995 0.005 80);
   --card-foreground: oklch(0.147 0.005 80);
+  /* Card hairline ring as a single theme-aware token, so a card can override its
+     ring with one base utility (e.g. ring-primary) and have it hold in both themes. */
+  --card-ring: oklch(0.147 0.005 80 / 5%);
   --popover: oklch(0.995 0.005 80);
   --popover-foreground: oklch(0.147 0.005 80);
-  --primary: oklch(0.7 0.06 75);
+  --primary: oklch(0.8 0.06 75);
   --primary-foreground: oklch(0.25 0.015 75);
   --secondary: oklch(0.97 0.006 80);
   --secondary-foreground: oklch(0.216 0.006 80);
@@ -46,6 +50,9 @@
   --sidebar-border: oklch(0.923 0.01 80);
   --sidebar-ring: oklch(0.709 0.02 80);
   --page-padding-x: 1.5rem;
+  /* Inset frame (web desktop): gutter width from viewport edge to the frame line.
+     The fake clip is drawn by InsetFrame. */
+  --frame-inset: 0.875rem;
 }
 
 html[data-platform="android"] {
@@ -79,21 +86,21 @@ html[data-platform="android"] {
 }
 
 [data-platform="linux"].vibrancy {
-  --background: oklch(0.995 0.005 80 / 85%);
-  --card: oklch(0.995 0.005 80 / 85%);
-  --muted: oklch(0.97 0.006 80 / 90%);
-  --accent: oklch(0.97 0.006 80 / 85%);
-  --sidebar: oklch(0.985 0.006 80 / 85%);
-  --sidebar-accent: oklch(0.97 0.006 80 / 85%);
+  --background: oklch(0.995 0.005 80 / 92.5%);
+  --card: oklch(0.995 0.005 80 / 92.5%);
+  --muted: oklch(0.97 0.006 80 / 95%);
+  --accent: oklch(0.97 0.006 80 / 92.5%);
+  --sidebar: oklch(0.985 0.006 80 / 92.5%);
+  --sidebar-accent: oklch(0.97 0.006 80 / 92.5%);
 }
 
 [data-platform="linux"].vibrancy.dark {
-  --background: oklch(0.147 0.005 80 / 85%);
-  --card: oklch(0.216 0.007 80 / 85%);
-  --muted: oklch(0.19 0.007 80 / 90%);
-  --accent: oklch(0.268 0.008 80 / 85%);
-  --sidebar: oklch(0.216 0.007 80 / 85%);
-  --sidebar-accent: oklch(0.268 0.008 80 / 85%);
+  --background: oklch(0.147 0.005 80 / 92.5%);
+  --card: oklch(0.216 0.007 80 / 92.5%);
+  --muted: oklch(0.19 0.007 80 / 95%);
+  --accent: oklch(0.268 0.008 80 / 92.5%);
+  --sidebar: oklch(0.216 0.007 80 / 92.5%);
+  --sidebar-accent: oklch(0.268 0.008 80 / 92.5%);
 }
 
 .dark {
@@ -101,6 +108,7 @@ html[data-platform="android"] {
   --foreground: oklch(0.985 0.006 80);
   --card: oklch(0.216 0.007 80);
   --card-foreground: oklch(0.985 0.006 80);
+  --card-ring: oklch(0.985 0.006 80 / 10%);
   --popover: oklch(0.216 0.007 80);
   --popover-foreground: oklch(0.985 0.006 80);
   --primary: oklch(0.8 0.06 75);
@@ -134,6 +142,9 @@ html[data-platform="android"] {
 @theme inline {
   --font-sans: "Public Sans Variable", sans-serif;
   --font-heading: "Outfit Variable", sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
   --text-sm: 0.9375rem;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -177,11 +188,20 @@ html[data-platform="android"] {
   --radius-squircle-lg: var(--rounded-squircle-lg);
   --radius-squircle-md: var(--rounded-squircle-md);
   --radius-squircle-sm: var(--rounded-squircle-sm);
+  /* Lighter than Tailwind's default shadow-sm (0.1 alpha) — same geometry, softer. */
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /* Tailwind v4 Preflight dropped the cursor:pointer that v3 applied to buttons.
+     Restore it for native buttons and role=button so every clickable control
+     shows the pointer; utilities still override, and disabled controls keep the default. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
   }
   html {
     @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
@@ -214,4 +234,62 @@ html[data-platform="android"] {
 
 @utility pb-page {
   padding-bottom: var(--page-padding-x);
+}
+
+@property --scroll-fade-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --scroll-fade-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes scroll-fade-top {
+  from {
+    --scroll-fade-top: 0px;
+  }
+  to {
+    --scroll-fade-top: var(--scroll-fade-size);
+  }
+}
+@keyframes scroll-fade-bottom {
+  from {
+    --scroll-fade-bottom: var(--scroll-fade-size);
+  }
+  to {
+    --scroll-fade-bottom: 0px;
+  }
+}
+
+/* Soft, scroll-aware fade at the top/bottom of a scroll container: the top edge fades only once you've
+   scrolled down, the bottom only while there's more below. No effect when content fits, or where
+   scroll-driven animations aren't supported (the mask stays fully opaque). */
+@utility scroll-fade {
+  --scroll-fade-size: 1.25rem;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--scroll-fade-top),
+    black calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--scroll-fade-top),
+    black calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
+
+  @supports (animation-timeline: scroll()) {
+    animation:
+      scroll-fade-top linear both,
+      scroll-fade-bottom linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range:
+      0 var(--scroll-fade-size),
+      calc(100% - var(--scroll-fade-size)) 100%;
+  }
 }

@@ -23,6 +23,14 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
 pub static SHARED_RO_AGENT: LazyLock<String> = LazyLock::new(|| {
     let client = SERVER.client();
     let raw = unique_agent("ro-shared");
+    // The shared SERVER runs under the ambient $USER (not a unique per-run test user),
+    // so its agent containers aren't matched by `cleanup_orphan_test_containers` and
+    // survive across runs. A prior run's `ro-shared-N` therefore still exists on a CI
+    // retry. Destroy any leftover first so creation is idempotent — otherwise the retry's
+    // create hit "already exists", which panicked here and *poisoned* this LazyLock,
+    // cascading a single failure into every read-only test.
+    let _ = client.stop_agent(&raw);
+    let _ = client.destroy_agent(&raw);
     client
         .create_agent(&raw)
         .unwrap_or_else(|e| panic!("failed to create shared read-only agent: {e}"))
@@ -54,6 +62,7 @@ pub struct TestServerBuilder {
     user: Option<String>,
     home: Option<PathBuf>,
     vestad_bin: Option<PathBuf>,
+    env_remove: Vec<String>,
 }
 
 impl TestServerBuilder {
@@ -78,9 +87,18 @@ impl TestServerBuilder {
         self
     }
 
+    /// Clear an env var the test process inherited before spawning vestad. The upgrade test
+    /// clears `VESTAD_AGENT_IMAGE` for the OLD vestad so it falls back to its own released
+    /// image (`ghcr.io/elyxlz/vesta:<tag>`), making the agent a faithful fleet member of that
+    /// version rather than running on the checkout's image.
+    pub fn env_remove(mut self, key: &str) -> Self {
+        self.env_remove.push(key.to_string());
+        self
+    }
+
     pub fn start(self) -> Result<TestServer, String> {
         let user = self.user.unwrap_or_else(|| unique_user("test"));
-        TestServer::start_with_options(Some(user), self.home, self.vestad_bin)
+        TestServer::start_with_options(Some(user), self.home, self.vestad_bin, &self.env_remove)
     }
 }
 
@@ -150,10 +168,10 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn start() -> Result<Self, String> {
-        Self::start_with_options(None, None, None)
+        Self::start_with_options(None, None, None, &[])
     }
 
-    fn start_with_options(user: Option<String>, home: Option<PathBuf>, vestad_bin: Option<PathBuf>) -> Result<Self, String> {
+    fn start_with_options(user: Option<String>, home: Option<PathBuf>, vestad_bin: Option<PathBuf>, env_remove: &[String]) -> Result<Self, String> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
@@ -177,16 +195,24 @@ impl TestServer {
         let stderr_path = home.join("vestad-stderr.log");
         let stderr_file = std::fs::File::create(&stderr_path)
             .map_err(|e| format!("create stderr log: {e}"))?;
+        // Capture stdout too: vestad's tracing (reconcile/rebuild decisions) goes here, and the
+        // upgrade e2e dumps it on failure to explain why an agent didn't come back after update.
+        let stdout_path = home.join("vestad-stdout.log");
+        let stdout_file = std::fs::File::create(&stdout_path)
+            .map_err(|e| format!("create stdout log: {e}"))?;
 
         let mut cmd = Command::new(&vestad);
         cmd.args(["serve", "--standalone", "--no-tunnel"])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
-            .stdout(Stdio::null())
+            .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
         if let Some(ref user_name) = user {
             cmd.env("USER", user_name);
+        }
+        for key in env_remove {
+            cmd.env_remove(key);
         }
 
         let process = cmd.spawn().map_err(|e| format!("spawn vestad: {e}"))?;
@@ -435,7 +461,7 @@ fn cp_container_file(cname: &str, container_path: &str) -> Option<String> {
 
 /// Container is up (regardless of auth/readiness state).
 pub fn is_up(status: &str) -> bool {
-    matches!(status, "not_authenticated" | "starting" | "setting_up" | "alive" | "restarting")
+    matches!(status, "not_authenticated" | "unprovisioned" | "starting" | "setting_up" | "alive" | "restarting")
 }
 
 pub struct ReleasedVestad {
@@ -445,22 +471,7 @@ pub struct ReleasedVestad {
 }
 
 pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
-    let output = Command::new("curl")
-        .arg("-fsSL")
-        .args(CURL_RETRY_ARGS)
-        .args([
-            "-H",
-            "Accept: application/vnd.github+json",
-            "-H",
-            "User-Agent: vesta-tests",
-            "https://api.github.com/repos/elyxlz/vesta/releases/latest",
-        ])
-        .output()
-        .map_err(|e| format!("fetch latest release metadata: {e}"))?;
-    if !output.status.success() {
-        return Err("failed to fetch latest release metadata".into());
-    }
-    let body = String::from_utf8_lossy(&output.stdout);
+    let body = github_get("https://api.github.com/repos/elyxlz/vesta/releases/latest")?;
     let data: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("parse latest release metadata: {e}"))?;
     let tag = data
@@ -468,7 +479,64 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "latest release tag missing".to_string())?
         .to_string();
+    download_released_vestad(&tag)
+}
 
+/// Parse a `vX.Y.Z` (or `X.Y.Z`) release tag into numeric components for ordering.
+/// Returns `None` for tags that don't parse, so the upgrade test ignores any
+/// non-standard tag rather than mis-ordering it.
+pub fn parse_release_tag(tag: &str) -> Option<Vec<u64>> {
+    let parts: Option<Vec<u64>> = tag.trim_start_matches('v').split('.').map(|s| s.parse().ok()).collect();
+    parts.filter(|components| components.len() == 3)
+}
+
+/// The highest released tag strictly older than `current` (e.g. `0.1.159` -> `v0.1.158`).
+///
+/// Queries the published releases rather than decrementing the patch number, because the
+/// beta channel lets users skip versions — the version directly below `current` may never
+/// have been released. Returns `Ok(None)` when no older release exists (nothing to upgrade
+/// from). This is the version a fleet member actually runs before taking `current`.
+pub fn previous_released_tag(current: &str) -> Result<Option<String>, String> {
+    let current_parts = parse_release_tag(current).ok_or_else(|| format!("unparseable current version: {current}"))?;
+    let body = github_get("https://api.github.com/repos/elyxlz/vesta/releases?per_page=100")?;
+    let releases: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse releases list: {e}"))?;
+    let entries = releases.as_array().ok_or_else(|| "releases response was not a list".to_string())?;
+    let mut best: Option<(Vec<u64>, String)> = None;
+    for entry in entries {
+        let Some(tag) = entry.get("tag_name").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(parts) = parse_release_tag(tag) else {
+            continue;
+        };
+        if parts >= current_parts {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_parts, _)| parts > *best_parts) {
+            best = Some((parts, tag.to_string()));
+        }
+    }
+    Ok(best.map(|(_, tag)| tag))
+}
+
+fn github_get(url: &str) -> Result<String, String> {
+    let output = Command::new("curl")
+        .arg("-fsSL")
+        .args(CURL_RETRY_ARGS)
+        .args(["-H", "Accept: application/vnd.github+json", "-H", "User-Agent: vesta-tests", url])
+        .output()
+        .map_err(|e| format!("github GET {url}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("github GET {url} failed"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Download and extract the released `vestad` binary for a specific tag (e.g. `v0.1.158`).
+/// The extracted binary carries that release's embedded agent core, so running it produces
+/// an agent exactly as that version's fleet members have it.
+pub fn download_released_vestad(tag: &str) -> Result<ReleasedVestad, String> {
     let rust_target = match std::env::consts::ARCH {
         "x86_64" => "x86_64-unknown-linux-gnu",
         "aarch64" => "aarch64-unknown-linux-gnu",
@@ -512,7 +580,7 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
 
     Ok(ReleasedVestad {
         _tmpdir: tmpdir,
-        tag,
+        tag: tag.to_string(),
         bin_path,
     })
 }

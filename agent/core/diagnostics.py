@@ -8,7 +8,9 @@ import typing as tp
 from . import logger
 from . import models as vm
 
-_WATCHDOG_THRESHOLDS_S = (60, 120, 300)
+_QUIET_NOTE_INTERVAL_S = 20.0  # one liveness note per interval of nothing-visible
+_QUIET_ESCALATION_S = 300  # past this, dead air with no tool running is suspicious: warn + emit
+_THINKING_TICK_FRESH_S = 30.0  # a thinking_tokens tick this recent proves the model is reasoning
 _CONTEXT_USAGE_TIMEOUT_S = 10.0
 _CONTEXT_USAGE_WARN_PCT = 80.0
 
@@ -62,34 +64,56 @@ def make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
     return handler
 
 
-def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
-    """Returns None if we can't determine (no client, or session not yet launched)."""
-    if state.client is None:
-        return None
-    return state.client.is_alive()
+def note_thinking_tick(turn: "vm.TurnSignals", *, tokens: int) -> None:
+    """Record one thinking_tokens tick on the turn. The first tick of a turn logs "Thinking..."
+    immediately (the wait loop only wakes once per poll interval); later ticks just refresh the
+    counter and freshness timestamp that note_turn_liveness reads."""
+    if turn.thinking_tokens_at is None:
+        logger.client("Thinking...")
+    turn.thinking_tokens = tokens
+    turn.thinking_tokens_at = time.monotonic()
 
 
-async def sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
-    warned_at: set[int] = set()
-    while not stop.is_set():
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=15)
-            break
-        except TimeoutError:
-            pass
-        idle = sdk_idle_seconds(state)
-        for threshold in _WATCHDOG_THRESHOLDS_S:
-            if idle >= threshold and threshold not in warned_at:
-                warned_at.add(threshold)
-                alive = _check_sdk_subprocess_alive(state)
-                alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
-                diag = format_hang_diagnostics(state)
-                logger.warning(f"SDK silent for {threshold}s | {alive_str} | {diag}")
-                # One event per threshold crossing (warned_at gates re-emit), so a multi-minute
-                # hang reaches the observability surface without spamming the stream every poll.
-                state.event_bus.emit({"type": "error", "text": f"SDK silent for {threshold}s | {alive_str} | {diag}"})
-        if idle < _WATCHDOG_THRESHOLDS_S[0]:
-            warned_at.clear()
+def note_turn_liveness(state: vm.State, *, turn: "vm.TurnSignals") -> None:
+    """Log one liveness note per _QUIET_NOTE_INTERVAL_S while a turn produces nothing visible.
+
+    Called from converse's wait loop — the one place that waits on the model, so this cannot
+    silently stop running while turns still complete. The quiet clock is time since the last
+    *visible* output (query sent, text or thinking emitted), because the stream itself is rarely
+    silent: the CLI ticks a thinking_tokens counter throughout extended thinking (which is
+    exactly why the old idle-based watchdog task never fired in production). Buckets are
+    monotonic within a quiet stretch, so turn.quiet_noted_bucket rate-limits to one note per
+    interval; both it and the once-per-stretch escalation flag reset when output lands.
+
+    Specificity, best signal first: a tool in flight explains the quiet (its tool-call lines
+    already show liveness) — debug. A recently ticking thinking counter means the model is
+    demonstrably reasoning — calm INFO with the token count, never escalated. Otherwise the
+    stream is genuinely dead air; the first note past _QUIET_ESCALATION_S is a warning + error
+    event."""
+    quiet = time.monotonic() - turn.last_visible_at
+    bucket = int(quiet // _QUIET_NOTE_INTERVAL_S)
+    if bucket < 1:
+        turn.quiet_noted_bucket = 0
+        turn.quiet_escalated = False
+        return
+    if bucket <= turn.quiet_noted_bucket:
+        return
+    turn.quiet_noted_bucket = bucket
+    elapsed = int(bucket * _QUIET_NOTE_INTERVAL_S)
+    thinking_live = turn.thinking_tokens_at is not None and (time.monotonic() - turn.thinking_tokens_at) < _THINKING_TICK_FRESH_S
+    if state.active_tools:
+        logger.debug(f"No output for {elapsed}s (tool in flight) | {format_hang_diagnostics(state)}")
+    elif thinking_live:
+        logger.client(f"Thinking for {elapsed}s (~{turn.thinking_tokens:,} tokens so far)")
+    elif quiet >= _QUIET_ESCALATION_S and not turn.quiet_escalated:
+        turn.quiet_escalated = True
+        msg = f"No output and no stream activity for {elapsed}s | {format_hang_diagnostics(state)}"
+        logger.warning(msg)
+        # One event per quiet stretch, so a genuine stall reaches the observability surface
+        # without spamming the stream.
+        state.event_bus.emit({"type": "error", "text": msg})
+    else:
+        logger.client(f"Model quiet for {elapsed}s | {format_hang_diagnostics(state)}")
 
 
 async def log_context_usage(state: vm.State) -> None:
@@ -110,5 +134,8 @@ async def log_context_usage(state: vm.State) -> None:
         state.context_warning_active = over_threshold
     except TimeoutError:
         logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s, skipping")
-    except (OSError, RuntimeError, KeyError, TypeError):
-        pass
+    except Exception as e:
+        # Best-effort observability only. The official SDK's get_context_usage drives a control
+        # request that can raise ClaudeSDKError or a bare Exception on an error/timeout response;
+        # a context-usage probe must never escape and kill the message processor.
+        logger.warning(f"context-usage probe failed: {e}")

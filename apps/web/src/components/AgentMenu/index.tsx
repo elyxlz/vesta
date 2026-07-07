@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreVertical, SlidersHorizontal } from "lucide-react";
-import { SettingsDialog } from "@/components/Settings";
+import { MoreVertical } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -24,12 +23,11 @@ export function AgentMenu() {
   const { name, agent, isBusy, start, stop, restart, rebuild, backup } =
     useSelectedAgent();
   const { setDeleteDialogOpen, handleOpenAuth } = useModals();
-  const { showToolCalls, setShowToolCalls } = useChatContext();
+  const { showToolCalls, setShowToolCalls } = useAgentSocket();
   const gateway = useGateway();
   const appMode = useAppMode((s) => s.mode);
 
   const [open, setOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const isMobile = useIsMobile();
 
@@ -47,12 +45,18 @@ export function AgentMenu() {
     onToggle: () => void (isRunning ? stop() : start()),
     onLogs: () => navigate(`/agent/${encodeURIComponent(name)}/logs`),
     onToolCalls: () => setShowToolCalls((v) => !v),
-    onOpenSettings: () => setSettingsOpen(true),
+    onAppSettings: () => navigate("/settings"),
+    onAgentSettings: () =>
+      navigate(`/agent/${encodeURIComponent(name)}/settings`),
     onRestart: () => void restart(),
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
-    onAuthenticate: () => handleOpenAuth(),
-    isAuthenticated: Boolean(agent && agent.status !== "not_authenticated"),
+    onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
+    isAuthenticated: Boolean(
+      agent &&
+      agent.status !== "not_authenticated" &&
+      agent.status !== "unprovisioned",
+    ),
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };
@@ -86,17 +90,6 @@ export function AgentMenu() {
     }
   }, [debugJson]);
 
-  const agentSettingsSlot = (
-    <Button
-      variant="default"
-      className="w-full justify-start"
-      onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}
-    >
-      <SlidersHorizontal data-icon="inline-start" />
-      {name}'s settings
-    </Button>
-  );
-
   return (
     <>
       {isMobile ? (
@@ -114,11 +107,6 @@ export function AgentMenu() {
           trigger={trigger}
         />
       )}
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        agentSettingsSlot={agentSettingsSlot}
-      />
       <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
         <DialogContent
           className="max-w-lg max-h-[80vh] overflow-auto"

@@ -6,9 +6,10 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useOrbState } from "@/hooks/use-orb-state";
 import { useSwipeNavigation } from "@/hooks/use-swipe-navigation";
 import { clearFaviconOrbState, setFaviconForOrbState } from "@/lib/favicon";
+import { setLastAgent } from "@/lib/last-agent";
 import { resetTabBaseTitle, setTabBaseTitle } from "@/lib/tab-title";
 import { useGateway } from "@/providers/GatewayProvider";
-import { ChatProvider } from "@/providers/ChatProvider";
+import { AgentSocketProvider } from "@/providers/AgentSocketProvider";
 import { ModalsProvider } from "@/providers/ModalsProvider";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 import { VoiceStoreEffects } from "@/providers/VoiceProvider";
@@ -26,6 +27,10 @@ export function AgentLayout() {
     setTabBaseTitle(routeName);
     return () => resetTabBaseTitle();
   }, [routeName]);
+
+  useEffect(() => {
+    if (agent) setLastAgent(agent.name);
+  }, [agent]);
 
   useEffect(() => {
     setFaviconForOrbState(orbState);
@@ -55,7 +60,7 @@ function AgentLayoutInner() {
 
   return (
     <VoiceStoreEffects>
-      <ChatProvider>
+      <AgentSocketProvider>
         <ModalsProvider>
           <AgentNavbar
             chatCollapsed={chatCollapsed}
@@ -76,7 +81,7 @@ function AgentLayoutInner() {
           )}
           <AgentIslandModals />
         </ModalsProvider>
-      </ChatProvider>
+      </AgentSocketProvider>
     </VoiceStoreEffects>
   );
 }

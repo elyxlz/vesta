@@ -1,52 +1,37 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { FieldDescription } from "@/components/ui/field";
+import { useState, type ReactNode } from "react";
+import type { ContextPreset } from "@/api/manifest";
+import { ProviderStep } from "../ProviderStep";
 
-interface ContextPreset {
-  tokens: number;
-  label: string;
-  note: string;
-}
-
-/// Context-window presets. 1M is the default (largest); smaller windows compact
-/// sooner and make prompt-cache reads cheaper.
-const CONTEXT_PRESETS: ContextPreset[] = [
-  { tokens: 1_000_000, label: "1M", note: "most context (default)" },
-  { tokens: 500_000, label: "500K", note: "balanced" },
-  { tokens: 200_000, label: "200K", note: "cheapest, compacts soonest" },
-];
-
+// Presets + the default come from the manifest (GET /manifest), passed in by the parent,
+// so this step holds no copy of either.
 export function ContextStep({
+  presets,
   initial,
   onSubmit,
   submitLabel = "continue",
+  logo,
+  onCancel,
 }: {
-  initial?: number;
+  presets: ContextPreset[];
+  initial: number;
   onSubmit: (tokens: number) => void;
   submitLabel?: string;
+  logo?: ReactNode;
+  onCancel?: () => void;
 }) {
-  const [selected, setSelected] = useState<number>(
-    initial ?? CONTEXT_PRESETS[0].tokens,
-  );
+  const [selected, setSelected] = useState<number>(initial);
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(selected);
-      }}
-      className="flex w-full flex-col items-center gap-4"
+    <ProviderStep
+      logo={logo}
+      title="context window"
+      subtitle="how much vesta keeps in mind before compacting. longer means vesta is less likely to forget things during the day, but uses more of your usage; shorter is cheaper and compacts sooner."
+      submitLabel={submitLabel}
+      onSubmit={() => onSubmit(selected)}
+      onCancel={onCancel}
     >
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">context window</h2>
-        <FieldDescription>
-          how much the agent keeps in context before it compacts. larger holds
-          more at once; smaller is cheaper and compacts sooner.
-        </FieldDescription>
-      </div>
-
       <div className="flex w-full flex-col gap-1.5">
-        {CONTEXT_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <button
             key={preset.tokens}
             type="button"
@@ -64,10 +49,6 @@ export function ContextStep({
           </button>
         ))}
       </div>
-
-      <Button type="submit" className="w-full">
-        {submitLabel}
-      </Button>
-    </form>
+    </ProviderStep>
   );
 }

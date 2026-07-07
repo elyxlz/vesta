@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/stores/use-voice";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
-import { ChatMessageArea } from "./ChatMessageArea";
+import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 
 interface ChatProps {
@@ -26,7 +26,9 @@ interface ChatProps {
 }
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
-  const { name } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
+  const notAuthenticated =
+    agent?.status === "not_authenticated" || agent?.status === "unprovisioned";
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
@@ -45,12 +47,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     messages,
     isTyping,
     connected,
+    historyLoaded,
     hasMore,
     loadingMore,
     loadMore,
     send,
     showToolCalls,
-  } = useChatContext();
+  } = useAgentSocket();
 
   const [input, setInput] = useState("");
 
@@ -58,33 +61,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     registerChatCallbacks(send, setInput);
   }, [registerChatCallbacks, send]);
 
-  const [wasConnected, setWasConnected] = useState(false);
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<ChatScrollHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomVisibleRef = useRef(true);
-  const [hasNewMessage, setHasNewMessage] = useState(false);
   useChatKeyboardFocus(textareaRef);
-
-  useEffect(() => {
-    if (connected) setWasConnected(true);
-  }, [connected]);
-
-  useEffect(() => {
-    const el = bottomRef.current;
-    const root = scrollRef.current;
-    if (!el || !root) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        bottomVisibleRef.current = entry.isIntersecting;
-        if (entry.isIntersecting) setHasNewMessage(false);
-      },
-      { root, threshold: 0 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   const chatMessages = useMemo(
     () =>
@@ -92,7 +71,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         (m) =>
           m.type === "user" ||
           m.type === "chat" ||
-          m.type === "error" ||
           (showToolCalls &&
             m.type === "tool_start" &&
             !(m.tool === "Bash" && m.input.includes("app-chat"))),
@@ -100,41 +78,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     [messages, showToolCalls],
   );
 
-  const lastMsgRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const latest = chatMessages[chatMessages.length - 1];
-    const latestKey = latest ? `${latest.ts}-${latest.type}` : null;
-    const prev = lastMsgRef.current;
-    lastMsgRef.current = latestKey;
-
-    if (prev && latestKey && latestKey !== prev && !bottomVisibleRef.current) {
-      if (latest.type !== "user") setHasNewMessage(true);
-    }
-  }, [chatMessages]);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !hasMore || loadingMore) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      loadMore();
-    }
-  }, [chatMessages, hasMore, loadingMore, loadMore]);
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const distanceFromTop = el.scrollHeight - el.clientHeight + el.scrollTop;
-    if (distanceFromTop < 100 && hasMore && !loadingMore) {
-      loadMore();
-    }
-  }, [hasMore, loadingMore, loadMore]);
-
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: 0, behavior: "smooth" });
+    scrollRef.current?.scrollToBottom();
   }, []);
 
   const handleSend = () => {
@@ -159,20 +104,15 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
   };
 
   return (
-    <div
-      className={cn(
-        "flex flex-col h-full min-h-0",
-        fullscreen && !isMobile && "drop-shadow-md",
-      )}
-    >
+    <div className="flex h-full min-h-0 flex-col">
       <Card
         className={cn(
-          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
-          fullscreen && "shadow-none ring-0",
+          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
+          fullscreen && "ring-0",
           isMobile && "bg-transparent overflow-visible",
         )}
         style={
@@ -191,29 +131,26 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <ChatMessageArea
           scrollRef={scrollRef}
-          bottomRef={bottomRef}
-          onScroll={handleScroll}
+          loadMore={loadMore}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
           hasMore={hasMore}
           chatMessages={chatMessages}
           connected={connected}
+          historyLoaded={historyLoaded}
           agentName={name}
+          notAuthenticated={notAuthenticated}
           isTyping={isTyping}
+          isMobile={isMobile}
         />
 
         <div className="relative">
-          <BottomBanner
-            hasNewMessage={hasNewMessage}
-            onScrollToBottom={scrollToBottom}
-            wasConnected={wasConnected}
-            connected={connected}
-            error={voiceError}
-          />
+          <BottomBanner error={voiceError} />
           <ChatComposer
             fullscreen={fullscreen}
             connected={connected}
+            notAuthenticated={notAuthenticated}
             sttAvailable={sttAvailable}
             isRecording={isRecording}
             voiceAutoSend={voiceAutoSend}

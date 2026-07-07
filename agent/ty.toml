@@ -1,0 +1,5 @@
+[src]
+include = ["core", "tests"]
+
+[environment]
+extra-paths = ["skills", "core/skills/app-chat/cli/src"]

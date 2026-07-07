@@ -11,6 +11,8 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
+from app_chat_cli.bubblelint import bubble_lint_reason
+
 
 def _default_agent_url() -> str:
     port = os.environ.get("WS_PORT")
@@ -22,6 +24,13 @@ def _default_agent_url() -> str:
 
 def cmd_send(args: argparse.Namespace) -> None:
     message = args.message
+
+    if not getattr(args, "longform", False):
+        reason = bubble_lint_reason(message)
+        if reason:
+            print(json.dumps({"error": reason}))
+            sys.exit(1)
+
     sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
 
     if not sock_path.exists():
@@ -97,15 +106,19 @@ def cmd_history(args: argparse.Namespace) -> None:
     base_url = args.url or _default_agent_url()
 
     if query:
+        # Search is /history with ?q= (relevance-ranked matching events); project to the same
+        # {timestamp, role, content} shape the recent path returns.
         params: dict[str, str] = {"q": query, "limit": str(limit)}
-        data = _api_get(base_url, "/search", params)
+        data = _api_get(base_url, "/history", params)
         if "error" in data:
             print(json.dumps(data))
             sys.exit(1)
-        if "results" not in data:
-            print(json.dumps({"error": "unexpected response from /search"}))
+        if "events" not in data:
+            print(json.dumps({"error": "unexpected response from /history"}))
             sys.exit(1)
-        print(json.dumps(data["results"], indent=2))
+        events = tp.cast(list[dict[str, str]], data["events"])
+        results = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events]
+        print(json.dumps(results, indent=2))
     else:
         result = _recent_messages(base_url, limit)
         if isinstance(result, dict):

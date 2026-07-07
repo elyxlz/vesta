@@ -51,8 +51,6 @@ _POST_STOP_DRAIN_S = 2.5
 _COMPACT_START_TIMEOUT_S = 60.0
 _COMPACT_TIMEOUT_S = 900.0
 _ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
-_DEFAULT_MAX_TOKENS = 200_000
-_BETA_1M = "context-1m-2025-08-07"
 
 
 def _preseed_config(cwd: str) -> None:
@@ -115,8 +113,8 @@ def _claude_args(
         args += ["--mcp-config", str(mcp_file)]
     for d in options.add_dirs:
         args += ["--add-dir", d]
-    if _BETA_1M in options.betas:
-        args += ["--betas", _BETA_1M]
+    for beta in options.betas:
+        args += ["--betas", beta]
     return args
 
 
@@ -141,6 +139,7 @@ class ClaudeSDKClient:
         self._turn_index = 0
         self._stops_received = 0
         self._turn_started = 0.0
+        self._interrupt_lock = asyncio.Lock()
         self._last_usage: dict[str, tp.Any] | None = None
         self._exit_code: int | None = None
         self._stderr_read = 0
@@ -218,11 +217,15 @@ class ClaudeSDKClient:
     async def query(self, prompt: str) -> None:
         if self._transcript_path is None:
             self._transcript_path = self._find_transcript()
-        if self._transcript_path is not None and self._transcript_path.exists():
-            self._offset = self._transcript_path.stat().st_size
-        else:
-            self._offset = 0
+        self._offset = self._transcript_path.stat().st_size if self._transcript_path is not None and self._transcript_path.exists() else 0
         self._turn_index += 1
+        # Clamp stops_received so it cannot pre-satisfy the new turn's threshold.
+        # interrupt() credits stops_received = turn_index, but a late Stop hook can
+        # still arrive in the 50-200ms window and push it one higher. Clamping here
+        # restores the invariant (stops_received < turn_index) before receive_response()
+        # runs, so the new turn always waits for its own Stop rather than being satisfied
+        # instantly by an over-credited count from the previous turn.
+        self._stops_received = min(self._stops_received, self._turn_index - 1)
         self._turn_started = time.monotonic()
         await tmux.submit_text(self._tmux_socket, self._tmux_session, prompt)
 
@@ -243,38 +246,49 @@ class ClaudeSDKClient:
             await asyncio.sleep(_POLL_S)
 
     async def interrupt(self) -> None:
-        # Skip if the current turn already completed: at idle, Escapes don't interrupt
-        # anything and a double-Escape opens the TUI's rewind dialog instead.
-        if self._stops_received >= self._turn_index:
-            return
-        # A single ESC byte never registers: the TUI's escape-sequence parser buffers it
-        # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
-        # where a lone Escape let generation run to completion). Sending Escape twice
-        # flushes the first as a real Escape keypress and reliably interrupts.
-        await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
-        # An interrupted turn never fires its Stop hook (verified: no late Stop arrives
-        # either), so account for the abandoned turn here. Without this, every turn after
-        # an interrupt waits for a Stop count that can never be reached and hangs.
-        self._stops_received = max(self._stops_received, self._turn_index)
+        # The lock serialises concurrent callers (monitor-loop vs processor) so the guard
+        # and credit are atomic: a second caller sees the updated stops_received after the
+        # first credits, rather than both passing the guard and sending four Escapes.
+        async with self._interrupt_lock:
+            # Skip if the current turn already completed: at idle, Escapes don't interrupt
+            # anything and a double-Escape opens the TUI's rewind dialog instead.
+            if self._stops_received >= self._turn_index:
+                return
+            # A single ESC byte never registers: the TUI's escape-sequence parser buffers it
+            # waiting for a follow-up byte that never comes (verified against claude v2.1.159,
+            # where a lone Escape let generation run to completion). Sending Escape twice
+            # flushes the first as a real Escape keypress and reliably interrupts.
+            try:
+                await tmux.send_double_escape(self._tmux_socket, self._tmux_session)
+            finally:
+                # Credit in finally so a cancelled send_double_escape still accounts for the
+                # abandoned turn and doesn't wedge receive_response until response_timeout.
+                # An interrupted turn never fires its Stop hook, so account for the abandoned
+                # turn here. Without this, every turn after an interrupt waits for a Stop
+                # count that can never be reached and hangs.
+                self._stops_received = max(self._stops_received, self._turn_index)
 
     async def get_context_usage(self) -> dict[str, tp.Any]:
         usage = self._last_usage or {}
         keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
         total = sum(usage[k] for k in keys if k in usage and isinstance(usage[k], int))
-        configured = self._options.max_context_tokens
-        if configured:
-            # The user pinned a window; report usage against exactly that.
-            max_tokens = configured
-        else:
-            # Don't assume the 1M beta took effect (it is silently ignored on some auth modes).
-            # Stay on the conservative 200k ceiling until usage actually exceeds it — which can
-            # only happen if the larger window is really active — so the overflow warning in
-            # diagnostics.log_context_usage still fires near the real limit instead of never.
-            max_tokens = _DEFAULT_MAX_TOKENS
-            if _BETA_1M in self._options.betas and total > _DEFAULT_MAX_TOKENS:
-                max_tokens = 1_000_000
+        # The caller supplies the one window to report against (no model constants here).
+        max_tokens = self._options.context_window or 0
         percentage = (total / max_tokens * 100) if max_tokens else 0.0
         return {"percentage": percentage, "totalTokens": total, "maxTokens": max_tokens}
+
+    async def snapshot_pane(self) -> str | None:
+        """Raw text of the live claude TUI pane, or None if the session isn't running.
+
+        The silence watchdog uses this to surface what a wedged TUI is actually showing
+        (a frozen prompt, an unsubmitted paste, a modal) instead of only reporting silence.
+        """
+        if self._monitor_task is None or self._exit_code is not None:
+            return None
+        try:
+            return await tmux.capture_pane(self._tmux_socket, self._tmux_session)
+        except (OSError, RuntimeError):
+            return None
 
     async def compact(self, instructions: str = "") -> None:
         """Compact the conversation in place via `/compact` and wait for it to finish.
@@ -319,7 +333,10 @@ class ClaudeSDKClient:
             self._ready.set()
 
         async def on_stop(payload: dict[str, tp.Any]) -> None:
-            self._stops_received += 1
+            # Clamp to turn_index: interrupt() already credits stops_received up to turn_index
+            # when it fires, so a late Stop that arrives in the 50-200ms window after interrupt()
+            # must not increment past the current turn's threshold and pre-satisfy the next turn.
+            self._stops_received = min(self._stops_received + 1, self._turn_index)
 
         async def on_precompact(payload: dict[str, tp.Any]) -> None:
             self._compaction_started.set()
@@ -329,9 +346,7 @@ class ClaudeSDKClient:
         self._bridge.on("PreCompact", on_precompact)
 
     def _hook_events(self) -> list[str]:
-        events = {str(e) for e in self._options.hooks}
-        events.update(_ALWAYS_EVENTS)
-        return sorted(events)
+        return sorted({str(e) for e in self._options.hooks}.union(_ALWAYS_EVENTS))
 
     def _write_config_files(self) -> None:
         sysprompt = self._options.system_prompt or ""

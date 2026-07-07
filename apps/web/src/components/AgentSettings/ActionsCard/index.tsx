@@ -1,8 +1,12 @@
 import { useNavigate } from "react-router-dom";
+import { KeyRound } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AgentActions } from "@/components/AgentMenu/AgentActions";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 export function ActionsCard() {
@@ -18,7 +22,7 @@ export function ActionsCard() {
     backup,
   } = useSelectedAgent();
   const { handleOpenAuth, setDeleteDialogOpen } = useModals();
-  const { showToolCalls, setShowToolCalls } = useChatContext();
+  const { showToolCalls, setShowToolCalls } = useAgentSocket();
 
   const isRunning =
     agent?.status !== "stopped" &&
@@ -26,12 +30,33 @@ export function ActionsCard() {
     agent?.status !== "not_found";
   const showAliveActions = agent?.status === "alive";
   const isAuthenticated = Boolean(
-    agent && agent.status !== "not_authenticated",
+    agent &&
+    agent.status !== "not_authenticated" &&
+    agent.status !== "unprovisioned",
   );
+
+  // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
+  // action: lift "sign in" to a primary button at the top and drop the routine
+  // auth row from the list below. Desktop keeps it as a normal list row. Auth is
+  // only offered when the gateway is reachable — signing in is moot while offline.
+  const isMobile = useIsMobile();
+  const { reachable } = useGateway();
+  const showTopSignIn = isMobile && !isAuthenticated && reachable;
 
   return (
     <Card size="sm">
       <CardContent>
+        {showTopSignIn && (
+          <Button
+            variant="default"
+            size="lg"
+            className="mb-4 w-full"
+            onClick={() => void handleOpenAuth()}
+          >
+            <KeyRound data-icon="inline-start" />
+            sign in
+          </Button>
+        )}
         <AgentActions
           isRunning={isRunning}
           showAliveActions={showAliveActions}
@@ -45,8 +70,6 @@ export function ActionsCard() {
           onRestart={() => void restart()}
           onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
-          onAuthenticate={() => void handleOpenAuth()}
-          isAuthenticated={isAuthenticated}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

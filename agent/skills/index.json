@@ -4,8 +4,16 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "workspace-sync",
+    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+  },
+  {
     "name": "agentmail",
-    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently."
+    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent, free tier). Use for \"email\", \"send email\", or \"agent inbox\" without a custom domain; inbound mail arrives as a notification."
+  },
+  {
+    "name": "birth",
+    "description": "Vesta's first-wake setup and onboarding, run once on a brand-new agent's very first boot. Come online, meet the user, move to their preferred channel, connect their email, and set up the highest-leverage skills. Invoked by the first-wake boot turn; not for later boots or restarts."
   },
   {
     "name": "browser",
@@ -14,6 +22,10 @@
   {
     "name": "claude-code",
     "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
+  },
+  {
+    "name": "contacts",
+    "description": "The people Vesta knows, a living address book and CRM. Who they are, how they communicate, what you know about them, and the history. Use whenever a person comes up, someone new appears, or you learn something about anyone in the user's world. Read a contact before reaching out to them; update it after."
   },
   {
     "name": "dashboard",
@@ -25,11 +37,15 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email via IMAP/SMTP for any provider (Gmail, Outlook/Hotmail/Microsoft personal, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account. Use to read an inbox, send/reply/forward mail, save drafts, manage messages (read/flag/answered/draft/categories, move/archive/delete), create/rename/delete folders, check folder counts, handle attachments, or get paged on new mail in real time (IMAP IDLE) from chosen folders. OAuth2 where supported, app-password fallback otherwise. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications."
+  },
+  {
+    "name": "enable-banking",
+    "description": "Personal bank spending, transactions, balances via Enable Banking open banking (EU/EEA only, no UK)."
   },
   {
     "name": "essay-iter",
-    "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
+    "description": "Iterate academic writing through a four-reviewer loop: rubric alignment, in-distribution fit, citation accuracy, AI-text detection. For coursework essays, dissertations, journal submissions, or conference papers."
   },
   {
     "name": "exa",
@@ -38,10 +54,6 @@
   {
     "name": "file-host",
     "description": "Host files over HTTP so they can be shared with the user or others by link (PDFs, images, exports, a live QR for device linking). Serves a directory; pair with a public vestad service for a shareable URL."
-  },
-  {
-    "name": "finance",
-    "description": "Personal finance, spending, transactions, bank balances, budgets via Enable Banking."
   },
   {
     "name": "flights",
@@ -56,7 +68,7 @@
     "description": "Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations."
   },
   {
-    "name": "icloud",
+    "name": "icloud-photos",
     "description": "iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone."
   },
   {
@@ -64,16 +76,20 @@
     "description": "Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage."
   },
   {
-    "name": "media-server",
-    "description": "This skill should be used when the user asks about their home media server: searching trackers, adding torrents, monitoring downloads, or browsing the media library."
+    "name": "microsoft",
+    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, and new-mail paging. Requires daemon."
   },
   {
-    "name": "microsoft",
-    "description": "Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon."
+    "name": "nap",
+    "description": "Take a nap; compact the conversation in place to free up context. Use when context usage is getting high (nap deliberately instead of letting autocompact fire blindly) or when the user tells you to take a nap."
+  },
+  {
+    "name": "notifications",
+    "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications."
   },
   {
     "name": "onboard",
-    "description": "Use when someone who doesn't have their own vesta asks what this is, how to get one, or hints they want in. Vesta is INVITE-ONLY: you can't buy it from a website, you only get in through someone who already has one. So you don't sell eagerly; you're a discerning gatekeeper to an exclusive club. Make them want it and show they're a fit, THEN (if they earn it) set them up end-to-end IN CHAT: verify their email by a code they read back, confirm they have a paid Claude account, agree a price, send a private Stripe link, then once they've paid create their agent and connect their Claude (an auth link + a code they paste back), and only then hand them the app to talk to it. Never asks for card details. Do NOT use on the owner (they already have one)."
+    "description": "Use when someone who doesn't have their own vesta asks what vesta is, how to get one, or hints they want in. Vesta is invite-only: you gatekeep and build desire through scarcity, draw out what they want, then sell vesta as indispensable to their goals and set them up end-to-end in chat. Not for the owner, who already has one."
   },
   {
     "name": "onedrive",
@@ -92,8 +108,24 @@
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
+    "name": "recall",
+    "description": "Recall past conversations from long-term memory. Use to look up specific past discussions, decisions, names, or facts that are no longer in the current context, across ALL sessions and days (not just today). Full-text search over the whole conversation history."
+  },
+  {
+    "name": "reduce-loc",
+    "description": "Shrink a codebase's line count without changing behavior; dead code, dedup, then architectural simplification. Use when asked to reduce LOC, simplify, or trim a repo."
+  },
+  {
     "name": "restart",
-    "description": "What to do after a container restart. Holds the per-skill service startup commands."
+    "description": "What to do after a container restart. Holds the per-skill daemon startup commands."
+  },
+  {
+    "name": "samsung-tv",
+    "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
+  },
+  {
+    "name": "service",
+    "description": "Register a background daemon with vestad to get a port, and keep it alive across restarts. Use when a skill runs a long-lived serve process (dashboard, tasks, voice, webhook receivers)."
   },
   {
     "name": "skills-registry",
@@ -121,23 +153,23 @@
   },
   {
     "name": "timezone",
-    "description": "Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when `$TZ` is not set yet."
+    "description": "Set or change the agent's IANA timezone. Use whenever the user relocates, moves, travels, or goes on holiday somewhere on a different timezone, or on first setup when the timezone is still the default `UTC`."
   },
   {
-    "name": "tv",
-    "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
+    "name": "torrents",
+    "description": "This skill should be used when the user asks about their torrent box: searching trackers, adding torrents to qBittorrent, monitoring downloads, or browsing the media library on the server."
   },
   {
     "name": "upstream-pr",
     "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
   },
   {
-    "name": "upstream-sync",
-    "description": "Sync local agent code with upstream vesta: updates, merges, conflicts."
+    "name": "vesta-cloud-account",
+    "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
   },
   {
     "name": "video-use",
-    "description": "Use for \"edit video\", \"video editing\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", \"launch video\", or whenever the user wants footage turned into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor that handles filler removal, auto color grading, 30ms audio fades, burned subtitles, and Manim/Remotion/PIL overlays."
+    "description": "Use for \"edit video\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", or turning raw footage into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor."
   },
   {
     "name": "voice",

@@ -165,16 +165,6 @@ pub fn exec_journal(lines: usize, follow: bool) -> ! {
     process::exit(1);
 }
 
-pub fn spawn_journal_stream(lines: usize, follow: bool) -> Result<tokio::process::Child, String> {
-    tokio::process::Command::new("journalctl")
-        .args(journal_args(lines, follow))
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("failed to spawn journalctl: {}", e))
-}
-
 pub fn main_pid() -> Option<u32> {
     let output = Command::new("systemctl")
         .args(["--user", "show", SERVICE_NAME, "--property=MainPID", "--value"])
@@ -213,5 +203,23 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
                 detail
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{journal_args, SERVICE_NAME};
+
+    #[test]
+    fn journal_args_scope_the_vestad_unit_and_forward_follow() {
+        let args = journal_args(500, true);
+        assert!(args.iter().any(|arg| arg == SERVICE_NAME), "must scope to the vestad unit");
+        assert!(args.iter().any(|arg| arg == "-f"), "follow flag must be forwarded");
+    }
+
+    #[test]
+    fn journal_args_omit_follow_when_not_following() {
+        let args = journal_args(100, false);
+        assert!(!args.iter().any(|arg| arg == "-f"), "no follow flag without follow");
     }
 }

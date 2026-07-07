@@ -16,7 +16,7 @@ export async function apiFetch(
   // local clock thinks it is still valid, e.g. server-side rotation/revocation)
   if (resp.status === 401) {
     const refreshed = await ensureFreshToken(true);
-    if (refreshed) {
+    if (refreshed === "ok") {
       resp = await fetch(apiUrl(path), {
         ...init,
         headers: { ...authHeaders(), ...init?.headers },
@@ -40,4 +40,14 @@ export async function apiFetch(
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await apiFetch(path, init);
   return resp.json();
+}
+
+// The one place that owns the JSON request shape (method + Content-Type + serialized body),
+// so individual endpoints don't each re-spell the same header and JSON.stringify.
+export function jsonInit(method: string, body: unknown): RequestInit {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
 }

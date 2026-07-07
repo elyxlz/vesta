@@ -27,4 +27,15 @@
 6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
    screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
+   screen -dmS telegram-watchdog bash ~/agent/skills/telegram/telegram-watchdog.sh
    ```
+   The watchdog (`telegram-watchdog.sh`) runs in its own screen session and restarts the daemon
+   if it dies, independent of the agent loop, so the channel self-heals even while the agent is
+   busy or mid-restart. It is rate-limited (backs off after repeated restarts) and drops a
+   notification when it acts. Especially important when Telegram is the primary/only channel.
+
+   **Deploying a new binary:** quit the watchdog FIRST, then the daemon, then swap the binary and
+   restart both (`screen -S telegram-watchdog -X quit; screen -S telegram -X quit; ...build...;
+   screen -dmS telegram ...; screen -dmS telegram-watchdog ...`). If you restart the daemon while
+   the watchdog is live, the watchdog races you and you end up with two daemons (two pollers →
+   Telegram 409 Conflict).

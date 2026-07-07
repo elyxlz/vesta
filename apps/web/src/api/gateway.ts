@@ -1,5 +1,7 @@
 import { getConnection } from "@/lib/connection";
-import type { LogEvent } from "@/lib/types";
+import type { LogEvent, ReleaseChannel } from "@/lib/types";
+import { apiJson } from "./client";
+import { openLogStream } from "./log-stream";
 
 let gatewayLogSource: EventSource | null = null;
 
@@ -18,32 +20,11 @@ export function streamGatewayLogs(
     if (follow) params.set("follow", "true");
     const url = `${conn.url}/gateway/logs?${params.toString()}`;
 
-    if (gatewayLogSource) gatewayLogSource.close();
-    const es = new EventSource(url);
-    gatewayLogSource = es;
-
-    es.onmessage = (e) => {
-      const text = e.data;
-      if (text.startsWith("error:")) {
-        onEvent({ kind: "Error", message: text });
-      } else {
-        onEvent({ kind: "Line", text });
-      }
-    };
-
-    es.addEventListener("gateway_stopped", () => {
-      onEvent({ kind: "End" });
-      es.close();
+    gatewayLogSource?.close();
+    gatewayLogSource = openLogStream(url, "gateway_stopped", onEvent, () => {
       gatewayLogSource = null;
       resolve();
     });
-
-    es.onerror = () => {
-      onEvent({ kind: "Error", message: "log stream disconnected" });
-      es.close();
-      gatewayLogSource = null;
-      resolve();
-    };
   });
 }
 
@@ -52,4 +33,41 @@ export function stopGatewayLogs(): void {
     gatewayLogSource.close();
     gatewayLogSource = null;
   }
+}
+
+export interface GatewayLan {
+  exposed: boolean;
+  url: string | null;
+}
+
+export interface GatewayInfo {
+  lan: GatewayLan;
+  tunnel_url: string | null;
+  port: number;
+}
+
+export interface GatewayRetention {
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+
+export interface GatewayAutoBackup {
+  enabled: boolean;
+  hour: number;
+  retention: GatewayRetention;
+}
+
+export interface GatewaySettings {
+  auto_update: boolean;
+  channel: ReleaseChannel;
+  auto_backup: GatewayAutoBackup;
+}
+
+export async function fetchGatewayInfo(): Promise<GatewayInfo> {
+  return apiJson<GatewayInfo>("/gateway/info");
+}
+
+export async function fetchGatewaySettings(): Promise<GatewaySettings> {
+  return apiJson<GatewaySettings>("/gateway/settings");
 }

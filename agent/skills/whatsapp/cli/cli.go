@@ -19,18 +19,26 @@ import (
 // global flags that must be read before command dispatch (the per-command FlagSet
 // only sees the remaining args after the subcommand).
 
-func extractFlag(name string) string {
+// lookupFlag returns the value of --name (as "--name value" or "--name=value")
+// and whether the flag was present, so callers can distinguish an absent flag
+// from one set to the empty string.
+func lookupFlag(name string) (string, bool) {
 	flag := "--" + name
 	prefix := flag + "="
 	for i, arg := range os.Args {
 		if arg == flag && i+1 < len(os.Args) {
-			return os.Args[i+1]
+			return os.Args[i+1], true
 		}
 		if strings.HasPrefix(arg, prefix) {
-			return strings.TrimPrefix(arg, prefix)
+			return strings.TrimPrefix(arg, prefix), true
 		}
 	}
-	return ""
+	return "", false
+}
+
+func extractFlag(name string) string {
+	val, _ := lookupFlag(name)
+	return val
 }
 
 func extractInstance() string         { return extractFlag("instance") }
@@ -68,66 +76,18 @@ func extractSkipSenders() map[string]bool {
 	return result
 }
 
-// extractInterruptSenders parses --interrupt-senders into an allowlist of phones
-// that should interrupt the agent. The returned `explicit` flag is true whenever
-// the flag was provided, so callers can distinguish "no flag → leave interrupt
-// field absent and let the agent's default apply" from "flag present → write an
-// explicit interrupt boolean per notification". A literal value of "none"
-// (case-insensitive) yields an empty allowlist with noInterrupt=true, meaning
-// no sender should interrupt.
-func extractInterruptSenders() (allowlist map[string]bool, explicit bool, noInterrupt bool) {
-	allowlist = make(map[string]bool)
-	val := ""
-	found := false
-	flagName := "--interrupt-senders"
-	prefix := flagName + "="
-	for i, arg := range os.Args {
-		if arg == flagName && i+1 < len(os.Args) {
-			val = os.Args[i+1]
-			found = true
-			break
-		}
-		if strings.HasPrefix(arg, prefix) {
-			val = strings.TrimPrefix(arg, prefix)
-			found = true
-			break
-		}
+// stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
+// directory for the default instance, a named subdirectory otherwise).
+func stateDataDir() string {
+	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
+	if instance := extractInstance(); instance != "" {
+		return filepath.Join(base, instance)
 	}
-	if !found {
-		return allowlist, false, false
-	}
-	explicit = true
-	if strings.EqualFold(strings.TrimSpace(val), "none") {
-		noInterrupt = true
-		return allowlist, explicit, noInterrupt
-	}
-	for _, phone := range strings.Split(val, ",") {
-		phone = strings.TrimSpace(phone)
-		if phone != "" {
-			allowlist[phone] = true
-		}
-	}
-	return allowlist, explicit, noInterrupt
-}
-
-func parseStateDir() (dataDir, logDir string) {
-	instance := extractInstance()
-	if instance != "" {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance)
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "logs")
-	} else {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp")
-		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", "logs")
-	}
-	return
+	return base
 }
 
 func getSocketPath() string {
-	instance := extractInstance()
-	if instance != "" {
-		return filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "whatsapp.sock")
-	}
-	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
+	return filepath.Join(stateDataDir(), "whatsapp.sock")
 }
 
 func successResult(success bool, msg string) map[string]any {
@@ -176,7 +136,7 @@ func readAuthStatus(dataDir string) map[string]string {
 }
 
 func runAuthenticate() {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 	var err error
 	dataDir, err = resolveDir(dataDir)
 	if err != nil {
@@ -187,7 +147,7 @@ func runAuthenticate() {
 }
 
 func runServe(logger waLog.Logger) {
-	dataDir, _ := parseStateDir()
+	dataDir := stateDataDir()
 
 	notifDir := extractNotificationsDir()
 	noNotify := isNoNotifications()
@@ -210,8 +170,7 @@ func runServe(logger waLog.Logger) {
 		}
 	}
 
-	interruptAllow, interruptExplicit, noInterrupt := extractInterruptSenders()
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), interruptAllow, interruptExplicit, noInterrupt, logger)
+	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -280,11 +239,11 @@ func stripGlobalFlags(args []string) []string {
 			skip = false
 			continue
 		}
-		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" || arg == "--interrupt-senders" {
+		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || arg == "--no-notifications" || strings.HasPrefix(arg, "--skip-senders=") || strings.HasPrefix(arg, "--interrupt-senders=") {
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || arg == "--no-notifications" || strings.HasPrefix(arg, "--skip-senders=") {
 			continue
 		}
 		filtered = append(filtered, arg)
@@ -303,79 +262,71 @@ func runOneShot(command string) {
 	os.Exit(exitCode)
 }
 
-// writeCommands lists commands that are blocked in read-only mode.
-var writeCommands = map[string]bool{
-	"send-message": true, "send-file": true, "send-reaction": true,
-	"send-audio": true, "add-contact": true, "remove-contact": true,
-	"leave-group": true, "create-group": true, "rename-group": true,
-	"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
-	"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
-	"delete-chat": true, "clear-all-chats": true,
+// command describes one socket subcommand in a single place: its canonical name,
+// short aliases, the leading positional args main rewrites into flags, whether it
+// mutates state (blocked in read-only mode), and its handler.
+type command struct {
+	name        string
+	aliases     []string
+	positionals []string
+	write       bool
+	run         func([]string, *WhatsAppClient) (any, error)
 }
 
-func executeCommand(command string, args []string, wac *WhatsAppClient) (any, error) {
-	if wac.readOnly && writeCommands[command] {
-		return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
-	}
+var commands = []command{
+	{name: "list-contacts", aliases: []string{"contacts", "search-contacts"}, run: cmdListContacts},
+	{name: "add-contact", positionals: []string{"name", "phone"}, write: true, run: cmdAddContact},
+	{name: "remove-contact", positionals: []string{"identifier"}, write: true, run: cmdRemoveContact},
+	{name: "list-messages", aliases: []string{"messages"}, positionals: []string{"to"}, run: cmdListMessages},
+	{name: "list-chats", aliases: []string{"chats"}, run: cmdListChats},
+	{name: "send-message", aliases: []string{"send"}, positionals: []string{"to", "message"}, write: true, run: cmdSendMessage},
+	{name: "send-file", aliases: []string{"file"}, positionals: []string{"to", "file-path"}, write: true, run: cmdSendFile},
+	{name: "send-audio", write: true, run: cmdSendAudio},
+	{name: "download-media", run: cmdDownloadMedia},
+	{name: "send-reaction", aliases: []string{"react"}, positionals: []string{"to", "message-id", "emoji"}, write: true, run: cmdSendReaction},
+	{name: "revoke-message", write: true, run: cmdRevokeMessage},
+	{name: "create-group", write: true, run: cmdCreateGroup},
+	{name: "leave-group", positionals: []string{"group"}, write: true, run: cmdLeaveGroup},
+	{name: "list-groups", aliases: []string{"groups"}, run: cmdListGroups},
+	{name: "update-group-participants", write: true, run: cmdUpdateGroupParticipants},
+	{name: "backfill", positionals: []string{"to"}, run: cmdBackfill},
+	{name: "rename-group", aliases: []string{"rename"}, positionals: []string{"group", "name"}, write: true, run: cmdRenameGroup},
+	{name: "set-group-photo", write: true, run: cmdSetGroupPhoto},
+	{name: "set-group-description", positionals: []string{"group", "description"}, write: true, run: cmdSetGroupDescription},
+	{name: "get-group-invite-link", run: cmdGetGroupInviteLink},
+	{name: "check-delivery", aliases: []string{"delivery"}, positionals: []string{"message-id"}, run: cmdCheckDelivery},
+	{name: "pair-phone", run: cmdPairPhone},
+	{name: "list-received-contacts", run: cmdListReceivedContacts},
+	{name: "archive-chat", positionals: []string{"to"}, write: true, run: cmdArchiveChat},
+	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
+	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
+	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
+}
 
-	switch command {
-	case "list-contacts":
-		return cmdListContacts(args, wac)
-	case "add-contact":
-		return cmdAddContact(args, wac)
-	case "remove-contact":
-		return cmdRemoveContact(args, wac)
-	case "list-messages":
-		return cmdListMessages(args, wac)
-	case "list-chats":
-		return cmdListChats(args, wac)
-	case "send-message":
-		return cmdSendMessage(args, wac)
-	case "send-file":
-		return cmdSendFile(args, wac)
-	case "send-audio":
-		return cmdSendAudio(args, wac)
-	case "download-media":
-		return cmdDownloadMedia(args, wac)
-	case "send-reaction":
-		return cmdSendReaction(args, wac)
-	case "revoke-message":
-		return cmdRevokeMessage(args, wac)
-	case "create-group":
-		return cmdCreateGroup(args, wac)
-	case "leave-group":
-		return cmdLeaveGroup(args, wac)
-	case "list-groups":
-		return cmdListGroups(args, wac)
-	case "update-group-participants":
-		return cmdUpdateGroupParticipants(args, wac)
-	case "backfill":
-		return cmdBackfill(args, wac)
-	case "rename-group":
-		return cmdRenameGroup(args, wac)
-	case "set-group-photo":
-		return cmdSetGroupPhoto(args, wac)
-	case "set-group-description":
-		return cmdSetGroupDescription(args, wac)
-	case "get-group-invite-link":
-		return cmdGetGroupInviteLink(args, wac)
-	case "check-delivery":
-		return cmdCheckDelivery(args, wac)
-	case "pair-phone":
-		return cmdPairPhone(args, wac)
-	case "list-received-contacts":
-		return cmdListReceivedContacts(args, wac)
-	case "archive-chat":
-		return cmdArchiveChat(args, wac)
-	case "archive-all-chats":
-		return cmdArchiveAllChats(wac)
-	case "delete-chat":
-		return cmdDeleteChat(args, wac)
-	case "clear-all-chats":
-		return cmdClearAllChats(wac)
-	default:
-		return nil, fmt.Errorf("unknown command: %s", command)
+// lookupCommand finds a command by its canonical name or one of its aliases.
+func lookupCommand(name string) (command, bool) {
+	for _, cmd := range commands {
+		if cmd.name == name {
+			return cmd, true
+		}
+		for _, alias := range cmd.aliases {
+			if alias == name {
+				return cmd, true
+			}
+		}
 	}
+	return command{}, false
+}
+
+func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error) {
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown command: %s", name)
+	}
+	if wac.readOnly && cmd.write {
+		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
+	}
+	return cmd.run(args, wac)
 }
 
 func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
@@ -501,11 +452,13 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 
 func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	var to, message, messageFile, replyTo string
+	var longform bool
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
 	fs.StringVar(&message, "message", "", "Message text (use '-' to read from stdin)")
 	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
+	fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -530,6 +483,11 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	}
 	if message == "" {
 		return nil, fmt.Errorf("message body is empty")
+	}
+	if !longform {
+		if reason := bubbleLintReason(message); reason != "" {
+			return nil, fmt.Errorf("%s", reason)
+		}
 	}
 	success, msg := wac.SendMessageWithPresence(to, message, replyTo)
 	result := successResult(success, msg)
@@ -862,10 +820,12 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{"contacts": messages}, nil
 }
 
-func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+// cmdChatTarget runs a single-target chat command that accepts the target via
+// --to or a leading positional (contact name, phone, group, or JID).
+func cmdChatTarget(name, usage string, args []string, action func(string) (bool, string)) (any, error) {
 	var to string
-	fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to archive (contact name, phone, group, or JID)")
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", usage)
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -875,11 +835,15 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	if to == "" {
 		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
 	}
-	success, msg := wac.ArchiveChat(to)
+	success, msg := action(to)
 	return successResult(success, msg), nil
 }
 
-func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
+func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
+}
+
+func cmdArchiveAllChats(_ []string, wac *WhatsAppClient) (any, error) {
 	archived, errs, err := wac.ArchiveAllChats()
 	if err != nil {
 		return nil, err
@@ -892,23 +856,10 @@ func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
 }
 
 func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
-	var to string
-	fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
-	fs.StringVar(&to, "to", "", "Chat to delete")
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-	if to == "" && len(fs.Args()) > 0 {
-		to = fs.Args()[0]
-	}
-	if to == "" {
-		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
-	}
-	success, msg := wac.DeleteChat(to)
-	return successResult(success, msg), nil
+	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
-func cmdClearAllChats(wac *WhatsAppClient) (any, error) {
+func cmdClearAllChats(_ []string, wac *WhatsAppClient) (any, error) {
 	jids, err := wac.store.ListAllChatJIDs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list chats: %v", err)

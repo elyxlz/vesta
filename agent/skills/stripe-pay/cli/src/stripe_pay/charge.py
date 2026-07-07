@@ -20,7 +20,6 @@ know to also approve in the Link app.
 from __future__ import annotations
 
 import json
-import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -327,7 +326,3 @@ def _log(
         config.history_file.chmod(0o600)
     except OSError:
         pass
-
-
-# Quiet pyflakes about ``time`` — kept available for any future preflight delay.
-_ = time

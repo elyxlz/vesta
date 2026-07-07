@@ -186,7 +186,8 @@ async def test_sidechain_lines_are_skipped(sandbox: Sandbox) -> None:
 
 @pytest.mark.anyio
 async def test_usage_flows_to_result_and_context_usage(sandbox: Sandbox) -> None:
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd))
+    # The caller supplies the reporting window; cc_sdk no longer assumes one.
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), context_window=200_000)
     async with ClaudeSDKClient(options=options) as client:
         await client.query("hello")
         messages = await collect_with_timeout(client)
@@ -464,7 +465,9 @@ async def test_all_core_hook_events_reach_bridge(sandbox: Sandbox) -> None:
 
         return HookMatcher(matcher="*", hooks=[cb])
 
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})
+    # core.sdk_parsing is typed against the official claude_agent_sdk HookEvent set (a superset of
+    # cc_sdk's), so feeding its event keys into cc_sdk's ClaudeAgentOptions is a type-only seam.
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})  # ty: ignore[invalid-argument-type]
     # Representative payloads for the fields core's callbacks actually read.
     extras = {
         "PostToolUseFailure": {"tool_name": "Bash", "error": "boom"},

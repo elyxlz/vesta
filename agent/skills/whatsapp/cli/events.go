@@ -48,6 +48,17 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 	}
 }
 
+// buildNotifContext assembles the NotifContext shared by message and reaction
+// notifications.
+func (wac *WhatsAppClient) buildNotifContext(chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
+	return NotifContext{
+		NotifDir: wac.notificationsDir, ChatName: chatName,
+		ContactName: contactName, ContactPhone: contactPhone,
+		Instance: wac.instance, ContactSaved: contactSaved,
+		IsDirectChat: isDirectChat, Sender: senderDisplay,
+	}
+}
+
 func (wac *WhatsAppClient) handleReceipt(evt *events.Receipt) {
 	if wac.store == nil {
 		return
@@ -137,14 +148,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	shouldNotify := wac.notificationsDir != "" && !wac.noNotify && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
 	if shouldNotify {
-		interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
-		notifCtx = NotifContext{
-			NotifDir: wac.notificationsDir, ChatName: chatName,
-			ContactName: contactName, ContactPhone: contactPhone,
-			Instance: wac.instance, ContactSaved: contactSaved,
-			IsDirectChat: isDirectChat, Sender: senderDisplay,
-			Interrupt: interrupt, InterruptExplicit: interruptExplicit,
-		}
+		notifCtx = wac.buildNotifContext(chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
 	}
 
 	// Audio messages: transcribe asynchronously, then send notification
@@ -254,14 +258,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	if wac.notificationsDir != "" {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
-		interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
-		ctx := NotifContext{
-			NotifDir: wac.notificationsDir, ChatName: chatName,
-			ContactName: contactName, ContactPhone: contactPhone,
-			Instance: wac.instance, ContactSaved: contactSaved,
-			IsDirectChat: isDirectChat, Sender: senderDisplay,
-			Interrupt: interrupt, InterruptExplicit: interruptExplicit,
-		}
+		ctx := wac.buildNotifContext(chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
 }

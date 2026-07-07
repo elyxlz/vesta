@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   startAgent,
   stopAgent,
@@ -18,39 +12,13 @@ import {
   type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
-import {
-  getAgentVisualStatus,
-  type OrbVisualState,
-} from "@/components/Orb/styles";
+import { getAgentVisualStatus } from "@/components/Orb/styles";
+import { SelectedAgentContext } from "./context";
+import type { SelectedAgentContextValue } from "./context";
 
-interface SelectedAgentContextValue {
-  name: string;
-  agent: AgentInfo;
-  agentState: AgentActivityState;
-  setAgentState: (state: AgentActivityState) => void;
-
-  operation: AgentOperation;
-  error: string;
-  statusLabel: string;
-  orbState: OrbVisualState;
-  isBusy: boolean;
-
-  start: () => void;
-  stop: () => void;
-  restart: () => void;
-  rebuild: () => void;
-  backup: () => void;
-  backups: BackupInfo[];
-  refreshBackups: () => Promise<void>;
-  restore: (backupId: string) => void;
-  removeBackup: (backupId: string) => void;
-  remove: () => Promise<void>;
-}
-
-const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(
-  null,
-);
+export { useSelectedAgent } from "./context";
 
 export function SelectedAgentProvider({
   agent,
@@ -66,6 +34,7 @@ export function SelectedAgentProvider({
 
   const withOp = useAgentOps((s) => s.withOp);
   const removeAgentOp = useAgentOps((s) => s.removeAgent);
+  const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
 
@@ -76,49 +45,50 @@ export function SelectedAgentProvider({
     agentState,
   );
 
-  const start = () => {
-    withOp(
-      name,
-      "starting",
-      async () => {
-        await startAgent(name);
-      },
-      "start failed",
-    );
-  };
+  const op =
+    (operation: AgentOperation, run: () => Promise<unknown>, failure: string) =>
+    () =>
+      withOp(
+        name,
+        operation,
+        async () => {
+          await run();
+        },
+        failure,
+      );
 
-  const stop = () => {
-    withOp(
-      name,
-      "stopping",
+  const start = op("starting", () => startAgent(name), "start failed");
+  const stop = op("stopping", () => stopAgent(name), "stop failed");
+  // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
+  // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
+  // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
+  // restart by any path — and this optimistic clear only hides the ~3s status-poll latency so the
+  // button vanishes immediately instead of flickering back. For host-access, which reconcile leaves
+  // alone (its mount needs a recreate a boot-time change can't confirm), this button IS the owner:
+  // it runs restartAgent, which recreates on mount drift and thus actually applies the grant.
+  const applyPending = (
+    operation: AgentOperation,
+    run: () => Promise<unknown>,
+    failure: string,
+  ) =>
+    op(
+      operation,
       async () => {
-        await stopAgent(name);
+        await run();
+        clearRestartPending(name);
       },
-      "stop failed",
+      failure,
     );
-  };
-
-  const restart = () => {
-    withOp(
-      name,
-      "starting",
-      async () => {
-        await restartAgent(name);
-      },
-      "restart failed",
-    );
-  };
-
-  const rebuild = () => {
-    withOp(
-      name,
-      "rebuilding",
-      async () => {
-        await rebuildAgent(name);
-      },
-      "rebuild failed",
-    );
-  };
+  const restart = applyPending(
+    "starting",
+    () => restartAgent(name),
+    "restart failed",
+  );
+  const rebuild = applyPending(
+    "rebuilding",
+    () => rebuildAgent(name),
+    "rebuild failed",
+  );
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
@@ -144,17 +114,14 @@ export function SelectedAgentProvider({
     };
   }, [name]);
 
-  const backup = () => {
-    withOp(
-      name,
-      "backing-up",
-      async () => {
-        await createBackup(name);
-        await refreshBackups();
-      },
-      "backup failed",
-    );
-  };
+  const backup = op(
+    "backing-up",
+    async () => {
+      await createBackup(name);
+      await refreshBackups();
+    },
+    "backup failed",
+  );
 
   const restore = (backupId: string) => {
     withOp(
@@ -212,14 +179,4 @@ export function SelectedAgentProvider({
       {children}
     </SelectedAgentContext.Provider>
   );
-}
-
-export function useSelectedAgent() {
-  const context = useContext(SelectedAgentContext);
-  if (!context) {
-    throw new Error(
-      "useSelectedAgent must be used within SelectedAgentProvider",
-    );
-  }
-  return context;
 }

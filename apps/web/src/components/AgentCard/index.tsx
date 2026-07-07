@@ -6,11 +6,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Orb } from "@/components/Orb";
 import type { AgentInfo } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
-import { useOrbState } from "@/hooks/use-orb-state";
+import { useOrbStatus } from "@/hooks/use-orb-state";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +29,7 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
   const isMobile = useIsMobile();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
-  const orbState = useOrbState(agent, agent.activityState);
+  const { orbState, label } = useOrbStatus(agent, agent.activityState);
 
   return (
     <Card
@@ -32,7 +37,19 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
       onClick={() => navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)}
     >
       <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
-        <Orb state={orbState} size={112} enableTracking={enableTracking} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Orb
+                state={orbState}
+                size={112}
+                enableTracking={enableTracking}
+                label={`${agent.name}: ${label}`}
+              />
+            </span>
+          </TooltipTrigger>
+          {label && <TooltipContent>{label}</TooltipContent>}
+        </Tooltip>
         <CardTitle className="font-serif text-center text-2xl -mt-3 font-medium tracking-tight text-foreground">
           {agent.name}
         </CardTitle>

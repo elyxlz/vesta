@@ -1,25 +1,20 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchPersonalities, type Personality } from "@/api/personalities";
+import { useManifest } from "@/hooks/use-manifest";
 
 export function PersonalityStep({
   onPicked,
 }: {
   onPicked: (name: string) => void;
 }) {
-  const [personalities, setPersonalities] = useState<Personality[] | null>(
-    null,
-  );
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string>("dry");
-
-  useEffect(() => {
-    fetchPersonalities()
-      .then((list) => setPersonalities(list))
-      .catch((e: Error) => setLoadError(e.message));
-  }, []);
+  // The personality catalog + the default come from the manifest (GET /manifest), not a side endpoint
+  // or a hardcoded copy. Until the user picks, fall through to the manifest default once it loads.
+  const manifest = useManifest();
+  const [picked, setPicked] = useState<string | null>(null);
+  const selected = picked ?? manifest?.default_personality ?? "";
+  const personalities = manifest?.personalities ?? null;
 
   return (
     <div className="flex flex-col items-center gap-4 w-[560px] max-w-full px-4">
@@ -31,9 +26,7 @@ export function PersonalityStep({
         </FieldDescription>
       </div>
 
-      {loadError ? (
-        <p className="text-xs text-destructive">failed to load: {loadError}</p>
-      ) : personalities === null ? (
+      {personalities === null ? (
         <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-28 w-full rounded-2xl" />
@@ -46,10 +39,11 @@ export function PersonalityStep({
             return (
               <button
                 key={p.name}
-                onClick={() => setSelected(p.name)}
+                onClick={() => setPicked(p.name)}
+                aria-pressed={isSelected}
                 className={`group flex h-full flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all cursor-pointer ${
                   isSelected
-                    ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
+                    ? "border-primary/60 bg-primary/5 ring-2 ring-ring"
                     : "border-border bg-input/30 hover:bg-input/60 hover:border-border/80"
                 }`}
               >
@@ -74,7 +68,7 @@ export function PersonalityStep({
       <Button
         className="w-full"
         onClick={() => onPicked(selected)}
-        disabled={personalities === null && !loadError}
+        disabled={personalities === null || !selected}
       >
         continue
       </Button>

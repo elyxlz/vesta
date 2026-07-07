@@ -29,35 +29,28 @@ async fn install_update(version: String) -> Result<(), String> {
     let arch = std::env::consts::ARCH;
 
     // Try dpkg (Debian/Ubuntu) first, then rpm (Fedora/RHEL)
-    let (url, install_cmd) = if Command::new("dpkg").arg("--version").output().is_ok() {
-        let pkg_arch = match arch {
-            "x86_64" => "amd64",
-            "aarch64" => "arm64",
-            _ => return Err(format!("Unsupported architecture: {arch}")),
+    let (filename, install_args): (String, Vec<&str>) =
+        if Command::new("dpkg").arg("--version").output().is_ok() {
+            let pkg_arch = match arch {
+                "x86_64" => "amd64",
+                "aarch64" => "arm64",
+                _ => return Err(format!("Unsupported architecture: {arch}")),
+            };
+            (format!("Vesta_{version}_{pkg_arch}.deb"), vec!["dpkg", "-i"])
+        } else if Command::new("rpm").arg("--version").output().is_ok() {
+            if !matches!(arch, "x86_64" | "aarch64") {
+                return Err(format!("Unsupported architecture: {arch}"));
+            }
+            (format!("Vesta-{version}-1.{arch}.rpm"), vec!["rpm", "-U", "--force"])
+        } else {
+            return Err("No supported package manager (dpkg/rpm) found".into());
         };
-        let filename = format!("Vesta_{version}_{pkg_arch}.deb");
-        let url =
-            format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
-        (url, vec!["dpkg", "-i"])
-    } else if Command::new("rpm").arg("--version").output().is_ok() {
-        let pkg_arch = match arch {
-            "x86_64" => "x86_64",
-            "aarch64" => "aarch64",
-            _ => return Err(format!("Unsupported architecture: {arch}")),
-        };
-        let filename = format!("Vesta-{version}-1.{pkg_arch}.rpm");
-        let url =
-            format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
-        (url, vec!["rpm", "-U", "--force"])
-    } else {
-        return Err("No supported package manager (dpkg/rpm) found".into());
-    };
 
+    let url = format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
     let tmp_dir = std::env::temp_dir().join("vesta-update");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
     let pkg_path = tmp_dir.join("vesta-update-pkg");
 
-    // Download the package
     let output = Command::new("curl")
         .args(["-fsSL", "-o"])
         .arg(&pkg_path)
@@ -71,20 +64,15 @@ async fn install_update(version: String) -> Result<(), String> {
         ));
     }
 
-    // Install with pkexec for GUI privilege escalation
-    let mut args = vec![install_cmd[0]];
-    for flag in &install_cmd[1..] {
-        args.push(flag);
-    }
-    let pkg_path_str = pkg_path.to_string_lossy().to_string();
+    // pkexec drives the GUI privilege-escalation prompt
+    let pkg_path_str = pkg_path.to_string_lossy();
+    let mut args = install_args;
     args.push(&pkg_path_str);
-
     let output = Command::new("pkexec")
         .args(&args)
         .output()
         .map_err(|e| format!("Failed to run pkexec: {e}"))?;
 
-    // Clean up
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     if !output.status.success() {
@@ -135,6 +123,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_oauth::init())
         .setup(|_app| {
             use tauri::Manager;
 

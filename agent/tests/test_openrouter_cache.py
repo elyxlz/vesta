@@ -1,8 +1,22 @@
 """Tests for the OpenRouter caching proxy's request transforms."""
 
+import asyncio
+import json
+
+from aiohttp import web
+
 import core.models as vm
 from core.client import build_client_options
-from core.openrouter_cache import _CACHE_LOG_EVERY, _record_cache_usage, _sniff_usage, _usage_int, transform_request
+from core.openrouter_cache import (
+    _CACHE_LOG_EVERY,
+    _PrestreamError,
+    _forward_bodies,
+    _forward_with_retry,
+    _record_cache_usage,
+    _sniff_usage,
+    _usage_int,
+    transform_request,
+)
 
 
 def _claude_code_body():
@@ -69,6 +83,57 @@ def test_transform_handles_missing_or_empty_system():
     assert "provider" not in transform_request({"model": "m", "system": []}, provider="Alibaba", session_id="s")
 
 
+def test_forward_bodies_retries_unpinned_when_provider_pinned():
+    parsed = {"model": "m", "provider": {"order": ["Baidu"], "allow_fallbacks": True}, "messages": []}
+    bodies = _forward_bodies(parsed, b"raw")
+    assert len(bodies) == 2
+    assert "provider" in json.loads(bodies[0])  # first attempt keeps the pin
+    assert "provider" not in json.loads(bodies[1])  # retry drops it to route around a stall
+
+
+def test_forward_bodies_single_attempt_when_unpinned():
+    parsed = {"model": "m", "messages": []}
+    assert _forward_bodies(parsed, b"raw") == [json.dumps(parsed).encode()]
+
+
+def test_forward_bodies_passes_raw_through_when_unparsed():
+    assert _forward_bodies(None, b"raw-bytes") == [b"raw-bytes"]
+
+
+def test_forward_with_retry_falls_back_after_prestream_failure():
+    tried: list[bytes] = []
+
+    async def attempt(body: bytes) -> web.StreamResponse:
+        tried.append(body)
+        if len(tried) == 1:
+            raise _PrestreamError("stalled")
+        return web.Response(status=200, text="ok")
+
+    resp = asyncio.run(_forward_with_retry([b"pinned", b"unpinned"], attempt))
+    assert resp.status == 200
+    assert tried == [b"pinned", b"unpinned"]  # retried the second body
+
+
+def test_forward_with_retry_returns_504_when_every_attempt_fails():
+    async def attempt(body: bytes) -> web.StreamResponse:
+        raise _PrestreamError("stalled")
+
+    resp = asyncio.run(_forward_with_retry([b"a", b"b"], attempt))
+    assert resp.status == 504
+
+
+def test_forward_with_retry_does_not_retry_on_first_success():
+    tried: list[bytes] = []
+
+    async def attempt(body: bytes) -> web.StreamResponse:
+        tried.append(body)
+        return web.Response(status=200)
+
+    resp = asyncio.run(_forward_with_retry([b"a", b"b"], attempt))
+    assert resp.status == 200
+    assert tried == [b"a"]  # first attempt streamed; no retry
+
+
 def test_sniff_usage_extracts_both_fields():
     # final message_delta-style chunk carries both counters
     chunk = b'data: {"type":"message_delta","usage":{"input_tokens":152,"output_tokens":9,"cache_read_input_tokens":21632}}'
@@ -121,8 +186,11 @@ def _config_with_memory(tmp_path, **overrides):
     return config
 
 
+_OPENROUTER = {"kind": "openrouter", "model": "deepseek/deepseek-v4-flash", "key": "sk-or-test"}
+
+
 def test_build_client_options_uses_proxy_url(tmp_path, state):
-    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4-flash")
+    config = _config_with_memory(tmp_path, provider=_OPENROUTER)
     state.openrouter_proxy_url = "http://127.0.0.1:54321"
     options = build_client_options(config, state)
     assert options.env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:54321"
@@ -131,6 +199,6 @@ def test_build_client_options_uses_proxy_url(tmp_path, state):
 def test_build_client_options_requires_proxy_for_openrouter(tmp_path, state):
     import pytest
 
-    config = _config_with_memory(tmp_path, agent_provider="openrouter", agent_model="deepseek/deepseek-v4-flash")
+    config = _config_with_memory(tmp_path, provider=_OPENROUTER)
     with pytest.raises(RuntimeError):
         build_client_options(config, state)

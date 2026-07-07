@@ -21,6 +21,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 interface ChatComposerProps {
   fullscreen?: boolean;
   connected: boolean;
+  notAuthenticated: boolean;
   sttAvailable: boolean;
   isRecording: boolean;
   voiceAutoSend: boolean;
@@ -38,6 +39,7 @@ interface ChatComposerProps {
 export function ChatComposer({
   fullscreen,
   connected,
+  notAuthenticated,
   sttAvailable,
   isRecording,
   voiceAutoSend,
@@ -73,6 +75,7 @@ export function ChatComposer({
   const showSend = !isRecording || !voiceAutoSend;
   const useLiveTranscript =
     isRecording && (voiceAutoSend || activation === "hold");
+  const inputDisabled = !connected || notAuthenticated;
 
   return (
     <div
@@ -100,20 +103,27 @@ export function ChatComposer({
           onChange={onInputChange}
           onKeyDown={onKeyDown}
           readOnly={useLiveTranscript}
-          placeholder={isRecording ? "listening..." : "send a message..."}
-          disabled={!connected}
+          placeholder={
+            isRecording
+              ? "listening..."
+              : notAuthenticated
+                ? "sign in to chat"
+                : "send a message..."
+          }
+          disabled={inputDisabled}
           rows={1}
           enterKeyHint="send"
-          className="max-h-[120px] md:text-base"
+          className="max-h-[240px] md:text-base"
         />
         {showSend && (
-          <InputGroupAddon align="inline-end" className="gap-0">
+          <InputGroupAddon align="inline-end" className="gap-0 py-0.5 pr-0.5">
             <InputGroupButton
               size="icon-sm"
               variant="ghost"
               aria-label="send message"
-              disabled={!connected}
+              disabled={inputDisabled}
               onClick={onSend}
+              className="size-11 [&_svg]:size-4"
             >
               <SendHorizontal />
             </InputGroupButton>
@@ -126,7 +136,7 @@ export function ChatComposer({
             <Button
               type="button"
               size="icon"
-              disabled={!connected}
+              disabled={inputDisabled}
               aria-label={isRecording ? "Stop recording" : "Start recording"}
               {...voiceButtonHandlers}
               className="size-12 rounded-full bg-red-500 text-white hover:bg-red-600 [&_svg]:size-5"

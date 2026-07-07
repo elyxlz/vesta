@@ -18,6 +18,7 @@ node_modules/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
 .tox/
 
 # Runtime data (local research, session state, secrets)
@@ -30,8 +31,8 @@ memory/dreamer/
 # Dreamer state (runtime)
 dreamer/
 
-# Notifications (runtime)
-notifications/
+# Notifications (runtime) — anchored so it only ignores the runtime dir, not the `notifications` skill
+/notifications/
 
 # Logs
 logs/
@@ -61,3 +62,7 @@ logs/
 # Build artifacts
 skills/*/cli/build/
 skills/dashboard/app/core
+
+# Constitution: user-authored, bind-mounted read-only by vestad (per-agent, not
+# workspace content). Anchored so it never lands in the workspace snapshot or git status.
+/constitution.md

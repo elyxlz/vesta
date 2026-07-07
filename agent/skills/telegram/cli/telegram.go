@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,18 +78,53 @@ func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool
 func (tc *TelegramClient) StartPolling() {
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 30
-	// Note: message_reaction requires Bot API 7.0+; the library will pass it through
-	// even if it doesn't have native struct support
-	updateConfig.AllowedUpdates = []string{"message"}
+	// Explicitly opt into the update kinds we handle. callback_query is what powers the
+	// interactive inline-keyboard UI (button taps). Telegram only delivers update types listed
+	// here. (message_reaction is omitted: the v5 library has no struct for it, so it can't be
+	// decoded from the poller; we can still SEND reactions via the raw setMessageReaction call.)
+	updateConfig.AllowedUpdates = []string{"message", "edited_message", "callback_query"}
 
 	updates := tc.bot.GetUpdatesChan(updateConfig)
 
 	log.Printf("Bot @%s started polling for updates", tc.bot.Self.UserName)
 
 	for update := range updates {
-		if update.Message != nil {
+		switch {
+		case update.Message != nil:
 			tc.handleMessage(update.Message)
+		case update.EditedMessage != nil:
+			tc.handleMessage(update.EditedMessage)
+		case update.CallbackQuery != nil:
+			tc.handleCallbackQuery(update.CallbackQuery)
 		}
+	}
+}
+
+// handleCallbackQuery fires when the owner taps an inline-keyboard button. We persist nothing
+// in the message store (it's a UI event, not a message) but drop a notification so the agent
+// can react: answer the callback (stop the button's spinner) and/or edit the message in place.
+func (tc *TelegramClient) handleCallbackQuery(cb *tgbotapi.CallbackQuery) {
+	if cb == nil {
+		return
+	}
+	var chatID, messageID int64
+	if cb.Message != nil {
+		chatID = cb.Message.Chat.ID
+		messageID = int64(cb.Message.MessageID)
+	}
+	sender := formatSenderName(cb.From)
+	username := ""
+	if cb.From != nil {
+		username = cb.From.UserName
+	}
+	contactName, contactSaved := sender, false
+	if chatID != 0 {
+		if contact, _ := tc.store.GetManualContact(chatID); contact != nil {
+			contactName, contactSaved = contact.Name, true
+		}
+	}
+	if tc.notificationsDir != "" {
+		WriteCallbackNotification(tc.notificationsDir, cb.ID, cb.Data, chatID, messageID, contactName, sender, username, tc.instance, contactSaved)
 	}
 }
 
@@ -219,6 +255,58 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 }
 
+// --- Telegram MarkdownV2 rendering -----------------------------------------
+//
+// Outbound messages are sent as MarkdownV2. Telegram's legacy "Markdown" mode
+// silently drops the underscores in a matched pair like `cs_live_...` (it reads
+// them as italics), which corrupted the Stripe Checkout links handed to users
+// -> a dead pay page. MarkdownV2 has the same hazard, so we ESCAPE every
+// reserved character in literal text. Explicit `[label](url)` links are kept
+// intact (label escaped; url only needs `)`/`\` escaped) so the onboard skill
+// can hand out a real, clickable pay link whose Stripe session id survives
+// byte-for-byte. Text that isn't a recognised link is still escaped, so a bare
+// URL survives verbatim (Telegram auto-links it) -- worst case a link renders
+// unlabelled, never corrupted.
+
+// mdV2Escaper backslash-escapes every MarkdownV2 reserved character in a run of
+// literal text. Backslash is listed first so we never double-escape our own
+// escapes.
+var mdV2Escaper = strings.NewReplacer(
+	"\\", "\\\\",
+	"_", "\\_", "*", "\\*", "[", "\\[", "]", "\\]",
+	"(", "\\(", ")", "\\)", "~", "\\~", "`", "\\`",
+	">", "\\>", "#", "\\#", "+", "\\+", "-", "\\-",
+	"=", "\\=", "|", "\\|", "{", "\\{", "}", "\\}",
+	".", "\\.", "!", "\\!",
+)
+
+// mdV2LinkURLEscaper escapes the only two characters reserved inside a
+// MarkdownV2 `(...)` link destination.
+var mdV2LinkURLEscaper = strings.NewReplacer("\\", "\\\\", ")", "\\)")
+
+// mdLinkRe matches a Markdown inline link `[label](http(s)://url)` with a plain
+// label and a whitespace/paren-free URL -- the shape the skills emit.
+var mdLinkRe = regexp.MustCompile(`\[([^\[\]]*)\]\((https?://[^\s)]+)\)`)
+
+// toMarkdownV2 renders an agent message as safe Telegram MarkdownV2: literal
+// text is fully escaped (so a URL's underscores can never parse as italics)
+// while explicit [label](url) links are preserved with their URL byte-for-byte.
+func toMarkdownV2(text string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range mdLinkRe.FindAllStringSubmatchIndex(text, -1) {
+		b.WriteString(mdV2Escaper.Replace(text[last:m[0]]))
+		b.WriteString("[")
+		b.WriteString(mdV2Escaper.Replace(text[m[2]:m[3]]))
+		b.WriteString("](")
+		b.WriteString(mdV2LinkURLEscaper.Replace(text[m[4]:m[5]]))
+		b.WriteString(")")
+		last = m[1]
+	}
+	b.WriteString(mdV2Escaper.Replace(text[last:]))
+	return b.String()
+}
+
 func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, error) {
 	// Split long messages
 	if len(text) > MaxMessageLength {
@@ -229,11 +317,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 			if len(chunks) > 1 {
 				prefix = fmt.Sprintf("(%d/%d) ", i+1, len(chunks))
 			}
-			msg := tgbotapi.NewMessage(recipientID, prefix+chunk)
-			msg.ParseMode = "Markdown"
+			msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(prefix+chunk))
+			msg.ParseMode = "MarkdownV2"
 			sent, err := tc.bot.Send(msg)
 			if err != nil {
-				// Retry without parse mode
+				// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+				msg.Text = prefix + chunk
 				msg.ParseMode = ""
 				sent, err = tc.bot.Send(msg)
 				if err != nil {
@@ -250,11 +339,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 		return lastID, nil
 	}
 
-	msg := tgbotapi.NewMessage(recipientID, text)
-	msg.ParseMode = "Markdown"
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
-		// Retry without parse mode
+		// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = tc.bot.Send(msg)
 		if err != nil {
@@ -363,6 +453,180 @@ func (tc *TelegramClient) DownloadFile(fileID, downloadPath string) (string, err
 	}
 
 	return downloadPath, nil
+}
+
+// parseInlineKeyboard turns a compact spec into an inline keyboard.
+// Format: rows separated by ';', buttons within a row by ',', and each button is
+// "Label=callback_data" (or just "Label", in which case data == label).
+// A button whose data starts with "url:" becomes a URL button instead of a callback.
+// Returns (markup, true) when at least one button parsed, else (zero, false).
+func parseInlineKeyboard(spec string) (tgbotapi.InlineKeyboardMarkup, bool) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return tgbotapi.InlineKeyboardMarkup{}, false
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, rowSpec := range strings.Split(spec, ";") {
+		rowSpec = strings.TrimSpace(rowSpec)
+		if rowSpec == "" {
+			continue
+		}
+		var row []tgbotapi.InlineKeyboardButton
+		for _, btnSpec := range strings.Split(rowSpec, ",") {
+			btnSpec = strings.TrimSpace(btnSpec)
+			if btnSpec == "" {
+				continue
+			}
+			label, data := btnSpec, btnSpec
+			if i := strings.Index(btnSpec, "="); i >= 0 {
+				label = strings.TrimSpace(btnSpec[:i])
+				data = strings.TrimSpace(btnSpec[i+1:])
+			}
+			if strings.HasPrefix(data, "url:") {
+				row = append(row, tgbotapi.NewInlineKeyboardButtonURL(label, strings.TrimPrefix(data, "url:")))
+			} else {
+				row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, data))
+			}
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		return tgbotapi.InlineKeyboardMarkup{}, false
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...), true
+}
+
+// SendMessageWithOptions sends a single message with optional inline-keyboard buttons and/or a
+// reply-to. Used when buttons/reply are present (no chunking: a button message is a single unit).
+// Plain sends with neither option still go through SendMessage so long-text chunking is preserved.
+func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, buttons string, replyTo int64) (int64, error) {
+	if buttons == "" && replyTo == 0 {
+		return tc.SendMessage(recipientID, text)
+	}
+	if len(text) > MaxMessageLength {
+		return 0, fmt.Errorf("message too long: %d chars (max %d for a message with buttons/reply)", len(text), MaxMessageLength)
+	}
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
+	if replyTo != 0 {
+		msg.ReplyToMessageID = int(replyTo)
+	}
+	if kb, ok := parseInlineKeyboard(buttons); ok {
+		msg.ReplyMarkup = kb
+	}
+	sent, err := tc.bot.Send(msg)
+	if err != nil {
+		msg.Text = text
+		msg.ParseMode = ""
+		sent, err = tc.bot.Send(msg)
+		if err != nil {
+			return 0, fmt.Errorf("failed to send message: %v", err)
+		}
+	}
+	msgID := int64(sent.MessageID)
+	chatName, _ := tc.store.GetChatName(recipientID)
+	tc.store.StoreChat(recipientID, chatName, "private", time.Now())
+	tc.store.StoreMessage(msgID, recipientID, tc.bot.Self.UserName, text, time.Now(), true, "", "", "", replyTo)
+	return msgID, nil
+}
+
+// EditMessage edits an existing message's text (and optionally its inline keyboard) in place.
+// This is the core of the "dynamic UI": update a status line, swap a menu, mark a choice taken.
+func (tc *TelegramClient) EditMessage(chatID, messageID int64, text, buttons string) error {
+	if kb, ok := parseInlineKeyboard(buttons); ok {
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, int(messageID), toMarkdownV2(text), kb)
+		edit.ParseMode = "MarkdownV2"
+		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
+			edit.ParseMode = ""
+			if _, err = tc.bot.Send(edit); err != nil {
+				return fmt.Errorf("failed to edit message: %v", err)
+			}
+		}
+	} else {
+		edit := tgbotapi.NewEditMessageText(chatID, int(messageID), toMarkdownV2(text))
+		edit.ParseMode = "MarkdownV2"
+		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
+			edit.ParseMode = ""
+			if _, err = tc.bot.Send(edit); err != nil {
+				return fmt.Errorf("failed to edit message: %v", err)
+			}
+		}
+	}
+	return nil
+}
+
+// DeleteMessage deletes a message (the bot's own, or any in a chat where it can). Telegram only
+// lets a bot delete its own messages in a private chat, and recent ones (<48h for others' msgs).
+func (tc *TelegramClient) DeleteMessage(chatID, messageID int64) error {
+	if _, err := tc.bot.Request(tgbotapi.NewDeleteMessage(chatID, int(messageID))); err != nil {
+		return fmt.Errorf("failed to delete message: %v", err)
+	}
+	return nil
+}
+
+// AnswerCallback acknowledges a button tap (callback_query). Always call it after handling a tap:
+// it stops the button's loading spinner. With text it shows a toast; with alert it's a modal popup.
+func (tc *TelegramClient) AnswerCallback(callbackID, text string, alert bool) error {
+	cb := tgbotapi.NewCallback(callbackID, text)
+	cb.ShowAlert = alert
+	if _, err := tc.bot.Request(cb); err != nil {
+		return fmt.Errorf("failed to answer callback: %v", err)
+	}
+	return nil
+}
+
+// SendVoice sends a voice note (best with .ogg/opus; other audio is sent as-is).
+func (tc *TelegramClient) SendVoice(recipientID int64, filePath, caption string) (int64, error) {
+	if _, err := os.Stat(filePath); err != nil {
+		return 0, fmt.Errorf("file not found: %s", filePath)
+	}
+	voice := tgbotapi.NewVoice(recipientID, tgbotapi.FilePath(filePath))
+	if caption != "" {
+		voice.Caption = caption
+	}
+	sent, err := tc.bot.Send(voice)
+	if err != nil {
+		return 0, fmt.Errorf("failed to send voice: %v", err)
+	}
+	msgID := int64(sent.MessageID)
+	chatName, _ := tc.store.GetChatName(recipientID)
+	tc.store.StoreChat(recipientID, chatName, "private", time.Now())
+	tc.store.StoreMessage(msgID, recipientID, tc.bot.Self.UserName, caption, time.Now(), true, "voice", filepath.Base(filePath), "", 0)
+	return msgID, nil
+}
+
+// SendChatAction shows a transient status in the chat ("typing…", "uploading…"). Telegram clears
+// it after ~5s or when the next message arrives, so call it right before a slow operation.
+func (tc *TelegramClient) SendChatAction(chatID int64, action string) error {
+	if action == "" {
+		action = tgbotapi.ChatTyping
+	}
+	if _, err := tc.bot.Request(tgbotapi.NewChatAction(chatID, action)); err != nil {
+		return fmt.Errorf("failed to send chat action: %v", err)
+	}
+	return nil
+}
+
+// PinMessage pins a message in the chat. silent=true suppresses the pin notification.
+func (tc *TelegramClient) PinMessage(chatID, messageID int64, silent bool) error {
+	cfg := tgbotapi.PinChatMessageConfig{ChatID: chatID, MessageID: int(messageID), DisableNotification: silent}
+	if _, err := tc.bot.Request(cfg); err != nil {
+		return fmt.Errorf("failed to pin message: %v", err)
+	}
+	return nil
+}
+
+// UnpinMessage unpins a specific message (messageID 0 unpins the most recent pinned message).
+func (tc *TelegramClient) UnpinMessage(chatID, messageID int64) error {
+	cfg := tgbotapi.UnpinChatMessageConfig{ChatID: chatID, MessageID: int(messageID)}
+	if _, err := tc.bot.Request(cfg); err != nil {
+		return fmt.Errorf("failed to unpin message: %v", err)
+	}
+	return nil
 }
 
 func (tc *TelegramClient) writeAuthStatusFile(data map[string]string) {

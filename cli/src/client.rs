@@ -97,10 +97,6 @@ fn cert_fingerprint(der: &[u8]) -> String {
     )
 }
 
-pub fn make_ws_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
-    make_rustls_config(fingerprint)
-}
-
 fn ws_base_url(url: &str) -> String {
     url.replace("https://", "wss://")
         .replace("http://", "ws://")
@@ -143,6 +139,24 @@ fn status_error_message(status: u16, error_msg: Option<String>) -> String {
 
 fn read_json<T: serde::de::DeserializeOwned>(resp: Response<Body>) -> Result<T, String> {
     resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
+}
+
+fn require_str(value: &serde_json::Value, field: &str) -> Result<String, String> {
+    value[field].as_str().map(str::to_string).ok_or_else(|| format!("response missing {field}"))
+}
+
+/// The Claude sign-in body for `update_settings` (PUT /provider); `update_settings` folds in the model.
+pub fn claude_auth(credentials: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "claude", "credentials": credentials })
+}
+
+/// The OpenRouter sign-in body for `update_settings` (PUT /provider): a full provider with the key.
+pub fn openrouter_auth(args: &OpenRouterArgs) -> serde_json::Value {
+    serde_json::json!({ "kind": "openrouter", "model": args.model, "key": args.key })
+}
+
+fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
+    value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
 
 fn map_error(host: &str, e: ureq::Error) -> String {
@@ -240,13 +254,39 @@ pub struct OpenRouterModel {
     pub cache_read_price: Option<f64>,
 }
 
-/// A Claude model offered by the picker in `vesta setup` (from `GET /providers/claude/models`).
 #[derive(serde::Deserialize)]
-pub struct ClaudeModel {
-    /// The alias stored in AGENT_MODEL, e.g. "opus".
-    pub id: String,
+pub struct ContextPreset {
+    pub tokens: u64,
     pub label: String,
     pub note: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProviderContext {
+    pub default: u64,
+    pub presets: Vec<ContextPreset>,
+}
+
+/// A provider's model catalog: explicit slugs (claude) or "live" (openrouter, fetched separately).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum ModelCatalog {
+    Static(Vec<String>),
+    /// The "live" sentinel (openrouter); the CLI fetches that catalog from its own endpoint instead.
+    Live(#[allow(dead_code)] String),
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProviderEntry {
+    pub models: ModelCatalog,
+    pub context: ProviderContext,
+}
+
+/// The provider manifest (`GET /manifest`): per-provider catalog + new-agent defaults, generated from
+/// the agent's models. The CLI reads model/context choices from here so it keeps no hardcoded copy.
+#[derive(serde::Deserialize)]
+pub struct Manifest {
+    pub providers: std::collections::HashMap<String, ProviderEntry>,
 }
 
 impl Client {
@@ -281,63 +321,48 @@ impl Client {
         self.cert_fingerprint.as_deref()
     }
 
+    fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+
+    /// Attach the bearer auth header. Generic over the request's body typestate so
+    /// the GET/DELETE (no body) and POST/PUT (with body) builders share one site.
+    fn authorized<B>(&self, builder: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        builder.header("Authorization", &format!("Bearer {}", self.api_key))
+    }
+
+    /// The one place the request error pipeline lives: surface a transport failure
+    /// via `map_error`, then reject any non-2xx status.
+    fn finish(&self, result: Result<Response<Body>, ureq::Error>) -> Result<Response<Body>, String> {
+        check_response(result.map_err(|e| map_error(&self.base_url, e))?)
+    }
+
     fn get(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .get(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call()
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)
+        self.finish(self.authorized(self.agent.get(self.url(path))).call())
     }
 
     fn post(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .post(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_empty()
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)
+        self.finish(self.authorized(self.agent.post(self.url(path))).send_empty())
     }
 
     fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .post(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body)
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)
+        self.finish(self.authorized(self.agent.post(self.url(path))).send_json(body))
     }
 
     fn delete_req(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .delete(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call()
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)
+        self.finish(self.authorized(self.agent.delete(self.url(path))).call())
     }
 
     fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .put(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body)
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)
+        self.finish(self.authorized(self.agent.put(self.url(path))).send_json(body))
+    }
+
+    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        self.finish(self.authorized(self.agent.patch(self.url(path))).send_json(body))
     }
 
     pub fn health(&self) -> Result<(), String> {
-        let resp = self
-            .agent
-            .get(&format!("{}/health", self.base_url))
-            .call()
-            .map_err(|e| map_error(&self.base_url, e))?;
-        check_response(resp)?;
+        self.finish(self.agent.get(self.url("/health")).call())?;
         Ok(())
     }
 
@@ -345,24 +370,21 @@ impl Client {
     // our behalf (with an ETag conditional request), so routing through it keeps
     // every client on one machine from hitting the GitHub API independently.
     pub fn latest_release_tag(&self) -> Result<Option<String>, String> {
-        let resp = self.get("/version")?;
-        let value: serde_json::Value = read_json(resp)?;
+        let value: serde_json::Value = read_json(self.get("/version")?)?;
         Ok(extract_latest_version(&value))
     }
 
     // Force vestad to refresh from GitHub, then return the latest tag. Used by
     // the explicit `vesta update` so it does not act on a stale cached value.
     pub fn check_latest_release_tag(&self) -> Result<Option<String>, String> {
-        let resp = self.post("/version/check")?;
-        let value: serde_json::Value = read_json(resp)?;
+        let value: serde_json::Value = read_json(self.post("/version/check")?)?;
         Ok(extract_latest_version(&value))
     }
 
     // The version vestad itself is running (the `version` field of `/version`),
     // used to gate the CLI against a mismatched gateway the same way the app does.
     pub fn gateway_version(&self) -> Result<String, String> {
-        let resp = self.get("/version")?;
-        let value: serde_json::Value = read_json(resp)?;
+        let value: serde_json::Value = read_json(self.get("/version")?)?;
         match value["version"].as_str() {
             Some(version) => Ok(version.trim().trim_start_matches('v').to_string()),
             None => Err("version response missing 'version'".into()),
@@ -378,94 +400,122 @@ impl Client {
     }
 
     pub fn get_channel(&self) -> Result<String, String> {
-        let resp = self.get("/settings/channel")?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
+        require_str(&value, "channel")
     }
 
     pub fn set_channel(&self, channel: &str) -> Result<String, String> {
-        let resp = self.put_json("/settings/channel", &serde_json::json!({ "channel": channel }))?;
-        let value: serde_json::Value = read_json(resp)?;
-        match value.get("channel").and_then(|c| c.as_str()) {
-            Some(channel) => Ok(channel.to_string()),
-            None => Err("response missing channel".into()),
-        }
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "channel": channel }))?)?;
+        require_str(&value, "channel")
+    }
+
+    pub fn get_auto_update(&self) -> Result<bool, String> {
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
+        require_bool(&value, "auto_update")
+    }
+
+    pub fn set_auto_update(&self, enabled: bool) -> Result<bool, String> {
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "auto_update": enabled }))?)?;
+        require_bool(&value, "auto_update")
+    }
+
+    pub fn get_gateway_settings(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/settings")?)
+    }
+
+    pub fn get_gateway_info(&self) -> Result<serde_json::Value, String> {
+        read_json(self.get("/gateway/info")?)
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
-        let resp = self.get("/agents")?;
-        read_json(resp)
+        read_json(self.get("/agents")?)
     }
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {
-        let resp = self.get(&format!("/agents/{name}"))?;
-        read_json(resp)
+        read_json(self.get(&format!("/agents/{name}"))?)
     }
 
-    /// Create an empty agent container. Provider config is sent separately via
-    /// `set_provider` once the agent is up (vestad no longer accepts credentials
-    /// at create time — see refactor for agent-owned auth state).
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
-        if let Some(tz) = timezone {
-            body["timezone"] = serde_json::json!(tz);
-        }
-        let resp = self.post_json("/agents", &body)?;
-        let v: serde_json::Value = read_json(resp)?;
+    /// Create an empty agent container. Credentials, timezone, and other preferences are sent
+    /// separately via `update_settings` once the agent is up (vestad no longer accepts credentials or
+    /// timezone at create time — the agent owns its config store).
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool) -> Result<String, String> {
+        let body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
+        let v: serde_json::Value = read_json(self.post_json("/agents", &body)?)?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
-    /// Provision an existing agent with provider credentials. Either Claude
-    /// (`credentials`: OAuth JSON blob) or OpenRouter (key/model).
-    pub fn set_provider_credentials(&self, name: &str, credentials: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        serde_json::from_str::<serde_json::Value>(credentials)
-            .map_err(|e| format!("invalid credentials JSON: {e}"))?;
-        let mut body = serde_json::json!({"credentials": credentials});
-        if let Some(model) = model {
-            body["model"] = serde_json::json!(model);
+    /// Apply a settings change in one go, then restart once to apply. A sign-in body (`auth`, from
+    /// `claude_auth`/`openrouter_auth`) goes to `PUT /provider` with the model/context folded in; a
+    /// bare model/context change goes to `PATCH /provider`; timezone goes to `PUT /config`. The writes
+    /// don't restart on their own, so a fresh agent gets its provider in a single race-free restart.
+    /// No-op (no restart) if nothing is set.
+    pub fn update_settings(
+        &self,
+        name: &str,
+        auth: Option<serde_json::Value>,
+        model: Option<&str>,
+        max_context_tokens: Option<u64>,
+        timezone: Option<&str>,
+        preempt_mode: Option<&str>,
+    ) -> Result<(), String> {
+        let mut changed = false;
+        if let Some(mut signin) = auth {
+            // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
+            // round-trip + agent restart that surfaces as an opaque BAD_GATEWAY.
+            if let Some(creds) = signin.get("credentials").and_then(|c| c.as_str()) {
+                serde_json::from_str::<serde_json::Value>(creds).map_err(|e| format!("invalid credentials JSON: {e}"))?;
+            }
+            if let Some(model) = model {
+                signin["model"] = serde_json::json!(model);
+            }
+            if let Some(ctx) = max_context_tokens {
+                signin["max_context_tokens"] = serde_json::json!(ctx);
+            }
+            self.put_json(&format!("/agents/{name}/provider"), &signin)?;
+            changed = true;
+        } else {
+            let mut patch = serde_json::Map::new();
+            if let Some(model) = model {
+                patch.insert("model".to_string(), serde_json::json!(model));
+            }
+            if let Some(ctx) = max_context_tokens {
+                patch.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
+            }
+            if !patch.is_empty() {
+                self.patch_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(patch))?;
+                changed = true;
+            }
         }
-        if let Some(ctx) = max_context_tokens {
-            body["max_context_tokens"] = serde_json::json!(ctx);
+        if let Some(tz) = timezone {
+            self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "timezone": tz }))?;
+            changed = true;
         }
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
-        Ok(())
+        if let Some(mode) = preempt_mode {
+            self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "preempt_mode": mode }))?;
+            changed = true;
+        }
+        if changed { self.restart_agent(name) } else { Ok(()) }
     }
 
-    /// Change the model and/or context window on a provisioned agent, keeping its
-    /// provider and credentials. POSTs `{model?, max_context_tokens?}`.
-    pub fn set_provider_settings(&self, name: &str, model: Option<&str>, max_context_tokens: Option<u64>) -> Result<(), String> {
-        let mut body = serde_json::Map::new();
-        if let Some(model) = model {
-            body.insert("model".to_string(), serde_json::json!(model));
-        }
-        if let Some(ctx) = max_context_tokens {
-            body.insert("max_context_tokens".to_string(), serde_json::json!(ctx));
-        }
-        self.post_json(&format!("/agents/{name}/provider"), &serde_json::Value::Object(body))?;
-        Ok(())
-    }
-
-    /// Current provider status: `{state, kind, model, max_context_tokens}`.
+    /// The agent's active provider + derived `{authed, kind, ...}`, proxied from its `GET /provider`.
     pub fn get_provider(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{name}/provider"))?;
-        read_json(resp)
+        read_json(self.get(&format!("/agents/{name}/provider"))?)
     }
 
-    pub fn set_provider_openrouter(&self, name: &str, args: &OpenRouterArgs) -> Result<(), String> {
-        let body = serde_json::json!({
-            "openrouter_key": args.key,
-            "openrouter_model": args.model,
-        });
-        self.post_json(&format!("/agents/{name}/provider"), &body)?;
-        Ok(())
+    /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it
+    /// boots not_authenticated.
+    pub fn logout(&self, name: &str) -> Result<(), String> {
+        self.delete_req(&format!("/agents/{name}/provider"))?;
+        self.restart_agent(name)
     }
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{name}/settings"))?;
-        read_json(resp)
+        read_json(self.get(&format!("/agents/{name}/settings"))?)
+    }
+
+    /// The agent's own config prefs (GET /config, proxied) — timezone, preempt_mode, etc.
+    pub fn get_agent_config(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/config"))?)
     }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
@@ -474,8 +524,7 @@ impl Client {
     }
 
     pub fn start_all(&self) -> Result<Vec<StartAllResult>, String> {
-        let resp = self.post("/agents/start")?;
-        let response: StartAllResponse = read_json(resp)?;
+        let response: StartAllResponse = read_json(self.post("/agents/start")?)?;
         Ok(response.results)
     }
 
@@ -500,7 +549,7 @@ impl Client {
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{name}/destroy"))?;
+        self.delete_req(&format!("/agents/{name}"))?;
         Ok(())
     }
 
@@ -509,27 +558,12 @@ impl Client {
         Ok(())
     }
 
-    /// Poll until status is `alive` OR `not_authenticated`. Used right after
+    /// Poll until status is `alive`, `not_authenticated`, or `unprovisioned`. Used right after
     /// `create_agent` to know the agent's HTTP server is up and ready to accept
-    /// `POST /agents/{name}/provider` — a brand-new empty agent will report
-    /// `not_authenticated` until the provider is provisioned.
+    /// `PUT /agents/{name}/config` — a brand-new empty agent reports `unprovisioned`
+    /// (no provider chosen) until the provider is provisioned.
     pub fn wait_until_running(&self, name: &str, timeout: Duration) -> Result<(), String> {
-        let deadline = Instant::now() + timeout;
-        let mut backoff = Duration::from_millis(200);
-        loop {
-            let status = self.agent_status(name)?;
-            match status.status.as_str() {
-                "alive" | "not_authenticated" => return Ok(()),
-                "not_found" | "dead" | "stopped" =>
-                    return Err(format!("{}: {}", name, status.status)),
-                _ => {}
-            }
-            if Instant::now() >= deadline {
-                return Err(format!("{}: timeout waiting for HTTP server (status: {})", name, status.status));
-            }
-            std::thread::sleep(backoff);
-            backoff = (backoff * 2).min(Duration::from_secs(1));
-        }
+        self.wait_for_status(name, timeout, &["alive", "not_authenticated", "unprovisioned"], "HTTP server", |_| {})
     }
 
     /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
@@ -545,8 +579,25 @@ impl Client {
         &self,
         name: &str,
         timeout: Duration,
+        on_change: impl FnMut(&str),
+    ) -> Result<(), String> {
+        self.wait_for_status(name, timeout, &["alive"], "ready", on_change)
+    }
+
+    /// Poll `/agents/{name}` until the status enters `ready`, hits a terminal state,
+    /// or the deadline passes. `ready` is checked before the terminal set, so a state
+    /// like `not_authenticated` can be a success for one caller and a failure for
+    /// another (it is terminal only when not listed in `ready`). `on_change` fires on
+    /// every distinct status so callers can surface progress.
+    fn wait_for_status(
+        &self,
+        name: &str,
+        timeout: Duration,
+        ready: &[&str],
+        wait_label: &str,
         mut on_change: impl FnMut(&str),
     ) -> Result<(), String> {
+        const TERMINAL_STATES: [&str; 5] = ["not_found", "dead", "stopped", "not_authenticated", "unprovisioned"];
         let deadline = Instant::now() + timeout;
         let mut backoff = Duration::from_millis(200);
         let mut last = String::new();
@@ -556,14 +607,14 @@ impl Client {
                 on_change(&status.status);
                 last = status.status.clone();
             }
-            match status.status.as_str() {
-                "alive" => return Ok(()),
-                "not_found" | "dead" | "stopped" | "not_authenticated" =>
-                    return Err(format!("{}: {}", name, status.status)),
-                _ => {}
+            if ready.contains(&status.status.as_str()) {
+                return Ok(());
+            }
+            if TERMINAL_STATES.contains(&status.status.as_str()) {
+                return Err(format!("{}: {}", name, status.status));
             }
             if Instant::now() >= deadline {
-                return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+                return Err(format!("{}: timeout waiting for {} (status: {})", name, wait_label, status.status));
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(Duration::from_secs(1));
@@ -572,20 +623,15 @@ impl Client {
 
     // Agent-less OAuth — runs the PKCE dance independent of any agent. Used by
     // `vesta setup` (pre-create) and `vesta auth <name>` (post-create reauth),
-    // followed by either POST /agents or POST /agents/{name}/provider.
+    // followed by either POST /agents or PUT /agents/{name}/config.
     pub fn start_auth_standalone(&self) -> Result<AuthFlowResponse, String> {
-        let resp = self.post("/providers/claude/oauth/start")?;
-        read_json(resp)
+        read_json(self.post("/providers/claude/oauth/start")?)
     }
 
     pub fn complete_auth_standalone(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
-        let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
-        let v: serde_json::Value = read_json(resp)?;
-        v["credentials"]
-            .as_str()
-            .map(String::from)
-            .ok_or_else(|| "no credentials in response".to_string())
+        let v: serde_json::Value = read_json(self.post_json("/providers/claude/oauth/complete", &body)?)?;
+        require_str(&v, "credentials")
     }
 
     pub fn validate_openrouter_key(&self, key: &str) -> Result<(), String> {
@@ -595,13 +641,11 @@ impl Client {
     }
 
     pub fn fetch_top_openrouter_models(&self) -> Result<Vec<OpenRouterModel>, String> {
-        let resp = self.get("/providers/openrouter/models/top")?;
-        read_json(resp)
+        read_json(self.get("/providers/openrouter/models/top")?)
     }
 
-    pub fn fetch_claude_models(&self) -> Result<Vec<ClaudeModel>, String> {
-        let resp = self.get("/providers/claude/models")?;
-        read_json(resp)
+    pub fn fetch_manifest(&self) -> Result<Manifest, String> {
+        read_json(self.get("/manifest")?)
     }
 
 
@@ -612,8 +656,7 @@ impl Client {
     }
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
-        let resp = self.get(&format!("/agents/{name}/backups"))?;
-        read_json(resp)
+        read_json(self.get(&format!("/agents/{name}/backups"))?)
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
@@ -632,42 +675,42 @@ impl Client {
     }
 
     pub fn get_auto_backup_settings(&self) -> Result<serde_json::Value, String> {
-        let resp = self.get("/settings/auto-backup")?;
-        read_json(resp)
+        let value: serde_json::Value = read_json(self.get("/gateway/settings")?)?;
+        Ok(value["auto_backup"].clone())
     }
 
     pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let resp = self.put_json("/settings/auto-backup", body)?;
-        read_json(resp)
+        let value: serde_json::Value = read_json(self.put_json("/gateway/settings", &serde_json::json!({ "auto_backup": body }))?)?;
+        Ok(value["auto_backup"].clone())
     }
 
     pub fn list_all_backups(&self) -> Result<Vec<BackupInfo>, String> {
-        let resp = self.get("/backups")?;
-        read_json(resp)
+        read_json(self.get("/backups")?)
+    }
+
+    pub fn get_agent_mounts(&self, name: &str) -> Result<serde_json::Value, String> {
+        read_json(self.get(&format!("/agents/{name}/mounts"))?)
+    }
+
+    pub fn set_agent_mounts(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        read_json(self.put_json(&format!("/agents/{name}/mounts"), body)?)
     }
 
     pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{name}/settings/backup"))?;
-        read_json(resp)
+        read_json(self.get(&format!("/agents/{name}/settings/backup"))?)
     }
 
     pub fn set_agent_backup_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let resp = self.put_json(&format!("/agents/{name}/settings/backup"), body)?;
-        read_json(resp)
+        read_json(self.put_json(&format!("/agents/{name}/settings/backup"), body)?)
     }
 
     pub fn delete_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.delete_req(&format!("/agents/{name}/settings/backup"))?;
-        read_json(resp)
+        read_json(self.delete_req(&format!("/agents/{name}/settings/backup"))?)
     }
 
     pub fn get_agent_constitution(&self, name: &str) -> Result<String, String> {
-        let resp = self.get(&format!("/agents/{name}/constitution"))?;
-        let body: serde_json::Value = read_json(resp)?;
-        body["content"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| "response missing 'content' field".to_string())
+        let body: serde_json::Value = read_json(self.get(&format!("/agents/{name}/constitution"))?)?;
+        require_str(&body, "content")
     }
 
     pub fn set_agent_constitution(&self, name: &str, content: &str) -> Result<(), String> {
@@ -679,6 +722,24 @@ impl Client {
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{name}/logs?tail={tail}"))?;
         consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
+    }
+
+    /// The agent's notification interrupt rules, read from its GET /config (the `notification_rules`
+    /// array; empty when absent). Everything is a rule now — a notification with no matching rule interrupts.
+    pub fn get_notification_rules(&self, name: &str) -> Result<serde_json::Value, String> {
+        let config: serde_json::Value = read_json(self.get(&format!("/agents/{name}/config"))?)?;
+        match config["notification_rules"].as_array() {
+            Some(rules) => Ok(serde_json::Value::Array(rules.clone())),
+            None => Ok(serde_json::Value::Array(vec![])),
+        }
+    }
+
+    /// Replace the agent's notification rules (PUT /config with {notification_rules}); the server assigns
+    /// ids to any missing one and stores rules canonically. Live — applied on the agent's next monitor
+    /// tick, no restart. Ignores the `{ok: true}` body.
+    pub fn set_notification_rules(&self, name: &str, rules: &serde_json::Value) -> Result<(), String> {
+        self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "notification_rules": rules }))?;
+        Ok(())
     }
 }
 
@@ -772,7 +833,7 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
         .try_clone()
         .map_err(|e| format!("failed to clone ws socket: {e}"))?;
     let connector =
-        tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
+        tungstenite::Connector::Rustls(make_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
         .map_err(|e| format!("ws connect failed: {e}"))?;
     timeout_handle
@@ -817,8 +878,8 @@ fn run_chat_session(
                                 std::io::stdout().flush().ok();
                             }
                         }
-                        Some("history") if render_history => {
-                            if let Some(events) = msg["events"].as_array() {
+                        Some("snapshot") if render_history => {
+                            if let Some(events) = msg["chat"]["events"].as_array() {
                                 for event in events {
                                     let event_type = event["type"].as_str().unwrap_or("");
                                     let time = time_from_ts(event["ts"].as_str().unwrap_or(""));

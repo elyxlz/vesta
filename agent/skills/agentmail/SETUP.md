@@ -64,17 +64,16 @@ The webhook reaches the local FastAPI service through the public vestad
 tunnel; that's why the service must be registered with `"public": true`.
 
 ```bash
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H "X-Agent-Token: $AGENT_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"agentmail","public":true}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+PORT=$(~/agent/skills/service/scripts/register-service agentmail --public)
 
 screen -dmS agentmail agentmail serve --port $PORT
 ```
 
-Append the same two-line block to `~/agent/prompts/restart.md` so the
-service comes back up after a container restart.
+Register it for restart (see [service](../service/SKILL.md)) by adding this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+
+```
+PORT=$(~/agent/skills/service/scripts/register-service agentmail --public) && screen -dmS agentmail agentmail serve --port $PORT
+```
 
 **Verify**: `curl http://127.0.0.1:$PORT/health` should return
 `{"ok": true, "address": "<your-address>"}`.

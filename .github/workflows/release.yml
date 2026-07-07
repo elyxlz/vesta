@@ -24,13 +24,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: master
           token: ${{ secrets.RELEASE_PAT }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/install-rust
 
       - uses: Swatinem/rust-cache@v2
 
@@ -52,7 +52,7 @@ jobs:
       - name: Compute new version
         id: bump
         run: |
-          CURRENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          CURRENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           IFS='.' read -r major minor patch_v <<< "$CURRENT"
           case "${{ inputs.bump }}" in
             patch) NEW="${major}.${minor}.$((patch_v + 1))" ;;
@@ -69,7 +69,7 @@ jobs:
           CURRENT: ${{ steps.bump.outputs.current }}
           NEW: ${{ steps.bump.outputs.new }}
         run: |
-          sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/pyproject.toml
+          sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/core/pyproject.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
@@ -113,8 +113,12 @@ jobs:
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          # Undo the bump with a revert commit, not a force-push: branch protection
+          # forbids force-pushes to master (allow_force_pushes: false). Only revert
+          # when the bump is still the tip, so a commit that landed after it is safe.
           git fetch origin master
           if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
-            git reset --hard HEAD~1
-            git push --force-with-lease origin master
+            git reset --hard origin/master
+            git revert --no-edit HEAD
+            git push origin master
           fi

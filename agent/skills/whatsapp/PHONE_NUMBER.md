@@ -11,8 +11,8 @@ You need a real mobile number from an actual carrier. Most VoIP/virtual numbers 
 **UK**
 | Provider | Type | Cost | Keep-alive |
 |---|---|---|---|
-| giffgaff | SIM / eSIM | Free SIM, £5 PAYG top-up | Top up every 6 months |
 | Lyca Mobile | SIM / eSIM | From £5/month PAYG | Use within 90 days |
+| giffgaff | SIM / eSIM | Free SIM, £5 PAYG top-up | Top up every 6 months |
 | Smarty (Three) | SIM / eSIM | From £4/month, no contract | Cancel anytime |
 | Asda Mobile | SIM | Free SIM, £5 top-up | Top up every 3 months |
 
@@ -56,9 +56,12 @@ WhatsApp now natively supports two accounts on a single device (Android and iPho
 3. Each account has separate chats, notifications, and settings
 
 **iPhone (WhatsApp 25.11.3+):**
-1. Open WhatsApp > Settings > tap the arrow next to your name > **Add Account**
-2. Enter your new number and verify via SMS
-3. Tap your profile icon to switch between accounts
+1. WhatsApp gates this feature by rollout and it's currently never visible in Settings by default, so first open this deeplink on the iPhone to activate it: `https://wa.me/settings?showAddAccountTooltip=true`. It opens WhatsApp Settings with the **Add Account** option surfaced.
+2. Tap the arrow next to your name > **Add Account**
+3. Enter your new number and verify via SMS
+4. Tap your profile icon to switch between accounts
+
+If the deeplink doesn't surface **Add Account** and you still can't find the multi-account option, use the WhatsApp Business app instead (Option C below): it's a separate app you can register to the new number without touching your personal WhatsApp.
 
 ### Option B: Work Profile (Android)
 
@@ -91,6 +94,6 @@ Once WhatsApp is registered with the new number, follow the main SETUP.md to aut
 
 **WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. You must be able to receive a text at the registered number when this happens. Don't discard the SIM after setup.
 
-**Unofficial API risk.** Vesta uses an unofficial WhatsApp bridge (whatsmeow), not the official WhatsApp Business API. This technically violates WhatsApp's ToS. Bans are rare with normal usage patterns but possible. Avoid mass messaging or spammy behavior. Let the number "age" with a few days of normal manual use before connecting to Vesta.
+**Make the first message an incoming one.** Before Vesta sends anything from the new account, message the new number from your own personal phone first, so its first interaction is receiving a message rather than sending one.
 
 **Number recycling.** If your prepaid number expires, the carrier will eventually reassign it. The new owner could register WhatsApp with that number, permanently disconnecting your agent.

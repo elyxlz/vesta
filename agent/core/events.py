@@ -68,6 +68,29 @@ class NotificationEvent(_BaseEvent):
     type: tp.Literal["notification"]
     source: str
     summary: str
+    # Structured facets for the notifications history view + rule-editor suggestions. `sender` is ""
+    # when the source attached no identity field. `decided` is what actually happened given the rules
+    # at arrival. `notif_id` is the notification file's stem, used to tell whether it's still pending
+    # (file on disk) or cleared. NotRequired because events predating the enrichment (and any
+    # non-monitor emitter) lack them; readers already tolerate their absence. The production emit in
+    # monitor_loop always supplies them.
+    notif_type: tp.NotRequired[str]
+    sender: tp.NotRequired[str]
+    # The notification's targetable structured extras ({field: value}, e.g. {"chat_name": "Bride squad"}),
+    # so the rule editor + the skill's `facets` can surface what an interrupt rule can match beyond
+    # source/type/sender. NotRequired (events predating it, and notifications with no such extras, omit it).
+    fields: tp.NotRequired[dict[str, str]]
+    decided: tp.NotRequired[tp.Literal["interrupt", "pool"]]
+    notif_id: tp.NotRequired[str]
+
+
+class NotificationClearedEvent(_BaseEvent):
+    type: tp.Literal["notification_cleared"]
+    # The cleared notification's file stem (matches a prior NotificationEvent.notif_id). Emitted when
+    # the agent processes a notification and deletes its file. A live broadcast-only delta (never
+    # persisted, see emit()): the notifications view seeds pending from the connect snapshot and then
+    # removes ids as these arrive.
+    notif_id: str
 
 
 class SubagentStartEvent(_BaseEvent):
@@ -96,22 +119,47 @@ type StreamEvent = (
     | UserEvent
     | ErrorEvent
     | NotificationEvent
+    | NotificationClearedEvent
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
 )
 
 
-class HistoryEvent(tp.TypedDict):
-    type: tp.Literal["history"]
-    events: list[StreamEvent]
+# The connect handshake: one event sent directly to a client on a successful WS connect (not via
+# the bus, so never persisted/broadcast). Each top-level key except `state` is a domain object so
+# new connect-time state is added within a domain (or as a new domain) without disturbing readers;
+# consumers read only the domains they care about (web: all; CLI: chat; vestad: state).
+class SnapshotChat(tp.TypedDict):
+    events: list[StreamEvent]  # recent app-chat seed; empty when the client connected with skip_history
+    cursor: int | None  # load-older pagination cursor
+
+
+class SnapshotNotifications(tp.TypedDict):
+    pending: list[str]  # notification file stems still on disk (received but not yet processed)
+
+
+class SnapshotEvent(tp.TypedDict):
+    type: tp.Literal["snapshot"]
     state: AgentState
-    cursor: int | None
+    chat: SnapshotChat
+    notifications: SnapshotNotifications
 
 
-type VestaEvent = StreamEvent | HistoryEvent
+type VestaEvent = StreamEvent | SnapshotEvent
 
-PAGE_SIZE = 100
+PAGE_SIZE = 50
+
+# The conversation the chat surface shows by default: the user's messages and the agent's
+# replies. The app-chat history window's cap and cursor count *these* (see _conversation_page),
+# so notifications and other noise never push the conversation out of the capped window.
+APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat")
+
+# Hidden-by-default events that ride along inside the window's id range (revealed by the
+# chat's show-tools toggle) without counting toward the cap — so a burst of tool calls can't
+# crowd the conversation out of the window, yet the toggle still has history to reveal.
+APP_CHAT_OVERLAY_TYPES: tuple[str, ...] = ("tool_start",)
+
 
 _EVENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -140,6 +188,11 @@ END;
 """
 
 _RECENCY_DECAY_RATE = 0.01
+
+# The notifications history channel: the arrivals list for the paginated view. Clears are not here —
+# pending state is seeded from the connect snapshot and kept live via broadcast notification_cleared
+# deltas, so the channel stays arrivals-only and pages aren't diluted by clear events.
+_NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
 
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
@@ -178,9 +231,14 @@ class EventBus:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
         self._conn: sqlite3.Connection | None = None
+        self._db_path: pl.Path | None = None
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(data_dir / "events.db"))
+            self._db_path = data_dir / "events.db"
+            # timeout sets SQLite's busy handler: a write waits up to N seconds for a
+            # held lock (e.g. a long-running VACUUM/maintenance op) instead of raising
+            # "database is locked" immediately. Pairs with the guard in emit() below.
+            self._conn = sqlite3.connect(str(self._db_path), timeout=30)
             self._conn.execute("PRAGMA journal_mode=WAL")
             _migrate(self._conn)
 
@@ -194,12 +252,22 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        if event["type"] != "status" and self._conn:
-            self._conn.execute(
-                "INSERT INTO events (ts, data) VALUES (?, ?)",
-                (event["ts"], json.dumps(event)),
-            )
-            self._conn.commit()
+        # status (activity flips) and notification_cleared (pending deltas) are live-only signals with
+        # no place in history — broadcast them but don't persist.
+        if event["type"] not in ("status", "notification_cleared") and self._conn:
+            # Event-logging is best-effort: a failed history write must NEVER crash the
+            # agent loop. Without this guard, a transient "database is locked" (the db
+            # held by a long maintenance op past the busy timeout) propagated out of emit
+            # and took down the whole loop on every event, turning one stuck write into a
+            # crash-restart storm. Drop the row with a warning and keep the agent alive.
+            try:
+                self._conn.execute(
+                    "INSERT INTO events (ts, data) VALUES (?, ?)",
+                    (event["ts"], json.dumps(event)),
+                )
+                self._conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
         for q in self._subscribers:
             self._offer(q, event)
 
@@ -232,13 +300,22 @@ class EventBus:
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
 
-    def _page(self, where_clause: str, params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
-        if not self._conn or limit <= 0:
+    def _page(self, conditions: tuple[str, ...], params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:
+        if not self._db_path or limit <= 0:
             return [], None
-        rows = self._conn.execute(
-            f"SELECT id, data FROM events {where_clause}ORDER BY id DESC LIMIT ?",
-            (*params, limit + 1),
-        ).fetchall()
+        where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
+        # Open a short-lived read connection rather than reusing self._conn (bound to the
+        # event loop thread): this lets callers run the query off the loop via
+        # asyncio.to_thread, so a slow scan on a large db never freezes the agent. WAL lets
+        # this reader run concurrently with the writer connection.
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        try:
+            rows = conn.execute(
+                f"SELECT id, data FROM events {where}ORDER BY id DESC LIMIT ?",
+                (*params, limit + 1),
+            ).fetchall()
+        finally:
+            conn.close()
         if not rows:
             return [], None
         has_older = len(rows) > limit
@@ -246,18 +323,61 @@ class EventBus:
         events = [json.loads(r[1]) for r in reversed(rows)]
         return events, rows[-1][0] if has_older else None
 
-    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        return self._page("", (), limit)
+    def _conversation_page(self, limit: int, before_cursor: int | None) -> tuple[list[StreamEvent], int | None]:
+        """The app-chat page: cap and cursor count conversation messages (APP_CHAT_TYPES),
+        while tool-call overlay events (APP_CHAT_OVERLAY_TYPES) within the window's id range
+        ride along — hidden until the show-tools toggle, but present so it has history to
+        reveal — without ever spending the cap. Two steps: find the id of the oldest of the
+        last `limit` conversation messages, then return everything visible from there up.
+        Short-lived read connection so it can run off the event loop (see _page)."""
+        if not self._db_path or limit <= 0:
+            return [], None
+        upper = "AND id < ? " if before_cursor is not None else ""
+        upper_params: tuple[object, ...] = (before_cursor,) if before_cursor is not None else ()
+        conv_ph = ",".join("?" for _ in APP_CHAT_TYPES)
+        visible = (*APP_CHAT_TYPES, *APP_CHAT_OVERLAY_TYPES)
+        vis_ph = ",".join("?" for _ in visible)
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        try:
+            conv_rows = conn.execute(
+                f"SELECT id FROM events WHERE json_extract(data, '$.type') IN ({conv_ph}) {upper}ORDER BY id DESC LIMIT ?",
+                (*APP_CHAT_TYPES, *upper_params, limit + 1),
+            ).fetchall()
+            if not conv_rows:
+                return [], None
+            has_older = len(conv_rows) > limit
+            boundary = conv_rows[:limit][-1][0]
+            rows = conn.execute(
+                f"SELECT data FROM events WHERE json_extract(data, '$.type') IN ({vis_ph}) AND id >= ? {upper}ORDER BY id ASC",
+                (*visible, boundary, *upper_params),
+            ).fetchall()
+        finally:
+            conn.close()
+        events = [json.loads(r[0]) for r in rows]
+        return events, boundary if has_older else None
 
-    def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        return self._page("WHERE id < ? ", (cursor,), limit)
+    def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
+        if channel == "app-chat":
+            return self._conversation_page(limit, None)
+        if channel == "notifications":
+            return self._page((_NOTIFICATION_CONDITION,), (), limit)
+        return self._page((), (), limit)
 
-    def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
+    def before(self, cursor: int, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
+        if channel == "app-chat":
+            return self._conversation_page(limit, cursor)
+        if channel == "notifications":
+            return self._page((_NOTIFICATION_CONDITION, "id < ?"), (cursor,), limit)
+        return self._page(("id < ?",), (cursor,), limit)
+
+    def search(self, query: str, *, limit: int = 20) -> list[StreamEvent]:
+        """Full-text search over events, returning the matching events in the same shape as recent()
+        (so /history can serve both recency and search), ranked by FTS relevance decayed toward recent."""
         if not self._conn:
             return []
         rows = self._conn.execute(
             """
-            SELECT e.ts, json_extract(e.data, '$.type') AS role, json_extract(e.data, '$.text') AS content,
+            SELECT e.data,
                    f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
             FROM events_fts f
             JOIN events e ON e.id = f.rowid
@@ -267,7 +387,7 @@ class EventBus:
             """,
             (_RECENCY_DECAY_RATE, query, limit),
         ).fetchall()
-        return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
+        return [json.loads(r[0]) for r in rows]
 
     def close(self) -> None:
         if self._conn:

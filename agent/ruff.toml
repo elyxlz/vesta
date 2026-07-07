@@ -1,0 +1,7 @@
+line-length = 144
+indent-width = 4
+target-version = "py312"
+
+[lint]
+ignore = ["E402", "E702", "E731", "UP008", "E712"]
+extend-select = ["UP"]
