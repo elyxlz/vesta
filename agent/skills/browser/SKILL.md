@@ -110,21 +110,11 @@ browser wait --time 2000
 browser wait --load-state load
 ```
 
-## Screenshots: prefer WebP and regions
+## Screenshots
 
-Screenshots are costly in context. When you only need a visual sanity check or a specific area,
-use `--webp` (typically 5-10x smaller than PNG) and `--region` to clip to the part that matters:
-
-```bash
-browser screenshot --webp                         # whole viewport, much smaller file
-browser screenshot --webp --region 0,0,800,600    # top-left 800x600
-browser screenshot --path /tmp/s.webp             # format inferred from .webp suffix
-browser screenshot --webp --quality 70            # tune compression (0-100)
-```
-
-Use PNG only when you need lossless output (e.g. pixel-diffing UI state). For routine flows
-where you just need to confirm "did the form submit" or "is a dialog on screen", WebP is fine
-and keeps cache pressure down.
+Screenshots are costly in context: prefer `--webp` (5-10x smaller than PNG) and `--region` to
+clip to the part that matters. Use PNG only when you need lossless output (e.g. pixel-diffing UI
+state). See the `browser screenshot` flags in the command reference.
 
 ## Refs vs coordinates
 
@@ -155,12 +145,9 @@ PY
 
 ## Contribute back what you learn
 
-**If you figured out something non-obvious about a site or mechanic, or wrote a helper that's
-broadly useful, contribute it upstream before you finish.** The agent loop on a site gets
-better only because past agents wrote down what they learned. Use the existing `upstream-pr`
-skill.
-
-Three kinds of upstreamable work, in order of frequency:
+If you figured out something non-obvious about a site or mechanic, or wrote a broadly useful
+helper, contribute it upstream before you finish via the `upstream-pr` skill. Three kinds of
+upstreamable work, in order of frequency:
 
 1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
    framework quirks, URL patterns, waits, traps. See the pattern in existing skill files.
@@ -176,8 +163,8 @@ What *not* to put anywhere shared:
 - Narration of the specific task you just did.
 - Secrets, cookies, session tokens, personal credentials.
 
-Flow: edit the file locally (it takes effect immediately thanks to `uv tool install --editable`),
-verify it works, then use the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
+Flow: edit locally (takes effect immediately via `uv tool install --editable`), verify, then use
+the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
 
 ## Multi-session (parallel sub-agents)
 
@@ -200,42 +187,17 @@ host can OOM. Prefer sequential for wide-scrape tasks.
 
 ## Stealth
 
-`browser launch --stealth` enables:
-- 58 anti-detection Chrome args (Scrapling)
-- `--disable-blink-features=AutomationControlled` (always on)
-- `navigator.webdriver` returns `undefined`, `navigator.plugins` populated, `navigator.languages` set
-- UA `Headless` stripped via `Emulation.setUserAgentOverride`
-
-For maximum stealth, run headed via Xvfb:
-
-```bash
-screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
-DISPLAY=:99 browser launch --stealth
-```
-
-Disable stealth entirely with `VESTA_BROWSER_NO_STEALTH=1`.
-
-Cloudflare Turnstile: see `interaction-skills/` and `stealth.py::solve_cf_turnstile()`.
+`browser launch --stealth` (see command reference) is on by default; disable it entirely with
+`VESTA_BROWSER_NO_STEALTH=1`. Cloudflare Turnstile: see `interaction-skills/` and
+`stealth.py::solve_cf_turnstile()`.
 
 ## VNC takeover (when stealth loses)
 
 Some sites (Google sign-in, banking) fingerprint automated browsers even under stealth. Hand
-control to the user via noVNC: they log in once, you reuse the persistent profile.
-
-```bash
-apt-get install -y novnc x11vnc openbox xdotool       # one-time
-screen -dmS xvfb Xvfb :99 -screen 0 1280x720x24
-screen -dmS openbox bash -c 'DISPLAY=:99 openbox'
-DISPLAY=:99 chromium --no-sandbox --disable-gpu \
-  --user-data-dir=$HOME/.browser/profile \
-  --window-size=1280,720 'https://example.com' &
-screen -dmS x11vnc x11vnc -display :99 -nopw -forever -shared -rfbport 5900
-screen -dmS websockify websockify --web=/usr/share/novnc <PORT> localhost:5900
-# send the user http://<LAN_IP>:<PORT>/vnc.html
-# when they're done:
-screen -X -S x11vnc quit; screen -X -S websockify quit
-# then use `browser launch --stealth --user-data-dir ~/.browser/profile` to reuse their cookies
-```
+control to the user via noVNC: run Chromium headed under Xvfb on a persistent
+`--user-data-dir`, bridge it out with `x11vnc` + `websockify --web=/usr/share/novnc`, and send
+the user `http://<LAN_IP>:<PORT>/vnc.html` to log in once. Afterwards reuse their cookies with
+`browser launch --stealth --user-data-dir ~/.browser/profile`.
 
 ## Raw CDP escape hatch
 
