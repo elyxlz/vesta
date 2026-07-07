@@ -81,7 +81,7 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it. Note in the summary what was filed (or that it was a no-op, and why).
 
-**Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. `upstream-pr` authenticates via a GitHub App (`uv run ~/agent/skills/upstream-pr/pr.py --token-only`), which is INDEPENDENT of the `gh` CLI's stored token. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
+**Test the channel before you call it blocked.** A blocker you can disprove in one command is not a blocker, it is a deferral wearing a costume. So "gh auth is broken / 401 / token expired" does NOT block upstreaming; it only blocks `gh`-CLI status checks. Before ever writing "upstream blocked on auth", actually run `pr.py --token-only`: if it prints a token, the channel works and filing is possible right now. Only a failure of `pr.py` itself (e.g. a missing App key) is a real auth blocker.
 
 **Keep an upstream queue and drain it.** Maintain a persistent queue file (e.g. `~/agent/upstream-queue.md`): every generalizable fix, bug, or learning gets appended the moment it is found. Each dream must, for every queued item, either file the PR (then remove it) or record a hard blocker actually tested this pass (not "next quiet window"). An item sitting unfiled across multiple dreams while `pr.py --token-only` works is a failure to flag, not a defer. "It's risky at 4am" is not a blocker for a single-file change that CI gates: file it and let CI catch errors.
 
@@ -170,8 +170,6 @@ Keep the container's filesystem organized and disk usage under control.
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
-The goal: a tidy workspace where everything has a purpose. If something is left over from a one-off task, remove it.
-
 ## Sensitive Data Cleanup
 
 Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
@@ -184,8 +182,6 @@ Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `20
 - Whether each validated or not
 - Upstream contributions: PRs created, issues filed, what was synced
 - Anything left unresolved
-
-Keep it terse. Future you will grep these. The point is a trail, not a journal.
 
 ## Compaction on completion
 
