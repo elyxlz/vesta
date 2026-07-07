@@ -24,5 +24,5 @@ Call the `compact_context` tool once. It schedules the compaction for after the 
 ## The nap prompt (for `instructions`)
 
 ```
-Preserve, with specifics: the user's current state and tone; every open thread and commitment (who is waiting on what); each in-flight task with its literal next action; recent decisions and the reasons behind them; and a brief record of tasks and work already completed this session (what was done and how it turned out). Keep exact values (names, dates, amounts, paths, commands) for anything unresolved. Drop verbose tool output and file contents, and condense resolved threads to a one-line record of what was done rather than dropping them entirely.
+Preserve whatever you would need to pick up seamlessly, in substance and in tone. Drop the noise.
 ```
