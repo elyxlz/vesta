@@ -59,7 +59,7 @@ flights cheapest LAX --round-trip --duration 4 --top 15
 
 ## Booking via Trip.com (Primary)
 
-Browser automation via stealth Chromium. Supports ALL airlines including Wizz Air and Ryanair.
+Browser automation via stealth Chromium.
 
 Use a subagent for Trip.com booking. Browser work fills context fast, so launch a background subagent with all necessary details and let it run.
 
@@ -84,6 +84,7 @@ browser launch --stealth
 - Click search, wait for results to load
 - Select the target flight from results (match by airline, time, price)
 - Click through to booking page
+- **Quirk**: no CAPTCHAs typically encountered during the booking flow
 
 **Step 2: Login (if needed)**
 - Trip.com may prompt for login. Use email login
@@ -105,8 +106,8 @@ browser launch --stealth
 - Skip all extras/add-ons (baggage, insurance, etc.) unless the user wants them
 
 **Step 5: Payment**
-- ~13 minute payment timer starts on the payment page
-- If logged in and card is saved, it may pre-fill card details
+- ~13 minute payment timer starts on the payment page. Don't linger
+- If logged in and card is saved, it may pre-fill card details (card details persist between bookings when logged in)
 - Otherwise enter: card number, expiry (MM/YY), CVC
 - Click pay/confirm
 - **3DS**: may trigger depending on card/airline. Check email for verification if needed
@@ -118,20 +119,12 @@ browser launch --stealth
 3. Set 24h-before check-in reminder via `tasks remind`
 4. Report booking details to user: airline, flight number, route, times, price, booking ref
 
-### Trip.com Known Quirks
-- **No CAPTCHAs** typically encountered during booking flow
-- **Guest checkout works** but saved passengers not available without login
-- **Card details persist** between bookings when logged in
-- **Cloudflare**: requires `browser launch --stealth` to bypass
-- **Payment timer**: ~13 minutes from entering payment page. Don't linger
-- **Prices** depend on browser locale/IP
-
 ### Subagent Template for Trip.com Booking
 
 When booking, launch a subagent with this info:
 ```
 Book flight on Trip.com:
-- Route: [ORIGIN] → [DESTINATION]
+- Route: [ORIGIN] -> [DESTINATION]
 - Date: [DATE]
 - Target flight: [AIRLINE] [FLIGHT_NUM] dep [TIME]
 - Passenger: [NAME] (get details from Keeper or provide directly)
@@ -143,11 +136,9 @@ Book flight on Trip.com:
 - After booking: report confirmation number, create calendar event, set check-in reminder
 ```
 
----
-
 ## Booking via Duffel API (Fallback)
 
-API-based booking. Faster and more reliable when the airline is supported. Use for easyJet, Vueling, BA, and other GDS-connected airlines. Does NOT support Wizz Air or Ryanair.
+API-based booking. Faster and more reliable when the airline is supported.
 
 **Note**: Requires a funded Duffel balance before live bookings. Check balance before attempting.
 
@@ -177,14 +168,12 @@ flights passenger show myprofile       # show profile
 
 ### Duffel Booking Flow
 
-1. `flights offer [ORIGIN] [DEST] [DATE]` → get `offer_id` + `passenger_ids`
+1. `flights offer [ORIGIN] [DEST] [DATE]` -> get `offer_id` + `passenger_ids`
 2. Review price, times, baggage
 3. `flights book <offer_id> --passenger-id <pas_id> --profile myprofile`
-4. Confirm → booking reference returned
+4. Confirm -> booking reference returned
 
 **Important**: Offers expire (~30 min). Always search fresh before booking.
-
----
 
 ## Parameters Reference
 
@@ -211,22 +200,10 @@ Duffel API token stored at `~/.config/duffel/token`. Passenger profiles at `~/.c
 
 To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORTS` in `cli/src/flights_cli/cli.py` (rename it to something like `HOME_AIRPORTS`) and set your preferred departure airports.
 
-## How It Works
-
-**Search**: Uses the `fli` Python library which reverse-engineers the Google Flights API, sending direct POST requests to Google's `FlightsFrontendService` endpoint.
-
-**Trip.com booking**: Browser automation via stealth Chromium (`browser` CLI). Navigates Trip.com as a real user, fills forms, handles login, completes payment.
-
-**Duffel booking**: REST API v2. Acts as a flight consolidator. Supports easyJet, Vueling, BA, and many others. Ryanair and Wizz Air excluded from API.
-
 ## Gotchas
 
 - **Google Flights destination must be single IATA code.** Multi-origin works, multi-destination does NOT
-- **Duffel offers expire**, typically ~30 minutes. Always search fresh before booking
-- **Duffel does NOT support Wizz Air or Ryanair.** Use Trip.com for these
-- **Duffel balance**: must be funded before live bookings. Check balance before attempting
-- Prices from Google Flights are in USD; Trip.com and Duffel prices depend on currency/locale
-- Trip.com quirks (stealth requirement, ~13 min payment timer, etc.) are in "Trip.com Known Quirks" above
+- Prices from Google Flights are in USD; Trip.com and Duffel prices depend on currency/locale/IP
 
 ## Saved Profiles
 
