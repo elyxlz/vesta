@@ -14,7 +14,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 ## Order of operations
 
 0. **Curiosity**: spend a real moment on yourself before the retrospective.
-1. **Self-improvement**: retrospective, review, fix, validate, upstream, dashboard
+1. **Self-improvement**: retrospective, review, fix, validate, upstream, dashboard, notification noise
 2. **User State**: update the snapshot in MEMORY.md
 3. **Memory curation**: prune, consolidate, move things out
 4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
@@ -98,6 +98,14 @@ Rules for dreamer-added widgets:
 - **Note the addition in tonight's summary** with the recurrence count and a one-liner the morning agent can surface ("Added a balance widget, you've been asking daily").
 
 Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
+
+### 7. Notification noise
+
+The same recurrence lens as the dashboard, pointed at your own interruptions. Scan recent notifications (the pool you triaged and what preempted you mid-task) for a kind that keeps arriving and keeps needing nothing: the same automated ping, a chatty group, a source you close every time. Threshold: roughly 3+ low-value occurrences across recent days before acting.
+
+For a clear-noise pattern, add a pool rule via the `notifications` skill so it stops breaking your focus, and note it in tonight's summary. Pooling defers, never drops, so this is reversible and safe to do on your own. For anything where importance is a real judgment call (a person, a topic that sometimes matters), don't decide it alone: surface it to the user with the pattern you saw and let them call it. Read the `notifications` skill for how rules match and place.
+
+Opposite direction too: if something important sat pooled when it should have reached you fast, propose an interrupt rule for it.
 
 ## Personality
 
