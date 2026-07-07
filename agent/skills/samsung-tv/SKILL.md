@@ -122,25 +122,7 @@ tv.hold_key('KEY_POWER', seconds=3)
 
 ### Shortcut Methods
 
-```python
-sc = tv.shortcuts()
-sc.power()
-sc.volume_up()
-sc.volume_down()
-sc.mute()
-sc.up() / sc.down() / sc.left() / sc.right()
-sc.enter()
-sc.back()
-sc.home()
-sc.source()
-sc.menu()
-sc.guide()
-sc.info()
-sc.channel_up() / sc.channel_down()
-sc.channel(number)
-sc.digit(n)
-sc.red() / sc.green() / sc.yellow() / sc.blue()
-```
+`sc = tv.shortcuts()` exposes named wrappers (`sc.power()`, `sc.volume_up()`, `sc.channel(number)`, etc.) around the `KEY_*` codes above.
 
 ## Apps
 
@@ -292,69 +274,7 @@ await api.get_now_playing()              # Request current state
 await api.disconnect()                   # Clean disconnect
 ```
 
-#### Alternative: raw requests (no extra dependencies)
-
-```python
-"""YouTube Lounge API - Cast a specific video to the TV's YouTube app"""
-import requests, re, xml.etree.ElementTree as ET
-
-TV_IP = find_tv_ip()  # use auto-discovery above
-
-def cast_youtube_video(video_id: str):
-    """Cast a YouTube video to the Samsung TV via YouTube Lounge API."""
-    # Step 1: Get screen ID from DIAL
-    resp = requests.get(f"http://{TV_IP}:8080/ws/apps/YouTube", timeout=5)
-    root = ET.fromstring(resp.text)
-    ns = {'dial': 'urn:dial-multiscreen-org:schemas:dial'}
-    additional = root.find('.//dial:additionalData', ns)
-    screen_id = None
-    for child in (additional if additional is not None else []):
-        tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-        if tag == 'screenId':
-            screen_id = child.text
-            break
-
-    # Step 2: Get lounge token
-    resp = requests.post(
-        "https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch",
-        data={"screen_ids": screen_id}
-    )
-    lounge_token = resp.json()["screens"][0]["loungeToken"]
-
-    # Step 3: Create session
-    BIND_URL = "https://www.youtube.com/api/lounge/bc/bind"
-    session_params = {
-        "CVER": "1", "RID": "1", "VER": "8",
-        "app": "youtube-desktop", "device": "REMOTE_CONTROL",
-        "id": "vesta-cast", "loungeIdToken": lounge_token, "name": "Vesta",
-    }
-    resp = requests.post(BIND_URL, params=session_params, data={"count": "0"})
-    sid = re.search(r'\["c","([^"]+)"', resp.text)
-    gsession = re.search(r'\["S","([^"]+)"', resp.text)
-    sid = sid.group(1) if sid else None
-    gsessionid = gsession.group(1) if gsession else None
-
-    if not sid or not gsessionid:
-        raise Exception("Failed to create Lounge session")
-
-    # Step 4: Send setPlaylist to play video
-    play_params = {
-        "CVER": "1", "RID": "2", "VER": "8",
-        "SID": sid, "gsessionid": gsessionid,
-        "app": "youtube-desktop", "device": "REMOTE_CONTROL",
-        "id": "vesta-cast", "loungeIdToken": lounge_token, "name": "Vesta",
-    }
-    play_data = {
-        "count": "1",
-        "req0__sc": "setPlaylist",
-        "req0_videoId": video_id,
-        "req0_videoIds": video_id,
-        "req0_currentTime": "0",
-        "req0_currentIndex": "0",
-    }
-    resp = requests.post(BIND_URL, params=play_params, data=play_data)
-    return resp.status_code == 200
-```
+If pyytlounge is unavailable, the Lounge API is DIAL:8080 -> get_lounge_token_batch -> bind/setPlaylist.
 
 ### Finding a YouTube Video ID
 
@@ -368,13 +288,7 @@ Replace `QUERY` with a URL-encoded search term (e.g., `lo+fi+beats`). Each resul
 
 ### Deep Link Method -- may not work on all models
 
-The `DEEP_LINK` / `run_app` method does not work on all Samsung TV models. Use the Lounge API above for reliable video casting.
-
-```python
-# May NOT work on all models -- use the Lounge API above instead
-video_id = "VIDEO_ID"
-tv.run_app('111299001912', app_type='DEEP_LINK', meta_tag=f'v={video_id}')
-```
+`tv.run_app('111299001912', app_type='DEEP_LINK', meta_tag=f'v={video_id}')` may not work on all models; prefer the Lounge API above.
 
 ### YouTube Playback Control
 
@@ -423,13 +337,8 @@ tv.move_cursor(x=500, y=300, duration=0)
 ## Notes
 
 - The TV must be on the same local network as Vesta
-- First WebSocket connection may require user approval on the TV screen
-- Token is saved to `~/.tv/samsung_tv_token.json` after first successful connection
 - REST API calls (rest_*) work without WebSocket -- useful for status checks
 - WebSocket calls (send_key, run_app, open_browser) require an active connection
-- If WebSocket times out, the TV may have gone to sleep -- send WoL first
-- The TV auto-sleeps after inactivity; WoL brings it back in ~10 seconds
 - Port 9197 is UPnP/SOAP (DLNA renderer), not useful for app control
-- **DHCP IP changes**: The TV's IP can change after power cycles. If connection fails, check the ARP table (`cat /proc/net/arp`) and look for the TV's MAC to find the current IP. The `find_tv_ip()` helper handles this automatically.
 - **Don't blindly navigate YouTube UI with remote keys** (KEY_UP/DOWN/LEFT/RIGHT). You can't see the screen, so you'll end up in the wrong place. Use the Lounge API for playback control (play, pause, seek). KEY_CC does not reliably toggle subtitles on all models.
 - **Spotify on TV**: Launch Spotify app (`rest_app_run('3201606009684')`), then use the Spotify playback API with the TV device ID to control what plays. This is more reliable than remote keys.
