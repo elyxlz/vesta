@@ -189,6 +189,92 @@ def _ensure_clean_exit(user_data_dir: Path) -> None:
     prefs_path.write_text(json.dumps(prefs))
 
 
+def _x_display_reachable(display: str) -> bool:
+    """True iff an X server is actually accepting connections on `display`."""
+    if shutil.which("xdpyinfo"):
+        try:
+            return (
+                subprocess.run(
+                    ["xdpyinfo", "-display", display],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                ).returncode
+                == 0
+            )
+        except Exception:
+            return False
+    # Fallback when xdpyinfo isn't installed: probe the X11 unix socket directly.
+    try:
+        n = display.lstrip(":").split(".")[0]
+        sock_path = f"/tmp/.X11-unix/X{n}"
+        if not os.path.exists(sock_path):
+            return False
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(sock_path)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _ensure_xvfb(display: str) -> bool:
+    """Best-effort: guarantee an X server is up on `display` before headed Chrome.
+
+    The Xvfb daemon is normally started at boot (restart skill), but if it died
+    or never came up this self-heals in ~2s instead of letting Chrome fail with
+    "Missing X server". Clears the stale lock an unclean shutdown leaves behind
+    (which otherwise makes Xvfb refuse to start), serialised with an flock so
+    concurrent launches don't stomp each other. Never raises; on failure the
+    caller falls back to headless.
+    """
+    if _x_display_reachable(display):
+        return True
+    xvfb = shutil.which("Xvfb")
+    if not xvfb:
+        return False
+    n = display.lstrip(":").split(".")[0]
+    lock_fd = None
+    try:
+        import fcntl
+
+        lock_fd = os.open(f"/tmp/.vesta-xvfb-{n}.lock", os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # Another launcher may have started it while we waited for the lock.
+        if _x_display_reachable(display):
+            return True
+        # Safe to remove now: we just confirmed nothing is listening on :n.
+        for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        subprocess.Popen(
+            [xvfb, display, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if _x_display_reachable(display):
+                return True
+            time.sleep(0.2)
+        return _x_display_reachable(display)
+    except Exception:
+        return False
+    finally:
+        if lock_fd is not None:
+            try:
+                import fcntl
+
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except OSError:
+                pass
+
+
 def launch(
     *,
     port: int | None = None,
@@ -223,8 +309,17 @@ def launch(
         "--password-store=basic",
     ]
 
-    # Stealth mode and DISPLAY together: skip --headless to avoid the "HeadlessChrome" UA string.
-    has_display = bool(os.environ.get("DISPLAY"))
+    # Stealth wants a real display (headless leaks a "HeadlessChrome" UA), so provision
+    # one on demand instead of relying on a boot daemon: default to :99 when DISPLAY is
+    # unset, then ensure an X server is actually up, self-healing a dead or lock-stuck
+    # Xvfb. Zero setup, no restart-skill entry. If it can't come up, degrade to headless.
+    display = os.environ.get("DISPLAY", "")
+    if stealth and not display:
+        display = ":99"
+    has_display = bool(display)
+    if stealth and display.startswith(":") and not _ensure_xvfb(display):
+        has_display = False
+        display = ""
     use_headless = headless and not (stealth and has_display)
     if use_headless:
         args += ["--headless=new", "--disable-gpu"]
@@ -248,11 +343,16 @@ def launch(
 
     args.append("about:blank")
 
+    chrome_env = {**os.environ, "HOME": str(Path.home())}
+    # Pass the (possibly defaulted) display through so Chrome uses it even when
+    # DISPLAY wasn't set in the environment.
+    if has_display and display:
+        chrome_env["DISPLAY"] = display
     proc = subprocess.Popen(
         args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        env={**os.environ, "HOME": str(Path.home())},
+        env=chrome_env,
     )
 
     deadline = time.time() + READY_TIMEOUT_S
