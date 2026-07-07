@@ -195,7 +195,7 @@ Your final two steps compact this conversation and restart into it, so you wake 
 2. Call `compact_context` with:
    - `followup`: the wake-up note below, with tonight's summary path filled in. Core delivers it to you on the far side of the restart.
    - `restart`: true, so Vesta restarts into the compacted session.
-   - `prompt`: the continuity prompt below, passed verbatim. Do not add state or a summary of your own: the summarizer reads the full conversation and keeps what matters.
+   - `prompt`: how to summarize the conversation. Use the continuity prompt below.
 
 Continuity prompt (for `prompt`):
 

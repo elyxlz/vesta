@@ -19,7 +19,7 @@ A nap costs a summarization pass, so nap with a reason, not mid-task out of habi
 Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
 
 - `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit it for a silent nap.
-- `prompt` (required): the nap prompt below, passed verbatim. That is the whole argument. Do not add exact values, state, or a summary of your own: the summarizer reads the full conversation and keeps what matters, so anything you would list is already there.
+- `prompt` (required): how to summarize the conversation. Use the nap prompt below.
 
 ## The nap prompt (for `prompt`)
 

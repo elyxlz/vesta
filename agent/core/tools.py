@@ -109,8 +109,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         "Compact this conversation at the next idle point (it needs an idle session). `followup` "
         "(optional) is a short instruction to your own next turn after compacting. `restart=true` "
         "(optional) restarts into the compacted session (the nightly dream); omit it for an in-place nap. "
-        "`prompt` is the summarization guidance (each skill supplies a fixed one); pass it verbatim. "
-        "Do not restate the conversation or list values in it: the summarizer already sees the full history.",
+        "`prompt` is how to summarize the conversation; each skill supplies one.",
         {
             "type": "object",
             "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "prompt": {"type": "string"}},
