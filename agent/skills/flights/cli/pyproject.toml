@@ -5,7 +5,7 @@ description = "Flight search CLI for Vesta using fli (punitarani/fli) — Google
 readme = {text = "", content-type = "text/plain"}
 requires-python = ">=3.11"
 dependencies = [
-    "flights>=0.7.0",
+    "flights>=0.9.0",
     "requests>=2.31.0",
 ]
 
