@@ -11,7 +11,7 @@ import httpx
 
 from .config import Config
 from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
-from . import backend, owa_commands
+from . import backend, owa_commands, owa_rest, owa_rest_commands
 from .context import MicrosoftContext
 from .settings import MicrosoftSettings
 
@@ -62,6 +62,10 @@ def main():
     p_complete = auth_sub.add_parser("complete")
     p_complete.add_argument("--flow-cache", required=True)
     auth_sub.add_parser("list")
+    p_owa_login = auth_sub.add_parser(
+        "owa-login", help="Capture OWA REST token from a signed-in browser session (one-step setup for locked tenants)."
+    )
+    p_owa_login.add_argument("--account", required=True, help="Email address to capture the token for.")
 
     # email
     email_parser = group.add_parser("email")
@@ -198,15 +202,19 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
     p_respond.add_argument("--message", default=None)
 
-    # Dual-path selector on every email/calendar subcommand: auto (Graph then OWA
-    # fallback), or force a single backend for testing/preference.
+    # Backend selector on every email/calendar subcommand.
+    # auto  - Graph first; on permission failure: EWS (if device-flow token cached)
+    #         or REST (if browser-captured token available).
+    # graph - force the official Graph API.
+    # owa   - force the reverse-engineered EWS path.
+    # owa-rest - force the OWA REST path (requires: microsoft auth owa-login).
     for sub in (email_sub, cal_sub):
         for sp in sub.choices.values():
             sp.add_argument(
                 "--backend",
-                choices=[backend.AUTO, backend.GRAPH, backend.OWA],
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA, backend.OWA_REST],
                 default=backend.AUTO,
-                help="Path to use: auto (Graph, fall back to OWA/EWS on a permission error), graph, or owa.",
+                help=("Path: auto (Graph then OWA fallback), graph, owa (EWS), or owa-rest (browser-captured token; requires auth owa-login)."),
             )
 
     args = parser.parse_args()
@@ -274,20 +282,59 @@ def _dispatch_auth(args, config):
         return auth_commands.authenticate_account(config)
     elif args.command == "complete":
         return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
+    elif args.command == "owa-login":
+        return auth_commands.owa_login(config, account_email=args.account)
+
+
+def _graph_has_account(config, account_email: str) -> bool:
+    """True if the Graph token cache knows this account. Accounts on a locked tenant
+    reachable only via OWA are absent here, so the Graph path can't resolve them."""
+    try:
+        return any((a["email"] or "").lower() == (account_email or "").lower() for a in auth_commands.list_accounts(config))
+    except Exception:
+        return False
 
 
 def _dispatch_email(args, config, client):
     choice = getattr(args, "backend", backend.AUTO)
 
-    def dual(graph_call, owa_call):
-        return backend.run(choice, graph_call, owa_call)
+    def _owa_fn_for_auto(ews_fn, rest_fn, account_email: str):
+        """For auto: try EWS; if that fails and a REST token is available, try REST."""
+
+        def combined():
+            try:
+                return ews_fn()
+            except Exception as exc:
+                if owa_rest.has_valid_token(account_email, config):
+                    return rest_fn()
+                raise exc
+
+        return combined
+
+    def triple(graph_fn, ews_fn, rest_fn):
+        if choice == backend.AUTO:
+            # A captured OWA REST token for an account Graph doesn't know (locked
+            # tenant) means Graph can't even resolve it: go straight to REST rather
+            # than fail account resolution before the fallback can trigger.
+            if owa_rest.has_valid_token(args.account, config) and not _graph_has_account(config, args.account):
+                return rest_fn()
+            return backend.run(backend.AUTO, graph_fn, _owa_fn_for_auto(ews_fn, rest_fn, args.account))
+        return backend.run(choice, graph_fn, ews_fn, rest_fn)
 
     if args.command == "list":
         kw = dict(account_email=args.account, folder=args.folder, limit=args.limit)
-        return dual(lambda: email.list_emails(config, client, **kw), lambda: owa_commands.list_emails(config, client, **kw))
+        return triple(
+            lambda: email.list_emails(config, client, **kw),
+            lambda: owa_commands.list_emails(config, client, **kw),
+            lambda: owa_rest_commands.list_emails(config, client, **kw),
+        )
     elif args.command == "get":
         kw = dict(account_email=args.account, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
-        return dual(lambda: email.get_email(config, client, **kw), lambda: owa_commands.get_email(config, client, **kw))
+        return triple(
+            lambda: email.get_email(config, client, **kw),
+            lambda: owa_commands.get_email(config, client, **kw),
+            lambda: owa_rest_commands.get_email(config, client, **kw),
+        )
     elif args.command == "send":
         kw = dict(
             account_email=args.account,
@@ -299,12 +346,20 @@ def _dispatch_email(args, config, client):
             attachments=args.attachments,
             html=args.html,
         )
-        return dual(lambda: email.send_email(config, client, **kw), lambda: owa_commands.send_email(config, client, **kw))
+        return triple(
+            lambda: email.send_email(config, client, **kw),
+            lambda: owa_commands.send_email(config, client, **kw),
+            lambda: owa_rest_commands.send_email(config, client, **kw),
+        )
     elif args.command == "draft":
         kw = dict(
             account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments
         )
-        return dual(lambda: email.create_email_draft(config, client, **kw), lambda: owa_commands.create_email_draft(config, client, **kw))
+        return triple(
+            lambda: email.create_email_draft(config, client, **kw),
+            lambda: owa_commands.create_email_draft(config, client, **kw),
+            lambda: owa_rest_commands.create_email_draft(config, client, **kw),
+        )
     elif args.command == "reply":
         kw = dict(
             account_email=args.account,
@@ -314,41 +369,82 @@ def _dispatch_email(args, config, client):
             reply_all=args.reply_all,
             html=args.html,
         )
-        return dual(lambda: email.reply_to_email(config, client, **kw), lambda: owa_commands.reply_to_email(config, client, **kw))
+        return triple(
+            lambda: email.reply_to_email(config, client, **kw),
+            lambda: owa_commands.reply_to_email(config, client, **kw),
+            lambda: owa_rest_commands.reply_to_email(config, client, **kw),
+        )
     elif args.command == "attachment":
         kw = dict(account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
-        return dual(lambda: email.get_attachment(config, client, **kw), lambda: owa_commands.get_attachment(config, client, **kw))
+        return triple(
+            lambda: email.get_attachment(config, client, **kw),
+            lambda: owa_commands.get_attachment(config, client, **kw),
+            lambda: owa_rest_commands.get_attachment(config, client, **kw),
+        )
     elif args.command == "search":
         kw = dict(account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
-        return dual(lambda: email.search_emails(config, client, **kw), lambda: owa_commands.search_emails(config, client, **kw))
+        return triple(
+            lambda: email.search_emails(config, client, **kw),
+            lambda: owa_commands.search_emails(config, client, **kw),
+            lambda: owa_rest_commands.search_emails(config, client, **kw),
+        )
     elif args.command == "update":
         kw = dict(account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories)
-        return dual(lambda: email.update_email(config, client, **kw), lambda: owa_commands.update_email(config, client, **kw))
+        return triple(
+            lambda: email.update_email(config, client, **kw),
+            lambda: owa_commands.update_email(config, client, **kw),
+            lambda: owa_rest_commands.update_email(config, client, **kw),
+        )
     elif args.command == "delete":
         kw = dict(account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent)
-        return dual(lambda: email.delete_email(config, client, **kw), lambda: owa_commands.delete_email(config, client, **kw))
+        return triple(
+            lambda: email.delete_email(config, client, **kw),
+            lambda: owa_commands.delete_email(config, client, **kw),
+            lambda: owa_rest_commands.delete_email(config, client, **kw),
+        )
     elif args.command == "block":
         if args.list:
-            return dual(
+            return triple(
                 lambda: block.list_block_rules(config, client, account_email=args.account),
                 lambda: owa_commands.list_block_rules(config, client, account_email=args.account),
+                lambda: owa_rest_commands.list_block_rules(config, client, account_email=args.account),
             )
-        return dual(
+        return triple(
             lambda: block.block_sender(config, client, account_email=args.account, sender=args.sender),
             lambda: owa_commands.block_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_rest_commands.block_sender(config, client, account_email=args.account, sender=args.sender),
         )
     elif args.command == "unblock":
-        return dual(
+        return triple(
             lambda: block.unblock_sender(config, client, account_email=args.account, sender=args.sender),
             lambda: owa_commands.unblock_sender(config, client, account_email=args.account, sender=args.sender),
+            lambda: owa_rest_commands.unblock_sender(config, client, account_email=args.account, sender=args.sender),
         )
 
 
 def _dispatch_calendar(args, config, client):
     choice = getattr(args, "backend", backend.AUTO)
 
-    def dual(graph_call, owa_call):
-        return backend.run(choice, graph_call, owa_call)
+    def _owa_fn_for_auto(ews_fn, rest_fn, account_email: str):
+        def combined():
+            try:
+                return ews_fn()
+            except Exception as exc:
+                if owa_rest.has_valid_token(account_email, config):
+                    return rest_fn()
+                raise exc
+
+        return combined
+
+    def triple(graph_fn, ews_fn, rest_fn):
+        if choice == backend.AUTO:
+            # A captured OWA REST token for an account Graph doesn't know (locked
+            # tenant) means Graph can't even resolve it: go straight to REST rather
+            # than fail account resolution before the fallback can trigger.
+            if owa_rest.has_valid_token(args.account, config) and not _graph_has_account(config, args.account):
+                return rest_fn()
+            return backend.run(backend.AUTO, graph_fn, _owa_fn_for_auto(ews_fn, rest_fn, args.account))
+        return backend.run(choice, graph_fn, ews_fn, rest_fn)
 
     if args.command == "list":
         kw = dict(
@@ -359,15 +455,24 @@ def _dispatch_calendar(args, config, client):
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
         )
-        return dual(lambda: calendar.list_events(config, client, **kw), lambda: owa_commands.list_events(config, client, **kw))
+        return triple(
+            lambda: calendar.list_events(config, client, **kw),
+            lambda: owa_commands.list_events(config, client, **kw),
+            lambda: owa_rest_commands.list_events(config, client, **kw),
+        )
     elif args.command == "calendars":
-        return dual(
+        return triple(
             lambda: calendar.list_calendars(config, client, account_email=args.account),
             lambda: owa_commands.list_calendars(config, client, account_email=args.account),
+            lambda: owa_rest_commands.list_calendars(config, client, account_email=args.account),
         )
     elif args.command == "get":
         kw = dict(account_email=args.account, event_id=args.event_id)
-        return dual(lambda: calendar.get_event(config, client, **kw), lambda: owa_commands.get_event(config, client, **kw))
+        return triple(
+            lambda: calendar.get_event(config, client, **kw),
+            lambda: owa_commands.get_event(config, client, **kw),
+            lambda: owa_rest_commands.get_event(config, client, **kw),
+        )
     elif args.command == "create":
         kw = dict(
             account_email=args.account,
@@ -383,7 +488,11 @@ def _dispatch_calendar(args, config, client):
             recurrence=args.recurrence,
             recurrence_end_date=args.recurrence_end_date,
         )
-        return dual(lambda: calendar.create_event(config, client, **kw), lambda: owa_commands.create_event(config, client, **kw))
+        return triple(
+            lambda: calendar.create_event(config, client, **kw),
+            lambda: owa_commands.create_event(config, client, **kw),
+            lambda: owa_rest_commands.create_event(config, client, **kw),
+        )
     elif args.command == "update":
         kw = dict(
             account_email=args.account,
@@ -395,13 +504,25 @@ def _dispatch_calendar(args, config, client):
             body=args.body,
             timezone=args.timezone,
         )
-        return dual(lambda: calendar.update_event(config, client, **kw), lambda: owa_commands.update_event(config, client, **kw))
+        return triple(
+            lambda: calendar.update_event(config, client, **kw),
+            lambda: owa_commands.update_event(config, client, **kw),
+            lambda: owa_rest_commands.update_event(config, client, **kw),
+        )
     elif args.command == "delete":
         kw = dict(account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation)
-        return dual(lambda: calendar.delete_event(config, client, **kw), lambda: owa_commands.delete_event(config, client, **kw))
+        return triple(
+            lambda: calendar.delete_event(config, client, **kw),
+            lambda: owa_commands.delete_event(config, client, **kw),
+            lambda: owa_rest_commands.delete_event(config, client, **kw),
+        )
     elif args.command == "respond":
         kw = dict(account_email=args.account, event_id=args.event_id, response=args.response, message=args.message)
-        return dual(lambda: calendar.respond_event(config, client, **kw), lambda: owa_commands.respond_event(config, client, **kw))
+        return triple(
+            lambda: calendar.respond_event(config, client, **kw),
+            lambda: owa_commands.respond_event(config, client, **kw),
+            lambda: owa_rest_commands.respond_event(config, client, **kw),
+        )
 
 
 def _run_serve(config: Config, notif_dir: Path):

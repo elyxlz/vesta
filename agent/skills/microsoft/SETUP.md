@@ -43,21 +43,37 @@ than as "Microsoft Office"), or durability. It is **not** required.
 
 ## Choosing a backend per command
 
-`--backend {auto,graph,owa}` (default `auto`) selects the path: `auto` tries Graph
-and falls back to the OWA/EWS path on a permission failure; `graph` / `owa` force
-one path. See "Two backends" in SKILL.md.
+`--backend {auto,graph,owa,owa-rest}` (default `auto`) selects the path:
+- `auto`: tries Graph; on a permission failure tries OWA/EWS; if EWS also fails and a REST token is available, uses REST.
+- `graph`: force the official Graph API.
+- `owa`: force the reverse-engineered EWS path.
+- `owa-rest`: force the OWA REST path (requires `microsoft auth owa-login` first).
+
+See "Three backends" in SKILL.md.
+
+## OWA REST path: one-step setup for locked tenants
+
+If your tenant blocks device-flow grants even for first-party Microsoft clients
+(common at universities), use the browser-capture path instead. Setup is one step:
+
+```bash
+microsoft auth owa-login --account you@university.edu
+```
+
+This opens `https://outlook.office.com/mail/` in the vesta browser, lets you sign
+in (or picks up an existing session), extracts the access token MSAL.js already
+holds in browser storage, decodes its expiry, and stores it. The token lasts ~24 h;
+re-run when it expires.
+
+After setup, `--backend owa-rest` uses this token, and `--backend auto` falls back
+to it automatically when both Graph and EWS are unavailable.
 
 ## Escape hatch if a tenant blocks even EWS
 
-The OWA fallback talks EWS over a first-party bearer token, which works as long as
-the tenant allows Exchange access at all. If a tenant disables EWS itself, the
-remaining option is to reproduce the browser exactly: drive a headless browser
-(the `browser` skill) to sign in to Outlook on the web, capture the live
-`/owa/service.svc` session (the session cookies plus the `X-OWA-CANARY` token),
-and replay the JSON `service.svc` actions with that session. This cannot be blocked
-without also blocking the user's own webmail, but the session is short-lived and
-must be re-captured through the interactive login, so it is intentionally not built
-in as a default.
+The OWA REST path (`owa-rest`) is the escape hatch: it uses the same token the
+Outlook web app holds, so it cannot be blocked without also blocking the user's own
+webmail. The token is short-lived (~24 h) so re-capture is needed periodically.
+Run `microsoft auth owa-login --account <email>` to refresh it.
 
 ## Authentication
 

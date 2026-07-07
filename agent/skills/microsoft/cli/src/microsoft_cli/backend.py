@@ -24,7 +24,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-AUTO, GRAPH, OWA = "auto", "graph", "owa"
+AUTO, GRAPH, OWA, OWA_REST = "auto", "graph", "owa", "owa-rest"
 _PERMISSION_STATUSES = (401, 403)
 
 
@@ -41,21 +41,27 @@ def _is_permission_failure(exc: Exception) -> bool:
     return False
 
 
-def run(choice: str, graph_fn, owa_fn):
+def run(choice: str, graph_fn, owa_fn, rest_fn=None):
     """Execute a command via the chosen path.
 
-    ``graph``/``owa`` force a single backend. ``auto`` tries Graph and falls back to
-    OWA on a permission failure, re-raising anything else.
+    ``graph`` / ``owa`` / ``owa-rest`` force a single backend (``rest_fn`` is
+    required for ``owa-rest``).  ``auto`` tries Graph and on a permission failure
+    falls back to ``owa_fn``; anything else re-raises.
     """
     if choice == GRAPH:
         return graph_fn()
     if choice == OWA:
         return owa_fn()
+    if choice == OWA_REST:
+        if rest_fn is None:
+            raise ValueError("no REST implementation provided for owa-rest backend")
+        return rest_fn()
 
+    # AUTO: try Graph, fall back to OWA on permission failures only.
     try:
         return graph_fn()
     except Exception as exc:  # noqa: BLE001 - we re-raise non-permission errors below
         if _is_permission_failure(exc):
-            logger.warning("Graph path unavailable (%s: %s); falling back to OWA/EWS", type(exc).__name__, exc)
+            logger.warning("Graph path unavailable (%s: %s); falling back to OWA", type(exc).__name__, exc)
             return owa_fn()
         raise

@@ -8,38 +8,35 @@ description: Outlook email, inbox, calendar, meetings, events via Microsoft. Req
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 
-## Two backends (Graph + reverse-engineered OWA fallback)
+## Three backends (Graph + OWA/EWS + OWA REST)
 
-Every email and calendar command runs over one of two paths, chosen with
-`--backend {auto,graph,owa}` (default `auto`):
+Every email and calendar command runs over one of three paths, chosen with
+`--backend {auto,graph,owa,owa-rest}` (default `auto`):
 
 - **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
   clean, supported path.
 - **`owa`**: a reverse-engineered fallback that speaks Exchange Web Services
-  (EWS) over the same endpoint Outlook on the web uses, authenticated with a
-  bearer token from the first-party "Microsoft Office" client. It exists for
-  locked-down tenants where Graph is unavailable because of permissions
-  (third-party apps blocked, Graph disabled, a missing delegated scope).
-- **`auto`** (default): try Graph; on a permission failure (401/403, a missing
-  scope, or no usable Graph token) transparently fall back to OWA/EWS. Any other
-  error propagates unchanged, so the fallback never hides real bugs.
+  (EWS) over a bearer token from the first-party "Microsoft Office" client. Works
+  on locked-down tenants where Graph is unavailable (third-party apps blocked,
+  Graph disabled, a missing delegated scope). Requires an interactive device-flow
+  sign-in on first use.
+- **`owa-rest`**: uses the OWA web app's own access token (captured from a live
+  browser session via `microsoft auth owa-login`) to call the OWA REST API
+  (`outlook.office.com/api/v2.0`). Path of last resort: works on tenants that
+  block even the device-flow grant (e.g. universities requiring admin approval for
+  all MSAL clients). Token is ~24 h; re-capture with a single command.
+- **`auto`** (default): tries Graph; on a permission failure tries OWA/EWS; if
+  EWS also fails and a REST token is on disk, falls back to REST. Non-permission
+  errors propagate unchanged so fallbacks never hide real bugs.
 
-Force a single path with `--backend graph` or `--backend owa` (used by the test
-suite to prove parity on both). Both paths return identically shaped output.
+**One-step OWA REST setup:**
+```bash
+microsoft auth owa-login --account you@company.com
+```
 
-Why the OWA path survives a locked-down company tenant: the first-party client is
-trusted tenant-wide (so it is not stopped by the "block third-party apps" control
-that blocks a custom Azure app), and EWS cannot be disabled without also breaking
-Outlook on the web for the tenant's own users.
-
-**Fallback of last resort:** if a tenant somehow disables EWS itself, the
-documented escape hatch is to drive a headless browser against Outlook on the web,
-capture the live `/owa/service.svc` session (cookies + `X-OWA-CANARY`), and replay
-those calls. Strictly more fragile, so it is not built in by default. See SETUP.md.
-
-**OWA-path gaps (use `--backend graph` for these):** attachments on
-send/draft/reply, and recurring-event creation, are not yet implemented on the
-OWA/EWS path; they raise a clear error there rather than silently doing nothing.
+**Path gaps:** attachments on send/draft/reply and recurring-event creation are
+not yet implemented on EWS or REST paths (clear error raised). Inbox rules
+(block/unblock) are Graph and EWS only; the REST path raises a clear error.
 
 ## Email
 
