@@ -18,8 +18,8 @@ A nap costs a summarization pass and drops any verbatim detail you did not expli
 
 Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
 
-- `instructions` (required): the nap prompt below, plus anything in flight that must survive verbatim (an exact next command, a draft message, a number you cannot lose).
 - `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit it for a silent nap.
+- `instructions` (required): the nap prompt below, plus at most a few exact values in flight that must survive verbatim (an exact command, a number, a path). Keep it short. `/compact` already preserves the conversation, so `instructions` only steers what the summary emphasizes; do not restate the session or paste a full state summary into it.
 
 ## The nap prompt (for `instructions`)
 

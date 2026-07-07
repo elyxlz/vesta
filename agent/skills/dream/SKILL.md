@@ -193,9 +193,9 @@ Your final two steps compact this conversation and restart into it, so you wake 
 
 1. Call `mark_dreamer_complete` to record that tonight's dream ran. Record first: if you stop after this, the run is still logged and self-heals next dream, whereas restarting without recording would re-fire the dream on the next hourly check.
 2. Call `compact_context` with:
-   - `instructions`: the continuity prompt below.
    - `followup`: the wake-up note below, with tonight's summary path filled in. Core delivers it to you on the far side of the restart.
    - `restart`: true, so Vesta restarts into the compacted session.
+   - `instructions`: the continuity prompt below, kept short. `/compact` already preserves the conversation, so `instructions` only steers what the summary emphasizes; do not paste a full state summary into it.
 
 Continuity prompt (for `instructions`):
 

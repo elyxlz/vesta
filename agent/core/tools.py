@@ -106,14 +106,15 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
 
     @tool(
         "compact_context",
-        "Compact this conversation with the given `instructions` at the next idle point (it needs an "
-        "idle session). Optionally pass `followup`: a short instruction delivered as a turn after "
-        "compacting (core prepends a note that the summary is now above). Pass `restart=true` to restart "
-        "into the compacted session; core delivers the follow-up on the far side of the restart. Omit "
-        "restart for an in-place compaction (a nap).",
+        "Compact this conversation at the next idle point (it needs an idle session). `followup` "
+        "(optional) is a short instruction to your own next turn after compacting. `restart=true` "
+        "(optional) restarts into the compacted session (the nightly dream); omit it for an in-place nap. "
+        "`instructions` is SHORT guidance for the summarizer, not a place to restate the conversation: "
+        "/compact already preserves the history, so just steer what it keeps and name a few exact values "
+        "that must survive verbatim. Do not paste a full state summary into it.",
         {
             "type": "object",
-            "properties": {"instructions": {"type": "string"}, "followup": {"type": "string"}, "restart": {"type": "boolean"}},
+            "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "instructions": {"type": "string"}},
             "required": ["instructions"],
         },
     )
