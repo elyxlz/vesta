@@ -228,6 +228,10 @@ pub struct ListEntry {
     pub name: String,
     pub status: AgentStatus,
     pub ws_port: u16,
+    // Container start time; the web app watches it change to retire a "restart to apply" flag.
+    // camelCase on the wire to match the web's AgentInfo; omitted when the agent has never started.
+    #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
 }
 
 // --- Docker connection ---
@@ -430,7 +434,13 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub port: Option<u16>,
     pub id: Option<String>,
+    /// Container start time (RFC3339 from Docker `State.StartedAt`), `None` for one that has never
+    /// started. Changes on every restart, so the web app uses it to retire a "restart to apply" flag.
+    pub started_at: Option<String>,
 }
+
+// The Go zero time Docker reports for a container that has never started; not a real boot.
+const NEVER_STARTED_AT: &str = "0001-01-01T00:00:00Z";
 
 pub async fn combined_status(
     http_client: &reqwest::Client,
@@ -505,7 +515,10 @@ pub(crate) fn container_info_from(cname: &str, info: &bollard::models::Container
         .unwrap_or_else(|| name_from_cname(cname));
     let port = agents_dir.and_then(|dir| read_env_value(dir, &name, "WS_PORT"))
         .and_then(|v| v.parse().ok());
-    ContainerInfo { status, port, id }
+    let started_at = info.state.as_ref()
+        .and_then(|s| s.started_at.clone())
+        .filter(|t| !t.is_empty() && t != NEVER_STARTED_AT);
+    ContainerInfo { status, port, id, started_at }
 }
 
 pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
@@ -515,6 +528,7 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
             status: ContainerStatus::NotFound,
             port: None,
             id: None,
+            started_at: None,
         },
     }
 }
@@ -1720,6 +1734,7 @@ pub async fn list_agents(
             name: agent_name.clone(),
             status: combined_status(http_client, agents_dir, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
+            started_at: info.started_at.clone(),
         });
     }
     entries
@@ -2456,6 +2471,33 @@ mod tests {
         assert!(mounts_have_core_code(&single));
         assert!(mounts_have_core_code(&legacy));
         assert!(!mounts_have_core_code(&none));
+    }
+
+    fn inspect_with_started_at(started_at: Option<&str>) -> bollard::models::ContainerInspectResponse {
+        bollard::models::ContainerInspectResponse {
+            state: Some(bollard::models::ContainerState {
+                status: Some(bollard::models::ContainerStateStatusEnum::RUNNING),
+                started_at: started_at.map(str::to_string),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn container_info_from_surfaces_container_start_time() {
+        // The web app clears a "restart to apply" flag by watching this value change, so a running
+        // container must report its StartedAt while a never-started container reports nothing.
+        let running = container_info_from("vesta-bot", &inspect_with_started_at(Some("2026-07-07T10:00:00.5Z")), None);
+        assert_eq!(running.started_at.as_deref(), Some("2026-07-07T10:00:00.5Z"));
+
+        // Docker returns the Go zero time for a container that has never started; treat it as absent
+        // so it never reads as a real boot on the wire.
+        let never = container_info_from("vesta-bot", &inspect_with_started_at(Some("0001-01-01T00:00:00Z")), None);
+        assert_eq!(never.started_at, None);
+
+        let missing = container_info_from("vesta-bot", &inspect_with_started_at(None), None);
+        assert_eq!(missing.started_at, None);
     }
 
     #[test]

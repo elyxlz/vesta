@@ -3099,8 +3099,8 @@ mod tests {
 
         // The control WS "agents" message, built by the production code path.
         let agents = vec![
-            ListEntry { name: "sample-agent".into(), status: AgentStatus::Alive, ws_port: 4200 },
-            ListEntry { name: "stopped-agent".into(), status: AgentStatus::Stopped, ws_port: 4201 },
+            ListEntry { name: "sample-agent".into(), status: AgentStatus::Alive, ws_port: 4200, started_at: Some("2026-01-01T00:00:00Z".into()) },
+            ListEntry { name: "stopped-agent".into(), status: AgentStatus::Stopped, ws_port: 4201, started_at: None },
         ];
         let mut activity = HashMap::new();
         activity.insert("sample-agent".to_string(), "thinking".to_string());

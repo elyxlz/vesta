@@ -281,7 +281,7 @@ export function FilesTab() {
       await writeFile(agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
-      markRestartPending(agentName, "files");
+      markRestartPending(agentName, "files", agent.startedAt);
     } catch (e) {
       setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
