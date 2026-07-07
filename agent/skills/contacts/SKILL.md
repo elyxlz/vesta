@@ -11,12 +11,15 @@ Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and 
 
 ## Where it lives
 
-`~/.contacts/` (personal, never leaves this box):
+`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
 
-- `INDEX.md`: the roster. One line per person: `name, relationship, one-liner`. Scan this first to see who you know.
-- `<slug>.md`: one file per person (`mom.md`, `jane-cofounder.md`, `emilio.md`). Slug is lowercase, dashes for spaces.
+To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
 
-`Glob ~/.contacts/*.md` to list everyone. `Grep` across the dir to find who said what or who works where.
+```bash
+grep -H "^# \|^Relationship:" ~/.contacts/*.md   # name + relationship for everyone, one call
+```
+
+`Glob ~/.contacts/*.md` lists everyone; `Grep` across the dir finds who said what or who works where.
 
 ## What a person's file holds
 
@@ -50,12 +53,10 @@ Only fill what's real. A near-stranger might be three lines. Someone central mig
 
 ## When to touch it
 
-- **Someone new appears** (a new sender, a name the user mentions, a person on the calendar): add a file and an INDEX line, even if it's just a stub.
+- **Someone new appears** (a new sender, a name the user mentions, a person on the calendar): add a file, even if it's just a stub.
 - **You learn something**: append it to their file. A preference, a date, a mood, a fact, a thing they're going through. Small and often beats a big rewrite.
 - **Before reaching out**: read their file so you match their style and remember what's open.
 - **The user asks about someone**: their file is your first stop, then `recall` for anything not captured yet.
-
-Keep INDEX.md in sync with the files. It's the fast path; the files are the depth.
 
 ## Keeping your sources in sync
 

@@ -12,8 +12,8 @@ If `~/agent/skills/contacts/SKILL.md` does not exist, install it:
 ~/agent/skills/skills-registry/scripts/skills-install contacts
 ```
 
-Then Read the SKILL.md so you follow its structure (INDEX.md plus one file per
-person).
+Then Read the SKILL.md so you follow its structure (one markdown file per
+person, no separate index).
 
 ### 2. Seed contact files from what you already know
 
@@ -27,9 +27,9 @@ Build your initial roster from the people you already have context on. Cover:
 
 For each person, create `~/.contacts/<slug>.md` with what you genuinely
 know (relationship, channels/handles, personality, communication style, facts,
-open threads) and add a line to `~/.contacts/INDEX.md`. Do not invent
-details. A near-stranger can be three lines; skip anyone you know nothing about.
-If a person already has a file, only add what is missing, never overwrite.
+open threads). Do not invent details. A near-stranger can be three lines; skip
+anyone you know nothing about. If a person already has a file, only add what is
+missing, never overwrite.
 
 ### 3. Set up the recurring sync (only if the user has contact sources)
 
