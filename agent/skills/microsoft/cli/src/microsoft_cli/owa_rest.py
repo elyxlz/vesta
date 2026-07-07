@@ -258,6 +258,26 @@ def _recipient(address: str) -> dict:
     return {"emailAddress": {"address": address}}
 
 
+def _file_attachment(name: str, content_bytes: bytes) -> dict:
+    # OWA REST v2.0 file attachments use the OutlookServices type name (not the Graph one).
+    return {
+        "@odata.type": "#Microsoft.OutlookServices.FileAttachment",
+        "name": name,
+        "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
+    }
+
+
+def _read_attachment(file_path: str) -> tuple[str, bytes]:
+    path = pl.Path(file_path).expanduser().resolve()
+    return path.name, path.read_bytes()
+
+
+def _attach_files(client: httpx.Client, token: str, item_id: str, attachments: list[str] | None) -> None:
+    for file_path in attachments or []:
+        name, data = _read_attachment(file_path)
+        _post(client, token, f"/me/messages/{item_id}/attachments", _file_attachment(name, data))
+
+
 def _message_body(subject: str, body: str, to: list[str] | None, cc: list[str] | None, bcc: list[str] | None, html: bool) -> dict:
     content_type = "HTML" if html else "Text"
     msg: dict[str, Any] = {
@@ -283,11 +303,14 @@ def send_message(
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[str] | None = None,
     html: bool = False,
 ) -> dict:
     token = load_token(account_email, config)
-    payload = {"message": _message_body(subject, body, to, cc, bcc, html), "saveToSentItems": True}
-    _post(client, token, "/me/sendmail", payload)
+    message = _message_body(subject, body, to, cc, bcc, html)
+    if attachments:
+        message["attachments"] = [_file_attachment(*_read_attachment(p)) for p in attachments]
+    _post(client, token, "/me/sendmail", {"message": message, "saveToSentItems": True})
     return {"status": "sent"}
 
 
@@ -297,14 +320,38 @@ def create_draft(
     config,
     *,
     to: list[str] | None,
-    subject: str,
+    subject: str | None,
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[str] | None = None,
+    reply_to_id: str | None = None,
+    forward_id: str | None = None,
 ) -> dict:
     token = load_token(account_email, config)
-    result = _post(client, token, "/me/messages", _message_body(subject, body, to, cc, bcc, False))
-    return {"status": "drafted", "id": result.get("id")}
+
+    if reply_to_id or forward_id:
+        source_id = reply_to_id or forward_id
+        endpoint = "createreply" if reply_to_id else "createforward"
+        draft = _post(client, token, f"/me/messages/{source_id}/{endpoint}")
+        draft_id = draft.get("id")
+        patch: dict[str, Any] = {"body": {"contentType": "Text", "content": body}}
+        if subject:
+            patch["subject"] = subject
+        if to:
+            patch["toRecipients"] = [_recipient(a) for a in to]
+        if cc:
+            patch["ccRecipients"] = [_recipient(a) for a in cc]
+        if bcc:
+            patch["bccRecipients"] = [_recipient(a) for a in bcc]
+        _patch(client, token, f"/me/messages/{draft_id}", patch)
+        _attach_files(client, token, draft_id, attachments)
+        return {"status": "drafted", "id": draft_id, "source_id": source_id}
+
+    result = _post(client, token, "/me/messages", _message_body(subject or "", body, to, cc, bcc, False))
+    draft_id = result.get("id")
+    _attach_files(client, token, draft_id, attachments)
+    return {"status": "drafted", "id": draft_id}
 
 
 def reply_message(
@@ -314,13 +361,56 @@ def reply_message(
     *,
     item_id: str,
     body: str,
+    attachments: list[str] | None = None,
     reply_all: bool = False,
     html: bool = False,
 ) -> dict:
     token = load_token(account_email, config)
+    if attachments:
+        create_endpoint = "createreplyall" if reply_all else "createreply"
+        draft = _post(client, token, f"/me/messages/{item_id}/{create_endpoint}")
+        draft_id = draft.get("id")
+        _patch(client, token, f"/me/messages/{draft_id}", {"body": {"contentType": "HTML" if html else "Text", "content": body}})
+        _attach_files(client, token, draft_id, attachments)
+        _post(client, token, f"/me/messages/{draft_id}/send")
+        return {"status": "sent"}
     endpoint = "replyall" if reply_all else "reply"
     _post(client, token, f"/me/messages/{item_id}/{endpoint}", {"comment": body})
     return {"status": "sent"}
+
+
+def forward_message(
+    client: httpx.Client,
+    account_email: str,
+    config,
+    *,
+    item_id: str,
+    to: list[str],
+    body: str = "",
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
+    html: bool = False,
+) -> dict:
+    token = load_token(account_email, config)
+    to_recipients = [_recipient(a) for a in to]
+    if attachments or cc or html:
+        draft = _post(client, token, f"/me/messages/{item_id}/createforward")
+        draft_id = draft.get("id")
+        patch: dict[str, Any] = {"body": {"contentType": "HTML" if html else "Text", "content": body}, "toRecipients": to_recipients}
+        if cc:
+            patch["ccRecipients"] = [_recipient(a) for a in cc]
+        _patch(client, token, f"/me/messages/{draft_id}", patch)
+        _attach_files(client, token, draft_id, attachments)
+        _post(client, token, f"/me/messages/{draft_id}/send")
+        return {"status": "sent"}
+    _post(client, token, f"/me/messages/{item_id}/forward", {"comment": body, "toRecipients": to_recipients})
+    return {"status": "sent"}
+
+
+def move_message(client: httpx.Client, account_email: str, config, *, item_id: str, destination: str) -> dict:
+    token = load_token(account_email, config)
+    result = _post(client, token, f"/me/messages/{item_id}/move", {"destinationId": destination})
+    return {"status": "moved", "email_id": item_id, "new_id": result.get("id")}
 
 
 def update_message(
@@ -331,8 +421,9 @@ def update_message(
     item_id: str,
     is_read: bool | None = None,
     categories: list[str] | None = None,
+    flagged: bool | None = None,
 ) -> dict:
-    if is_read is None and categories is None:
+    if is_read is None and categories is None and flagged is None:
         raise OwaRestError("nothing to update")
     token = load_token(account_email, config)
     patch: dict[str, Any] = {}
@@ -340,6 +431,8 @@ def update_message(
         patch["isRead"] = is_read
     if categories is not None:
         patch["categories"] = categories
+    if flagged is not None:
+        patch["flag"] = {"flagStatus": "flagged" if flagged else "notFlagged"}
     _patch(client, token, f"/me/messages/{item_id}", patch)
     return {"status": "updated", "id": item_id}
 
@@ -373,6 +466,92 @@ def delete_by_sender(client: httpx.Client, account_email: str, config, *, sender
 def get_attachment(client: httpx.Client, account_email: str, config, *, email_id: str, attachment_id: str) -> dict:
     token = load_token(account_email, config)
     return _get(client, token, f"/me/messages/{email_id}/attachments/{attachment_id}")
+
+
+def list_attachments(client: httpx.Client, account_email: str, config, *, email_id: str) -> list[dict]:
+    token = load_token(account_email, config)
+    resp = _get(client, token, f"/me/messages/{email_id}/attachments", {"$select": "id,name,size,contentType"})
+    return resp.get("value", [])
+
+
+def download_attachments(client: httpx.Client, account_email: str, config, *, email_id: str, out_dir: str) -> dict:
+    token = load_token(account_email, config)
+    resp = _get(client, token, f"/me/messages/{email_id}/attachments")
+    out = pl.Path(out_dir).expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    saved: list[dict] = []
+    used: set[str] = set()
+    for att in resp.get("value", []):
+        content_bytes = att.get("contentBytes")
+        if not content_bytes:  # item/reference attachments carry no inline bytes
+            continue
+        raw_name = att.get("name") or "attachment"
+        base = pl.Path(raw_name).name or "attachment"
+        stem, suffix = pl.Path(base).stem, pl.Path(base).suffix
+        name = f"{stem}{suffix}"
+        counter = 1
+        while name in used:
+            name = f"{stem}_{counter}{suffix}"
+            counter += 1
+        used.add(name)
+        (out / name).write_bytes(base64.b64decode(content_bytes))
+        saved.append({"name": raw_name, "saved_to": str(out / name), "size": att.get("size", 0)})
+    return {"email_id": email_id, "count": len(saved), "saved": saved}
+
+
+# ---------------------------------------------------------------------------
+# Folders
+# ---------------------------------------------------------------------------
+
+_FOLDER_SELECT = "id,displayName,parentFolderId,totalItemCount,unreadItemCount"
+
+
+def resolve_folder_id(client: httpx.Client, account_email: str, config, *, folder: str) -> str:
+    """Map a well-known key, a display name, or a raw folder id to an OWA folder path segment."""
+    key = folder.casefold()
+    if key in _FOLDER_MAP:
+        return _FOLDER_MAP[key]
+    token = load_token(account_email, config)
+    resp = _get(client, token, "/me/mailfolders", {"$select": "id,displayName", "$top": "100"})
+    for candidate in resp.get("value", []):
+        if (candidate.get("displayName") or "").casefold() == key:
+            return candidate["id"]
+    return folder
+
+
+def list_folders(client: httpx.Client, account_email: str, config) -> list[dict]:
+    token = load_token(account_email, config)
+    top = _paginate(client, token, "/me/mailfolders", {"$select": _FOLDER_SELECT, "$top": "100"}, 100)
+    out: list[dict] = []
+    for folder in top:
+        out.append(folder)
+        kids = _get(client, token, f"/me/mailfolders/{folder['id']}/childfolders", {"$select": _FOLDER_SELECT, "$top": "100"})
+        out.extend(kids.get("value", []))
+    return out
+
+
+def folder_status(client: httpx.Client, account_email: str, config, *, folder: str) -> dict:
+    folder_id = resolve_folder_id(client, account_email, config, folder=folder)
+    token = load_token(account_email, config)
+    return _get(client, token, f"/me/mailfolders/{folder_id}", {"$select": "id,displayName,totalItemCount,unreadItemCount"})
+
+
+def create_folder(client: httpx.Client, account_email: str, config, *, name: str, parent_id: str | None = None) -> dict:
+    token = load_token(account_email, config)
+    path = f"/me/mailfolders/{parent_id}/childfolders" if parent_id else "/me/mailfolders"
+    return _post(client, token, path, {"displayName": name})
+
+
+def rename_folder(client: httpx.Client, account_email: str, config, *, folder_id: str, name: str) -> dict:
+    token = load_token(account_email, config)
+    result = _patch(client, token, f"/me/mailfolders/{folder_id}", {"displayName": name})
+    return result or {"status": "renamed", "id": folder_id, "displayName": name}
+
+
+def delete_folder(client: httpx.Client, account_email: str, config, *, folder_id: str) -> dict:
+    token = load_token(account_email, config)
+    _delete(client, token, f"/me/mailfolders/{folder_id}")
+    return {"status": "deleted", "id": folder_id}
 
 
 # ---------------------------------------------------------------------------

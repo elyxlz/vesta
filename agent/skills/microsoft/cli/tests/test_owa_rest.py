@@ -356,40 +356,30 @@ def test_get_raises_http_status_error_on_401(tmp_path):
 
 
 def test_force_owa_rest_calls_rest_fn():
-    called = {"graph": False, "ews": False, "rest": False}
+    called = {"graph": False, "rest": False}
 
     def graph_fn():
         called["graph"] = True
         return "graph"
 
-    def ews_fn():
-        called["ews"] = True
-        return "ews"
-
     def rest_fn():
         called["rest"] = True
         return "rest"
 
-    result = backend.run(backend.OWA_REST, graph_fn, ews_fn, rest_fn)
+    result = backend.run(backend.OWA_REST, graph_fn, rest_fn)
     assert result == "rest"
     assert called["graph"] is False
-    assert called["ews"] is False
     assert called["rest"] is True
 
 
-def test_force_owa_rest_without_rest_fn_raises():
-    with pytest.raises(ValueError, match="REST"):
-        backend.run(backend.OWA_REST, lambda: "g", lambda: "e")
-
-
-def test_auto_falls_back_to_ows_fn_on_permission_error():
-    """auto: Graph 403 -> ewa_fn (existing OWA fallback, unchanged)."""
+def test_auto_falls_back_to_rest_fn_on_permission_error():
+    """auto: Graph 403 -> rest_fn (OWA REST fallback)."""
 
     def graph_fn():
         raise _http_error(403)
 
-    result = backend.run(backend.AUTO, graph_fn, lambda: "ews-result")
-    assert result == "ews-result"
+    result = backend.run(backend.AUTO, graph_fn, lambda: "rest-result")
+    assert result == "rest-result"
 
 
 def test_owa_rest_constant_value():
@@ -437,3 +427,147 @@ def test_delete_by_sender_skips_non_matching(tmp_path):
     assert result["deleted_ids"] == ["m1"]
     # Only the spam message was deleted
     assert client.delete.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Parity: move / archive / forward / flag / drafts / folders / attachments
+# ---------------------------------------------------------------------------
+
+
+def test_move_message_posts_destination(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"Id": "m2"})
+    result = owa_rest.move_message(client, "user@example.com", cfg, item_id="m1", destination="archive")
+    assert result == {"status": "moved", "email_id": "m1", "new_id": "m2"}
+    url = client.post.call_args.args[0]
+    body = client.post.call_args.kwargs["json"]
+    assert url.endswith("/me/messages/m1/move")
+    assert body == {"DestinationId": "archive"}
+
+
+def test_forward_plain_uses_forward_action(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({})
+    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", to=["b@x.com"], body="fyi")
+    assert result == {"status": "sent"}
+    url = client.post.call_args.args[0]
+    body = client.post.call_args.kwargs["json"]
+    assert url.endswith("/me/messages/m1/forward")
+    assert body["Comment"] == "fyi"
+    assert body["ToRecipients"] == [{"EmailAddress": {"Address": "b@x.com"}}]
+
+
+def test_forward_with_cc_uses_draft_path(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"Id": "d1"})
+    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", to=["b@x.com"], body="fyi", cc=["c@x.com"])
+    assert result == {"status": "sent"}
+    posted = [c.args[0] for c in client.post.call_args_list]
+    assert posted[0].endswith("/me/messages/m1/createforward")
+    assert posted[-1].endswith("/me/messages/d1/send")
+    patch_body = client.patch.call_args.kwargs["json"]
+    assert patch_body["CcRecipients"] == [{"EmailAddress": {"Address": "c@x.com"}}]
+
+
+def test_update_message_flagged(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({})
+    owa_rest.update_message(client, "user@example.com", cfg, item_id="m1", flagged=True)
+    body = client.patch.call_args.kwargs["json"]
+    assert body == {"Flag": {"FlagStatus": "flagged"}}
+
+
+def test_update_message_unflagged(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({})
+    owa_rest.update_message(client, "user@example.com", cfg, item_id="m1", flagged=False)
+    assert client.patch.call_args.kwargs["json"] == {"Flag": {"FlagStatus": "notFlagged"}}
+
+
+def test_create_draft_reply_is_threaded(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"Id": "draft-1"})
+    result = owa_rest.create_draft(client, "user@example.com", cfg, to=None, subject=None, body="thanks", reply_to_id="orig-1")
+    assert result == {"status": "drafted", "id": "draft-1", "source_id": "orig-1"}
+    posted = [c.args[0] for c in client.post.call_args_list]
+    assert posted[0].endswith("/me/messages/orig-1/createreply")
+    assert not any(u.endswith("/send") for u in posted)
+
+
+def test_create_draft_forward_sets_recipients(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"Id": "draft-2"})
+    owa_rest.create_draft(client, "user@example.com", cfg, to=["b@x.com"], subject=None, body="fyi", forward_id="orig-2")
+    assert client.post.call_args_list[0].args[0].endswith("/me/messages/orig-2/createforward")
+    assert client.patch.call_args.kwargs["json"]["ToRecipients"] == [{"EmailAddress": {"Address": "b@x.com"}}]
+
+
+def test_resolve_folder_id_wellknown_skips_lookup(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"value": []})
+    assert owa_rest.resolve_folder_id(client, "user@example.com", cfg, folder="Archive") == "archive"
+    client.get.assert_not_called()
+
+
+def test_resolve_folder_id_display_name(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"value": [{"Id": "news-id", "DisplayName": "Newsletters"}]})
+    assert owa_rest.resolve_folder_id(client, "user@example.com", cfg, folder="Newsletters") == "news-id"
+
+
+def test_list_folders_flattens_children(tmp_path):
+    cfg = _patched_token(tmp_path)
+    mock = MagicMock(spec=httpx.Client)
+    top_resp = MagicMock(status_code=200)
+    top_resp.raise_for_status = MagicMock()
+    top_resp.json.return_value = {"value": [{"Id": "inbox-id", "DisplayName": "Inbox"}]}
+    kids_resp = MagicMock(status_code=200)
+    kids_resp.raise_for_status = MagicMock()
+    kids_resp.json.return_value = {"value": [{"Id": "sub-id", "DisplayName": "Receipts"}]}
+    mock.get.side_effect = [top_resp, kids_resp]
+    result = owa_rest.list_folders(mock, "user@example.com", cfg)
+    assert [f["displayName"] for f in result] == ["Inbox", "Receipts"]
+
+
+def test_create_folder_nested(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"Id": "new-id", "DisplayName": "Child"})
+    owa_rest.create_folder(client, "user@example.com", cfg, name="Child", parent_id="parent-id")
+    assert client.post.call_args.args[0].endswith("/me/mailfolders/parent-id/childfolders")
+    assert client.post.call_args.kwargs["json"] == {"DisplayName": "Child"}
+
+
+def test_delete_folder(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({})
+    result = owa_rest.delete_folder(client, "user@example.com", cfg, folder_id="fid")
+    assert result == {"status": "deleted", "id": "fid"}
+    assert client.delete.call_args.args[0].endswith("/me/mailfolders/fid")
+
+
+def test_send_message_with_attachments_inlines_them(tmp_path):
+    cfg = _patched_token(tmp_path)
+    f = tmp_path / "report.pdf"
+    f.write_bytes(b"pdf-bytes")
+    client = _mock_client({})
+    owa_rest.send_message(client, "user@example.com", cfg, to=["b@x.com"], subject="Hi", body="see attached", attachments=[str(f)])
+    body = client.post.call_args.kwargs["json"]
+    attachments = body["Message"]["Attachments"]
+    assert attachments[0]["Name"] == "report.pdf"
+    assert base64.b64decode(attachments[0]["ContentBytes"]) == b"pdf-bytes"
+
+
+def test_download_attachments_writes_files(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client(
+        {
+            "value": [
+                {"Name": "a.pdf", "Size": 3, "ContentBytes": base64.b64encode(b"aaa").decode()},
+                {"Name": "ref", "Size": 0},  # no ContentBytes: skipped
+            ]
+        }
+    )
+    out = tmp_path / "dl"
+    result = owa_rest.download_attachments(client, "user@example.com", cfg, email_id="m1", out_dir=str(out))
+    assert result["count"] == 1
+    assert (out / "a.pdf").read_bytes() == b"aaa"

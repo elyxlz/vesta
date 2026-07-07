@@ -62,11 +62,11 @@ def send_email(
     attachments: list[str] | None = None,
     html: bool = False,
 ) -> dict:
-    if attachments:
-        raise NotImplementedError("attachments are not yet supported on the OWA REST path; use the Graph path for attachments")
     if not to and not cc and not bcc:
         raise ValueError("at least one recipient is required (--to, --cc, or --bcc)")
-    return owa_rest.send_message(client, account_email, config, to=to, subject=subject, body=body, cc=cc, bcc=bcc, html=html)
+    return owa_rest.send_message(
+        client, account_email, config, to=to, subject=subject, body=body, cc=cc, bcc=bcc, attachments=attachments, html=html
+    )
 
 
 def create_email_draft(
@@ -74,18 +74,35 @@ def create_email_draft(
     client,
     *,
     account_email: str,
-    to: list[str] | None,
-    subject: str,
     body: str,
+    subject: str | None = None,
+    to: list[str] | None = None,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
     attachments: list[str] | None = None,
+    reply_to_id: str | None = None,
+    forward_id: str | None = None,
 ) -> dict:
-    if attachments:
-        raise NotImplementedError("attachments are not yet supported on the OWA REST path; use the Graph path for attachments")
-    if not to and not cc and not bcc:
-        raise ValueError("at least one recipient is required (--to, --cc, or --bcc)")
-    return owa_rest.create_draft(client, account_email, config, to=to, subject=subject, body=body, cc=cc, bcc=bcc)
+    if reply_to_id and forward_id:
+        raise ValueError("specify at most one of --reply-to or --forward")
+    if not (reply_to_id or forward_id):
+        if not subject:
+            raise ValueError("--subject is required for a new draft")
+        if not to and not cc and not bcc:
+            raise ValueError("at least one recipient is required (--to, --cc, or --bcc)")
+    return owa_rest.create_draft(
+        client,
+        account_email,
+        config,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        bcc=bcc,
+        attachments=attachments,
+        reply_to_id=reply_to_id,
+        forward_id=forward_id,
+    )
 
 
 def reply_to_email(
@@ -99,9 +116,39 @@ def reply_to_email(
     reply_all: bool = False,
     html: bool = False,
 ) -> dict:
-    if attachments:
-        raise NotImplementedError("attachments are not yet supported on the OWA REST path; use the Graph path for attachments")
-    return owa_rest.reply_message(client, account_email, config, item_id=email_id, body=body, reply_all=reply_all, html=html)
+    return owa_rest.reply_message(
+        client, account_email, config, item_id=email_id, body=body, attachments=attachments, reply_all=reply_all, html=html
+    )
+
+
+def forward_email(
+    config: Config,
+    client,
+    *,
+    account_email: str,
+    email_id: str,
+    to: list[str],
+    body: str = "",
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
+    html: bool = False,
+) -> dict:
+    if not to:
+        raise ValueError("--to is required to forward")
+    return owa_rest.forward_message(
+        client, account_email, config, item_id=email_id, to=to, body=body, cc=cc, attachments=attachments, html=html
+    )
+
+
+def move_email(config: Config, client, *, account_email: str, email_id: str, to_folder: str) -> dict:
+    destination = owa_rest.resolve_folder_id(client, account_email, config, folder=to_folder)
+    result = owa_rest.move_message(client, account_email, config, item_id=email_id, destination=destination)
+    result["to_folder"] = to_folder
+    return result
+
+
+def archive_email(config: Config, client, *, account_email: str, email_id: str) -> dict:
+    return move_email(config, client, account_email=account_email, email_id=email_id, to_folder="archive")
 
 
 def get_attachment(config: Config, client, *, account_email: str, email_id: str, attachment_id: str, save_path: str) -> dict:
@@ -113,12 +160,27 @@ def get_attachment(config: Config, client, *, account_email: str, email_id: str,
     return {"name": att.get("name"), "content_type": att.get("contentType"), "saved_to": str(path)}
 
 
+def list_attachments(config: Config, client, *, account_email: str, email_id: str) -> list[dict]:
+    return owa_rest.list_attachments(client, account_email, config, email_id=email_id)
+
+
+def download_attachments(config: Config, client, *, account_email: str, email_id: str, out_dir: str) -> dict:
+    return owa_rest.download_attachments(client, account_email, config, email_id=email_id, out_dir=out_dir)
+
+
 def update_email(
-    config: Config, client, *, account_email: str, email_id: str, is_read: bool | None = None, categories: list[str] | None = None
+    config: Config,
+    client,
+    *,
+    account_email: str,
+    email_id: str,
+    is_read: bool | None = None,
+    categories: list[str] | None = None,
+    flagged: bool | None = None,
 ) -> dict:
-    if is_read is None and categories is None:
-        raise ValueError("must specify at least one field to update (is_read or categories)")
-    return owa_rest.update_message(client, account_email, config, item_id=email_id, is_read=is_read, categories=categories)
+    if is_read is None and categories is None and flagged is None:
+        raise ValueError("must specify at least one field to update (is_read, categories, or flagged)")
+    return owa_rest.update_message(client, account_email, config, item_id=email_id, is_read=is_read, categories=categories, flagged=flagged)
 
 
 def delete_email(
@@ -131,17 +193,42 @@ def delete_email(
     return owa_rest.delete_by_sender(client, account_email, config, sender=sender, permanent=permanent)
 
 
-# Block/unblock: OWA REST v2.0 does not expose inbox rules; raise clearly.
+# Block/unblock: OWA REST v2.0 does not expose inbox message rules; raise clearly.
 def list_block_rules(config: Config, client, *, account_email: str):
-    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend owa (EWS) or --backend graph")
+    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend graph")
 
 
 def block_sender(config: Config, client, *, account_email: str, sender: str):
-    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend owa (EWS) or --backend graph")
+    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend graph")
 
 
 def unblock_sender(config: Config, client, *, account_email: str, sender: str):
-    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend owa (EWS) or --backend graph")
+    raise NotImplementedError("inbox rules are not available on the OWA REST path; use --backend graph")
+
+
+# ---------------------------------------------------------------------------
+# Folders
+# ---------------------------------------------------------------------------
+
+
+def list_folders(config: Config, client, *, account_email: str) -> list[dict]:
+    return owa_rest.list_folders(client, account_email, config)
+
+
+def folder_status(config: Config, client, *, account_email: str, folder: str) -> dict:
+    return owa_rest.folder_status(client, account_email, config, folder=folder)
+
+
+def create_folder(config: Config, client, *, account_email: str, name: str, parent_id: str | None = None) -> dict:
+    return owa_rest.create_folder(client, account_email, config, name=name, parent_id=parent_id)
+
+
+def rename_folder(config: Config, client, *, account_email: str, folder_id: str, name: str) -> dict:
+    return owa_rest.rename_folder(client, account_email, config, folder_id=folder_id, name=name)
+
+
+def delete_folder(config: Config, client, *, account_email: str, folder_id: str) -> dict:
+    return owa_rest.delete_folder(client, account_email, config, folder_id=folder_id)
 
 
 # ---------------------------------------------------------------------------

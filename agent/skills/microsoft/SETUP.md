@@ -34,7 +34,26 @@ Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your
 microsoft auth login                         # Start device flow - gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
 microsoft auth list                           # List authenticated accounts
+microsoft auth remove --account <email>       # Sign an account out
 ```
+
+## Fallback backend: OWA REST (locked tenants only)
+
+If the tenant blocks Graph entirely (third-party apps disabled, or even the
+device-flow grant blocked, e.g. a university), use the OWA REST fallback. It
+reuses the token from a signed-in Outlook-on-the-web session, so it works on any
+mailbox you can open in a browser. Requires the `browser` skill daemon running
+with `DISPLAY=:99`.
+
+```bash
+microsoft auth owa-login --account you@company.com   # opens OWA, captures the token
+microsoft email list --account you@company.com --backend owa-rest
+```
+
+The captured token lasts ~24 h; re-run `auth owa-login` when it expires. With a
+captured token present, `--backend auto` (the default) falls back to OWA REST
+automatically whenever Graph returns a permission error. Every command works on
+both backends **except** `block`/`unblock` (inbox rules), which are Graph-only.
 
 ## Troubleshooting: Adding New Azure Permissions
 

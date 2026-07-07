@@ -8,35 +8,31 @@ description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forwa
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 
-## Three backends (Graph + OWA/EWS + OWA REST)
+## Two backends (Graph + OWA REST)
 
-Every email and calendar command runs over one of three paths, chosen with
-`--backend {auto,graph,owa,owa-rest}` (default `auto`):
+Every email, folder, and calendar command runs over one of two paths, chosen with
+`--backend {auto,graph,owa-rest}` (default `auto`):
 
 - **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
-  clean, supported path.
-- **`owa`**: a reverse-engineered fallback that speaks Exchange Web Services
-  (EWS) over a bearer token from the first-party "Microsoft Office" client. Works
-  on locked-down tenants where Graph is unavailable (third-party apps blocked,
-  Graph disabled, a missing delegated scope). Requires an interactive device-flow
-  sign-in on first use.
+  clean, supported, first-class path. Uses a device-flow OAuth token (see SETUP).
 - **`owa-rest`**: uses the OWA web app's own access token (captured from a live
   browser session via `microsoft auth owa-login`) to call the OWA REST API
-  (`outlook.office.com/api/v2.0`). Path of last resort: works on tenants that
-  block even the device-flow grant (e.g. universities requiring admin approval for
-  all MSAL clients). Token is ~24 h; re-capture with a single command.
-- **`auto`** (default): tries Graph; on a permission failure tries OWA/EWS; if
-  EWS also fails and a REST token is on disk, falls back to REST. Non-permission
-  errors propagate unchanged so fallbacks never hide real bugs.
+  (`outlook.office.com/api/v2.0`). The universal fallback: works on any mailbox you
+  can open in a browser, including locked-down tenants that block Graph entirely
+  (third-party apps disabled, or even the device-flow grant blocked, e.g. a
+  university). Token is ~24 h; re-capture with a single command.
+- **`auto`** (default): tries Graph; on a permission failure (401/402/403, or the
+  account is only reachable via a captured OWA token) falls back to OWA REST.
+  Non-permission errors propagate unchanged so the fallback never hides real bugs.
 
-**One-step OWA REST setup:**
+Both backends support the full command surface below. The only exception:
+inbox rules (`block`/`unblock`) are Graph-only, since OWA REST v2.0 does not
+expose them; on the REST path they raise a clear error pointing to `--backend graph`.
+
+**One-step OWA REST setup** (only needed if Graph is blocked on the tenant):
 ```bash
 microsoft auth owa-login --account you@company.com
 ```
-
-**Path gaps:** attachments on send/draft/reply and recurring-event creation are
-not yet implemented on EWS or REST paths (clear error raised). Inbox rules
-(block/unblock) are Graph and EWS only; the REST path raises a clear error.
 
 ## Email
 

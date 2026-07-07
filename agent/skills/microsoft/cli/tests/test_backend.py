@@ -79,8 +79,8 @@ def test_force_graph_propagates_its_error_without_fallback():
         backend.run(backend.GRAPH, graph_fn, lambda: "owa-result")
 
 
-def test_force_owa_never_calls_graph():
+def test_force_owa_rest_never_calls_graph():
     def graph_fn():
-        raise AssertionError("graph must not run when owa is forced")
+        raise AssertionError("graph must not run when owa-rest is forced")
 
-    assert backend.run(backend.OWA, graph_fn, lambda: "owa-result") == "owa-result"
+    assert backend.run(backend.OWA_REST, graph_fn, lambda: "rest-result") == "rest-result"
