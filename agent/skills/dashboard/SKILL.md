@@ -63,7 +63,7 @@ The dashboard is a high-density UI, not a standard app interface. Default shadcn
 *   Default widget wrapper: `<div className="rounded-2xl bg-secondary p-3 text-sm">`
 *   Dense widgets: `p-2`. Reserve `p-4` for the rare case it actually needs the room.
 *   Grid gap: Use `gap-2` (preferred) or `gap-3`. Reserve `gap-4`.
-*   Inside widgets: Use `space-y-2` instead of `space-y-4`.
+*   Inside widgets: use `flex flex-col gap-2` for vertical stacks, not larger gaps (and not `space-y-*`).
 *   Prefer horizontal density over tall widgets. Combine related info into single rows.
 
 **3. Buttons & Controls**
@@ -118,9 +118,91 @@ import { StarIcon } from "lucide-react"
 
 ## UI & Styling
 
-*   **Read the docs:** Before every UI change, read `shadcn/SKILL.md` and its linked rules.
+*   **Conventions:** Before every UI change, follow the shadcn / UI conventions section below.
 *   **Make it fun:** Use lucide icons for visual flair (like `<Flame />` for streaks, `<CheckCircle />` for completed).
 *   **Use semantic colors:** Use Tailwind classes (like `text-green-500`, `bg-amber-100`, `border-pink-400`) for badges, progress bars, and status indicators.
+
+## shadcn / UI conventions
+
+The components under `components/ui/` are pre-installed shadcn components, frozen and synced from the main app. This project is pinned to the **radix** base, **lucide** icons, and a Vite SPA (`rsc: false`, so no `"use client"` directive is needed). Never run the shadcn CLI here and never edit `components/ui/`: build by composing the existing components in `config.tsx`, `pages/`, and `widgets/`.
+
+**Styling**
+*   `className` is for layout, not styling. Never override a component's colors or typography.
+*   No `space-x-*` / `space-y-*`. Use `flex` with `gap-*` (vertical stacks: `flex flex-col gap-*`).
+*   Use `size-*` when width and height match (`size-10`, not `w-10 h-10`).
+*   Use `truncate`, not `overflow-hidden text-ellipsis whitespace-nowrap`.
+*   No manual `dark:` overrides. Use semantic tokens (`bg-background`, `text-muted-foreground`).
+*   Use `cn()` for conditional classes, not manual ternary template literals.
+*   No manual `z-index` on overlays (Dialog, Sheet, Popover handle their own stacking).
+
+**Forms**
+*   Forms use `FieldGroup` + `Field`, never a raw `div` with `space-y-*` or `grid gap-*`.
+*   Inside `InputGroup` use `InputGroupInput` / `InputGroupTextarea`, not raw `Input` / `Textarea`; buttons inside inputs use `InputGroupAddon`.
+*   Option sets of 2 to 7 choices use `ToggleGroup`, not looped `Button`s with manual active state.
+*   Group related checkboxes/radios with `FieldSet` + `FieldLegend`.
+*   Validation: `data-invalid` on `Field`, `aria-invalid` on the control (disabled: `data-disabled` on `Field`, `disabled` on the control).
+
+**Composition**
+*   Items live inside their Group: `SelectItem` in `SelectGroup`, `DropdownMenuItem` in `DropdownMenuGroup`, `CommandItem` in `CommandGroup`.
+*   Custom triggers use `asChild`.
+*   Dialog / Sheet / Drawer always need a Title (`className="sr-only"` if visually hidden).
+*   Full Card composition (`CardHeader` / `CardTitle` / `CardDescription` / `CardContent` / `CardFooter`), don't dump everything in `CardContent`.
+*   Button has no `isPending` / `isLoading`: compose with `Spinner` + `data-icon` + `disabled`.
+*   `TabsTrigger` inside `TabsList`; `Avatar` always has `AvatarFallback`.
+*   Prefer an existing component over custom markup: `Alert` for callouts, `Empty` for empty states, `Separator` over `<hr>`, `Skeleton` for loading, `Badge` over styled spans, `toast()` from `sonner`.
+
+**Icons**
+*   Icons in a `Button` use `data-icon="inline-start"` / `"inline-end"`; no sizing classes on icons inside components; pass icons as objects (`icon={CheckIcon}`), not string keys.
+
+**Key patterns**
+
+```tsx
+// Form layout: FieldGroup + Field, not div + Label.
+<FieldGroup>
+  <Field>
+    <FieldLabel htmlFor="email">Email</FieldLabel>
+    <Input id="email" />
+  </Field>
+</FieldGroup>
+
+// Validation: data-invalid on Field, aria-invalid on the control.
+<Field data-invalid>
+  <FieldLabel>Email</FieldLabel>
+  <Input aria-invalid />
+  <FieldDescription>Invalid email.</FieldDescription>
+</Field>
+
+// Icons in buttons: data-icon, no sizing classes.
+<Button>
+  <SearchIcon data-icon="inline-start" />
+  Search
+</Button>
+
+// Spacing: gap-*, not space-y-*.  Equal dimensions: size-*, not w-*/h-*.
+<div className="flex flex-col gap-4" />
+<Avatar className="size-10" />
+
+// Status colors: Badge variants or semantic tokens, not raw colors.
+<Badge variant="secondary">+20.1%</Badge>
+```
+
+**Component selection**
+
+| Need                       | Use                                                                                                 |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| Button/action              | `Button` with appropriate variant                                                                   |
+| Form inputs                | `Input`, `Select`, `Combobox`, `Switch`, `Checkbox`, `RadioGroup`, `Textarea`, `InputOTP`, `Slider` |
+| Toggle between 2-5 options | `ToggleGroup` + `ToggleGroupItem`                                                                    |
+| Data display               | `Table`, `Card`, `Badge`, `Avatar`                                                                   |
+| Navigation                 | `Sidebar`, `NavigationMenu`, `Breadcrumb`, `Tabs`, `Pagination`                                      |
+| Overlays                   | `Dialog` (modal), `Sheet` (side panel), `Drawer` (bottom sheet), `AlertDialog` (confirmation)       |
+| Feedback                   | `sonner` (toast), `Alert`, `Progress`, `Skeleton`, `Spinner`                                         |
+| Command palette            | `Command` inside `Dialog`                                                                            |
+| Charts                     | `Chart` (wraps Recharts)                                                                             |
+| Layout                     | `Card`, `Separator`, `Resizable`, `ScrollArea`, `Accordion`, `Collapsible`                           |
+| Empty states               | `Empty`                                                                                              |
+| Menus                      | `DropdownMenu`, `ContextMenu`, `Menubar`                                                             |
+| Tooltips/info              | `Tooltip`, `HoverCard`, `Popover`                                                                    |
 
 ## After every change
 
