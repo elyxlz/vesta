@@ -576,6 +576,9 @@ async def test_monitor_loop_trash_rule_drops_file_and_creates_no_turn(tmp_path):
         notifs = [e for e in emitted if e["type"] == "notification"]
         assert len(notifs) == 1, f"trashed notification must still be recorded once, got {len(notifs)}"
         assert notifs[0]["decided"] == "trash", "history must record the trash disposition"
+        # A trashed notification is resolved on arrival, so it must be cleared (no pending dot forever).
+        cleared = [e for e in emitted if e["type"] == "notification_cleared"]
+        assert [e["notif_id"] for e in cleared] == ["status"], "trashed notification must emit a matching notification_cleared"
     finally:
         await runner.aclose()
 

@@ -618,8 +618,14 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
 
             # Trashed notifications are recorded in history above but never reach the agent: move the
             # files out of the active dir (recoverable, and so they never re-emit) and create no turn.
+            # They are resolved the moment they arrive, so clear each one's pending marker right away —
+            # the arrival emit carried a notif_id, and without a matching notification_cleared the
+            # history view would show a trashed notification pending forever.
             if trashed:
                 await trash_notification_files(trashed, trash_dir=config.notif_trash_dir)
+                for notif in trashed:
+                    if notif.file_path:
+                        state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(notif.file_path).stem})
 
             queued_paths.update(n.file_path for n, disposition in decisions if disposition != "trash" and n.file_path)
             pending_passive.extend(new_passive)
