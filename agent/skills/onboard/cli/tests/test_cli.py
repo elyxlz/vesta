@@ -79,7 +79,7 @@ def _mock_precreate(monkeypatch, result=None):
     monkeypatch.setattr(
         cli_mod.Client,
         "create_account",
-        lambda self, email, code=None: result if result is not None else {"ok": True, "email": email, "code_applied": bool(code)},
+        lambda self, email, code=None: result if result is not None else {"ok": True, "email": email, "referral_code_applied": bool(code)},
     )
 
 
@@ -98,7 +98,7 @@ def test_verify_send_records_intent_then_sends(capsys, monkeypatch):
 
     def _create(self, email, code=None):
         calls["create"] = (email, code)
-        return {"ok": True, "email": email, "code_applied": bool(code)}
+        return {"ok": True, "email": email, "referral_code_applied": bool(code)}
 
     def _send(self, email):
         calls["send"] = email
@@ -120,12 +120,12 @@ def test_verify_send_sends_referral_code_from_shared_file(capsys, monkeypatch):
 
     def _create(self, email, code=None):
         calls["code"] = code
-        return {"ok": True, "email": email, "code_applied": bool(code)}
+        return {"ok": True, "email": email, "referral_code_applied": bool(code)}
 
     monkeypatch.setattr(cli_mod.Client, "create_account", _create)
     monkeypatch.setattr(cli_mod.Client, "send_otp", lambda self, email: {"success": True})
     rc, data = _run(["verify-send", "--email", E], capsys)
-    assert rc == 0 and data["code_applied"] is True
+    assert rc == 0 and data["referral_code_applied"] is True
     assert calls["code"] == "abc123"
 
 
@@ -173,14 +173,14 @@ def test_checkout_forwards_price_and_code_no_referral(capsys, monkeypatch):
 
     # checkout no longer takes/sends a referral (issue #79): attribution is bound
     # at account-create, so its signature has no referral_code and no X-Vesta-Referral.
-    def fake_checkout(self, *, token, plan, price, code):
-        captured.update(token=token, plan=plan, price=price, code=code)
+    def fake_checkout(self, *, token, plan, price, discount_code):
+        captured.update(token=token, plan=plan, price=price, discount_code=discount_code)
         return {"url": "https://checkout.stripe.com/x", "subdomain": "ada", "server_id": "srv1"}
 
     monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
     rc, data = _run(["checkout", "--email", E, "--price", "200", "--code", " friend50 "], capsys)
     assert rc == 0 and data["url"].startswith("https://checkout.stripe.com/")
-    assert captured == {"token": "TOK", "plan": "pro", "price": 200.0, "code": "friend50"}
+    assert captured == {"token": "TOK", "plan": "pro", "price": 200.0, "discount_code": "friend50"}
     # server_id is stashed for later steps but kept out of the agent-facing output.
     assert state_mod.load(E)["server_id"] == "srv1"
     assert "server_id" not in data
