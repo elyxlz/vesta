@@ -84,23 +84,11 @@ Most plugin `search` scripts do this for you with `--add <n> --path <dir>`.
 ## Examples
 
 ```bash
-# What's downloading right now?
-~/agent/skills/torrents/qb status
-
-# Search via the built-in plugin
-~/agent/skills/torrents/qb search "dune part two" movies
-
 # Search and add directly via the TorrentLeech scraper
 ~/agent/skills/torrents/plugins/torrentleech/search "Dune 2024" --cat movies --add 1 --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
 
 # Add a magnet to a specific path
 ~/agent/skills/torrents/qb add "magnet:?xt=urn:btih:..." --path "$MEDIA_LIBRARY_PATH/Mike/Movies"
-
-# Browse the library
-~/agent/skills/torrents/qb ls-library mike/Movies
-
-# How much space is left?
-~/agent/skills/torrents/qb disk
 ```
 
 ## Troubleshooting
@@ -118,9 +106,8 @@ sudo systemctl restart qbittorrent-nox@<QB_USER>
 
 ## One-time qBittorrent config
 
-Recommended settings on the box:
+Recommended settings on the box (see Troubleshooting for `WebUI\LocalHostAuth=false`):
 
-- `WebUI\LocalHostAuth=false` (no login from localhost)
 - `WebUI\AuthSubnetWhitelist=192.168.0.0/24` (or your LAN subnet)
 - SOCKS5 proxy configured for all torrent traffic (use a VPN)
 - Torrent export dir: `$MEDIA_LIBRARY_PATH/Torrents`
