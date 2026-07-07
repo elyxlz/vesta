@@ -34,11 +34,12 @@ fn read_session_id(container: &str) -> String {
     .to_string()
 }
 
-/// End-to-end of the nightly dreamer's finalize step against real claude: the agent calls
-/// `mark_dreamer_complete`, which must (1) compact the live conversation in place via a real
-/// `/compact` (an `isCompactSummary` line lands in the SAME session transcript), and (2) restart
-/// the agent while KEEPING the session id, so the agent resumes the compacted conversation rather
-/// than waking up on a blank slate. This is the behavior that replaced the old hard session reset.
+/// End-to-end of the nightly dreamer's finalize step against real claude. The finalize is two
+/// tool calls: `mark_dreamer_complete` records the run, then `compact_context(restart=true)` does
+/// the work, which must (1) compact the live conversation in place via a real `/compact` (an
+/// `isCompactSummary` line lands in the SAME session transcript), and (2) restart the agent while
+/// KEEPING the session id, so the agent resumes the compacted conversation rather than waking up on
+/// a blank slate. This is the behavior that replaced the old hard session reset.
 #[test]
 fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
     let Some((_shared, container)) = lock_live_agent_b() else {
@@ -48,15 +49,15 @@ fn dreamer_complete_compacts_in_place_and_restart_resumes_the_session() {
     let session_id_before = read_session_id(&container);
     assert!(!session_id_before.is_empty() && session_id_before != "None", "agent should have a persisted session id before the dream finalizes");
 
-    // Drive only the finalize step (not a full multi-minute dream): tell the agent to call its
-    // mark_dreamer_complete control tool now. That flags compact-then-restart; the message
-    // processor compacts at the next idle point and then restarts.
+    // Drive only the finalize step (not a full multi-minute dream): mark_dreamer_complete just
+    // records the run, so the agent must then call compact_context(restart=true) to compact in
+    // place and restart into the resumed session. The drain compacts at the next idle point.
     write_notification(
         &container,
-        "Call your mark_dreamer_complete tool right now. Do not run a full dream and do nothing else first — just call the tool.",
+        "Finalize tonight's dream now in two steps, and do nothing else (no full dream): first call your mark_dreamer_complete tool, then call your compact_context tool with restart set to true and a short prompt describing how to summarize this conversation.",
         true,
     )
-    .expect("write mark_dreamer_complete notification");
+    .expect("write dream finalize notification");
 
     // (1) Compaction really happened: claude writes an isCompactSummary line into the SAME
     // session transcript (manual /compact rewrites in place; resume keeps working).
