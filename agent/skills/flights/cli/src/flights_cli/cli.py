@@ -804,6 +804,13 @@ def main():
     p_passenger.set_defaults(func=cmd_passenger)
 
     args = parser.parse_args()
+    # The search/dates/cheapest commands scrape Google Flights via fli; a stale
+    # fli silently returns nothing (issue #822). The Duffel commands use a
+    # stable API and are exempt.
+    if args.command in ("search", "dates", "cheapest"):
+        from ._freshness import require_latest
+
+        require_latest("flights")
     args.func(args)
 
 
