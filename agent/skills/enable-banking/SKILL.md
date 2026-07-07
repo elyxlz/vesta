@@ -11,10 +11,7 @@ Tracks personal bank spending via Enable Banking open banking API (restricted mo
 
 Enable Banking is a Finland-licensed AISP operating under EU/EEA PSD2. It does **not** cover UK residents linking UK bank accounts: the UK consent flow returns "Due to local financial regulation you are not currently able to grant consent." Confirmed against a UK PSU attempting to link Revolut Bank UAB (LT) in May 2026.
 
-For UK users, this skill is not a viable path. Workable alternatives outside the EB API:
-- Per-bank developer APIs where they exist (e.g. Monzo's developer API is free for own-account use, OAuth client at `developers.monzo.com/api/clients`).
-- Manual CSV imports from each bank's app.
-- A UK-licensed AISP with personal-tier API access. Note: GoCardless Bank Account Data closed to new signups in July 2025; TrueLayer free tier is sandbox only; Plaid UK requires a custom paid plan. As of May 2026 there is no straightforward free auto-aggregator for UK individuals.
+For UK users this skill is not viable; workable alternatives outside the EB API are per-bank developer APIs (e.g. Monzo, free for own-account use), manual CSV imports, or a UK-licensed AISP with personal-tier API access (as of May 2026 there is no straightforward free auto-aggregator for UK individuals).
 
 Verify regional coverage with the user before walking them through Enable Banking setup.
 
@@ -98,9 +95,13 @@ Notification format:
 
 ## Auth & Consent
 
-- **Auth method**: RS256 JWT, self-signed. JWTs generated fresh per request, no OAuth token refresh needed
-- **Consent duration**: 90 days
+- **Auth method**: each API request generates a fresh RS256 self-signed JWT. No OAuth token storage or refresh needed.
+- **Sessions**: `finance auth login` creates a session at Enable Banking linked to your bank's consent. The `session_id` is stored in config and used for data requests.
+- **Restricted mode**: Enable Banking allows linking your own bank accounts without a commercial contract; only your linked accounts are accessible.
+- **Consent duration**: 90 days (the `valid_until` field in the auth request controls expiry).
 - **Re-auth**: when consent expires, run `finance auth login` and authorize your bank in the browser. The callback is caught automatically at `https://localhost:7866/callback`; on a browser SSL error, copy the full redirect URL from the address bar and pass it to `finance auth callback --url '<url>'`.
+- **Pagination**: transaction fetching automatically paginates via `continuation_key`.
+- **All output is JSON**, suitable for piping/parsing.
 
 ## Configuration
 
@@ -122,17 +123,6 @@ See [SETUP.md](SETUP.md) for initial configuration instructions.
 
 ## Bank Selection Notes
 
-- Use the `finance auth login` flow to browse available banks via Enable Banking
-- For EU banks, use the country code of the bank's licensed entity (e.g. `LT` for Revolut Bank UAB, the EU-licensed entity)
-- Set your bank with `finance config set --aspsp-name <name> --aspsp-country <cc>`; it persists in `~/.finance/config.json` and survives reinstalls. The `ASPSP_NAME` / `ASPSP_COUNTRY` constants in `enablebanking.py` are only the fallback default when config is unset.
-- **Callback port**: 7866. Must be free during `finance auth login`. Port is forwarded from container to host.
-- **Redirect URL**: `https://localhost:7866/callback` (HTTPS with self-signed cert; browser SSL warning is expected, just copy the URL)
-
-## How It Works
-
-- **JWT auth**: Each API request generates a fresh RS256 JWT signed with the private key. No token storage or refresh needed.
-- **Sessions**: `finance auth login` creates a session at Enable Banking that links to your bank's consent. The `session_id` is stored in config and used for data requests.
-- **Restricted mode**: Enable Banking allows linking your own bank accounts without a commercial contract. Only your linked accounts are accessible.
-- **Consent**: The `valid_until` field in the auth request controls consent expiry (default 90 days).
-- **Pagination**: transaction fetching automatically paginates via `continuation_key`
-- **All output is JSON**, suitable for piping/parsing
+- Browse available banks via the `finance auth login` flow, then set your bank with `finance config set --aspsp-name <name> --aspsp-country <cc>`.
+- For EU banks, use the country code of the bank's **licensed entity**, not the user's country (e.g. `LT` for Revolut Bank UAB). The `ASPSP_NAME` / `ASPSP_COUNTRY` constants in `enablebanking.py` are only the fallback default when config is unset.
+- **Callback port 7866** must be free during `finance auth login` and is forwarded from container to host.
