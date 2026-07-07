@@ -213,17 +213,23 @@ function ModelCard({
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
         <span className="truncate text-[11px] text-muted-foreground">
-          {model.author}
-          {model.context_length
-            ? ` · ${formatTokens(model.context_length)} ctx`
-            : ""}
-          {formatPrice(
-            model.input_price,
-            model.output_price,
-            model.cache_read_price,
-          )
-            ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
-            : ""}
+          {model.note ? (
+            model.note
+          ) : (
+            <>
+              {model.author}
+              {model.context_length
+                ? ` · ${formatTokens(model.context_length)} ctx`
+                : ""}
+              {formatPrice(
+                model.input_price,
+                model.output_price,
+                model.cache_read_price,
+              )
+                ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
+                : ""}
+            </>
+          )}
         </span>
       </div>
     </button>

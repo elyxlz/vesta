@@ -1,4 +1,4 @@
-const DEFAULT_BASE = "Vesta";
+const DEFAULT_BASE = "vesta";
 
 export function setTabBaseTitle(base: string): void {
   if (typeof document === "undefined") return;
