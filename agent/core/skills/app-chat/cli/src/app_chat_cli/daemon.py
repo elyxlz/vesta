@@ -20,6 +20,9 @@ import aiohttp
 
 
 RECONNECT_DELAY = 2.0
+# Ping the peer on this cadence so a half-open connection (silent network drop, wedged webview)
+# is detected and closed promptly instead of lingering until the next send fails minutes later.
+WS_HEARTBEAT_S = 30.0
 
 
 @dataclass
@@ -102,7 +105,7 @@ async def _ws_loop(state: DaemonState) -> None:
             if agent_token:
                 sep = "&" if "?" in url else "?"
                 url = f"{url}{sep}agent_token={agent_token}"
-            async with state.session.ws_connect(url) as ws:
+            async with state.session.ws_connect(url, heartbeat=WS_HEARTBEAT_S) as ws:
                 state.ws = ws
                 _log(f"connected to {state.ws_url}")
                 async for msg in ws:
@@ -133,30 +136,37 @@ def _handle_event(state: DaemonState, raw: str) -> None:
         _replay_missed(state, event["chat"]["events"])
         return
 
-    if "ts" in event:
-        _update_last_seen_ts(state, event["ts"])
-
     if event_type == "user" and "text" in event:
         ts = event["ts"] if "ts" in event else None
-        _write_notification(state, event["text"], timestamp=ts)
+        _notify_if_new(state, event["text"], ts)
+
+
+def _notify_if_new(state: DaemonState, text: str, ts: str | None) -> bool:
+    """Write a notification for a user message, unless one at or before `ts` was already notified.
+
+    The dedup watermark advances *only* here, on user messages. Advancing it on assistant/tool/status
+    events (as an earlier version did) let a later event push it past a user message that was never
+    notified — dropped from the bounded live queue or lost on a socket teardown — so on reconnect that
+    message read as 'already seen' and was silently lost. Keying purely on user-message ts closes that
+    gap and makes the snapshot/live overlap on connect idempotent."""
+    if ts is not None and state.last_seen_ts is not None and ts <= state.last_seen_ts:
+        return False
+    _write_notification(state, text, timestamp=ts)
+    if ts is not None:
+        _update_last_seen_ts(state, ts)
+    return True
 
 
 def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
-    """On reconnect, generate notifications for user messages missed during downtime."""
-    cutoff = state.last_seen_ts
+    """On reconnect, generate notifications for user messages missed during downtime. Snapshot events
+    arrive oldest-first, so the watermark advances in order and only un-notified messages get through."""
     count = 0
     for past in events:
         if "type" not in past or past["type"] != "user" or "text" not in past:
             continue
-        ts = past["ts"] if "ts" in past else None
-        if cutoff and ts and str(ts) <= cutoff:
-            continue
-        _write_notification(state, str(past["text"]), timestamp=str(ts) if ts else None)
-        count += 1
-    for past in reversed(events):
-        if "ts" in past:
-            _update_last_seen_ts(state, str(past["ts"]))
-            break
+        ts = str(past["ts"]) if "ts" in past else None
+        if _notify_if_new(state, str(past["text"]), ts):
+            count += 1
     if count:
         _log(f"replayed {count} missed message(s)")
 

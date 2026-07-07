@@ -39,6 +39,11 @@ from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, 
 
 logger = logging.getLogger("vesta.api")
 
+# Ping every connected client on this cadence so a half-open socket (a phone that dropped off the
+# network without a close frame) is detected and torn down promptly, freeing the subscriber and
+# letting the client reconnect and replay, rather than the server buffering to a dead peer for minutes.
+WS_HEARTBEAT_S = 30.0
+
 
 def _pending_notification_ids(config: VestaConfig) -> list[str]:
     """Notification file stems still on disk — received but not yet processed. Seeds the connect
@@ -60,7 +65,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     config: VestaConfig = request.app["config"]
     skip_history = request.query.get("skip_history", "") in ("1", "true")
 
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT_S)
     await ws.prepare(request)
     request.app["websockets"].add(ws)
 
