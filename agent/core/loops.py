@@ -33,7 +33,7 @@ from .helpers import load_prompt, build_restart_context, clear_notifications
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
 
-from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
+from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
 
 def _now() -> dt.datetime:
@@ -169,6 +169,14 @@ def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> st
 
     Delivered as a boot turn rather than a notification — it is the agent's own startup context, not
     an external event, so it never enters the interrupt-rules/pool/triage machinery."""
+    # Consume the one-shot boot message up front, before any early return, so it is delivered on the
+    # boot it was set for and never strands to a later, unrelated restart (e.g. an unauthenticated
+    # boot that returns None below). If this boot has no greeting to attach it to, it is discarded.
+    boot_msg = state.persisted.pending_boot_message
+    if boot_msg is not None:
+        state.persisted.pending_boot_message = None
+        state_store.save_state(state.persisted, config)
+
     if state.provider_status is None or state.provider_status.state != ProviderAuthState.AUTHENTICATED:
         logger.startup("No authenticated provider yet, waiting for sign-in before starting")
         return None
@@ -183,12 +191,7 @@ def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> st
         logger.startup("Boot turn: birth")
         return setup_prompt.strip()
 
-    extras = []
-    if state.persisted.show_dreamer_summary:
-        state.persisted.show_dreamer_summary = False
-        state_store.save_state(state.persisted, config)
-        for path in sorted(config.dreamer_dir.glob("*.md"), reverse=True)[:3]:
-            extras.append(f"[Dreamer Summary: {path.stem}]\n{path.read_text().strip()}")
+    extras = [boot_msg] if boot_msg is not None else []
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return None
@@ -333,31 +336,60 @@ async def _run_messages_with_interrupts(
         state.noninterruptible_turn_active = False
 
 
-async def compact_then_restart_if_requested(*, state: vm.State) -> None:
-    """If the dreamer flagged it, compact the live session at idle, then trigger the restart.
+# The one core-owned follow-up string: a fact only core can state (it ran /compact, so the prior
+# conversation is now the summary at the top of context). Prepended to a follow-up ONLY when the
+# compaction actually succeeded, so we never falsely claim a summary is above. "above" holds in
+# both channels (live notification on the compacted session; boot greeting resuming it).
+COMPACTION_ORIENTATION = "[Your context was just compacted; the summary is above.]"
 
-    Called between turns (right after one completes) because /compact only works while the
-    session is idle. The session_id is kept, so the restart resumes the compacted conversation
-    instead of starting blank. A compaction failure is logged, not fatal: we restart regardless,
-    and resume still works on the un-compacted session."""
-    if not state.compact_then_restart or state.client is None:
+
+def _followup_turn(followup: str, *, compacted_ok: bool) -> str:
+    # Only claim the compaction happened if it did; otherwise deliver the caller's intent bare.
+    return f"{COMPACTION_ORIENTATION}\n\n{followup}" if compacted_ok else followup
+
+
+async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -> None:
+    """Drain a deferred compaction. Compact, then route the optional follow-up to the channel
+    that survives a restart: a boot message when restarting (a live notification would race the
+    SIGTERM), a live notification otherwise. Compaction failure is logged, not fatal: the
+    follow-up is still delivered (without the false 'summary above' claim) and the restart still
+    happens (resume works on the un-compacted session)."""
+    pending = state.pending_compaction
+    state.pending_compaction = None
+    if state.client is None or pending is None:
         return
-    state.compact_then_restart = False
-    logger.client("Compacting session before nightly restart...")
+    logger.client(f"Compacting session (restart={pending.restart})")
     state.event_bus.set_state("thinking")
     state.compacting = True
+    compacted_ok = True
     try:
-        await compact_session(state=state)
+        await compact_session(state=state, prompt=pending.prompt)
     except (ClaudeSDKError, OSError, RuntimeError, TimeoutError) as exc:
-        logger.warning(f"Compaction before restart failed: {exc}, restarting anyway")
+        compacted_ok = False
+        logger.warning(f"compaction failed: {exc}")
     finally:
         state.compacting = False
         state.event_bus.set_state("idle")
-    # vestad owns the restart: it SIGTERMs us (clean shutdown) and starts us back, resuming the
-    # compacted session. We don't set graceful_shutdown ourselves — under the on-failure policy a
-    # clean self-exit would stay down. If vestad is unreachable, stay up on the compacted session.
-    if not await vestad_client.request_restart():
-        logger.warning("vestad unreachable for nightly restart; continuing on the compacted session")
+
+    turn = _followup_turn(pending.followup, compacted_ok=compacted_ok) if pending.followup is not None else None
+    deliver_live = not pending.restart
+    if pending.restart:
+        if turn is not None:
+            # Persist before requesting the restart: vestad SIGTERMs us during request_restart(),
+            # so there is no later moment to write it.
+            state.persisted.pending_boot_message = turn
+            state_store.save_state(state.persisted, config)
+        # vestad owns the restart and starts us back on the compacted session. If it is unreachable
+        # we stay up on this session, so the boot channel is moot: clear it and fall back to the
+        # live channel below instead of losing the follow-up.
+        if not await vestad_client.request_restart():
+            logger.warning("vestad unreachable for restart; continuing on the compacted session")
+            if turn is not None:
+                state.persisted.pending_boot_message = None
+                state_store.save_state(state.persisted, config)
+            deliver_live = True
+    if deliver_live and turn is not None:
+        drop_core_notification(type_=TYPE_COMPACTION_FOLLOWUP, body=turn, config=config)
 
 
 async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -404,7 +436,7 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
                         state.processor_busy = True
                         try:
                             await _run_messages_with_interrupts(turn, queue=queue, state=state, config=config)
-                            await compact_then_restart_if_requested(state=state)
+                            await drain_compaction_request(state=state, config=config)
                         finally:
                             state.processor_busy = False
                 finally:

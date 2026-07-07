@@ -26,7 +26,7 @@ def test_save_then_load_round_trip(tmp_path):
         first_start_done=True,
         last_restart_reason="clean",
         last_dreamer_run=dt.datetime(2026, 1, 2, 3, 4, 5),
-        show_dreamer_summary=True,
+        pending_boot_message="[Your context was just compacted; the summary is above.]\n\nnew day",
         session_id="abc-123",
         applied_migrations=["mig-1", "mig-2"],
     )

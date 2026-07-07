@@ -186,3 +186,25 @@ Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `20
 - Anything left unresolved
 
 Keep it terse. Future you will grep these. The point is a trail, not a journal.
+
+## Compaction on completion
+
+Your final two steps compact this conversation and restart into it, so you wake tomorrow with a clean but continuous context rather than a blind autocompact firing mid-day. Do them in order:
+
+1. Call `mark_dreamer_complete` to record that tonight's dream ran. Record first: if you stop after this, the run is still logged and self-heals next dream, whereas restarting without recording would re-fire the dream on the next hourly check.
+2. Call `compact_context` with:
+   - `followup`: the wake-up note below, with tonight's summary path filled in. Core delivers it to you on the far side of the restart.
+   - `restart`: true, so Vesta restarts into the compacted session.
+   - `prompt`: how to summarize the conversation. Use the continuity prompt below.
+
+Continuity prompt (for `prompt`):
+
+```
+You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before it sleeps and wakes to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise.
+```
+
+Wake-up note (for `followup`):
+
+```
+New day: you dreamed and compacted. Tonight's summary is at <the dreamer summary file you just wrote>.
+```

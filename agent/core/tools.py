@@ -14,6 +14,11 @@ from .helpers import clear_notifications
 from .workspace_sync import vesta_version
 
 
+def _opt_str(value: tp.Any) -> str:
+    """Normalize an optional string tool arg: a JSON null (or absent) means empty, never 'None'."""
+    return str(value).strip() if value is not None else ""
+
+
 def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
         # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
@@ -87,23 +92,47 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
 
     @tool(
         "mark_dreamer_complete",
-        "Call as the final step of the nightly dream, once the dream summary has been written and MEMORY.md has been updated. Records today's run, then (once this turn ends) compacts the conversation and restarts the agent, which resumes the compacted session — so you come back with a clean but continuous context rather than a blank slate.",
+        "Call once the nightly dream is fully complete (retrospective done, fixes validated, queue "
+        "drained per the dream skill's gate). Records that today's dream ran so it does not re-fire on "
+        "the next hourly check. This only records the run; it does not compact or restart. Compact and "
+        "restart as your final step via compact_context(followup=..., restart=true).",
         {},
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
-        state.persisted.show_dreamer_summary = True
-        state.persisted.last_restart_reason = vm.NIGHTLY_RESTART
         state_store.save_state(state.persisted, config)
-        # /compact only works while the session is idle, so we can't compact from inside this
-        # mid-turn tool call. Flag it; the message processor compacts at the next idle point and
-        # then triggers the restart. The session_id is intentionally kept so the restart resumes
-        # the compacted conversation instead of starting fresh.
-        state.compact_then_restart = True
-        logger.dreamer("Dreamer marked complete by agent — will compact then restart with continuous context")
-        return {"content": [{"type": "text", "text": "dreamer marked complete; compacting context then restart"}]}
+        logger.dreamer("Dreamer run recorded by agent")
+        return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete]
+    @tool(
+        "compact_context",
+        "Compact this conversation at the next idle point (it needs an idle session). `followup` "
+        "(optional) is a short instruction to your own next turn after compacting. `restart=true` "
+        "(optional) restarts into the compacted session (the nightly dream); omit it for an in-place nap. "
+        "`prompt` is how to summarize the conversation; each skill supplies one.",
+        {
+            "type": "object",
+            "properties": {"followup": {"type": "string"}, "restart": {"type": "boolean"}, "prompt": {"type": "string"}},
+            "required": ["prompt"],
+        },
+    )
+    async def compact_context(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        prompt = _opt_str(args["prompt"])
+        if not prompt:
+            return {"content": [{"type": "text", "text": "error: prompt required"}]}
+        # Reject a malformed call where followup/restart leaked in as tool-call tags inside the
+        # prompt string; the agent sees this and retries with proper separate arguments.
+        if "<parameter name=" in prompt or "</prompt>" in prompt:
+            return {"content": [{"type": "text", "text": "error: pass followup and restart as separate arguments, not inside prompt. Retry."}]}
+        followup = _opt_str(args["followup"] if "followup" in args else None)
+        # Accept only a real True or the string "true": a model emitting "false" must not be coerced truthy.
+        raw_restart = args["restart"] if "restart" in args else False
+        restart = raw_restart is True or (isinstance(raw_restart, str) and raw_restart.strip().lower() == "true")
+        state.pending_compaction = vm.PendingCompaction(prompt=prompt, followup=followup or None, restart=restart)
+        logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
+        return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
+
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:

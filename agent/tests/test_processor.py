@@ -169,13 +169,12 @@ def test_restart_reason_round_trip(tmp_path):
 
 
 def test_reason_constants_follow_category_detail_shape():
-    for const in (vm.CLEAN_RESTART, vm.NIGHTLY_RESTART, vm.CRASH_RESTART):
+    for const in (vm.CLEAN_RESTART, vm.CRASH_RESTART):
         assert ": " in const, f"{const!r} must be 'category: detail'"
         category = const.split(": ", 1)[0]
-        assert category in {"clean", "nightly", "crash", "error"}, category
+        assert category in {"clean", "crash", "error"}, category
         assert "—" not in const and "–" not in const
     assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
-    assert vm.NIGHTLY_RESTART == "nightly: the dreamer ran and compacted your session for continuous context"
 
 
 def test_build_restart_context_renders_system_restart_header(tmp_path):
@@ -186,19 +185,20 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     config.core_prompts_dir.mkdir(parents=True, exist_ok=True)
     (config.core_prompts_dir / "restart.md").write_text("Read the `restart` skill and follow it.\n")
 
-    out = helpers.build_restart_context(vm.NIGHTLY_RESTART, config)
-    assert out.startswith("[System Restart]\nReason: the dreamer ran and compacted your session for continuous context")
+    reason = "clean: routine restart, no specific reason"
+    out = helpers.build_restart_context(reason, config)
+    assert out.startswith("[System Restart]\nReason: routine restart, no specific reason")
     assert out.endswith("Read the `restart` skill and follow it.")
 
     # A reason without a category prefix renders whole.
     out2 = helpers.build_restart_context("first start", config)
     assert "Reason: first start" in out2
 
-    # Extras (dreamer summary) slot between the header and the restart prompt.
-    out3 = helpers.build_restart_context(vm.NIGHTLY_RESTART, config, extras=["[Dreamer Summary: x]\nhello"])
+    # Extras (e.g. a compaction boot message) slot between the header and the restart prompt.
+    out3 = helpers.build_restart_context(reason, config, extras=["[Boot Message]\nhello"])
     header, summary, prompt = out3.split("\n\n")
     assert header.startswith("[System Restart]")
-    assert summary.startswith("[Dreamer Summary: x]")
+    assert summary.startswith("[Boot Message]")
     assert prompt == "Read the `restart` skill and follow it."
 
     # Crash/error reasons keep their marker: the restart skill branches on a crash boot

@@ -4,6 +4,7 @@ claude-code
 dashboard
 dream
 email-client
+nap
 notifications
 onboard
 personality
