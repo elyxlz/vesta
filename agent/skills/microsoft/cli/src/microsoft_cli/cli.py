@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 
 from .config import Config
-from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
+from . import auth_commands, email, calendar, monitor, notifications, block, folders, notify, format as fmt
 from .context import MicrosoftContext
 
 
@@ -60,6 +60,8 @@ def main():
     p_complete = auth_sub.add_parser("complete")
     p_complete.add_argument("--flow-cache", required=True)
     auth_sub.add_parser("list")
+    p_auth_remove = auth_sub.add_parser("remove")
+    p_auth_remove.add_argument("--account", required=True)
 
     # email
     email_parser = group.add_parser("email")
@@ -90,11 +92,14 @@ def main():
     p_draft = email_sub.add_parser("draft")
     p_draft.add_argument("--account", required=True)
     p_draft.add_argument("--to", nargs="+", default=None)
-    p_draft.add_argument("--subject", required=True)
+    p_draft.add_argument("--subject", default=None)
     p_draft.add_argument("--body", required=True)
     p_draft.add_argument("--cc", nargs="+", default=None)
     p_draft.add_argument("--bcc", nargs="+", default=None)
     p_draft.add_argument("--attachments", nargs="+", default=None)
+    p_draft_source = p_draft.add_mutually_exclusive_group()
+    p_draft_source.add_argument("--reply-to", dest="reply_to_id", default=None, help="Draft a threaded reply to this message id")
+    p_draft_source.add_argument("--forward", dest="forward_id", default=None, help="Draft a forward of this message id")
 
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
@@ -104,11 +109,32 @@ def main():
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
 
+    p_forward = email_sub.add_parser("forward")
+    p_forward.add_argument("--account", required=True)
+    p_forward.add_argument("--id", required=True, dest="email_id")
+    p_forward.add_argument("--to", nargs="+", required=True)
+    p_forward.add_argument("--body", default="")
+    p_forward.add_argument("--cc", nargs="+", default=None)
+    p_forward.add_argument("--attachments", nargs="+", default=None)
+    p_forward.add_argument("--html", action="store_true")
+
+    p_move = email_sub.add_parser("move")
+    p_move.add_argument("--account", required=True)
+    p_move.add_argument("--id", required=True, dest="email_id")
+    p_move.add_argument("--to-folder", required=True, dest="to_folder")
+
+    p_archive = email_sub.add_parser("archive")
+    p_archive.add_argument("--account", required=True)
+    p_archive.add_argument("--id", required=True, dest="email_id")
+
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
     p_attachment.add_argument("--email-id", required=True)
-    p_attachment.add_argument("--attachment-id", required=True)
-    p_attachment.add_argument("--save-path", required=True)
+    p_attachment.add_argument("--attachment-id", default=None)
+    p_attachment.add_argument("--save-path", default=None)
+    p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
+    p_attachment.add_argument("--all", action="store_true", dest="download_all", help="Download every attachment to --out-dir")
+    p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
 
     p_search = email_sub.add_parser("search")
     p_search.add_argument("--account", required=True)
@@ -122,6 +148,9 @@ def main():
     p_update.add_argument("--id", required=True, dest="email_id")
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
+    p_update_flag = p_update.add_mutually_exclusive_group()
+    p_update_flag.add_argument("--flagged", dest="flagged", action="store_true", default=None, help="Flag the message for follow-up.")
+    p_update_flag.add_argument("--unflagged", dest="flagged", action="store_false", default=None, help="Clear the follow-up flag.")
 
     p_delete = email_sub.add_parser("delete")
     p_delete.add_argument("--account", required=True)
@@ -139,6 +168,49 @@ def main():
     p_unblock = email_sub.add_parser("unblock")
     p_unblock.add_argument("--account", required=True)
     p_unblock.add_argument("--sender", required=True, help="Email address of sender to unblock")
+
+    # folder
+    folder_parser = group.add_parser("folder")
+    folder_sub = folder_parser.add_subparsers(dest="command", required=True)
+
+    p_folder_list = folder_sub.add_parser("list")
+    p_folder_list.add_argument("--account", required=True)
+    _add_format_flags(p_folder_list)
+
+    p_folder_status = folder_sub.add_parser("status")
+    p_folder_status.add_argument("--account", required=True)
+    p_folder_status.add_argument("--folder", required=True)
+
+    p_folder_create = folder_sub.add_parser("create")
+    p_folder_create.add_argument("--account", required=True)
+    p_folder_create.add_argument("--name", required=True)
+    p_folder_create.add_argument("--parent", default=None, dest="parent_id", help="Parent folder id for a nested folder")
+
+    p_folder_rename = folder_sub.add_parser("rename")
+    p_folder_rename.add_argument("--account", required=True)
+    p_folder_rename.add_argument("--id", required=True, dest="folder_id")
+    p_folder_rename.add_argument("--name", required=True)
+
+    p_folder_delete = folder_sub.add_parser("delete")
+    p_folder_delete.add_argument("--account", required=True)
+    p_folder_delete.add_argument("--id", required=True, dest="folder_id")
+
+    # notify
+    notify_parser = group.add_parser("notify")
+    notify_sub = notify_parser.add_subparsers(dest="command", required=True)
+
+    p_notify_list = notify_sub.add_parser("list")
+    p_notify_list.add_argument("--account", required=True)
+
+    p_notify_add = notify_sub.add_parser("add")
+    p_notify_add.add_argument("--account", required=True)
+    p_notify_add_group = p_notify_add.add_mutually_exclusive_group(required=True)
+    p_notify_add_group.add_argument("--folder", default=None, help="Folder (well-known key or display name) to also notify on")
+    p_notify_add_group.add_argument("--all", action="store_true", dest="all_folders", help="Watch every folder on the server")
+
+    p_notify_remove = notify_sub.add_parser("remove")
+    p_notify_remove.add_argument("--account", required=True)
+    p_notify_remove.add_argument("--folder", required=True)
 
     # calendar
     cal_parser = group.add_parser("calendar")
@@ -221,12 +293,15 @@ def main():
         if args.group == "auth":
             result = _dispatch_auth(args, config)
             print(json.dumps(fmt.strip_odata(result), indent=2))
-        elif args.group in ("email", "calendar"):
+        elif args.group in ("email", "calendar", "folder", "notify"):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                if args.group == "email":
-                    result = _dispatch_email(args, config, client)
-                else:
-                    result = _dispatch_calendar(args, config, client)
+                dispatchers = {
+                    "email": _dispatch_email,
+                    "calendar": _dispatch_calendar,
+                    "folder": _dispatch_folder,
+                    "notify": _dispatch_notify,
+                }
+                result = dispatchers[args.group](args, config, client)
                 _print_result(args, result)
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
@@ -238,6 +313,7 @@ _COMPACT_FORMATTERS = {
     ("email", "search"): fmt.format_email_list,
     ("calendar", "list"): fmt.format_calendar_event_list,
     ("calendar", "calendars"): fmt.format_calendar_name_list,
+    ("folder", "list"): fmt.format_folder_list,
 }
 
 
@@ -269,6 +345,8 @@ def _dispatch_auth(args, config):
         return auth_commands.authenticate_account(config)
     elif args.command == "complete":
         return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
+    elif args.command == "remove":
+        return auth_commands.remove_account(config, account_email=args.account)
 
 
 def _dispatch_email(args, config, client):
@@ -307,6 +385,8 @@ def _dispatch_email(args, config, client):
             cc=args.cc,
             bcc=args.bcc,
             attachments=args.attachments,
+            reply_to_id=args.reply_to_id,
+            forward_id=args.forward_id,
         )
     elif args.command == "reply":
         return email.reply_to_email(
@@ -319,15 +399,35 @@ def _dispatch_email(args, config, client):
             reply_all=args.reply_all,
             html=args.html,
         )
-    elif args.command == "attachment":
-        return email.get_attachment(
-            config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
+    elif args.command == "forward":
+        return email.forward_email(
+            config,
+            client,
+            account_email=args.account,
+            email_id=args.email_id,
+            to=args.to,
+            body=args.body,
+            cc=args.cc,
+            attachments=args.attachments,
+            html=args.html,
         )
+    elif args.command == "move":
+        return email.move_email(config, client, account_email=args.account, email_id=args.email_id, to_folder=args.to_folder)
+    elif args.command == "archive":
+        return email.archive_email(config, client, account_email=args.account, email_id=args.email_id)
+    elif args.command == "attachment":
+        return _dispatch_attachment(args, config, client)
     elif args.command == "search":
         return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
     elif args.command == "update":
         return email.update_email(
-            config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
+            config,
+            client,
+            account_email=args.account,
+            email_id=args.email_id,
+            is_read=args.is_read,
+            categories=args.categories,
+            flagged=args.flagged,
         )
     elif args.command == "delete":
         return email.delete_email(
@@ -339,6 +439,41 @@ def _dispatch_email(args, config, client):
         return block.block_sender(config, client, account_email=args.account, sender=args.sender)
     elif args.command == "unblock":
         return block.unblock_sender(config, client, account_email=args.account, sender=args.sender)
+
+
+def _dispatch_attachment(args, config, client):
+    if args.list_only:
+        return email.list_attachments(config, client, account_email=args.account, email_id=args.email_id)
+    if args.download_all:
+        out_dir = args.out_dir or str(config.data_dir / "attachments" / args.email_id)
+        return email.download_attachments(config, client, account_email=args.account, email_id=args.email_id, out_dir=out_dir)
+    if not args.attachment_id or not args.save_path:
+        raise ValueError("Provide --attachment-id and --save-path to download one attachment, or use --list / --all")
+    return email.get_attachment(
+        config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
+    )
+
+
+def _dispatch_folder(args, config, client):
+    if args.command == "list":
+        return folders.list_folders(config, client, account_email=args.account)
+    elif args.command == "status":
+        return folders.folder_status(config, client, account_email=args.account, folder=args.folder)
+    elif args.command == "create":
+        return folders.create_folder(config, client, account_email=args.account, name=args.name, parent_id=args.parent_id)
+    elif args.command == "rename":
+        return folders.rename_folder(config, client, account_email=args.account, folder_id=args.folder_id, name=args.name)
+    elif args.command == "delete":
+        return folders.delete_folder(config, client, account_email=args.account, folder_id=args.folder_id)
+
+
+def _dispatch_notify(args, config, client):
+    if args.command == "list":
+        return notify.list_notify(config, client, account_email=args.account)
+    elif args.command == "add":
+        return notify.add_notify(config, client, account_email=args.account, folder=args.folder, all_folders=args.all_folders)
+    elif args.command == "remove":
+        return notify.remove_notify(config, client, account_email=args.account, folder=args.folder)
 
 
 def _dispatch_calendar(args, config, client):
@@ -432,6 +567,7 @@ def _run_serve(config: Config, notif_dir: Path):
         base_url=config.base_url,
         upload_chunk_size=config.upload_chunk_size,
         folders=config.folders,
+        notify_file=notify.notify_file_for(config),
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 

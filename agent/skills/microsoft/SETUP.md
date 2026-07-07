@@ -1,22 +1,32 @@
 # Microsoft Setup
 
-1. Create an Azure App Registration at https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
-   - Name: anything (e.g. "Vesta")
-   - Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
-   - Redirect URI: leave blank (device flow doesn't need one)
-   - Under "API permissions": click "Add a permission" → "Microsoft Graph" → **"Delegated permissions"** (not Application permissions) → search and add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
-   - Under "Authentication" (may show as "Authentication (Preview)"): go to the **Settings** tab → toggle "Allow public client flows" to **Yes** → click Save
-2. Copy the **Application (client) ID**
-3. Set environment variable:
-   ```
-   MICROSOFT_MCP_CLIENT_ID=<your-client-id>
-   ```
-4. Install: `uv tool install ~/agent/skills/microsoft/cli`
-5. Start background daemon: `screen -dmS microsoft microsoft serve`
-6. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
+No Azure setup is required. The skill defaults to the **Microsoft Graph Command Line Tools**
+public client (Microsoft-published, multitenant, device-code capable) and requests the delegated
+Graph scopes it needs (`Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`,
+`MailboxSettings.ReadWrite`) via dynamic consent at sign-in. Just install, start the daemon, and
+authenticate:
+
+1. Install: `uv tool install ~/agent/skills/microsoft/cli`
+2. Start background daemon: `screen -dmS microsoft microsoft serve`
+3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```
+
+## Optional: your own Azure app registration
+
+Use your own app only if you need to (e.g. a Conditional Access policy blocks the default client,
+or you want to pin a narrower scope set). Create one at
+https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade:
+
+- Name: anything (e.g. "Vesta")
+- Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
+- Redirect URI: leave blank (device flow doesn't need one)
+- Under "API permissions": click "Add a permission" → "Microsoft Graph" → **"Delegated permissions"** (not Application permissions) → search and add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
+- Under "Authentication" (may show as "Authentication (Preview)"): go to the **Settings** tab → toggle "Allow public client flows" to **Yes** → click Save
+
+Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your-client-id>`
+(a custom client uses `.default`, i.e. exactly the permissions you configured above).
 
 ## Authentication
 
