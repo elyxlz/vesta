@@ -64,6 +64,10 @@
     "description": "Gmail, Google Calendar, Meet: email, events, scheduling. Requires daemon."
   },
   {
+    "name": "growth",
+    "description": "Vesta's growth engine. Use when a non-owner in the user's world is getting real value from you and would want their own Vesta, or when reviewing contacts for who to introduce. You offer them their own and the user earns referral money. Not for the owner, who already has one."
+  },
+  {
     "name": "home-assistant",
     "description": "Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations."
   },
