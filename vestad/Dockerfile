@@ -1,4 +1,8 @@
-FROM debian:bookworm-slim
+# Debian 13 (trixie) for git >=2.42. On git 2.39 (bookworm) `git sparse-checkout set` deletes an
+# out-of-cone directory that holds untracked files, taking the agent's untracked
+# ~/.claude/.credentials.json with it and de-authing the agent on a skills-install. git >=2.42
+# refuses to delete a directory containing untracked files, closing that hole at the root.
+FROM debian:trixie-slim
 
 LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.description="Personal assistant agent that works autonomously on your behalf" \
