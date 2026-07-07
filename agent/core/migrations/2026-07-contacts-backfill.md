@@ -31,10 +31,10 @@ open threads). Do not invent details. A near-stranger can be three lines; skip
 anyone you know nothing about. If a person already has a file, only add what is
 missing, never overwrite.
 
-### 3. Set up the recurring sync (only if the user has contact sources)
+### 3. Schedule the nightly pass
 
-If any contact-holding service is connected (whatsapp, google, microsoft,
-calendar) and you do not already have a reconcile reminder (`tasks remind list`),
-schedule one so the sources stay consistent both ways, as described in the
-skill's "Keeping your sources in sync" section. If nothing is connected yet,
-skip this step.
+Maintain exactly one recurring reminder that, nightly in the early hours,
+updates the contact files with everything learned about people that day and
+reconciles them across every messaging app and other service that holds
+contacts, as described in the skill's "Keeping contacts current" section. If you
+do not already have one (`tasks remind list`), create it now.

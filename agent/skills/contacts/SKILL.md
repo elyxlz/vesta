@@ -58,20 +58,20 @@ Only fill what's real. A near-stranger might be three lines. Someone central mig
 - **Before reaching out**: read their file so you match their style and remember what's open.
 - **The user asks about someone**: their file is your first stop, then `recall` for anything not captured yet.
 
-## Keeping your sources in sync
+## Keeping contacts current
 
-People don't live in one place. The same person is a WhatsApp thread, an email address, a calendar guest, maybe a row in Google or Microsoft contacts. Contacts is the hub of truth that ties those together, and you keep them reconciled in both directions:
+People don't live in one place, and you learn about them all day long. Two things keep the files honest, and you do both on one nightly pass in the early hours:
 
-- **Pull in**: new people and new facts from the connected sources (whatsapp, email, calendar, the address book skills) get folded into the contact files. A new sender becomes a new file; a phone number you learn gets added to Channels.
-- **Push out**: when a service has a write API (Google contacts, Microsoft contacts), keep its canonical fields (name, number, email) matching what you know here. Non-destructive: fill gaps and fix what's clearly stale, never bulk-overwrite a service's data.
+- **Capture the day**: go back over the day's conversations and activity and fold everything you learned about anyone into their file, a new fact, a mood, a plan, something they're going through, a handle you saw. Anyone who came up for the first time gets a file.
+- **Reconcile the sources**: the same person is a thread in one messaging app, an address in another, a guest on a calendar, a row in an address book. Contacts is the hub of truth that ties them together. Pull new people and facts in from everywhere that holds contacts, and push your canonical fields (name, number, email) back out to the services that can be written to. Non-destructive: fill gaps and fix what's clearly stale, never bulk-overwrite a service's data.
 
-Do this on a schedule so it stays current without the user asking. Keep exactly **one** recurring reminder that triggers the pass:
+Always keep this running. Maintain exactly **one** recurring reminder that triggers the pass:
 
 ```bash
-tasks remind "Reconcile contacts across whatsapp, email, calendar, and the address books" --recurring weekly --at "2026-01-05T09:00:00" --tz "$TZ"
+tasks remind "Update contacts with everything learned today, then reconcile them across every messaging app and every other service that holds contacts" --recurring daily --at "2026-01-05T04:00:00" --tz "$TZ"
 ```
 
-When that reminder fires, run the reconcile: sweep each connected source, merge new people and facts into `~/.contacts/`, then update the writable address books to match. Check `tasks remind list` before adding another so you never stack duplicates. If the user has no contact-holding services connected yet, skip the reminder until they do.
+When it fires, do both: sweep the day's activity into the files, then work out which sources are worth reconciling this time and bring them in line. Check `tasks remind list` first so you never stack duplicates.
 
 ## [Your setup]
 
