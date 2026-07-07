@@ -10,6 +10,23 @@ def list_accounts(config: Config) -> list[dict[str, str]]:
     return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file)]
 
 
+def remove_account(config: Config, *, account_email: str) -> dict[str, str]:
+    app = auth.get_app(config.cache_file)
+    email_lower = account_email.lower()
+    matches = [a for a in app.get_accounts() if (a["username"] if "username" in a else "").lower() == email_lower]
+    if not matches:
+        raise ValueError(f"No account found with email '{account_email}'")
+
+    for account in matches:
+        app.remove_account(account)
+
+    cache = app.token_cache
+    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+        auth._write_cache(config.cache_file, content=cache.serialize())
+
+    return {"status": "removed", "email": account_email}
+
+
 def authenticate_account(config: Config) -> dict[str, str]:
     app = auth.get_app(config.cache_file)
     flow = app.initiate_device_flow(scopes=config.scopes)

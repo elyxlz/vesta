@@ -22,6 +22,7 @@ class MicrosoftContext:
     base_url: str
     upload_chunk_size: int
     folders: dict[str, str]
+    notify_file: Path | None = None
     calendar_notify_thresholds: list[int] | None = None
 
     def get_calendar_notify_thresholds(self) -> list[int]:
