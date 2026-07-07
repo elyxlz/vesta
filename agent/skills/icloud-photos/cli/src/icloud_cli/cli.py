@@ -844,6 +844,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    # pyicloud reverse-engineers iCloud and breaks when it falls behind Apple's
+    # changes; a stale version fails silently. Guard every user command. The
+    # internal _worker runs in a subprocess the parent already guarded, so it is
+    # exempt to avoid a duplicate PyPI check.
+    if args.command != "_worker":
+        from ._freshness import require_latest
+
+        require_latest("pyicloud")
     args.func(args)
 
 
