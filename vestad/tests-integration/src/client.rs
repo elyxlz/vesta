@@ -314,36 +314,12 @@ impl Client {
         Ok(())
     }
 
-    /// LEGACY(remove-when: the upgrade e2e's from-version (`previous_released_tag`) >= 0.1.161 —
-    /// the first release speaking the current PUT `/provider` + `{kind,model,key}` contract; true
-    /// once 0.1.160 is no longer an upgrade-from target): sign in against a pre-0.1.161 daemon,
-    /// which serves `POST /agents/{name}/provider` and whose agent core expects
-    /// `{openrouter_key, openrouter_model}`. The upgrade test provisions on the previous released
-    /// daemon before upgrading, so it must speak whatever contract that daemon shipped.
-    pub fn sign_in_openrouter_legacy_pre_put(&self, name: &str, key: &str, model: &str) -> Result<(), String> {
-        self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"openrouter_key": key, "openrouter_model": model});
-        self.post_json(&format!("/agents/{}/provider", name), &body)?;
-        Ok(())
-    }
-
     /// Sign an agent in with a Claude OAuth credentials blob + model via `PUT /provider`. The write
     /// doesn't restart; callers restart afterwards. The agent must be running to receive the call.
     pub fn sign_in_claude(&self, name: &str, credentials: &str, model: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
         let body = serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
         self.put_json(&format!("/agents/{}/provider", name), &body)?;
-        Ok(())
-    }
-
-    /// LEGACY(remove-when: the upgrade e2e's from-version (`previous_released_tag`) >= 0.1.161): sign
-    /// a pre-0.1.161 daemon in with Claude credentials. It serves `POST /agents/{name}/provider` and
-    /// its agent core expects just `{credentials}` (model comes from the `AGENT_MODEL` env the caller
-    /// sets). The upgrade test provisions the previous released daemon, so it must speak that contract.
-    pub fn sign_in_claude_legacy_pre_put(&self, name: &str, credentials: &str) -> Result<(), String> {
-        self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"credentials": credentials});
-        self.post_json(&format!("/agents/{}/provider", name), &body)?;
         Ok(())
     }
 

@@ -424,10 +424,9 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     fall back to a default claude provider.
 
     Legacy convergence runs first (before the config is built), so the loaded config reflects the
-    migrated nested provider rather than a stale default. This makes load_config the single owner of
-    "what config does the agent run on" — there is no separate boot step to sequence wrongly.
+    migrated store rather than a stale default. This makes load_config the single owner of "what
+    config does the agent run on" — there is no separate boot step to sequence wrongly.
     """
-    migrate_legacy_config_to_store()
     migrate_notification_policy_file()
     issues: list[str] = []
     dropped: set[str] = set()
@@ -461,83 +460,6 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     ),
                     issues,
                 )
-
-
-_LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"
-_LEGACY_FLAT_KEYS = ("agent_model", "agent_provider", "openrouter_key", "max_context_tokens", "thinking")
-
-
-def _parse_legacy_export(content: str, key: str) -> str | None:
-    """Read a `[export ]KEY=value` line from a shell env file, unquoting once; None if absent/empty."""
-    for raw_line in content.splitlines():
-        line = raw_line.strip().removeprefix("export ")
-        name, _, value = line.partition("=")
-        if "=" not in line or name.strip() != key:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
-            value = value[1:-1]
-        return value or None
-    return None
-
-
-def migrate_legacy_config_to_store() -> None:
-    """Relocate a legacy agent's flat provider config into the nested `provider` object, draining the
-    old flat config.json keys, the legacy env vars, and vesta-provider.env. Idempotent: once the store
-    has a `provider` and no flat keys, it's a no-op. This is the only place flat->nested lives.
-
-    LEGACY(remove-when: no fleet agent boots with flat provider keys in config.json): this function,
-    its boot call site, _parse_legacy_export, and _LEGACY_FLAT_KEYS.
-    """
-    store = read_config_store()
-    content = _LEGACY_PROVIDER_ENV.read_text() if _LEGACY_PROVIDER_ENV.is_file() else ""
-    changed = False
-
-    def legacy(env_key: str, store_key: str) -> str | None:  # old flat store key wins, then env, then file
-        if store_key in store and store[store_key] not in (None, ""):
-            return str(store[store_key])
-        env = os.environ[env_key] if env_key in os.environ else ""
-        return env or _parse_legacy_export(content, env_key)
-
-    if "provider" not in store:
-        kind = legacy("AGENT_PROVIDER", "agent_provider")
-        model = legacy("AGENT_MODEL", "agent_model")
-        key = legacy("ANTHROPIC_AUTH_TOKEN", "openrouter_key")
-        ctx_raw = legacy("MAX_CONTEXT_TOKENS", "max_context_tokens")
-        ctx = int(ctx_raw) if ctx_raw and ctx_raw.isdigit() else None
-        provider: dict[str, pyd.JsonValue] | None = None
-        if kind == "openrouter" and key and model:
-            provider = {"kind": "openrouter", "model": model, "key": key}
-            if ctx is not None:
-                provider["max_context_tokens"] = ctx
-        elif model or kind == "claude":
-            provider = {"kind": "claude", "model": model or "opus"}
-            if ctx is not None:
-                provider["max_context_tokens"] = ctx
-            if "thinking" in store and store["thinking"] is not None:
-                provider["thinking"] = store["thinking"]
-        if provider is not None:
-            store["provider"] = provider
-            changed = True
-
-    for flat in _LEGACY_FLAT_KEYS:
-        if flat in store:
-            store.pop(flat, None)
-            changed = True
-
-    personality = os.environ["AGENT_PERSONALITY"] if "AGENT_PERSONALITY" in os.environ else _parse_legacy_export(content, "AGENT_PERSONALITY")
-    if personality and "agent_personality" not in store:
-        store["agent_personality"] = personality
-        changed = True
-    tz = os.environ["TZ"] if "TZ" in os.environ else None
-    if tz and tz != "UTC" and "timezone" not in store:
-        store["timezone"] = tz
-        changed = True
-
-    if changed:
-        logger.startup("migrated legacy flat config into the nested provider store")
-        _write_config_store(store)
-    _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
 
 
 _LEGACY_POLICY_FILE = "notification_policy.json"

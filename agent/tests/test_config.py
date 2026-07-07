@@ -11,7 +11,6 @@ from core.config import (
     config_store_path,
     load_config,
     load_notification_rules,
-    migrate_legacy_config_to_store,
     migrate_notification_policy_file,
     read_config_store,
     update_config_store,
@@ -43,7 +42,6 @@ def test_default_provider_is_none_when_unprovisioned(agentdir, monkeypatch, tmp_
     from core import config as config_mod
 
     monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config, _ = config_mod.load_config()
     assert config.provider is None
 
@@ -128,7 +126,6 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_
     from core import config as config_mod
 
     monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config, issues = load_config()
     assert config.provider is None
     assert config.agent_personality == "dry"
@@ -161,7 +158,6 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch, tmp_path):
     from core import config as config_mod
 
     monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config_store_path().write_text("{ not json")
     assert read_config_store() == {}
     config, _ = load_config()
@@ -173,116 +169,8 @@ def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path)
     from core.config import stored_config
 
     monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", tmp_path / "absent.env")
     config, _ = config_mod.load_config()
     assert stored_config(config)["provider"] is None
-
-
-# --- Legacy fleet convergence: flat -> nested provider ---
-
-
-def test_migrate_drains_flat_env_into_nested_provider(agentdir, monkeypatch):
-    monkeypatch.setenv("AGENT_MODEL", "sonnet")
-    monkeypatch.setenv("AGENT_PERSONALITY", "warm")
-    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "500000")
-    monkeypatch.delenv("TZ", raising=False)
-    migrate_legacy_config_to_store()
-    assert read_config_store() == {
-        "provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500000},
-        "agent_personality": "warm",
-    }
-
-
-def test_migrate_drains_legacy_tz_into_store(agentdir, monkeypatch):
-    monkeypatch.setenv("TZ", "America/New_York")
-    migrate_legacy_config_to_store()
-    assert read_config_store()["timezone"] == "America/New_York"
-
-
-def test_migrate_skips_utc_default_tz(agentdir, monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    migrate_legacy_config_to_store()
-    assert "timezone" not in read_config_store()
-
-
-def test_migrate_does_not_overwrite_existing_store_and_is_idempotent(agentdir, monkeypatch):
-    update_config_store({"provider": {"kind": "claude", "model": "haiku"}})  # a prior choice
-    monkeypatch.setenv("AGENT_MODEL", "sonnet")  # legacy env says otherwise
-    migrate_legacy_config_to_store()
-    assert read_config_store()["provider"] == {"kind": "claude", "model": "haiku"}  # choice preserved
-    migrate_legacy_config_to_store()  # second run is a no-op
-    assert read_config_store()["provider"] == {"kind": "claude", "model": "haiku"}
-
-
-def test_migrate_ignores_nonnumeric_context(agentdir, monkeypatch):
-    monkeypatch.setenv("AGENT_MODEL", "opus")
-    monkeypatch.delenv("AGENT_PERSONALITY", raising=False)
-    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "lots")
-    migrate_legacy_config_to_store()
-    assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
-
-
-def test_migrate_drains_legacy_provider_file_into_nested(agentdir, monkeypatch, tmp_path):
-    from core import config as config_mod
-
-    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS", "AGENT_PROVIDER"):
-        monkeypatch.delenv(key, raising=False)
-    legacy = tmp_path / "vesta-provider.env"
-    legacy.write_text(
-        "export AGENT_PROVIDER=openrouter\n"
-        "export AGENT_MODEL='deepseek/deepseek-v4-flash'\n"
-        "export ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n"
-        "export MAX_CONTEXT_TOKENS=200000\n"
-    )
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
-
-    config_mod.migrate_legacy_config_to_store()
-    provider = config_mod.read_config_store()["provider"]
-    assert provider == {
-        "kind": "openrouter",
-        "model": "deepseek/deepseek-v4-flash",
-        "key": "sk-or-v1-secret",
-        "max_context_tokens": 200000,
-    }
-    assert not legacy.exists()  # the legacy file is retired after draining
-
-
-def test_migrate_legacy_claude_file_carries_no_key(agentdir, monkeypatch, tmp_path):
-    from core import config as config_mod
-
-    for key in ("AGENT_MODEL", "AGENT_PERSONALITY", "MAX_CONTEXT_TOKENS", "AGENT_PROVIDER"):
-        monkeypatch.delenv(key, raising=False)
-    legacy = tmp_path / "vesta-provider.env"
-    legacy.write_text("export AGENT_PROVIDER=claude\nexport ANTHROPIC_AUTH_TOKEN=\n")
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
-
-    config_mod.migrate_legacy_config_to_store()
-    assert config_mod.read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
-    assert not legacy.exists()
-
-
-def test_load_config_converges_legacy_provider_file_first(agentdir, monkeypatch, tmp_path):
-    """A legacy OpenRouter agent stores its provider only in vesta-provider.env. load_config must
-    drain it into the store BEFORE building the config, so the returned config is the OpenRouter
-    provider — not the default (which would derive not_authenticated and defer all work)."""
-    from core import config as config_mod
-    from core.config import OpenRouterConfig
-
-    for key in ("AGENT_MODEL", "AGENT_PROVIDER", "MAX_CONTEXT_TOKENS", "AGENT_PERSONALITY", "ANTHROPIC_AUTH_TOKEN"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
-    legacy = tmp_path / "vesta-provider.env"
-    legacy.write_text(
-        "export AGENT_PROVIDER=openrouter\nexport AGENT_MODEL='deepseek/deepseek-v4-flash'\nexport ANTHROPIC_AUTH_TOKEN='sk-or-v1-secret'\n"
-    )
-    monkeypatch.setattr(config_mod, "_LEGACY_PROVIDER_ENV", legacy)
-
-    config, _ = config_mod.load_config()
-
-    assert isinstance(config.provider, OpenRouterConfig)
-    assert config.provider.model == "deepseek/deepseek-v4-flash"
-    assert config.provider.key.get_secret_value() == "sk-or-v1-secret"
-    assert not legacy.exists()  # convergence ran and retired the legacy file
 
 
 # --- PUT /config (prefs) + PATCH /provider validation ---

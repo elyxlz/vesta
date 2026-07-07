@@ -3045,7 +3045,7 @@ mod tests {
         let long = client.post(format!("http://127.0.0.1:{}/longrun", port)).send().await.unwrap();
         assert_eq!(long.status(), reqwest::StatusCode::OK);
 
-        assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS);
+        const { assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS) };
         handle.abort();
     }
 
