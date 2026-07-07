@@ -22,20 +22,13 @@ keeper "search dropbox login"            # search by partial words
 keeper "search aws --format json"        # JSON output
 ```
 
-### View a Record
+### View a Record / Reveal a Password
 ```bash
 keeper "get <UID>"                       # display record details
-keeper "get <UID> --unmask"              # show passwords in plain text
+keeper "get <UID> --unmask"              # show full record with passwords in plain text
 keeper "get <UID> --format json"         # JSON output
 keeper "get <UID> --format password"     # show only the password
-```
-
-### Reveal a Password
-
-To reveal a stored password, use one of these working commands:
-```bash
 keeper "find-password <UID>"             # print just the password
-keeper "get <UID> --unmask"              # print the full record with passwords in plain text
 ```
 
 Note: `unmask` is NOT a subcommand. `keeper "unmask <UID> password"` does not exist and will fail. Unmasking is the `--unmask` flag on `get`, or use `find-password` to get the password on its own.
