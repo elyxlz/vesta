@@ -16,7 +16,7 @@ Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and 
 To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
 
 ```bash
-grep -H "^# \|^Relationship:" ~/.contacts/*.md   # name + relationship for everyone, one call
+grep -rHs "^# \|^Relationship:" ~/.contacts/   # name + relationship for everyone; empty until you add people
 ```
 
 `Glob ~/.contacts/*.md` lists everyone; `Grep` across the dir finds who said what or who works where.
