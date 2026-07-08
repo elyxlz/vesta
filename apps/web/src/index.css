@@ -3,6 +3,8 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/public-sans";
 @import "@fontsource-variable/outfit";
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/source-serif-4/wght-italic.css";
 @import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
@@ -142,6 +144,7 @@ html[data-platform="android"] {
 @theme inline {
   --font-sans: "Public Sans Variable", sans-serif;
   --font-heading: "Outfit Variable", sans-serif;
+  --font-serif: "Source Serif 4 Variable", Georgia, serif;
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
