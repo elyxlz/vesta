@@ -77,4 +77,4 @@ Models:
 - Every response includes a `costDollars` field. Mention cost to the user for `research` calls (they can add up).
 - `--text` significantly increases token count. Use `--highlights` or `--summary` when you just need gist.
 - Exa ranks by semantic relevance. For exact-match queries (names, SKUs), pass `--type keyword`.
-- Installed via `uv tool install ~/agent/skills/exa/cli`.
+- Installed via `uv tool install --editable ~/agent/skills/exa/cli`.

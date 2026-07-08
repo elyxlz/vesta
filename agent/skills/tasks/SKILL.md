@@ -99,7 +99,7 @@ DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/log
 
 ## Setup
 ```bash
-uv tool install ~/agent/skills/tasks/cli
+uv tool install --editable ~/agent/skills/tasks/cli
 ```
 
 ## Background Daemon

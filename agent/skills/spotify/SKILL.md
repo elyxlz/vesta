@@ -156,5 +156,5 @@ spotify playback transfer --device-id <ID> --play
 ## Notes
 - Playback control requires Spotify Premium + at least one Spotify client open
 - All output is JSON
-- Install via: `uv tool install <path-to-skill>/cli`
+- Install via: `uv tool install --editable <path-to-skill>/cli`
 - To delete/unfollow a playlist, use the Spotify API directly via spotipy (no CLI command yet, use `sp.current_user_unfollow_playlist(id)`)

@@ -8,7 +8,7 @@ description: Reply to notifications with `source=app-chat` via `app-chat send`. 
 ## Setup
 This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-only mount), not `~/agent/skills/`.
 ```bash
-uv tool install ~/agent/core/skills/app-chat/cli
+uv tool install --editable ~/agent/core/skills/app-chat/cli
 ```
 
 **Background**: `screen -dmS app-chat app-chat serve`
