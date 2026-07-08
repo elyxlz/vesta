@@ -38,6 +38,36 @@ def _print_snapshot(interactive_only: bool = False) -> None:
     print(_snapshot_banner(interactive_only=interactive_only))
 
 
+DEFAULT_VIEW_PATH = "/tmp/vesta-browser-view.png"
+
+
+def _print_view(with_header: bool = True) -> None:
+    """Capture a screenshot and print its path (+ optional url/title header)."""
+    try:
+        path = helpers.screenshot(path=DEFAULT_VIEW_PATH)
+    except (RuntimeError, OSError, ValueError) as e:
+        print(f"(screenshot failed: {e})")
+        return
+    if with_header:
+        try:
+            info = helpers.page_info()
+        except (RuntimeError, OSError):
+            info = {}
+        title = info["title"] if "title" in info else ""
+        url = info["url"] if "url" in info else ""
+        print(f"# {title or '(no title)'}\n# {url}".rstrip())
+    print(f"screenshot: {path}")
+
+
+def _print_feedback(interactive_only: bool = False) -> None:
+    """Report back after an action in the session's perception mode (a11y / screenshot / both)."""
+    mode = admin.read_mode()
+    if mode in ("a11y", "both"):
+        _print_snapshot(interactive_only=interactive_only)
+    if mode in ("screenshot", "both"):
+        _print_view(with_header=(mode == "screenshot"))
+
+
 # ── Commands ──────────────────────────────────────────────────
 
 
@@ -49,6 +79,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
         executable=args.executable,
     )
     admin.ensure_daemon()
+    if args.vision:
+        admin.set_mode("screenshot")
     print(
         json.dumps(
             {
@@ -57,10 +89,19 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "pid": running.pid,
                 "user_data_dir": str(running.user_data_dir),
                 "headless": args.headless,
+                "mode": admin.read_mode(),
             },
             indent=2,
         )
     )
+    return 0
+
+
+def cmd_mode(args: argparse.Namespace) -> int:
+    """Get or set how action commands report back: a11y tree, screenshot, or both."""
+    if args.mode:
+        admin.set_mode(args.mode)
+    print(json.dumps({"mode": admin.read_mode()}))
     return 0
 
 
@@ -109,7 +150,7 @@ def cmd_open(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     tid = helpers.new_tab(args.url)
     helpers.wait_for_load()
-    _print_snapshot()
+    _print_feedback()
     print(f"\n# target_id: {tid}")
     return 0
 
@@ -119,7 +160,7 @@ def _navigate(action: Callable[[], object]) -> int:
     admin.ensure_daemon()
     action()
     helpers.wait_for_load()
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -186,7 +227,7 @@ def cmd_click(args: argparse.Namespace) -> int:
             return 2
         helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -194,7 +235,7 @@ def cmd_type(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     helpers.type_ref(args.ref, args.text, submit=args.submit, slowly=args.slowly)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -209,7 +250,7 @@ def cmd_press(args: argparse.Namespace) -> int:
         key = pieces[-1]
     helpers.press_key(key, modifiers=mods or 0)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -311,7 +352,7 @@ def cmd_tabs(args: argparse.Namespace) -> int:
 def cmd_focus(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     helpers.switch_tab(args.target_id)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -351,10 +392,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd")
 
     # Session lifecycle
-    lp = sub.add_parser("launch", help="Launch a Chromium for this session.")
+    lp = sub.add_parser("launch", help="Launch Camoufox for this session.")
     lp.add_argument("--headless", action="store_true")
     lp.add_argument("--stealth", action="store_true")
     lp.add_argument("--no-sandbox", action="store_true")
+    lp.add_argument("--vision", action="store_true", help="Report back with screenshots instead of the a11y tree.")
     lp.add_argument("--user-data-dir", default=None)
     lp.add_argument("--executable", default=None)
     lp.add_argument("--port", type=int, default=None)
@@ -363,6 +405,10 @@ def _build_parser() -> argparse.ArgumentParser:
     cp = sub.add_parser("connect", help="Connect to an externally running Camoufox.")
     cp.add_argument("url", help="BiDi WebSocket URL, e.g. ws://localhost:9222/session")
     cp.set_defaults(func=cmd_connect)
+
+    mp = sub.add_parser("mode", help="Get/set how actions report back: a11y tree, screenshot, or both.")
+    mp.add_argument("mode", nargs="?", choices=admin.PERCEPTION_MODES, help="Omit to print the current mode.")
+    mp.set_defaults(func=cmd_mode)
 
     sub.add_parser("doctor", help="Report Camoufox install + session health.").set_defaults(func=cmd_doctor)
 

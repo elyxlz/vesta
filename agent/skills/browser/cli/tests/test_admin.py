@@ -101,3 +101,38 @@ def test_read_session_ws_url_reads(tmp_path, monkeypatch):
         assert admin.read_session_ws_url() == "ws://127.0.0.1:5555/session"
     finally:
         admin._session_file(None, "bidi-ws").unlink()
+
+
+def test_read_mode_defaults_to_a11y(monkeypatch, tmp_path):
+    monkeypatch.setenv("BROWSER_SESSION", "modemissing-" + tmp_path.name)
+    assert admin.read_mode() == "a11y"
+
+
+def test_set_and_read_mode_roundtrip(tmp_path, monkeypatch):
+    session = "modecheck-" + tmp_path.name
+    monkeypatch.setenv("BROWSER_SESSION", session)
+    try:
+        admin.set_mode("screenshot")
+        assert admin.read_mode() == "screenshot"
+        admin.set_mode("both")
+        assert admin.read_mode() == "both"
+    finally:
+        admin._session_file(None, "mode").unlink(missing_ok=True)
+
+
+def test_set_mode_rejects_unknown(monkeypatch, tmp_path):
+    monkeypatch.setenv("BROWSER_SESSION", "modebad-" + tmp_path.name)
+    import pytest
+
+    with pytest.raises(ValueError, match="mode must be one of"):
+        admin.set_mode("hologram")
+
+
+def test_read_mode_falls_back_on_garbage(tmp_path, monkeypatch):
+    session = "modegarbage-" + tmp_path.name
+    monkeypatch.setenv("BROWSER_SESSION", session)
+    admin._session_file(None, "mode").write_text("nonsense")
+    try:
+        assert admin.read_mode() == "a11y"
+    finally:
+        admin._session_file(None, "mode").unlink(missing_ok=True)

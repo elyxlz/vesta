@@ -86,6 +86,53 @@ def test_parser_fetch_navigate_first():
     assert ns.navigate_first is True
 
 
+def test_parser_mode_accepts_choices():
+    parser = cli._build_parser()
+    assert parser.parse_args(["mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["mode"]).mode is None
+
+
+def test_parser_launch_vision_flag():
+    parser = cli._build_parser()
+    assert parser.parse_args(["launch", "--vision"]).vision is True
+
+
+def test_cmd_mode_sets_and_prints(monkeypatch, capsys):
+    seen: dict = {"mode": "a11y"}
+    monkeypatch.setattr(cli.admin, "set_mode", lambda m: seen.__setitem__("mode", m))
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: seen["mode"])
+    cli.cmd_mode(argparse.Namespace(mode="both"))
+    assert seen["mode"] == "both"
+    assert '"both"' in capsys.readouterr().out
+
+
+def test_print_feedback_a11y_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "a11y")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap"]
+
+
+def test_print_feedback_screenshot_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "screenshot")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["view"]
+
+
+def test_print_feedback_both(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "both")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap", "view"]
+
+
 def test_parser_click_at_coords():
     parser = cli._build_parser()
     ns = parser.parse_args(["click", "--at", "320.5", "180.0"])

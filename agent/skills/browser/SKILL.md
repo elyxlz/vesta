@@ -70,8 +70,10 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 ```bash
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
+browser launch --vision                           # ... and report back with screenshots, not the a11y tree
 browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
+browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session
 browser stop-all                                  # stop everything
 browser sessions                                  # list active sessions
@@ -118,6 +120,23 @@ browser wait --load-state load
 Screenshots are costly in context: prefer `--webp` (much smaller than PNG) and `--region` to
 clip to the part that matters. Use PNG only when you need lossless output (e.g. pixel-diffing UI
 state). Camoufox captures PNG and JPEG natively; `--webp` is encoded as JPEG.
+
+## Perception: a11y tree or screenshots
+
+You pick how the browser reports back after each action, once per session:
+
+```bash
+browser mode a11y         # default: every action returns the accessibility tree with e1/e2 refs
+browser mode screenshot   # every action returns a screenshot path instead (work from the image)
+browser mode both         # return both
+browser mode              # print the current mode
+browser launch --vision   # shortcut for screenshot mode at launch
+```
+
+In **a11y** mode, drive with refs (`browser click e5`). In **screenshot** mode, read
+`/tmp/vesta-browser-view.png`, find the target's pixel, and use coordinate actions
+(`browser click --at X Y`). `browser snapshot` and `browser screenshot` always work regardless
+of mode when you want the other view on demand.
 
 ## Refs vs coordinates
 

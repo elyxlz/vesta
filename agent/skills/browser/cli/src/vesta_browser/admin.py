@@ -143,13 +143,31 @@ def read_session_browser_pid(name: str | None = None) -> int | None:
     return _read_pid(_session_file(name, "browser-pid"))
 
 
+PERCEPTION_MODES = ("a11y", "screenshot", "both")
+
+
+def read_mode(name: str | None = None) -> str:
+    """The session's perception mode: how action commands report back. Default a11y."""
+    try:
+        value = _session_file(name, "mode").read_text().strip()
+    except FileNotFoundError:
+        return "a11y"
+    return value if value in PERCEPTION_MODES else "a11y"
+
+
+def set_mode(mode: str, name: str | None = None) -> None:
+    if mode not in PERCEPTION_MODES:
+        raise ValueError(f"mode must be one of {PERCEPTION_MODES}, got {mode!r}")
+    _session_file(name, "mode").write_text(mode)
+
+
 def stop_browser(name: str | None = None) -> None:
     """Terminate the Camoufox process for a session, if we launched it."""
     session = _session_name(name)
     pid = read_session_browser_pid(session)
     if pid:
         _terminate_pid(pid)
-    for p in (_session_file(session, "browser-pid"), _session_file(session, "bidi-ws")):
+    for p in (_session_file(session, "browser-pid"), _session_file(session, "bidi-ws"), _session_file(session, "mode")):
         p.unlink(missing_ok=True)
 
 
