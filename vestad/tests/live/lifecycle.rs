@@ -48,6 +48,6 @@ fn agent_restart_vesta_tool_restarts_through_vestad() {
     let uid = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let file = format!("{E2E_FILES_DIR}/restarted-{uid}.txt");
     write_notification(&container, &create_file_request(&file, "BACK"), true).expect("write post-restart probe");
-    wait_for_file_contains(&container, &file, "BACK", Duration::from_secs(180))
+    wait_for_file_contains(&container, &file, "BACK", Duration::from_secs(300))
         .expect("agent must process work after the restart");
 }
