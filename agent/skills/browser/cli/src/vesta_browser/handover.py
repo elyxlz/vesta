@@ -286,7 +286,7 @@ _PAGE_TEMPLATE = """<!doctype html>
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
   /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
-  .engraving { position: absolute; left: 0; right: 0; top: 88.3%; text-align: center; z-index: 2; pointer-events: none;
+  .engraving { position: absolute; left: 0; right: 0; top: 87.5%; text-align: center; z-index: 2; pointer-events: none;
     font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
@@ -310,7 +310,7 @@ _PAGE_TEMPLATE = """<!doctype html>
     const overlay = document.getElementById('overlay');
     const base = location.pathname.replace(/[^/]*$/, '');
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
-    let rfb = null, attempts = 0;
+    let rfb = null, attempts = 0, lastText = '';
 
     function connect() {
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
@@ -331,17 +331,46 @@ _PAGE_TEMPLATE = """<!doctype html>
         overlay.classList.remove('hidden');
         if (attempts++ < 30) setTimeout(connect, 1500);
       });
-      // Seamless clipboard, no VNC paste box: when the remote selection changes, mirror it to the
-      // local clipboard; the local paste below forwards the other way.
+      // Remote copy -> local clipboard: mirror the remote selection out so a copy inside the
+      // session lands in the user's own clipboard.
       rfb.addEventListener('clipboard', (e) => {
-        if (e.detail && e.detail.text && navigator.clipboard) navigator.clipboard.writeText(e.detail.text).catch(() => {});
+        if (e.detail && e.detail.text) {
+          lastText = e.detail.text;
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(e.detail.text).catch(() => {});
+        }
       });
     }
-    // A local Cmd/Ctrl+V anywhere on the page forwards the user's clipboard straight into the session.
-    document.addEventListener('paste', (e) => {
-      const text = (e.clipboardData || window.clipboardData).getData('text');
-      if (text && rfb) rfb.clipboardPasteFrom(text);
-    });
+
+    // Local clipboard -> remote. The VNC canvas is not an editable element, so a normal 'paste'
+    // event never fires; instead read the local clipboard on a user gesture and push it into the
+    // remote selection. On any click the remote selection is kept current (so right-click Paste
+    // works), and Cmd/Ctrl+V is intercepted to sync then inject a clean Ctrl+V, so it pastes
+    // regardless of the local modifier (a Mac Cmd maps to Super on the Linux remote otherwise).
+    async function readLocal() {
+      if (!navigator.clipboard || !navigator.clipboard.readText) return '';
+      try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
+    }
+    async function syncToRemote() {
+      const text = await readLocal();
+      if (text && text !== lastText && rfb) { lastText = text; rfb.clipboardPasteFrom(text); }
+    }
+    document.addEventListener('pointerdown', syncToRemote);
+    document.addEventListener('keydown', async (e) => {
+      if (!((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V'))) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const text = await readLocal();
+      if (!rfb) return;
+      if (text) { lastText = text; rfb.clipboardPasteFrom(text); }
+      // release any modifier the real keypress left held on the remote, then a clean Ctrl+V
+      rfb.sendKey(0xffeb, 'MetaLeft', false);
+      rfb.sendKey(0xffe3, 'ControlLeft', false);
+      rfb.sendKey(0xffe9, 'AltLeft', false);
+      rfb.sendKey(0xffe3, 'ControlLeft', true);
+      rfb.sendKey(0x0076, 'KeyV', true);
+      rfb.sendKey(0x0076, 'KeyV', false);
+      rfb.sendKey(0xffe3, 'ControlLeft', false);
+    }, true);
     connect();
   </script>
 </body>
