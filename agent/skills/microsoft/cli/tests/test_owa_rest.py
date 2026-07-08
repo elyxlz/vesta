@@ -683,3 +683,14 @@ def test_owa_login_paste_rejects_garbage(tmp_path):
     result = auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
     assert result["status"] == "error"
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
+
+
+def test_list_accounts_enumerates_owa_token_files(tmp_path):
+    cfg = _FakeConfig(tmp_path)
+    owa_rest.save_token("a@x.com", cfg, token="t", expires_at=time.time() + 3600)
+    owa_rest.save_token("b@y.com", cfg, token="t", expires_at=time.time() + 3600)
+    assert owa_rest.list_accounts(cfg) == ["a@x.com", "b@y.com"]
+
+
+def test_list_accounts_empty_when_none(tmp_path):
+    assert owa_rest.list_accounts(_FakeConfig(tmp_path)) == []
