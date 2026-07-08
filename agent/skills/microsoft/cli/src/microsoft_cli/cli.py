@@ -11,6 +11,7 @@ import httpx
 
 from .config import Config
 from . import auth_commands, email, calendar, monitor, notifications, block, folders, notify, format as fmt
+from . import backend, owa_rest, owa_rest_commands
 from .context import MicrosoftContext
 
 
@@ -62,6 +63,20 @@ def main():
     auth_sub.add_parser("list")
     p_auth_remove = auth_sub.add_parser("remove")
     p_auth_remove.add_argument("--account", required=True)
+    p_owa_login = auth_sub.add_parser(
+        "owa-login", help="Authorize the OWA REST fallback (default: capture token from the agent's browser session)."
+    )
+    p_owa_login.add_argument("--account", required=True, help="Email address to authorize.")
+    p_owa_login_mode = p_owa_login.add_mutually_exclusive_group()
+    p_owa_login_mode.add_argument(
+        "--device", action="store_true", help="Use a device-code sign-in instead of the browser (for tenants that still permit device flow)."
+    )
+    p_owa_login_mode.add_argument(
+        "--token", default=None, help="Save a token the user extracted from their own signed-in Outlook (creds never reach the agent)."
+    )
+    p_owa_complete = auth_sub.add_parser("owa-complete", help="Finish an OWA REST --device sign-in started with owa-login.")
+    p_owa_complete.add_argument("--account", required=True)
+    p_owa_complete.add_argument("--flow-cache", required=True)
 
     # email
     email_parser = group.add_parser("email")
@@ -276,6 +291,19 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
     p_respond.add_argument("--message", default=None)
 
+    # Backend selector on every email/calendar/folder subcommand.
+    # auto     - Graph first; on a permission failure fall back to OWA REST (if a captured token exists).
+    # graph    - force the official Graph API.
+    # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
+    for sub in (email_sub, cal_sub, folder_sub):
+        for sp in sub.choices.values():
+            sp.add_argument(
+                "--backend",
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
+                default=backend.AUTO,
+                help="Path: auto (Graph then OWA-REST fallback), graph, or owa-rest (browser-captured token; requires auth owa-login).",
+            )
+
     args = parser.parse_args()
     config = Config()
 
@@ -347,25 +375,51 @@ def _dispatch_auth(args, config):
         return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
     elif args.command == "remove":
         return auth_commands.remove_account(config, account_email=args.account)
+    elif args.command == "owa-login":
+        return auth_commands.owa_login(config, account_email=args.account, use_device=args.device, token=args.token)
+    elif args.command == "owa-complete":
+        return auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache)
+
+
+def _graph_has_account(config, account_email: str) -> bool:
+    """True if the Graph token cache knows this account. Accounts on a locked tenant
+    reachable only via OWA REST are absent here, so the Graph path can't resolve them."""
+    try:
+        return any((a["email"] or "").lower() == (account_email or "").lower() for a in auth_commands.list_accounts(config))
+    except Exception:
+        return False
+
+
+def _route(args, config, account_email, graph_fn, rest_fn):
+    """Run a command on the chosen backend. For ``auto``, fall back to OWA REST only
+    when a captured token exists; if the account is unknown to Graph but has a REST
+    token, go straight to REST (Graph can't even resolve it)."""
+    choice = args.backend if "backend" in vars(args) else backend.AUTO
+    if choice != backend.AUTO:
+        return backend.run(choice, graph_fn, rest_fn)
+    has_rest = owa_rest.has_valid_token(account_email, config)
+    if not has_rest:
+        return graph_fn()
+    if not _graph_has_account(config, account_email):
+        return rest_fn()
+    return backend.run(backend.AUTO, graph_fn, rest_fn)
 
 
 def _dispatch_email(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
     if args.command == "list":
-        return email.list_emails(config, client, account_email=args.account, folder=args.folder, limit=args.limit)
+        kw = dict(account_email=acct, folder=args.folder, limit=args.limit)
+        return route(lambda: email.list_emails(config, client, **kw), lambda: owa_rest_commands.list_emails(config, client, **kw))
     elif args.command == "get":
-        return email.get_email(
-            config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            include_attachments=not args.no_attachments,
-            save_to_file=args.save_to,
-        )
+        kw = dict(account_email=acct, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
+        return route(lambda: email.get_email(config, client, **kw), lambda: owa_rest_commands.get_email(config, client, **kw))
     elif args.command == "send":
-        return email.send_email(
-            config,
-            client,
-            account_email=args.account,
+        kw = dict(
+            account_email=acct,
             to=args.to,
             subject=args.subject,
             body=args.body,
@@ -374,11 +428,10 @@ def _dispatch_email(args, config, client):
             attachments=args.attachments,
             html=args.html,
         )
+        return route(lambda: email.send_email(config, client, **kw), lambda: owa_rest_commands.send_email(config, client, **kw))
     elif args.command == "draft":
-        return email.create_email_draft(
-            config,
-            client,
-            account_email=args.account,
+        kw = dict(
+            account_email=acct,
             to=args.to,
             subject=args.subject,
             body=args.body,
@@ -388,83 +441,115 @@ def _dispatch_email(args, config, client):
             reply_to_id=args.reply_to_id,
             forward_id=args.forward_id,
         )
+        return route(lambda: email.create_email_draft(config, client, **kw), lambda: owa_rest_commands.create_email_draft(config, client, **kw))
     elif args.command == "reply":
-        return email.reply_to_email(
-            config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            body=args.body,
-            attachments=args.attachments,
-            reply_all=args.reply_all,
-            html=args.html,
+        kw = dict(
+            account_email=acct, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all, html=args.html
         )
+        return route(lambda: email.reply_to_email(config, client, **kw), lambda: owa_rest_commands.reply_to_email(config, client, **kw))
     elif args.command == "forward":
-        return email.forward_email(
-            config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            to=args.to,
-            body=args.body,
-            cc=args.cc,
-            attachments=args.attachments,
-            html=args.html,
+        kw = dict(
+            account_email=acct, email_id=args.email_id, to=args.to, body=args.body, cc=args.cc, attachments=args.attachments, html=args.html
         )
+        return route(lambda: email.forward_email(config, client, **kw), lambda: owa_rest_commands.forward_email(config, client, **kw))
     elif args.command == "move":
-        return email.move_email(config, client, account_email=args.account, email_id=args.email_id, to_folder=args.to_folder)
+        kw = dict(account_email=acct, email_id=args.email_id, to_folder=args.to_folder)
+        return route(lambda: email.move_email(config, client, **kw), lambda: owa_rest_commands.move_email(config, client, **kw))
     elif args.command == "archive":
-        return email.archive_email(config, client, account_email=args.account, email_id=args.email_id)
+        kw = dict(account_email=acct, email_id=args.email_id)
+        return route(lambda: email.archive_email(config, client, **kw), lambda: owa_rest_commands.archive_email(config, client, **kw))
     elif args.command == "attachment":
         return _dispatch_attachment(args, config, client)
     elif args.command == "search":
-        return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
+        kw = dict(account_email=acct, query=args.query, limit=args.limit, folder=args.folder)
+        return route(lambda: email.search_emails(config, client, **kw), lambda: owa_rest_commands.search_emails(config, client, **kw))
     elif args.command == "update":
-        return email.update_email(
-            config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            is_read=args.is_read,
-            categories=args.categories,
-            flagged=args.flagged,
-        )
+        kw = dict(account_email=acct, email_id=args.email_id, is_read=args.is_read, categories=args.categories, flagged=args.flagged)
+        return route(lambda: email.update_email(config, client, **kw), lambda: owa_rest_commands.update_email(config, client, **kw))
     elif args.command == "delete":
-        return email.delete_email(
-            config, client, account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent
-        )
+        kw = dict(account_email=acct, email_id=args.email_id, sender=args.sender, permanent=args.permanent)
+        return route(lambda: email.delete_email(config, client, **kw), lambda: owa_rest_commands.delete_email(config, client, **kw))
     elif args.command == "block":
         if args.list:
-            return block.list_block_rules(config, client, account_email=args.account)
-        return block.block_sender(config, client, account_email=args.account, sender=args.sender)
+            return route(
+                lambda: block.list_block_rules(config, client, account_email=acct),
+                lambda: owa_rest_commands.list_block_rules(config, client, account_email=acct),
+            )
+        return route(
+            lambda: block.block_sender(config, client, account_email=acct, sender=args.sender),
+            lambda: owa_rest_commands.block_sender(config, client, account_email=acct, sender=args.sender),
+        )
     elif args.command == "unblock":
-        return block.unblock_sender(config, client, account_email=args.account, sender=args.sender)
+        return route(
+            lambda: block.unblock_sender(config, client, account_email=acct, sender=args.sender),
+            lambda: owa_rest_commands.unblock_sender(config, client, account_email=acct, sender=args.sender),
+        )
 
 
 def _dispatch_attachment(args, config, client):
+    acct = args.account
     if args.list_only:
-        return email.list_attachments(config, client, account_email=args.account, email_id=args.email_id)
+        kw = dict(account_email=acct, email_id=args.email_id)
+        return _route(
+            args,
+            config,
+            acct,
+            lambda: email.list_attachments(config, client, **kw),
+            lambda: owa_rest_commands.list_attachments(config, client, **kw),
+        )
     if args.download_all:
         out_dir = args.out_dir or str(config.data_dir / "attachments" / args.email_id)
-        return email.download_attachments(config, client, account_email=args.account, email_id=args.email_id, out_dir=out_dir)
+        kw = dict(account_email=acct, email_id=args.email_id, out_dir=out_dir)
+        return _route(
+            args,
+            config,
+            acct,
+            lambda: email.download_attachments(config, client, **kw),
+            lambda: owa_rest_commands.download_attachments(config, client, **kw),
+        )
     if not args.attachment_id or not args.save_path:
         raise ValueError("Provide --attachment-id and --save-path to download one attachment, or use --list / --all")
-    return email.get_attachment(
-        config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
+    kw = dict(account_email=acct, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
+    return _route(
+        args,
+        config,
+        acct,
+        lambda: email.get_attachment(config, client, **kw),
+        lambda: owa_rest_commands.get_attachment(config, client, **kw),
     )
 
 
 def _dispatch_folder(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
     if args.command == "list":
-        return folders.list_folders(config, client, account_email=args.account)
+        return route(
+            lambda: folders.list_folders(config, client, account_email=acct),
+            lambda: owa_rest_commands.list_folders(config, client, account_email=acct),
+        )
     elif args.command == "status":
-        return folders.folder_status(config, client, account_email=args.account, folder=args.folder)
+        return route(
+            lambda: folders.folder_status(config, client, account_email=acct, folder=args.folder),
+            lambda: owa_rest_commands.folder_status(config, client, account_email=acct, folder=args.folder),
+        )
     elif args.command == "create":
-        return folders.create_folder(config, client, account_email=args.account, name=args.name, parent_id=args.parent_id)
+        return route(
+            lambda: folders.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
+            lambda: owa_rest_commands.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
+        )
     elif args.command == "rename":
-        return folders.rename_folder(config, client, account_email=args.account, folder_id=args.folder_id, name=args.name)
+        return route(
+            lambda: folders.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
+            lambda: owa_rest_commands.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
+        )
     elif args.command == "delete":
-        return folders.delete_folder(config, client, account_email=args.account, folder_id=args.folder_id)
+        return route(
+            lambda: folders.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
+            lambda: owa_rest_commands.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
+        )
 
 
 def _dispatch_notify(args, config, client):
@@ -477,26 +562,34 @@ def _dispatch_notify(args, config, client):
 
 
 def _dispatch_calendar(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
     if args.command == "list":
-        return calendar.list_events(
-            config,
-            client,
-            account_email=args.account,
+        kw = dict(
+            account_email=acct,
             calendar_name=args.calendar_name,
             days_ahead=args.days_ahead,
             days_back=args.days_back,
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
         )
+        return route(lambda: calendar.list_events(config, client, **kw), lambda: owa_rest_commands.list_events(config, client, **kw))
     elif args.command == "calendars":
-        return calendar.list_calendars(config, client, account_email=args.account)
+        return route(
+            lambda: calendar.list_calendars(config, client, account_email=acct),
+            lambda: owa_rest_commands.list_calendars(config, client, account_email=acct),
+        )
     elif args.command == "get":
-        return calendar.get_event(config, client, account_email=args.account, event_id=args.event_id)
+        return route(
+            lambda: calendar.get_event(config, client, account_email=acct, event_id=args.event_id),
+            lambda: owa_rest_commands.get_event(config, client, account_email=acct, event_id=args.event_id),
+        )
     elif args.command == "create":
-        return calendar.create_event(
-            config,
-            client,
-            account_email=args.account,
+        kw = dict(
+            account_email=acct,
             subject=args.subject,
             start=args.start,
             end=args.end,
@@ -509,11 +602,11 @@ def _dispatch_calendar(args, config, client):
             recurrence=args.recurrence,
             recurrence_end_date=args.recurrence_end_date,
         )
+        return route(lambda: calendar.create_event(config, client, **kw), lambda: owa_rest_commands.create_event(config, client, **kw))
     elif args.command == "update":
-        return calendar.update_event(
-            config,
-            client,
-            account_email=args.account,
+        # The reminder knob is Graph-only; the OWA REST update takes the shared fields.
+        shared = dict(
+            account_email=acct,
             event_id=args.event_id,
             subject=args.subject,
             start=args.start,
@@ -521,17 +614,17 @@ def _dispatch_calendar(args, config, client):
             location=args.location,
             body=args.body,
             timezone=args.timezone,
-            reminder_on=args.reminder_on,
-            reminder_minutes=args.reminder_minutes,
+        )
+        return route(
+            lambda: calendar.update_event(config, client, reminder_on=args.reminder_on, reminder_minutes=args.reminder_minutes, **shared),
+            lambda: owa_rest_commands.update_event(config, client, **shared),
         )
     elif args.command == "delete":
-        return calendar.delete_event(
-            config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation
-        )
+        kw = dict(account_email=acct, event_id=args.event_id, send_cancellation=not args.no_cancellation)
+        return route(lambda: calendar.delete_event(config, client, **kw), lambda: owa_rest_commands.delete_event(config, client, **kw))
     elif args.command == "respond":
-        return calendar.respond_event(
-            config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message
-        )
+        kw = dict(account_email=acct, event_id=args.event_id, response=args.response, message=args.message)
+        return route(lambda: calendar.respond_event(config, client, **kw), lambda: owa_rest_commands.respond_event(config, client, **kw))
 
 
 def _run_serve(config: Config, notif_dir: Path):
