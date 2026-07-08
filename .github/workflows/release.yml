@@ -87,7 +87,7 @@ jobs:
           (cd cli && cargo check --quiet) &
           (cd apps/desktop/src-tauri && cargo check --quiet) &
           (cd apps/mobile/src-tauri && cargo check --quiet) &
-          (cd agent && uv lock --quiet) &
+          (cd agent && uv lock --project core --quiet) &
           wait
 
       - name: Commit and push
