@@ -28,7 +28,8 @@ from . import admin, launcher
 HANDOVER_SESSION = "handover"
 HANDOVER_PROFILE = Path.home() / ".browser" / "handover"
 WEBROOT = Path.home() / ".cache" / "vesta-browser" / "handover-web"
-FONTS_DIR = Path(__file__).parent / "assets" / "handover" / "fonts"
+ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
+FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
 # A MacBook Retina native screen (2880x1800, 16:10) rendered at 2x device scale: Chrome lays
@@ -109,6 +110,7 @@ def _build_webroot() -> Path:
     (WEBROOT / "handover.html").write_text(render_page())
     (WEBROOT / "fonts").mkdir()
     shutil.copyfile(FONTS_DIR / "public-sans.woff2", WEBROOT / "fonts" / "public-sans.woff2")
+    shutil.copyfile(ASSETS_DIR / "macbook.png", WEBROOT / "macbook.png")
     for name in ("core", "vendor"):
         src = novnc / name
         if src.exists():
@@ -237,11 +239,11 @@ def status() -> dict[str, object]:
     }
 
 
-# The live browser is framed as vesta's own laptop: a modern MacBook, seen head-on, with the
-# stream as its screen. Silver aluminium in light, space-grey in dark (the machine is a physical
-# object; the desk behind it takes the theme). The wordmark is etched on the base in the same
-# system serif the vesta.run logotype uses; the status is a small light beside it. Personality
-# comes from the object, so the screen itself stays clean and crisp (no CRT effects).
+# The live browser is framed as vesta's own laptop. The frame is a real head-on MacBook photo
+# (public-domain Pixabay render) with a transparent screen cut-out; the stream sits *behind* it
+# and shows through the hole, so the aluminium and bezel are photographic, not hand-drawn. The
+# screen rectangle was measured from the PNG (see the #stage offsets). The image is pointer-
+# transparent so clicks and typing land on the browser underneath.
 _PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -254,108 +256,73 @@ _PAGE_TEMPLATE = """<!doctype html>
   :root {
     color-scheme: light dark;
     --serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-    --desk-1: oklch(0.95 0.008 80); --desk-2: oklch(0.89 0.012 75);
-    --alu: oklch(0.83 0.003 250); --alu-hi: oklch(0.93 0.003 250); --alu-lo: oklch(0.71 0.005 250);
-    --etch: oklch(0.46 0.004 250); --muted: oklch(0.553 0.015 80);
-    --bezel: oklch(0.17 0 0); --screen-bg: oklch(0.97 0.006 80); --ok: oklch(0.66 0.17 150);
+    --desk-1: oklch(0.95 0.008 80); --desk-2: oklch(0.88 0.014 75);
+    --label: oklch(0.46 0.012 70); --screen-bg: oklch(0.97 0.006 80); --ok: oklch(0.66 0.17 150);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --desk-1: oklch(0.17 0.008 80); --desk-2: oklch(0.1 0.006 80);
-      --alu: oklch(0.42 0.004 265); --alu-hi: oklch(0.52 0.004 265); --alu-lo: oklch(0.33 0.005 265);
-      --etch: oklch(0.7 0.004 265); --muted: oklch(0.7 0.02 80);
-      --bezel: oklch(0.12 0 0); --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150);
-    }
+    :root { --desk-1: oklch(0.19 0.008 80); --desk-2: oklch(0.11 0.006 80); --label: oklch(0.72 0.02 80); --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150); }
   }
-  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.89 0.012 75);--alu:oklch(0.83 0.003 250);--alu-hi:oklch(0.93 0.003 250);--alu-lo:oklch(0.71 0.005 250);--etch:oklch(0.46 0.004 250);--muted:oklch(0.553 0.015 80);--bezel:oklch(0.17 0 0);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
-  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.17 0.008 80);--desk-2:oklch(0.1 0.006 80);--alu:oklch(0.42 0.004 265);--alu-hi:oklch(0.52 0.004 265);--alu-lo:oklch(0.33 0.005 265);--etch:oklch(0.7 0.004 265);--muted:oklch(0.7 0.02 80);--bezel:oklch(0.12 0 0);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
+  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.88 0.014 75);--label:oklch(0.46 0.012 70);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
+  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.19 0.008 80);--desk-2:oklch(0.11 0.006 80);--label:oklch(0.72 0.02 80);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: radial-gradient(130% 100% at 50% -20%, var(--desk-1), var(--desk-2));
-    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased; overflow: hidden;
-    display: grid; place-items: center; padding: 2.5vmin;
+    background: radial-gradient(135% 105% at 50% -25%, var(--desk-1), var(--desk-2));
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
+    overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 3vmin;
   }
-
-  /* the machine: a lid (screen) + hinge + base, kept at a laptop aspect and centred */
-  .macbook { width: min(96vw, calc(92vh * 1.51)); display: flex; flex-direction: column; align-items: center; }
-  .lid {
-    width: 100%; aspect-ratio: 16 / 10.6; border-radius: 20px; padding: 11px 11px 26px;
-    background: linear-gradient(var(--alu-hi), var(--alu) 8%, var(--alu) 82%, var(--alu-lo));
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.4), inset 0 0 0 1px oklch(0 0 0 / 0.12), 0 26px 60px -26px oklch(0 0 0 / 0.55);
-    display: flex; flex-direction: column;
-  }
-  .bezel {
-    position: relative; flex: 1 1 auto; min-height: 0; border-radius: 11px; background: var(--bezel);
-    padding: 12px; box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.6);
-    display: flex; flex-direction: column;
-  }
-  .notch { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 15%; max-width: 150px; height: 8px; background: var(--bezel); border-radius: 0 0 6px 6px; z-index: 2; }
-  #stage { position: relative; flex: 1 1 auto; min-height: 0; border-radius: 4px; overflow: hidden; background: var(--screen-bg); }
+  /* the machine, kept at the photo's aspect and capped near native px so the frame stays sharp */
+  .macbook { position: relative; width: min(94vw, 1160px, calc(84vh * 1.5725)); aspect-ratio: 1280 / 814; }
+  /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
+  #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%; overflow: hidden; background: var(--screen-bg); z-index: 0; }
   #screen { width: 100%; height: 100%; }
-  .glare { position: absolute; inset: 0; pointer-events: none; z-index: 3;
-    background: linear-gradient(128deg, oklch(1 0 0 / 0.07) 0%, transparent 16%, transparent 100%); }
-  /* etched brand on the aluminium below the screen */
-  .badge { flex: 0 0 auto; height: 15px; margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .wordmark { font-family: var(--serif); font-weight: 500; font-size: 13px; letter-spacing: -0.01em; color: var(--etch); text-shadow: 0 1px 0 oklch(1 0 0 / 0.35); }
-  .wordmark .dim { opacity: 0.62; }
-  .led { width: 6px; height: 6px; border-radius: 50%; background: var(--etch); opacity: .4; animation: pulse 1.6s infinite; }
-  .badge.ok .led { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 6px 1px color-mix(in oklch, var(--ok) 70%, transparent); }
-  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: .7; } }
-
-  /* hinge + the base front lip (with the opening notch), grounding it as a laptop */
-  .hinge { width: 99%; height: 8px; background: linear-gradient(var(--alu-lo), var(--alu)); border-radius: 0 0 3px 3px; box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.4); }
-  .base { position: relative; width: 88%; height: 15px; background: linear-gradient(var(--alu), var(--alu-lo)); border-radius: 0 0 9px 9px;
-    box-shadow: 0 12px 22px -10px oklch(0 0 0 / 0.55); }
-  .base::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 13%; max-width: 120px; height: 5px; background: var(--alu-lo); border-radius: 0 0 5px 5px; box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.35); }
-
-  #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: var(--screen-bg); transition: opacity .45s ease; z-index: 1; }
+  .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+  #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: var(--screen-bg); transition: opacity .45s ease; }
   #overlay.hidden { opacity: 0; pointer-events: none; }
   .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2); border-top-color: var(--ok); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #overlay p { margin: 14px 0 0; color: var(--muted); font-size: 13px; }
+  #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
+  /* brand label on the desk under the machine */
+  .caption { display: inline-flex; align-items: center; gap: 9px; }
+  .wordmark { font-family: var(--serif); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; color: var(--label); }
+  .wordmark .dim { opacity: 0.6; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: var(--label); opacity: .45; animation: pulse 1.6s infinite; }
+  .caption.ok .led { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 7px 1px color-mix(in oklch, var(--ok) 70%, transparent); }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: .7; } }
   @media (prefers-reduced-motion: reduce) { .led, .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
   <div class="macbook">
-    <div class="lid">
-      <div class="bezel">
-        <div class="notch"></div>
-        <div id="stage">
-          <div id="screen"></div>
-          <div id="overlay">
-            <div class="overlay-inner">
-              <div class="spinner"></div>
-              <p>Waking vesta's computer</p>
-            </div>
-          </div>
-          <div class="glare"></div>
+    <div id="stage">
+      <div id="screen"></div>
+      <div id="overlay">
+        <div class="overlay-inner">
+          <div class="spinner"></div>
+          <p>Waking vesta's computer</p>
         </div>
       </div>
-      <div class="badge" id="badge">
-        <span class="wordmark">vesta<span class="dim">'s browser</span></span>
-        <span class="led"></span>
-      </div>
     </div>
-    <div class="hinge"></div>
-    <div class="base"></div>
+    <img class="frame" src="./macbook.png" alt="" draggable="false">
+  </div>
+  <div class="caption" id="caption">
+    <span class="wordmark">vesta<span class="dim">'s browser</span></span>
+    <span class="led"></span>
   </div>
   <script type="module">
     import RFB from './core/rfb.js';
     const overlay = document.getElementById('overlay');
-    const badge = document.getElementById('badge');
+    const caption = document.getElementById('caption');
     const base = location.pathname.replace(/[^/]*$/, '');
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
     let rfb = null, attempts = 0;
 
     function connect() {
-      badge.classList.remove('ok');
+      caption.classList.remove('ok');
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
-      // Downscale a dense fixed framebuffer (see SCREEN_W/H, rendered at 2x) into the window and
+      // Downscale a dense fixed framebuffer (see SCREEN_W/H, rendered at 2x) into the cut-out and
       // ask for near-lossless tiles so text stays crisp; the link is local/tunnelled so quality
       // is cheap. Do NOT resizeSession: that matches CSS pixels and discards the Retina density.
       rfb.scaleViewport = true;
@@ -366,12 +333,12 @@ _PAGE_TEMPLATE = """<!doctype html>
       rfb.addEventListener('connect', () => {
         attempts = 0;
         overlay.classList.add('hidden');
-        badge.classList.add('ok');
+        caption.classList.add('ok');
         rfb.focus();
       });
       rfb.addEventListener('disconnect', () => {
         overlay.classList.remove('hidden');
-        badge.classList.remove('ok');
+        caption.classList.remove('ok');
         if (attempts++ < 30) setTimeout(connect, 1500);
       });
     }

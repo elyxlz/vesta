@@ -8,10 +8,15 @@ content is otherwise unmodified from the upstream snapshot at import time.
 Subsequent edits and new skills are authored by Vesta agents and committed
 under the Vesta repository license.
 
-The handover page (`cli/src/vesta_browser/assets/handover/fonts/`) bundles the
-Public Sans variable font (Copyright 2015 The Public Sans Project Authors, SIL
-Open Font License 1.1) for its small text, matching the vesta-cloud brand. The
-wordmark uses the system serif stack, as the vesta.run logotype does.
+The handover page (`cli/src/vesta_browser/assets/handover/`) bundles:
+
+- `fonts/public-sans.woff2`, the Public Sans variable font (Copyright 2015 The
+  Public Sans Project Authors, SIL Open Font License 1.1), for its small text.
+  The wordmark uses the system serif stack, as the vesta.run logotype does.
+- `macbook.png`, a head-on MacBook render with a transparent screen cut-out, from
+  Pixabay (https://pixabay.com/illustrations/apple-macbook-pro-laptop-mockup-6306818/),
+  used under the Pixabay Content License (free for commercial use, no attribution
+  required). The live browser is composited through its screen hole.
 
 Upstream MIT license text follows.
 
