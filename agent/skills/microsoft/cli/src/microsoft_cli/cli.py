@@ -64,13 +64,13 @@ def main():
     p_auth_remove = auth_sub.add_parser("remove")
     p_auth_remove.add_argument("--account", required=True)
     p_owa_login = auth_sub.add_parser(
-        "owa-login", help="Authorize the OWA REST fallback via device sign-in (no browser; for tenants that block Graph)."
+        "owa-login", help="Authorize the OWA REST fallback (default: capture token from the agent's browser session)."
     )
     p_owa_login.add_argument("--account", required=True, help="Email address to authorize.")
     p_owa_login.add_argument(
-        "--browser", action="store_true", help="Last resort: capture the token from a signed-in browser (tenants that block device flow)."
+        "--device", action="store_true", help="Use a device-code sign-in instead of the browser (for tenants that still permit device flow)."
     )
-    p_owa_complete = auth_sub.add_parser("owa-complete", help="Finish an OWA REST device sign-in started with owa-login.")
+    p_owa_complete = auth_sub.add_parser("owa-complete", help="Finish an OWA REST --device sign-in started with owa-login.")
     p_owa_complete.add_argument("--account", required=True)
     p_owa_complete.add_argument("--flow-cache", required=True)
 
@@ -372,7 +372,7 @@ def _dispatch_auth(args, config):
     elif args.command == "remove":
         return auth_commands.remove_account(config, account_email=args.account)
     elif args.command == "owa-login":
-        return auth_commands.owa_login(config, account_email=args.account, use_browser=args.browser)
+        return auth_commands.owa_login(config, account_email=args.account, use_device=args.device)
     elif args.command == "owa-complete":
         return auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache)
 

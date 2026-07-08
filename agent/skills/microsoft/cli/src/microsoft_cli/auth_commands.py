@@ -122,15 +122,19 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     return {"status": "error", "message": "Authentication succeeded but no account was found"}
 
 
-def owa_login(config: Config, *, account_email: str, use_browser: bool = False) -> dict[str, str]:
+def owa_login(config: Config, *, account_email: str, use_device: bool = False) -> dict[str, str]:
     """Authorize the OWA REST fallback for an account.
 
-    Default: a device-code sign-in (no browser) with the first-party Microsoft Office
-    client for the outlook.office.com resource. Returns a code to enter at the URL; finish
-    with `microsoft auth owa-complete`. MSAL then auto-refreshes the token, so this is a
-    one-time step. Use `--browser` only on the rare tenant that blocks the device-flow grant
-    entirely (captures the token from a signed-in Outlook-on-the-web session instead)."""
-    if use_browser:
+    Default (browser): capture the OWA token from the agent's browser session. The tenants
+    that need this fallback usually block Graph *and* device-code flow, and browser capture
+    works on all of them. It is agent-driven and non-blocking: the agent opens Outlook on the
+    web and signs in via the `browser` skill (screenshots + credentials/MFA relayed in chat),
+    then this command captures the token from the live session. Runs on the agent's machine,
+    so nothing is required of the user's machine.
+
+    `--device`: a device-code sign-in instead (enter a code at a URL, no browser), for the
+    subset of locked tenants that still permit device flow. MSAL then auto-refreshes it."""
+    if not use_device:
         return _owa_login_browser(config, account_email=account_email)
 
     app = auth.get_app(config.cache_file, OWA_REST_CLIENT_ID)
@@ -188,8 +192,12 @@ def owa_complete(config: Config, *, account_email: str, flow_cache: str) -> dict
 
 
 def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    """Last-resort: capture the OWA token from a signed-in browser session (only for tenants
-    that block the device-flow grant). Requires the ``browser`` skill daemon with DISPLAY=:99."""
+    """Capture the OWA token from the agent's browser session, non-blocking.
+
+    Opens Outlook on the web in the agent's browser and reads the outlook.office.com access
+    token from its storage. If the session is not signed in yet, returns `sign_in_required`
+    (no blocking prompt) so the agent can drive the sign-in via the `browser` skill and re-run.
+    Requires the `browser` skill daemon with DISPLAY=:99."""
     import os
 
     env = dict(os.environ)
@@ -200,34 +208,31 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
         result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env)
         return result.stdout.strip()
 
-    # Launch the browser (ignore "already running" errors).
     _run("launch", "--stealth")
     _run("open", "https://outlook.office.com/mail/")
-
-    print(f"Browser opened https://outlook.office.com/mail/\nSign in as {account_email} if prompted, then press Enter to continue...")
-    input()
-
     token = _run("evaluate", _OWA_TOKEN_JS)
 
     if not token or token == "NONE":
         return {
-            "status": "error",
+            "status": "sign_in_required",
+            "account": account_email,
+            "url": "https://outlook.office.com/mail/",
             "message": (
-                "Could not find an OWA access token in the browser. "
-                "Make sure you are signed in to Outlook on the web as "
-                f"{account_email} and try again."
+                f"Outlook on the web is open in the browser but not signed in as {account_email}. "
+                "Drive the sign-in with the `browser` skill (navigate, enter credentials, handle MFA), "
+                "then run `microsoft auth owa-login` again to capture the token."
             ),
         }
 
     try:
         expires_at = owa_rest.jwt_exp(token)
-    except (ValueError, KeyError, Exception):
-        return {"status": "error", "message": "Token was captured but could not decode its expiry. The token may be malformed."}
+    except Exception:
+        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
 
-    owa_rest.save_token(account_email, config, token=token, expires_at=expires_at)
+    owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
 
     return {
         "status": "success",
         "account": account_email,
-        "message": f"OWA REST token captured for {account_email}. Valid for ~24 h; re-run this command when it expires.",
+        "message": f"OWA REST token captured for {account_email}. Valid ~24 h; re-run this command to refresh when it expires.",
     }

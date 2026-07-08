@@ -40,26 +40,28 @@ microsoft auth remove --account <email>       # Sign an account out
 ## Fallback backend: OWA REST (locked tenants only)
 
 If the tenant blocks Graph entirely (third-party apps disabled, missing scopes),
-use the OWA REST fallback. It's a **device-code sign-in, no browser** — the same
-flow as `auth login`, using the first-party Microsoft Office client for the
-`outlook.office.com` resource:
+use the OWA REST fallback. Locked tenants usually block device-code flow as well,
+so the default is a **browser capture**, driven by the agent on its own machine
+(the `browser` skill daemon with `DISPLAY=:99`). The agent opens Outlook on the web,
+signs in (relaying the user's credentials and MFA through chat), then captures the
+`outlook.office.com` token from the live session:
 
 ```bash
-microsoft auth owa-login --account you@company.com                        # prints a code + URL
-microsoft auth owa-complete --account you@company.com --flow-cache <cache>  # after approving
+microsoft auth owa-login --account you@company.com     # captures the token, or returns sign_in_required
 microsoft email list --account you@company.com --backend owa-rest
 ```
 
-MSAL auto-refreshes the token, so this is a one-time setup. With it in place,
-`--backend auto` (the default) falls back to OWA REST automatically whenever Graph
-returns a permission error. Every command works on both backends **except**
-`block`/`unblock` (inbox rules), which are Graph-only.
+If the browser is not signed in yet, `owa-login` returns `sign_in_required` (it does
+not block); finish the sign-in with the `browser` skill and run it again. The token
+lasts about 24 h; re-run to refresh. With a token in place, `--backend auto` (the
+default) falls back to OWA REST automatically whenever Graph returns a permission
+error. Every command works on both backends **except** `block`/`unblock` (inbox
+rules), which are Graph-only.
 
-**Extreme tenants only:** if the tenant blocks even the device-flow grant (e.g.
-some universities), capture the token from a signed-in browser instead with
-`microsoft auth owa-login --account you@company.com --browser` (requires the
-`browser` skill daemon with `DISPLAY=:99`); that token lasts ~24 h and is re-captured
-by re-running the command.
+**Tenants that still permit device flow:** `microsoft auth owa-login --account you@company.com --device`
+does a device-code sign-in instead (enter a code at a URL, no browser), finished with
+`microsoft auth owa-complete --account you@company.com --flow-cache <cache>`. MSAL then
+auto-refreshes that token.
 
 ## Troubleshooting: Adding New Azure Permissions
 

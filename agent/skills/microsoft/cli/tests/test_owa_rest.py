@@ -615,3 +615,44 @@ def test_load_token_device_expired_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(owa_rest.auth, "get_token_silent", lambda *a, **k: None)
     with pytest.raises(owa_rest.OwaRestNoToken, match="owa-login"):
         owa_rest.load_token("user@example.com", cfg)
+
+
+# ---------------------------------------------------------------------------
+# owa-login browser capture (default path, agent-driven, non-blocking)
+# ---------------------------------------------------------------------------
+
+
+def test_owa_login_browser_captures_token(tmp_path, monkeypatch):
+    from microsoft_cli import auth_commands
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    fresh = _make_token(time.time() + 7200)
+
+    class _Res:
+        def __init__(self, out):
+            self.stdout = out
+
+    def fake_run(args, capture_output, text, env):
+        return _Res(fresh if args[1] == "evaluate" else "ok")
+
+    monkeypatch.setattr(auth_commands.subprocess, "run", fake_run)
+    result = auth_commands.owa_login(cfg, account_email="user@example.com")
+    assert result["status"] == "success"
+    assert owa_rest.has_valid_token("user@example.com", cfg) is True
+
+
+def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch):
+    from microsoft_cli import auth_commands
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+
+    class _Res:
+        def __init__(self, out):
+            self.stdout = out
+
+    monkeypatch.setattr(auth_commands.subprocess, "run", lambda *a, **k: _Res("NONE"))
+    result = auth_commands.owa_login(cfg, account_email="user@example.com")
+    assert result["status"] == "sign_in_required"
+    assert owa_rest.has_valid_token("user@example.com", cfg) is False

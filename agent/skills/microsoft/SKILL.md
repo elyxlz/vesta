@@ -16,27 +16,30 @@ Every email, folder, and calendar command runs over one of two paths, chosen wit
 - **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
   clean, supported, first-class path. Uses a device-flow OAuth token (see SETUP).
 - **`owa-rest`**: calls the OWA REST API (`outlook.office.com/api/v2.0`) with a
-  token from the first-party Microsoft Office client, obtained by a **device-code
-  sign-in** (`microsoft auth owa-login`, no browser) and auto-refreshed by MSAL.
-  The universal fallback: works on locked-down tenants that block Graph (third-party
-  apps disabled, missing scopes). For the rare tenant that blocks the device-flow
-  grant itself (e.g. some universities), `owa-login --browser` captures the token
-  from a signed-in Outlook-on-the-web session instead.
+  token captured from a signed-in Outlook-on-the-web session in the agent's own
+  browser (`microsoft auth owa-login`). This is the universal fallback: locked
+  tenants that block Graph usually block device-code flow too, and browser capture
+  works on all of them. The capture is agent-driven and runs on the agent's box, so
+  it needs nothing from the user's machine.
 - **`auto`** (default): tries Graph; on a permission failure (401/402/403, or the
   account is only authorized for OWA REST) falls back to OWA REST. Non-permission
   errors propagate unchanged so the fallback never hides real bugs.
 
-Both backends support the full command surface below. The only exception:
+Both backends support the full command surface below. The one exception:
 inbox rules (`block`/`unblock`) are Graph-only, since OWA REST v2.0 does not
 expose them; on the REST path they raise a clear error pointing to `--backend graph`.
 
-**OWA REST setup** (only needed if Graph is blocked on the tenant) — a device
-sign-in, no browser:
+**OWA REST setup** (only needed if Graph is blocked on the tenant). Open Outlook
+on the web in the agent's browser and sign in with the `browser` skill (navigate,
+enter the user's credentials, handle MFA), then capture the token:
 ```bash
-microsoft auth owa-login --account you@company.com     # prints a code + URL
-microsoft auth owa-complete --account you@company.com --flow-cache <cache>
+microsoft auth owa-login --account you@company.com
 ```
-The token then auto-refreshes; no re-auth. `--auto` uses it automatically once set up.
+If the session is not signed in yet it returns `sign_in_required` (no blocking);
+finish the sign-in via the `browser` skill and run it again. The captured token
+lasts about 24 h; re-run to refresh. `auto` uses it automatically once captured.
+On a tenant that still permits device flow, `owa-login --device` (then
+`owa-complete`) does a code sign-in instead, which MSAL auto-refreshes.
 
 ## Email
 
