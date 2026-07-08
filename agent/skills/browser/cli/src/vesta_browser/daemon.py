@@ -33,8 +33,20 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from typing import Protocol
 
 from .bidi import BidiClient, BidiError
+
+
+class Backend(Protocol):
+    """The surface the daemon uses, satisfied by BidiClient (Camoufox) and CdpBackend (Chrome)."""
+
+    async def connect(self, ws_url: str) -> None: ...
+    async def new_session(self) -> str: ...
+    def on_event(self, method: str) -> asyncio.Queue[dict]: ...
+    async def send(self, method: str, params: dict | None = None) -> dict: ...
+    async def close(self) -> None: ...
+
 
 INTERNAL_URL_PREFIXES = (
     "about:",
@@ -111,7 +123,7 @@ def resolve_ws_url() -> str:
 
 class Daemon:
     def __init__(self) -> None:
-        self.bidi: BidiClient | None = None
+        self.bidi: Backend | None = None
         self.context: str | None = None
         self.events: deque[dict] = deque(maxlen=EVENT_BUFFER)
         self.dialog: dict | None = None
@@ -120,13 +132,21 @@ class Daemon:
         self._consumers: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
-        self.ws_url = resolve_ws_url()
-        _log(f"connecting to {self.ws_url}")
-        self.bidi = BidiClient()
+        # CDP backend (a connected Chrome) if VESTA_BROWSER_CDP_WS is set, else native BiDi.
+        if "VESTA_BROWSER_CDP_WS" in os.environ and os.environ["VESTA_BROWSER_CDP_WS"]:
+            from .cdp_backend import CdpBackend
+
+            self.ws_url = os.environ["VESTA_BROWSER_CDP_WS"]
+            self.bidi = CdpBackend()
+            _log(f"connecting (CDP) to {self.ws_url}")
+        else:
+            self.ws_url = resolve_ws_url()
+            self.bidi = BidiClient()
+            _log(f"connecting (BiDi) to {self.ws_url}")
         try:
             await self.bidi.connect(self.ws_url)
         except Exception as e:
-            raise RuntimeError(f"BiDi WS handshake failed: {e}")
+            raise RuntimeError(f"backend WS handshake failed: {e}")
         self.context = await self.bidi.new_session()
         _log(f"session ready, context={self.context}")
 

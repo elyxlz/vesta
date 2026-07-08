@@ -72,6 +72,7 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 browser launch                                    # fetch (first time) + launch Camoufox, headless
 browser launch --vision                           # ... and report back with screenshots, not the a11y tree
 browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
+browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session

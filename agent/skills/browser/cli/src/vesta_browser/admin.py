@@ -139,6 +139,24 @@ def read_session_ws_url(name: str | None = None) -> str | None:
         return None
 
 
+def read_session_cdp_ws(name: str | None = None) -> str | None:
+    try:
+        ws = _session_file(name, "cdp-ws").read_text().strip()
+        return ws or None
+    except FileNotFoundError:
+        return None
+
+
+def record_bidi_endpoint(ws_url: str, name: str | None = None) -> None:
+    """Record a connected Camoufox BiDi endpoint so the daemon (and restarts) find it."""
+    _session_file(name, "bidi-ws").write_text(ws_url)
+
+
+def record_cdp_endpoint(ws_url: str, name: str | None = None) -> None:
+    """Record a connected Chrome CDP endpoint so the daemon (and restarts) find it."""
+    _session_file(name, "cdp-ws").write_text(ws_url)
+
+
 def read_session_browser_pid(name: str | None = None) -> int | None:
     return _read_pid(_session_file(name, "browser-pid"))
 
@@ -167,7 +185,12 @@ def stop_browser(name: str | None = None) -> None:
     pid = read_session_browser_pid(session)
     if pid:
         _terminate_pid(pid)
-    for p in (_session_file(session, "browser-pid"), _session_file(session, "bidi-ws"), _session_file(session, "mode")):
+    for p in (
+        _session_file(session, "browser-pid"),
+        _session_file(session, "bidi-ws"),
+        _session_file(session, "cdp-ws"),
+        _session_file(session, "mode"),
+    ):
         p.unlink(missing_ok=True)
 
 
@@ -179,16 +202,21 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     if daemon_alive(session):
         restart_daemon(session)
 
-    # Resolve WS URL before the daemon spawns: either VESTA_BROWSER_BIDI_WS is set
-    # explicitly, or we have a recorded ws url from a previous launch_browser call.
+    # Resolve the backend endpoint before the daemon spawns. Precedence: an explicit
+    # CDP ws (connected Chrome), an explicit BiDi ws, a recorded CDP endpoint, then a
+    # recorded BiDi endpoint (launched Camoufox).
     env = {**os.environ, "BROWSER_SESSION": session}
-    if "VESTA_BROWSER_BIDI_WS" not in env:
-        ws_url = read_session_ws_url(session)
-        if ws_url is None:
+    if "VESTA_BROWSER_CDP_WS" not in env and "VESTA_BROWSER_BIDI_WS" not in env:
+        cdp_ws = read_session_cdp_ws(session)
+        bidi_ws = read_session_ws_url(session)
+        if cdp_ws is not None:
+            env["VESTA_BROWSER_CDP_WS"] = cdp_ws
+        elif bidi_ws is not None:
+            env["VESTA_BROWSER_BIDI_WS"] = bidi_ws
+        else:
             raise RuntimeError(
-                "No Camoufox for this session. Run `browser launch` first, or set VESTA_BROWSER_BIDI_WS to connect to a remote browser."
+                "No browser for this session. Run `browser launch` first, or `browser connect <url>` to attach to a remote browser."
             )
-        env["VESTA_BROWSER_BIDI_WS"] = ws_url
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "vesta_browser.daemon"],

@@ -106,16 +106,45 @@ def cmd_mode(args: argparse.Namespace) -> int:
 
 
 def cmd_connect(args: argparse.Namespace) -> int:
-    """Connect to an externally running Camoufox via its BiDi WebSocket URL."""
-    import os
+    """Attach to an externally running browser, over a tunnel or LAN.
 
-    ws = args.url
-    if not (ws.startswith("ws://") or ws.startswith("wss://")):
-        print(f"connect expects a BiDi ws:// url, got {ws!r}", file=sys.stderr)
+    - http(s)://host:port     -> a Chrome DevTools endpoint (CDP); resolves /json/version
+    - ws(s)://host:port/session -> a Camoufox WebDriver BiDi endpoint
+    - ws(s)://host:port/...    -> a raw Chrome CDP browser websocket
+    """
+    import os
+    import urllib.request
+    from urllib.parse import urlparse, urlunparse
+
+    url = args.url
+    if url.startswith(("http://", "https://")):
+        with urllib.request.urlopen(f"{url.rstrip('/')}/json/version", timeout=5) as r:
+            data = json.loads(r.read())
+        if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
+            print(f"no webSocketDebuggerUrl at {url}/json/version", file=sys.stderr)
+            return 1
+        # Chrome reports its own host in the ws url; rewrite it to the host we connected
+        # through so this works over a tunnel / across the internet.
+        ws_path = urlparse(data["webSocketDebuggerUrl"]).path
+        ws = urlunparse(("ws", urlparse(url).netloc, ws_path, "", "", ""))
+        admin.record_cdp_endpoint(ws)
+        os.environ["VESTA_BROWSER_CDP_WS"] = ws
+        backend = "cdp"
+    elif url.startswith(("ws://", "wss://")) and url.rstrip("/").endswith("/session"):
+        ws = url
+        admin.record_bidi_endpoint(ws)
+        os.environ["VESTA_BROWSER_BIDI_WS"] = ws
+        backend = "bidi"
+    elif url.startswith(("ws://", "wss://")):
+        ws = url
+        admin.record_cdp_endpoint(ws)
+        os.environ["VESTA_BROWSER_CDP_WS"] = ws
+        backend = "cdp"
+    else:
+        print(f"connect expects an http(s):// or ws(s):// url, got {url!r}", file=sys.stderr)
         return 1
-    os.environ["VESTA_BROWSER_BIDI_WS"] = ws
     admin.ensure_daemon()
-    print(json.dumps({"session": admin._session_name(), "ws": ws}))
+    print(json.dumps({"session": admin._session_name(), "backend": backend, "ws": ws}))
     return 0
 
 

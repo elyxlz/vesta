@@ -40,13 +40,24 @@ apt-get install -y novnc x11vnc openbox xdotool scrot
 
 See SKILL.md § "Handover" for the flow.
 
-## Connecting to a remote Camoufox
+## Connecting to a remote browser
 
-To drive a Camoufox running on another machine, point the session at its BiDi WebSocket:
+`browser connect` attaches to a browser running elsewhere (a LAN box, or the user's own
+machine over a tunnel). It picks the backend from the URL:
 
 ```bash
+# The user's own Chrome (CDP). They launch Chrome with a debug port and expose it:
+#   chrome --remote-debugging-port=9222
+#   cloudflared tunnel --url http://localhost:9222   (or any http tunnel)
+browser connect http://<tunnel-host>:<port>          # resolves /json/version, drives via CDP
+
+# A remote Camoufox (native BiDi):
 browser connect ws://<host>:<port>/session
 ```
+
+Over a tunnel, Chrome reports its own internal host in the websocket URL; `connect` rewrites it
+to the host you connected through, so the full helper surface (snapshot, click, type, screenshot)
+works across the internet. Stealth is Camoufox's job; a connected Chrome is driven as-is.
 
 ## Environment variables
 
