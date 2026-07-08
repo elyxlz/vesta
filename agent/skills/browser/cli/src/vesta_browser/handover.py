@@ -286,7 +286,7 @@ _PAGE_TEMPLATE = """<!doctype html>
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
   /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
-  .engraving { position: absolute; left: 0; right: 0; top: 87.5%; text-align: center; z-index: 2; pointer-events: none;
+  .engraving { position: absolute; left: 0; right: 0; top: 88%; text-align: center; z-index: 2; pointer-events: none;
     font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
