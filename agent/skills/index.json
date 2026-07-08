@@ -133,7 +133,7 @@
   },
   {
     "name": "shop",
-    "description": "Shop for real products on the user's behalf via Shop.app \u2014 catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy (\"order me X\", \"find me running shoes\", \"track my order\", \"reorder the coffee\"). For paying non-Shop merchants, use the stripe-pay skill instead."
+    "description": "Shop for real products on the user's behalf via Shop.app. Catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy ('order me X', 'find me running shoes', 'track my order', 'reorder the coffee'). For paying non-Shop merchants, use the stripe-pay skill instead."
   },
   {
     "name": "skills-registry",
