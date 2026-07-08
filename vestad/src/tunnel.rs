@@ -689,7 +689,7 @@ pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
 // invisible from the inside: vestad stays healthy, systemd sees nothing wrong,
 // and every request to the hostname gets Cloudflare error 1033 until someone
 // restarts vestad by hand. Two failure modes, two layers:
-//   - the process exits (crash, OOM, fatal give-up) -> respawn after a fixed delay
+//   - the process exits (crash, OOM, fatal give-up) -> respawn after a backoff delay
 //   - the process wedges with its edge connections dead -> cloudflared's own
 //     /ready endpoint (loopback metrics port) reports no registered connection;
 //     after consecutive failures the child is killed and respawned.
@@ -697,15 +697,20 @@ pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
 // Cloudflare edge would conflate probe-path failures (host DNS/egress, an edge
 // incident) with a wedged connector and kill a healthy tunnel — dropping every
 // live session through it. /ready measures exactly the thing a restart fixes.
-// Config-level death (tunnel deleted server-side, token revoked) is NOT
-// self-healed here: cloudflared exits with the reason, which lands in
-// `vestad logs` via the stderr forwarder; recovery is `vestad connect`.
+// Config-level death (tunnel deleted server-side, token revoked) is not fixed by
+// a restart: cloudflared keeps exiting with the reason, so the respawn backoff
+// stretches toward its cap and the failure lands in `vestad logs` via the stderr
+// forwarder; recovery is `vestad connect`. It still self-heals for free if the
+// cause turns out to be transient (a slow resolver at boot).
 
-/// Delay between cloudflared respawns. Fixed rather than exponential: the one
-/// child vestad owns rarely dies, and a constant delay recovers promptly
-/// without the backoff/healthy-reset bookkeeping. Permanent failure (a revoked
-/// token) loops at this cadence with cloudflared's reason in `vestad logs`.
-const TUNNEL_RESPAWN_DELAY_SECS: u64 = 15;
+/// Respawn backoff. A respawn whose run reconnects to the edge (a transient blip
+/// on a working tunnel) resets to BASE for prompt recovery; a run that never
+/// registers (revoked token, deleted tunnel, resolver still down) doubles the
+/// delay up to MAX, so a permanently-failing tunnel settles into a slow retry
+/// instead of churning cloudflared every BASE seconds forever. Either way it
+/// keeps retrying, so a transient outage of any length still recovers on its own.
+const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 15;
+const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 300;
 const READY_PROBE_INTERVAL_SECS: u64 = 30;
 const READY_PROBE_TIMEOUT_SECS: u64 = 5;
 /// Consecutive failed /ready probes before cloudflared is restarted.
@@ -729,7 +734,8 @@ impl TunnelSupervisor {
 }
 
 /// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
-/// on a failed edge probe streak, after a fixed delay between attempts.
+/// on a failed edge probe streak, after a backoff delay between attempts (see
+/// `next_respawn_delay_secs`).
 ///
 /// `on_tunnel_up(bool)` is invoked on SUSTAINED edge changes (debounced) so the
 /// caller can mirror tunnel health into status.json: `true` as soon as the tunnel
@@ -762,43 +768,50 @@ pub fn supervise_tunnel(
         // "reported up" with `now` as the last registered time.
         let mut reported_up = true;
         let mut last_registered = tokio::time::Instant::now();
+        let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
         loop {
             match start_tunnel(&config_dir, port).await {
                 Ok((mut child, metrics_port)) => {
-                    let reason = tokio::select! {
+                    let (reason, registered) = tokio::select! {
                         _ = shutdown_rx.changed() => {
                             child.kill().await.ok();
                             return;
                         }
-                        reason = run_until_unhealthy(
+                        outcome = run_until_unhealthy(
                             &mut child,
                             probe_client.as_ref(),
                             metrics_port,
                             on_tunnel_up.as_ref(),
                             &mut reported_up,
                             &mut last_registered,
-                        ) => reason,
+                        ) => outcome,
                     };
                     child.kill().await.ok();
-                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel unhealthy ({reason}), restarting cloudflared");
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel unhealthy ({reason}), restarting cloudflared");
                 }
                 Err(e) => {
-                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel start failed: {e}");
+                    // start_tunnel never reached the edge, so this counts as a run
+                    // that did not register — back off.
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
                 }
             }
             tokio::select! {
                 _ = shutdown_rx.changed() => return,
-                _ = tokio::time::sleep(std::time::Duration::from_secs(TUNNEL_RESPAWN_DELAY_SECS)) => {}
+                _ = tokio::time::sleep(std::time::Duration::from_secs(respawn_delay_secs)) => {}
             }
         }
     });
     TunnelSupervisor { shutdown: shutdown_tx, task }
 }
 
-/// Watch one cloudflared run; returns the reason it must be replaced (process
-/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row). Drives the
-/// debounced `on_tunnel_up` edge callback via `reported_up`/`last_registered`,
-/// which persist across restarts.
+/// Watch one cloudflared run; returns `(reason it must be replaced, whether this
+/// run ever registered an edge connection)`. The reason is a process exit or
+/// /ready failing READY_PROBE_MAX_FAILURES times in a row; the `registered` flag
+/// drives the respawn backoff (a run that reconnected resets it, one that never
+/// did lets it grow). Drives the debounced `on_tunnel_up` edge callback via
+/// `reported_up`/`last_registered`, which persist across restarts.
 async fn run_until_unhealthy(
     child: &mut tokio::process::Child,
     probe_client: Option<&reqwest::Client>,
@@ -806,7 +819,7 @@ async fn run_until_unhealthy(
     on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
     reported_up: &mut bool,
     last_registered: &mut tokio::time::Instant,
-) -> String {
+) -> (String, bool) {
     let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
     let probe_interval = std::time::Duration::from_secs(READY_PROBE_INTERVAL_SECS);
     // First probe only after a full interval, so cloudflared has time to register.
@@ -817,13 +830,18 @@ async fn run_until_unhealthy(
     // reconnecting on its own.
     probe_ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut consecutive_failures = 0u32;
+    // Whether this run ever saw a registered edge connection. Feeds the respawn
+    // backoff: a run that reconnected is a transient blip (reset to base), one
+    // that never did is a persistent failure (let the delay grow).
+    let mut registered = false;
     loop {
         tokio::select! {
             status = child.wait() => {
-                return match status {
+                let reason = match status {
                     Ok(s) => format!("cloudflared exited: {s}"),
                     Err(e) => format!("cloudflared wait failed: {e}"),
                 };
+                return (reason, registered);
             }
             _ = probe_ticks.tick() => {
                 let Some(client) = probe_client else { continue };
@@ -835,6 +853,7 @@ async fn run_until_unhealthy(
                 // Mirror health into status.json on sustained edges only: "up" the
                 // moment it re-registers, "down" only after a sustained outage.
                 if ok {
+                    registered = true;
                     *last_registered = tokio::time::Instant::now();
                     if !*reported_up {
                         on_tunnel_up(true);
@@ -852,11 +871,21 @@ async fn run_until_unhealthy(
                     tracing::warn!(consecutive_failures, "tunnel ready probe failed (no registered edge connection)");
                 }
                 if restart {
-                    return format!("no ready edge connection for {consecutive_failures} consecutive probes");
+                    return (format!("no ready edge connection for {consecutive_failures} consecutive probes"), registered);
                 }
             }
         }
     }
+}
+
+/// Pure backoff accounting: after a run that registered an edge connection reset
+/// to base (recovery should be prompt), otherwise double up to the cap so a
+/// persistently-failing tunnel stops churning cloudflared every base delay.
+fn next_respawn_delay_secs(current: u64, registered: bool) -> u64 {
+    if registered {
+        return TUNNEL_RESPAWN_BASE_DELAY_SECS;
+    }
+    current.saturating_mul(2).min(TUNNEL_RESPAWN_MAX_DELAY_SECS)
 }
 
 /// Pure probe accounting: a success clears the failure streak; a failure
@@ -941,6 +970,26 @@ mod tests {
         let (count, restart) = record_probe(failures, false);
         assert_eq!(count, READY_PROBE_MAX_FAILURES);
         assert!(restart, "restart at the threshold");
+    }
+
+    #[test]
+    fn respawn_backoff_grows_to_cap_while_failing_and_resets_on_reconnect() {
+        // A persistently-failing tunnel doubles the delay from base up to the cap
+        // and then stays there — no unbounded growth, no churn past the ceiling.
+        let mut delay = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+        let mut seen = vec![delay];
+        for _ in 0..8 {
+            delay = next_respawn_delay_secs(delay, false);
+            seen.push(delay);
+        }
+        assert_eq!(seen[0], TUNNEL_RESPAWN_BASE_DELAY_SECS);
+        assert_eq!(seen[1], TUNNEL_RESPAWN_BASE_DELAY_SECS * 2);
+        assert_eq!(*seen.last().unwrap(), TUNNEL_RESPAWN_MAX_DELAY_SECS);
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "delay is monotonic while failing");
+        assert!(seen.iter().all(|&d| d <= TUNNEL_RESPAWN_MAX_DELAY_SECS), "never exceeds the cap");
+
+        // A run that reconnected resets straight to base, however large the delay had grown.
+        assert_eq!(next_respawn_delay_secs(TUNNEL_RESPAWN_MAX_DELAY_SECS, true), TUNNEL_RESPAWN_BASE_DELAY_SECS);
     }
 
     #[test]

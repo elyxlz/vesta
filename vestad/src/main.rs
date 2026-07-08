@@ -609,7 +609,10 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                             None => return, // can't name the URL; leave the field as-is
                         }
                     } else {
-                        TunnelStatus::Failed("tunnel connection lost".to_string())
+                        // Only fired after TUNNEL_DOWN_SUSTAINED_SECS of no edge
+                        // connection, so it has genuinely persisted — point the
+                        // user at the recovery step for a revoked/dead tunnel.
+                        TunnelStatus::Failed("tunnel down 2+ min — if it persists, run vestad connect".to_string())
                     };
                     if let Ok(mut s) = status.lock() {
                         s.set_tunnel(next);
