@@ -78,7 +78,7 @@ def test_rerun_returns_same_turn_each_boot(skills_config):
 
 
 def _load_recall():
-    path = pathlib.Path(__file__).resolve().parent.parent / "skills" / "recall" / "scripts" / "recall.py"
+    path = pathlib.Path(__file__).resolve().parent.parent / "skills" / "recall" / "cli" / "src" / "recall_cli" / "cli.py"
     spec = importlib.util.spec_from_file_location("recall", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
