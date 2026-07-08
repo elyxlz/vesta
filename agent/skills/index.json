@@ -132,6 +132,10 @@
     "description": "Register a background daemon with vestad to get a port, and keep it alive across restarts. Use when a skill runs a long-lived serve process (dashboard, tasks, voice, webhook receivers)."
   },
   {
+    "name": "shop",
+    "description": "Shop for real products on the user's behalf via Shop.app \u2014 catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy (\"order me X\", \"find me running shoes\", \"track my order\", \"reorder the coffee\"). For paying non-Shop merchants, use the stripe-pay skill instead."
+  },
+  {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
   },
