@@ -1,106 +1,96 @@
 # stripe-pay Skill Setup
 
-One-time setup so the agent can charge a Stripe Link wallet on the user's behalf.
+One-time setup so Vesta can pay merchants on your behalf through Stripe's **Link
+for Agents**, using the official `@stripe/link-cli`. Your real card is never
+exposed: each purchase mints a single-use credential that Stripe releases only
+after you approve it in your Link app.
 
 ## Prerequisites
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/)
-- A Stripe account with **Link** enabled
-- The user's preferred channel skill installed and authenticated (one of: `whatsapp`, `telegram`, `app-chat`)
+- Node.js 18+ (already present in the agent container)
+- A Stripe **Link** account, with the Link app on your phone (iOS / Android) or web
+- The user (you) able to receive Link approval push notifications
 
-## Step 1: Install the CLI
-
-```bash
-uv tool install ~/agent/skills/stripe-pay/cli
-```
-
-This installs the `stripe-pay` binary onto your `PATH`.
-
-## Step 2: Get Stripe credentials
-
-You need a **Restricted API Key** scoped for agent payments.
-
-1. Go to <https://dashboard.stripe.com/apikeys>
-2. Click "Create restricted key"
-3. Name it `vesta-agent` (or similar)
-4. Grant these permissions:
-   - **Issuing**: Cards `Write`, Authorizations `Read`
-   - **Link**: Wallet `Write` (for the OAuth flow)
-   - **Charges**: `Write` (so spend requests can settle)
-5. Copy the `rk_live_...` (or `rk_test_...`) key
-
-Store it once:
+## Step 1: Install the Link CLI
 
 ```bash
-mkdir -p ~/.stripe-pay && chmod 700 ~/.stripe-pay
-printf '%s' 'rk_live_...' > ~/.stripe-pay/api_key
-chmod 600 ~/.stripe-pay/api_key
+npm i -g @stripe/link-cli
+link-cli --version
 ```
 
-(`stripe-pay authorize` reads this on first run.)
+(If you would rather not install globally, every command in the skill also runs as
+`npx -y @stripe/link-cli <args>`.)
 
-## Step 3: Authorize the agent in your Link wallet
+## Step 2: Connect the agent to your Link wallet
 
 ```bash
-stripe-pay authorize
+link-cli auth login --client-name "Vesta"
 ```
 
-This opens your browser to Stripe's Link OAuth consent flow. Sign in to Link
-and approve the agent. You'll be redirected to a localhost callback that the
-CLI captures, and the resulting refresh token is saved to
-`~/.stripe-pay/credentials.json` (mode 600).
+This prints a verification URL and a short phrase. Open the URL, sign in to Link,
+and enter the phrase to approve the connection. `--client-name "Vesta"` is how the
+connection shows up in your Link app, so you can recognise and revoke it later.
 
-This is idempotent: re-running it re-opens the browser to refresh the token.
+On a headless box where the agent cannot relay the code interactively, either:
 
-## Step 4: Configure spend caps in the Link app
+- run `link-cli auth login --client-name "Vesta" --interval 5 --timeout 300`, which
+  prints the code immediately and polls until you approve, or
+- set `LINK_ACCESS_TOKEN` (and `LINK_REFRESH_TOKEN`) in the agent's environment if
+  you already hold tokens.
 
-Open the Link app (iOS / Android / web) and set caps for the connected agent:
-
-- **Per-charge cap** (e.g. $50)
-- **Daily cap** (e.g. $200)
-- **Monthly cap** (e.g. $1000)
-- **Allowed merchant categories** (optional)
-
-Caps live in Stripe Link, not in this skill. If a charge exceeds a cap, Stripe
-will require a second approval inside the Link app on top of the per-charge
-prompt the agent sends to your channel.
-
-## Step 5: Test
-
-Send yourself a tiny test charge:
+Confirm it worked:
 
 ```bash
-stripe-pay charge --amount 1 --currency USD \
-                  --merchant "stripe-pay smoke test" \
-                  --reason "verifying setup"
+link-cli auth status
 ```
 
-You should:
-1. Get an approval prompt on your primary channel (WhatsApp / Telegram / app-chat)
-2. Reply `yes`
-3. See a JSON blob with a single-use card on stdout
-4. See an `approved` line in `~/.stripe-pay/history.jsonl`
+## Step 3: Set your spend caps in the Link app
 
-If you get an error about "no credentials", repeat Step 3.
+Open the Link app and set caps for the connected "Vesta" agent:
 
-## Step 6: Tell the agent
+- Per-charge cap (e.g. $50)
+- Daily cap (e.g. $200)
+- Monthly cap (e.g. $1000)
 
-Mention to your vesta that the skill is set up. Future charge requests like
-"renew my domain" will route through `stripe-pay charge`.
+Caps are enforced by Stripe, not by this skill. A spend over a cap is refused, and
+Stripe will tell you why in the approval prompt.
 
-## Optional: scope to test mode first
+## Step 4: Rehearse in test mode
 
-If you want to verify the flow without real money, use a **test mode** restricted
-key (`rk_test_...`) in Step 2 and authorize the agent against the Stripe
-Link **test environment**. Charges will succeed without moving real funds.
+Run a spend request in Stripe test mode (no real money, uses card 4242...):
+
+```bash
+link-cli spend-request create \
+  --merchant-name "stripe-pay smoke test" \
+  --merchant-url "https://example.com" \
+  --context "Test-mode rehearsal to confirm Vesta can request a spend approval and retrieve a single-use card credential end to end." \
+  --amount 100 \
+  --request-approval --test --format json
+```
+
+You should get a Link approval push. Approve it, then retrieve the (test) card:
+
+```bash
+link-cli spend-request retrieve <lsrq_id> \
+  --interval 2 --max-attempts 60 \
+  --include card --output-file /tmp/link-card.json --format json
+rm -f /tmp/link-card.json
+```
+
+## Step 5: Tell Vesta it is set up
+
+Mention to your Vesta that stripe-pay is ready. Future requests like "renew my
+domain" or "pay this invoice" will route through the Link CLI, and you will approve
+each one in your Link app.
 
 ## Troubleshooting
 
-- `error: no_credentials`: run `stripe-pay authorize`.
-- `error: token_expired`: re-run `stripe-pay authorize` to refresh.
-- Approval prompt never arrives: confirm your primary channel daemon is
-  running (`screen -ls` should show `whatsapp` / `telegram` / `app-chat`).
-- Charge succeeds in Stripe but stdout shows an error: check
-  `~/.stripe-pay/history.jsonl` for the recorded `charge_id` and reconcile in
-  the Stripe dashboard.
+- `auth status` says not authenticated: re-run Step 2.
+- Approval push never arrives: confirm the Link app is installed and signed in on
+  your device, and that notifications are enabled for it.
+- `POLLING_TIMEOUT` on retrieve: you did not approve within the window (10 minutes).
+  Start a fresh spend request.
+- Spend refused: it exceeded a cap you set in Step 3. Raise the cap in the Link app
+  or approve a smaller amount.
+- Command not found: `npm i -g @stripe/link-cli`, or prefix calls with
+  `npx -y @stripe/link-cli`.
