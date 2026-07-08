@@ -6,7 +6,7 @@ Graph scopes it needs (`Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`,
 `MailboxSettings.ReadWrite`) via dynamic consent at sign-in. Just install, start the daemon, and
 authenticate:
 
-1. Install: `uv tool install ~/agent/skills/microsoft/cli`
+1. Install: `uv tool install --editable ~/agent/skills/microsoft/cli`
 2. Start background daemon: `screen -dmS microsoft microsoft serve`
 3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```

@@ -5,7 +5,7 @@ pyicloud for iCloud) that track upstream sites which change format without
 notice. A version behind PyPI is how such a skill silently starts returning
 nothing (issue #822). `require_latest` compares the installed version against
 PyPI's latest and exits non-zero when behind, turning silent drift into a
-loud, actionable error that a `uv tool install --force --reinstall .` clears.
+loud, actionable error that a `uv tool install --editable --force --reinstall .` clears.
 
 On any network / PyPI failure staleness cannot be proven, so it warns and
 returns rather than blocking a working install on a transient PyPI outage.
@@ -58,7 +58,7 @@ def require_latest(package: str) -> None:
                     "error": (
                         f"{package} {installed} is behind the latest release {latest}. This skill wraps a "
                         f"reverse-engineered library that breaks when it falls behind upstream; reinstall to "
-                        f"update: cd ~/agent/skills/<skill>/cli && uv tool install --force --reinstall ."
+                        f"update: cd ~/agent/skills/<skill>/cli && uv tool install --editable --force --reinstall ."
                     )
                 }
             ),
