@@ -31,8 +31,11 @@ WEBROOT = Path.home() / ".cache" / "vesta-browser" / "handover-web"
 FONTS_DIR = Path(__file__).parent / "assets" / "handover" / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-# Xvfb screen size (matches launcher._ensure_xvfb) and the Chrome window we force onto it.
-SCREEN_W, SCREEN_H = 1920, 1080
+# A high-resolution virtual screen rendered at 2x device scale (like a Retina panel): Chrome
+# lays out at 1280x720 CSS but paints 2560x1440 real pixels, so the streamed image stays crisp
+# when noVNC scales it into the user's window.
+SCREEN_W, SCREEN_H = 2560, 1440
+DEVICE_SCALE = 2
 
 # Debian's `novnc` package installs here; a few distros relocate it.
 NOVNC_DIRS = [
@@ -135,14 +138,19 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # (on a Wayland host Chrome's Ozone otherwise auto-selects Wayland from XDG_SESSION_TYPE and
     # never paints the X screen x11vnc mirrors, so the stream is black); --window-size fills the
     # Xvfb screen; --disable-gpu keeps it on the software path Xvfb provides.
-    launcher._ensure_xvfb(display)
+    launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
     openbox = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     running = admin.launch_chrome(
         HANDOVER_SESSION,
         headless=False,
         stealth=True,
         user_data_dir=profile,
-        extra_args=[f"--window-size={SCREEN_W},{SCREEN_H}", "--disable-gpu", "--ozone-platform=x11"],
+        extra_args=[
+            f"--window-size={SCREEN_W},{SCREEN_H}",
+            f"--force-device-scale-factor={DEVICE_SCALE}",
+            "--disable-gpu",
+            "--ozone-platform=x11",
+        ],
         initial_url=url,
     )
 

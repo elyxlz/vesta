@@ -223,7 +223,7 @@ def _x_display_reachable(display: str) -> bool:
         return False
 
 
-def _ensure_xvfb(display: str) -> bool:
+def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
     """Best-effort: guarantee an X server is up on `display` before headed Chrome.
 
     The Xvfb daemon is normally started at boot (restart skill), but if it died
@@ -231,7 +231,8 @@ def _ensure_xvfb(display: str) -> bool:
     "Missing X server". Clears the stale lock an unclean shutdown leaves behind
     (which otherwise makes Xvfb refuse to start), serialised with an flock so
     concurrent launches don't stomp each other. Never raises; on failure the
-    caller falls back to headless.
+    caller falls back to headless. `screen` is the Xvfb `WxHxDEPTH` geometry;
+    handover uses a larger one so the streamed screen stays crisp on HiDPI.
     """
     if _x_display_reachable(display):
         return True
@@ -255,7 +256,7 @@ def _ensure_xvfb(display: str) -> bool:
             except OSError:
                 pass
         subprocess.Popen(
-            [xvfb, display, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+            [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
