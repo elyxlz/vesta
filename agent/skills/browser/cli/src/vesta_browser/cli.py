@@ -103,7 +103,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 def cmd_handover(args: argparse.Namespace) -> int:
     """Hand the live browser to the user over a branded page so they sign in by hand."""
     if args.action == "start":
-        result = handover.start(url=args.url, port=args.port, message=args.message, user_data_dir=args.user_data_dir)
+        result = handover.start(url=args.url, port=args.port, user_data_dir=args.user_data_dir)
     elif args.action == "stop":
         result = handover.stop()
     else:
@@ -352,7 +352,6 @@ def _build_parser() -> argparse.ArgumentParser:
     hv.add_argument("action", choices=["start", "stop", "status"])
     hv.add_argument("--url", default=None, help="URL to open in the headed browser (e.g. the sign-in page).")
     hv.add_argument("--port", type=int, default=None, help="Port to bind the web server on (from register-service --public).")
-    hv.add_argument("--message", default=None, help="One line shown in the page header telling the user what to do.")
     hv.add_argument("--user-data-dir", default=None, help="Chrome profile dir; its cookies persist for later reuse.")
     hv.set_defaults(func=cmd_handover)
 

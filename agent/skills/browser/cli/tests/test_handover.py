@@ -33,38 +33,37 @@ def _fake_novnc(root):
 # ── page rendering ────────────────────────────────────────────
 
 
-def test_render_page_injects_message():
-    page = handover.render_page("Sign in to Outlook")
-    assert "Sign in to Outlook" in page
+def test_page_is_generic_not_task_specific():
+    # The page names only "Vesta's browser"; the agent conveys the actual task in chat.
+    page = handover.render_page()
+    assert "Vesta" in page and "browser" in page
+    assert "Outlook" not in page
 
 
-def test_render_page_escapes_html():
-    page = handover.render_page('<script>alert("x")</script>')
-    assert "<script>alert" not in page
-    assert "&lt;script&gt;" in page
+def test_page_uses_vesta_cloud_fonts():
+    page = handover.render_page()
+    assert "./fonts/outfit.woff2" in page
+    assert "./fonts/public-sans.woff2" in page
 
 
 def test_page_connects_to_relative_websockify_path():
     # The WS URL is derived from the page's own path so it works behind the
     # vestad service proxy at /agents/<name>/<service>/handover.html.
-    page = handover.render_page("hi")
+    page = handover.render_page()
     assert "import RFB from './core/rfb.js'" in page
     assert "base + 'websockify'" in page
-
-
-def test_page_states_the_honest_privacy_claim():
-    page = handover.render_page("hi")
-    assert "Vesta keeps the session, not your password" in page
 
 
 # ── web-root assembly ─────────────────────────────────────────
 
 
-def test_build_webroot_writes_page_and_symlinks_novnc(isolated, monkeypatch):
+def test_build_webroot_writes_page_fonts_and_symlinks_novnc(isolated, monkeypatch):
     novnc = _fake_novnc(isolated)
     monkeypatch.setattr(handover, "NOVNC_DIRS", [novnc])
-    root = handover._build_webroot("Please sign in")
-    assert (root / "handover.html").read_text().count("Please sign in") == 1
+    root = handover._build_webroot()
+    assert (root / "handover.html").is_file()
+    assert (root / "fonts" / "outfit.woff2").is_file()
+    assert (root / "fonts" / "public-sans.woff2").is_file()
     assert (root / "core" / "rfb.js").is_file()  # resolves through the symlink
     assert (root / "vendor" / "pako").is_dir()
 
@@ -72,10 +71,14 @@ def test_build_webroot_writes_page_and_symlinks_novnc(isolated, monkeypatch):
 def test_build_webroot_is_rebuildable(isolated, monkeypatch):
     novnc = _fake_novnc(isolated)
     monkeypatch.setattr(handover, "NOVNC_DIRS", [novnc])
-    handover._build_webroot("first")
-    root = handover._build_webroot("second")
-    assert "second" in (root / "handover.html").read_text()
-    assert "first" not in (root / "handover.html").read_text()
+    handover._build_webroot()
+    root = handover._build_webroot()  # a second build wipes and recreates cleanly
+    assert (root / "handover.html").is_file()
+
+
+def test_bundled_fonts_exist_in_the_package():
+    assert (handover.FONTS_DIR / "outfit.woff2").is_file()
+    assert (handover.FONTS_DIR / "public-sans.woff2").is_file()
 
 
 def test_find_novnc_dir_raises_with_install_hint(monkeypatch, tmp_path):
@@ -89,7 +92,7 @@ def test_find_novnc_dir_raises_with_install_hint(monkeypatch, tmp_path):
 
 def test_require_binaries_lists_missing(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError, match="x11vnc, websockify"):
+    with pytest.raises(RuntimeError, match="x11vnc, websockify, openbox"):
         handover._require_binaries()
 
 
@@ -127,6 +130,7 @@ def test_stop_is_idempotent_with_nothing_running():
 def test_status_all_false_when_idle():
     st = handover.status()
     assert st["chrome"] is False
+    assert st["openbox"] is False
     assert st["x11vnc"] is False
     assert st["websockify"] is False
     assert st["web_port"] is None

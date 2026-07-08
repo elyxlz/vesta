@@ -209,13 +209,15 @@ The user is usually on a different machine, so the page needs a public URL. Regi
 PORT=$(~/agent/skills/service/scripts/register-service browser-handover --public)
 
 # 2. bring up the headed browser + branded page, pointed at the sign-in URL
-browser handover start --port "$PORT" \
-  --url "https://outlook.office.com/mail/" \
-  --message "Sign in to your Outlook account"
+browser handover start --port "$PORT" --url "https://outlook.office.com/mail/"
 
 # 3. send the user this link (vestad proxies the websocket through it):
 #    $VESTAD_TUNNEL/agents/$AGENT_NAME/browser-handover/handover.html
 ```
+
+The page is generic: it says only "Vesta's browser". Tell the user what to do in chat, framed
+plainly, e.g. "I need you to sign in on my browser. Connect with this link and log in there:
+<link>." When they are signed in you keep the session, not their password.
 
 While they sign in, watch for completion however the site exposes it. To talk to the handover
 browser (poll for a cookie or token, screenshot), set `BROWSER_SESSION=handover` first, e.g.
@@ -223,8 +225,8 @@ browser (poll for a cookie or token, screenshot), set `BROWSER_SESSION=handover`
 and tear it all down:
 
 ```bash
-browser handover status                 # {chrome, x11vnc, websockify, web_port}
-browser handover stop                   # stops VNC + websockify + Chrome, removes the web root
+browser handover status                 # {chrome, openbox, x11vnc, websockify, web_port}
+browser handover stop                   # stops VNC + WM + Chrome, removes the web root
 ```
 
 The handover profile persists at `~/.browser/handover`, so afterwards you can reuse the cookies

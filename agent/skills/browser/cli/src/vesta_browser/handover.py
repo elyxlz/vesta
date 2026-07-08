@@ -3,9 +3,11 @@
 Some sites (Microsoft/Google/banking) fingerprint automated browsers and block
 device-code or scripted auth outright. The escape hatch is to let the *user* drive
 the agent's real headed Chrome: sign in once by hand, then reuse the resulting
-session cookies. This wraps the plumbing (headed Chrome under Xvfb -> x11vnc ->
-websockify) but replaces noVNC's dated default UI with a branded auto-connecting
-page, so what the user opens looks like Vesta, not a sketchy remote-desktop applet.
+session cookies. This wraps the plumbing (headed Chrome under Xvfb + a window
+manager -> x11vnc -> websockify) but serves a branded page (Vesta's own type and
+palette) instead of noVNC's dated default UI, so what the user opens reads as
+Vesta, not a sketchy remote-desktop applet. It is deliberately generic: the page
+says only "Vesta's browser"; the agent tells the user what to do in chat.
 
 The public URL is the caller's job: register a `--public` vestad service to get a
 port, pass it here as `--port`, and hand the user
@@ -15,21 +17,22 @@ websocket upgrade through that route, so the same page works for a remote user.
 
 from __future__ import annotations
 
-import html
 import os
 import shutil
 import socket
 import subprocess
 from pathlib import Path
 
-from . import admin
+from . import admin, launcher
 
 HANDOVER_SESSION = "handover"
 HANDOVER_PROFILE = Path.home() / ".browser" / "handover"
 WEBROOT = Path.home() / ".cache" / "vesta-browser" / "handover-web"
+FONTS_DIR = Path(__file__).parent / "assets" / "handover" / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-DEFAULT_MESSAGE = "Sign in to continue. This is Vesta's browser, shown to you live."
+# Xvfb screen size (matches launcher._ensure_xvfb) and the Chrome window we force onto it.
+SCREEN_W, SCREEN_H = 1920, 1080
 
 # Debian's `novnc` package installs here; a few distros relocate it.
 NOVNC_DIRS = [
@@ -47,13 +50,13 @@ def _find_novnc_dir() -> Path:
     for d in NOVNC_DIRS:
         if (d / "core" / "rfb.js").is_file():
             return d
-    raise RuntimeError("noVNC not found (looked for core/rfb.js under /usr/share/novnc). Install it: apt-get install -y novnc x11vnc")
+    raise RuntimeError("noVNC not found (looked for core/rfb.js under /usr/share/novnc). Install it: apt-get install -y novnc x11vnc openbox")
 
 
 def _require_binaries() -> None:
-    missing = [b for b in ("x11vnc", "websockify") if not shutil.which(b)]
+    missing = [b for b in ("x11vnc", "websockify", "openbox") if not shutil.which(b)]
     if missing:
-        raise RuntimeError(f"missing {', '.join(missing)}. Install: apt-get install -y novnc x11vnc")
+        raise RuntimeError(f"missing {', '.join(missing)}. Install: apt-get install -y novnc x11vnc openbox")
 
 
 def _free_port(start: int) -> int:
@@ -88,17 +91,20 @@ def _read_pid(suffix: str) -> int | None:
         return None
 
 
-def render_page(message: str) -> str:
-    return _PAGE_TEMPLATE.replace("__MESSAGE__", html.escape(message))
+def render_page() -> str:
+    return _PAGE_TEMPLATE
 
 
-def _build_webroot(message: str) -> Path:
-    """Assemble a web root: our branded page plus symlinks to noVNC's core + vendor."""
+def _build_webroot() -> Path:
+    """Assemble a web root: the branded page, the bundled fonts, and symlinks to noVNC's core + vendor."""
     novnc = _find_novnc_dir()
     if WEBROOT.exists():
         shutil.rmtree(WEBROOT)
     WEBROOT.mkdir(parents=True, exist_ok=True)
-    (WEBROOT / "handover.html").write_text(render_page(message))
+    (WEBROOT / "handover.html").write_text(render_page())
+    (WEBROOT / "fonts").mkdir()
+    for font in ("public-sans.woff2", "outfit.woff2"):
+        shutil.copyfile(FONTS_DIR / font, WEBROOT / "fonts" / font)
     for name in ("core", "vendor"):
         src = novnc / name
         if src.exists():
@@ -106,12 +112,14 @@ def _build_webroot(message: str) -> Path:
     return WEBROOT
 
 
-def start(*, url: str | None, port: int | None, message: str | None, user_data_dir: str | None) -> dict[str, object]:
-    """Bring up headed Chrome + x11vnc + websockify serving the branded page. Idempotent-ish: stops any prior handover first."""
-    _require_binaries()
-    stop()  # tear down a stale handover so ports and pids don't collide
+def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
+    """Bring up headed Chrome + a window manager + x11vnc + websockify serving the branded page.
 
-    msg = message or DEFAULT_MESSAGE
+    Idempotent-ish: stops any prior handover first so ports and pids don't collide.
+    """
+    _require_binaries()
+    stop()
+
     profile = Path(user_data_dir) if user_data_dir else HANDOVER_PROFILE
 
     # launch() provisions Xvfb on demand for a stealth headed browser; pin the display so
@@ -122,17 +130,26 @@ def start(*, url: str | None, port: int | None, message: str | None, user_data_d
     display = os.environ.get("DISPLAY") or ":99"
     os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
+
+    # Bring the display up, then a window manager, then the headed browser. Three flags make a
+    # headed Chrome usable through x11vnc on Xvfb: --ozone-platform=x11 forces the X11 backend
+    # (on a Wayland host Chrome's Ozone otherwise auto-selects Wayland from XDG_SESSION_TYPE and
+    # never paints the X screen x11vnc mirrors, so the stream is black); --window-size fills the
+    # Xvfb screen; --disable-gpu keeps it on the software path Xvfb provides.
+    launcher._ensure_xvfb(display)
+    openbox = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     running = admin.launch_chrome(
         HANDOVER_SESSION,
         headless=False,
         stealth=True,
         user_data_dir=profile,
+        extra_args=[f"--window-size={SCREEN_W},{SCREEN_H}", "--disable-gpu", "--ozone-platform=x11"],
         initial_url=url,
     )
 
     vnc_port = _free_port(VNC_PORT_START)
     web_port = port or _free_port(WEB_PORT_START)
-    webroot = _build_webroot(msg)
+    webroot = _build_webroot()
 
     log = open(_session_file("handover-log"), "w")
     x11vnc = subprocess.Popen(
@@ -148,6 +165,7 @@ def start(*, url: str | None, port: int | None, message: str | None, user_data_d
         start_new_session=True,
     )
 
+    _session_file("openbox-pid").write_text(str(openbox.pid))
     _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
     _session_file("websockify-pid").write_text(str(websockify.pid))
     _session_file("web-port").write_text(str(web_port))
@@ -161,13 +179,12 @@ def start(*, url: str | None, port: int | None, message: str | None, user_data_d
         "display": display,
         "page": "handover.html",
         "profile": str(profile),
-        "message": msg,
     }
 
 
 def stop() -> dict[str, object]:
-    """Tear down the handover: websockify, x11vnc, the headed Chrome, and the web root. Idempotent."""
-    for suffix in ("websockify-pid", "x11vnc-pid"):
+    """Tear down the handover: websockify, x11vnc, the WM, the headed Chrome, and the web root. Idempotent."""
+    for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
         if pid is not None:
             admin._terminate_pid(pid)
@@ -185,6 +202,7 @@ def status() -> dict[str, object]:
     return {
         "session": HANDOVER_SESSION,
         "chrome": _alive(admin.read_session_chrome_pid(HANDOVER_SESSION)),
+        "openbox": _alive(_read_pid("openbox-pid")),
         "x11vnc": _alive(_read_pid("x11vnc-pid")),
         "websockify": _alive(_read_pid("websockify-pid")),
         "web_port": web_port,
@@ -192,77 +210,110 @@ def status() -> dict[str, object]:
     }
 
 
+# Palette + type lifted from the vesta-cloud landing page: warm neutrals (oklch hue 80), a
+# champagne primary, Outfit for the wordmark and Public Sans for everything else. The trust
+# signal here is the look, not a paragraph of reassurance, so the chrome stays spare.
 _PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Vesta - sign in</title>
+<title>Vesta's browser</title>
 <style>
-  :root { color-scheme: light dark; --bg:#f4f5f7; --card:#fff; --ink:#0e1116; --muted:#5b6472; --line:#e6e8ec; --accent:#4f46e5; --ok:#12a150; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0b0d10; --card:#14171c; --ink:#eef1f5; --muted:#98a2b3; --line:#232833; --accent:#8b8bff; --ok:#3ecf7a; }
+  @font-face { font-family: "Outfit"; src: url("./fonts/outfit.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+  @font-face { font-family: "Public Sans"; src: url("./fonts/public-sans.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+  :root {
+    color-scheme: light dark;
+    --bg: oklch(0.995 0.005 80);
+    --card: oklch(0.995 0.005 80);
+    --fg: oklch(0.147 0.005 80);
+    --muted: oklch(0.553 0.015 80);
+    --line: oklch(0.147 0.005 80 / 0.10);
+    --primary: oklch(0.8186 0.0795 66.78);
+    --frame: oklch(0.97 0.006 80);
+    --edge: oklch(1 0 0 / 0.6);
   }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: oklch(0.147 0.005 80);
+      --card: oklch(0.216 0.007 80);
+      --fg: oklch(0.985 0.006 80);
+      --muted: oklch(0.709 0.02 80);
+      --line: oklch(1 0 0 / 0.08);
+      --frame: oklch(0.19 0.007 80);
+      --edge: oklch(1 0 0 / 0.06);
+    }
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: oklch(0.995 0.005 80); --card: oklch(0.995 0.005 80); --fg: oklch(0.147 0.005 80);
+    --muted: oklch(0.553 0.015 80); --line: oklch(0.147 0.005 80 / 0.10); --frame: oklch(0.97 0.006 80); --edge: oklch(1 0 0 / 0.6);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: oklch(0.147 0.005 80); --card: oklch(0.216 0.007 80); --fg: oklch(0.985 0.006 80);
+    --muted: oklch(0.709 0.02 80); --line: oklch(1 0 0 / 0.08); --frame: oklch(0.19 0.007 80); --edge: oklch(1 0 0 / 0.06);
+  }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-         display: flex; flex-direction: column; overflow: hidden; }
-  header { flex: 0 0 auto; padding: 14px 18px; display: flex; align-items: center; gap: 12px;
-           background: linear-gradient(180deg, var(--card), color-mix(in srgb, var(--card) 88%, var(--bg))); border-bottom: 1px solid var(--line); }
-  .logo { width: 34px; height: 34px; border-radius: 9px; flex: 0 0 auto;
-          background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #ec4899));
-          display: grid; place-items: center; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 40%, transparent); }
-  .logo svg { width: 19px; height: 19px; }
-  .titles { min-width: 0; }
-  .titles h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-  .titles p { margin: 1px 0 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .pill { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
-          font-size: 12px; font-weight: 600; color: var(--muted); padding: 6px 11px; border: 1px solid var(--line);
-          border-radius: 999px; background: var(--card); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #d0a215; box-shadow: 0 0 0 0 color-mix(in srgb, #d0a215 60%, transparent); animation: pulse 1.6s infinite; }
-  .pill.ok .dot { background: var(--ok); animation: none; box-shadow: none; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, #d0a215 55%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-  #stage { position: relative; flex: 1 1 auto; min-height: 0; background: #000; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    flex: 0 0 auto; padding: 15px 22px; display: flex; align-items: center; gap: 12px;
+    background: var(--card); border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 var(--edge) inset;
+  }
+  .wordmark {
+    font-family: "Outfit", sans-serif; font-weight: 600; font-size: 16px; letter-spacing: -0.005em; color: var(--fg);
+  }
+  .wordmark .dim { color: var(--muted); font-weight: 500; }
+  .pill {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0.01em;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .6; animation: pulse 1.6s infinite; }
+  .pill.ok { color: var(--fg); }
+  .pill.ok .dot { background: var(--primary); opacity: 1; animation: none; }
+  @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: .9; } }
+
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; background: var(--frame); }
   #screen { width: 100%; height: 100%; }
-  #overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
-             background: var(--bg); transition: opacity .35s ease; padding: 24px; }
+
+  #overlay {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    background: var(--frame); transition: opacity .45s ease;
+  }
   #overlay.hidden { opacity: 0; pointer-events: none; }
-  .spinner { width: 30px; height: 30px; margin: 0 auto 16px; border-radius: 50%;
-             border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  .spinner {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 2.5px solid var(--line); border-top-color: var(--primary); animation: spin .8s linear infinite;
+  }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #overlay h2 { margin: 0 0 6px; font-size: 16px; font-weight: 650; }
-  #overlay p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 340px; }
-  footer { flex: 0 0 auto; padding: 9px 18px; font-size: 12px; color: var(--muted);
-           border-top: 1px solid var(--line); background: var(--card); display: flex; align-items: center; gap: 8px; }
-  footer svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--ok); }
+  #overlay p { margin: 14px 0 0; color: var(--muted); font-size: 13px; letter-spacing: 0.01em; }
+  .overlay-inner { display: grid; justify-items: center; }
+
+  @media (prefers-reduced-motion: reduce) { .dot, .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
   <header>
-    <div class="logo"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2 4 5v6c0 5 3.4 8.3 8 11 4.6-2.7 8-6 8-11V5l-8-3Z" fill="#fff" opacity=".95"/>
-      <path d="M9 12l2.2 2.2L15.5 10" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg></div>
-    <div class="titles">
-      <h1>Vesta</h1>
-      <p>__MESSAGE__</p>
-    </div>
+    <span class="wordmark">Vesta<span class="dim">'s browser</span></span>
     <span class="pill" id="pill"><span class="dot"></span><span id="pilltext">Connecting</span></span>
   </header>
   <div id="stage">
     <div id="screen"></div>
     <div id="overlay">
-      <div>
+      <div class="overlay-inner">
         <div class="spinner"></div>
-        <h2>Opening Vesta's browser</h2>
-        <p>Hold on a moment. The live sign-in screen will appear here.</p>
+        <p>Connecting to Vesta's browser</p>
       </div>
     </div>
   </div>
-  <footer>
-    <svg viewBox="0 0 24 24" fill="none"><path d="M12 2 4 5v6c0 5 3.4 8.3 8 11 4.6-2.7 8-6 8-11V5l-8-3Z" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
-    <span>You are driving Vesta's own browser. Your password goes to the real sign-in page in the frame; Vesta keeps the session, not your password.</span>
-  </footer>
   <script type="module">
     import RFB from './core/rfb.js';
     const overlay = document.getElementById('overlay');
@@ -272,12 +323,9 @@ _PAGE_TEMPLATE = """<!doctype html>
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
     let rfb = null, attempts = 0;
 
-    function setStatus(text, ok) {
-      pilltext.textContent = text;
-      pill.classList.toggle('ok', !!ok);
-    }
     function connect() {
-      setStatus(attempts ? 'Reconnecting' : 'Connecting', false);
+      pilltext.textContent = attempts ? 'Reconnecting' : 'Connecting';
+      pill.classList.remove('ok');
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
@@ -285,14 +333,15 @@ _PAGE_TEMPLATE = """<!doctype html>
       rfb.addEventListener('connect', () => {
         attempts = 0;
         overlay.classList.add('hidden');
-        setStatus('Connected', true);
+        pill.classList.add('ok');
+        pilltext.textContent = 'Connected';
         rfb.focus();
       });
-      rfb.addEventListener('disconnect', (e) => {
-        setStatus('Reconnecting', false);
+      rfb.addEventListener('disconnect', () => {
         overlay.classList.remove('hidden');
+        pill.classList.remove('ok');
         if (attempts++ < 30) setTimeout(connect, 1500);
-        else setStatus('Disconnected', false);
+        else pilltext.textContent = 'Disconnected';
       });
     }
     connect();
