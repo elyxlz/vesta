@@ -12,6 +12,10 @@ export type AgentStatus =
 export interface ServiceInfo {
   port: number;
   rev: number;
+  // Per-service access key for the iframe URL path. Absent when talking to an
+  // older vestad that predates key auth (the Dashboard falls back to the legacy
+  // public path in that case).
+  key?: string;
 }
 
 export interface AgentInfo {

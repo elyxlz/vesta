@@ -25,8 +25,9 @@ export const vestadApiFixtures = {
         "name": "sample-agent",
         "services": {
           "dashboard": {
+            "key": "0123456789abcdef",
             "port": 8080,
-            "public": true,
+            "public": false,
             "rev": 3
           }
         },

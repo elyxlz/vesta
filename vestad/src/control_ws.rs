@@ -69,6 +69,7 @@ pub(crate) fn build_agents_message(
                                     "port": entry.port,
                                     "public": entry.public,
                                     "rev": rev,
+                                    "key": entry.key,
                                 });
                                 (svc_name.clone(), val)
                             })

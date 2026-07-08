@@ -38,6 +38,7 @@ describe("vestad API contract", () => {
     expect(agents.length).toBeGreaterThan(0);
     expect(agents[0].services.dashboard.port).toBe(8080);
     expect(agents[0].services.dashboard.rev).toBe(3);
+    expect(agents[0].services.dashboard.key).toBe("0123456789abcdef");
   });
 
   it("backup listings satisfy BackupInfo for every backup type", () => {

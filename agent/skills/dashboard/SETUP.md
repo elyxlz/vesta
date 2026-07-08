@@ -18,7 +18,7 @@ cd ~/agent/skills/dashboard/app && npx vite build
 
 `scripts/serve` registers the service port (see [service](../service/SKILL.md)) and starts the preview, rebuilding `node_modules`/`dist` first if they are missing. Start it, and fetch the port for the check below:
 ```bash
-PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
+PORT=$(~/agent/skills/service/scripts/register-service dashboard)
 screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
 ```
 

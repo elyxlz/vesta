@@ -77,10 +77,20 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     };
   }, [iframeKey]);
 
+  // The dashboard is a non-public service: its per-service key rides in the URL
+  // path so every relative sub-resource request authenticates without cookies
+  // (WKWebView drops cross-origin iframe cookies). Fall back to the legacy path
+  // for an older vestad that doesn't send a key.
   const conn = getConnection();
+  const dashboardKey = dashboardService?.key;
+  const base = conn
+    ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
+    : null;
   const dashboardUrl =
-    hasDashboard && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
+    hasDashboard && base
+      ? dashboardKey
+        ? `${base}k/${encodeURIComponent(dashboardKey)}/`
+        : base
       : null;
 
   const sendContext = useCallback(() => {

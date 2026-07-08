@@ -1396,11 +1396,23 @@ mod file_path_tests {
 
 const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
-#[derive(Serialize, Copy, Clone, PartialEq)]
+#[derive(Serialize, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
     pub(crate) port: u16,
     #[serde(default)]
     pub(crate) public: bool,
+    /// Random per-service access key. Embedded in the iframe URL path
+    /// (`/agents/{name}/{service}/k/{key}/`) so a non-public service is reachable
+    /// without cookies or headers: every relative sub-resource request rides under
+    /// the same key-prefixed path. See `agent_proxy::split_key_subpath`.
+    #[serde(default = "gen_service_key")]
+    pub(crate) key: String,
+}
+
+const SERVICE_KEY_BYTES: usize = 32;
+
+pub(crate) fn gen_service_key() -> String {
+    (0..SERVICE_KEY_BYTES).map(|_| format!("{:02x}", rand::random::<u8>())).collect()
 }
 
 impl<'de> serde::Deserialize<'de> for ServiceEntry {
@@ -1409,11 +1421,17 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
         #[serde(untagged)]
         enum Raw {
             Legacy(u16),
-            Full { port: u16, #[serde(default)] public: bool },
+            Full {
+                port: u16,
+                #[serde(default)]
+                public: bool,
+                #[serde(default)]
+                key: Option<String>,
+            },
         }
         match Raw::deserialize(deserializer)? {
-            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false }),
-            Raw::Full { port, public } => Ok(ServiceEntry { port, public }),
+            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false, key: gen_service_key() }),
+            Raw::Full { port, public, key } => Ok(ServiceEntry { port, public, key: key.unwrap_or_else(gen_service_key) }),
         }
     }
 }
@@ -1717,7 +1735,11 @@ async fn register_service_handler(
 
     let mut settings = state.settings.write().await;
 
-    let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
+    let cached = settings.services.get(&name).and_then(|s| s.get(&service_name));
+    let cached_port = cached.map(|e| e.port);
+    // Keep the key stable across re-registrations (every agent restart re-runs the
+    // skill's `serve:` line) so a parent app's iframe URL keeps working.
+    let cached_key = cached.map(|e| e.key.clone());
     let port = match cached_port {
         Some(p) if is_cached_port_reusable(p).await => p,
         Some(p) => {
@@ -1727,7 +1749,7 @@ async fn register_service_handler(
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
 
-    let entry = ServiceEntry { port, public: body.public };
+    let entry = ServiceEntry { port, public: body.public, key: cached_key.unwrap_or_else(gen_service_key) };
     settings.services.entry(name.clone()).or_default().insert(service_name.clone(), entry);
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
@@ -3121,7 +3143,7 @@ mod tests {
         let mut activity = HashMap::new();
         activity.insert("sample-agent".to_string(), "thinking".to_string());
         let mut agent_services = HashMap::new();
-        agent_services.insert("dashboard".to_string(), ServiceEntry { port: 8080, public: true });
+        agent_services.insert("dashboard".to_string(), ServiceEntry { port: 8080, public: false, key: "0123456789abcdef".to_string() });
         let mut services = HashMap::new();
         services.insert("sample-agent".to_string(), agent_services);
         let mut agent_revs = HashMap::new();
