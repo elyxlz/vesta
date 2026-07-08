@@ -57,7 +57,7 @@ goto("https://new-url.com")
 try:
     bidi("browsingContext.handleUserPrompt", accept=True)  # click "Leave"
 except RuntimeError:
-    pass  # no dialog — normal
+    pass  # no dialog, normal
 
 # Option B: prevent before navigating (JS injection, detectable)
 js("window.onbeforeunload=null")

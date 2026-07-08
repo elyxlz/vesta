@@ -1,6 +1,6 @@
 # Tabs
 
-Camoufox runs headless, so there is no visible tab strip to keep in sync — tabs are just
+Camoufox runs headless, so there is no visible tab strip to keep in sync; tabs are just
 top-level BiDi browsing contexts you open, attach to, and close.
 
 ## The BiDi tab model
@@ -30,6 +30,6 @@ of the old CDP target id.
 - `list_tabs()` includes internal `about:` pages by default; pass `include_internal=False` when
   you want only real pages.
 - If a page reports `w=0 h=0` in `page_info()`, you're likely attached to a context that hasn't
-  laid out yet — `wait_for_load()` first.
+  laid out yet; `wait_for_load()` first.
 - For dynamic UIs, re-read element rects (fresh snapshot) after opening dropdowns / modals before
   coordinate-clicking.

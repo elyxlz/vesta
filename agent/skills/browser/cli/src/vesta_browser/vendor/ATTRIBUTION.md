@@ -5,7 +5,7 @@ accessibility snapshot in-page (WebDriver BiDi has no native AX-tree export). It
 bundles:
 
 - **[dom-accessibility-api](https://github.com/eps1lon/dom-accessibility-api)**
-  v0.7.0, MIT licensed — the W3C accessible-name/role algorithm
+  v0.7.0, MIT licensed: the W3C accessible-name/role algorithm
   (`computeAccessibleName`, `getRole`, `isInaccessible`, `isDisabled`).
 - Vesta's own `walker.js`, which walks the DOM using that library, assigns the
   numbered refs (`e1`, `e2`, ...), and keeps the ref -> element map in the page
@@ -25,7 +25,7 @@ npx esbuild walker.js --bundle --format=iife --minify --target=firefox115 --outf
 
 ---
 
-## dom-accessibility-api — MIT License
+## dom-accessibility-api (MIT License)
 
 Copyright (c) 2020 Sebastian Silbermann
 
