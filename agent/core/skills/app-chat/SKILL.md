@@ -11,10 +11,10 @@ This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-
 uv tool install ~/agent/core/skills/app-chat/cli
 ```
 
-**Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications`
+**Background**: `screen -dmS app-chat app-chat serve`
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications
+screen -dmS app-chat app-chat serve
 ```
 
 ## Quick Reference
@@ -25,10 +25,9 @@ app-chat history --limit 20
 ```
 
 ## How it works
-- The daemon connects to the agent's `/ws` WebSocket
-- When the app user sends a message, the daemon writes a notification file
+- When the app user sends a message, the agent receives it and writes the notification itself
 - You receive the notification and reply with `app-chat send`
-- The daemon also relays liveness events (thinking, tool use) to the app
+- The daemon holds a `/ws` connection so `app-chat send` can deliver your replies to the app
 
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
