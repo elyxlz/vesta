@@ -73,8 +73,11 @@ def _print_feedback(interactive_only: bool = False) -> None:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     profile = Path(args.user_data_dir) if args.user_data_dir else None
+    # Camoufox is fully fingerprint-spoofed headless, so CLI launches are always headless: no
+    # display or Xvfb needed even when DISPLAY is set (e.g. callers that set DISPLAY=:99 out of
+    # a stock-Chromium habit). Headed is reserved for `handover`, which provisions its own Xvfb.
     running = admin.launch_browser(
-        headless=args.headless,
+        headless=True,
         user_data_dir=profile,
         executable=args.executable,
     )
@@ -88,7 +91,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "ws_url": running.ws_url,
                 "pid": running.pid,
                 "user_data_dir": str(running.user_data_dir),
-                "headless": args.headless,
+                "headless": True,
                 "mode": admin.read_mode(),
             },
             indent=2,

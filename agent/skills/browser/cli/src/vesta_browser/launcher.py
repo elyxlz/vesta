@@ -230,6 +230,20 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
                 pass
 
 
+def _launch_env(profile_dir: Path, use_headless: bool) -> dict[str, str]:
+    """Build the child env: fingerprint config, plus headless hygiene."""
+    env = {**os.environ, "HOME": str(Path.home())}
+    env.update(camou_config_env(select_preset(profile_dir)))
+    if use_headless:
+        env["MOZ_HEADLESS"] = "1"
+        # Strip any inherited DISPLAY/WAYLAND_DISPLAY: headless Firefox still runs GTK init and
+        # blocks trying to reach a dead display (e.g. a caller that set DISPLAY=:99 out of a
+        # stock-Chromium habit, with no X server). Headless needs no display, so drop them.
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+    return env
+
+
 def launch(
     *,
     user_data_dir: Path | None = None,
@@ -254,10 +268,7 @@ def launch(
     if extra_args:
         args += extra_args
 
-    env = {**os.environ, "HOME": str(Path.home())}
-    env.update(camou_config_env(select_preset(profile_dir)))
-    if use_headless:
-        env["MOZ_HEADLESS"] = "1"
+    env = _launch_env(profile_dir, use_headless)
 
     stderr_log = log_path or Path(f"/tmp/vesta-camoufox-{os.getpid()}.log")
     log_handle = open(stderr_log, "w+b")

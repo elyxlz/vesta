@@ -101,3 +101,23 @@ def test_read_ws_url_times_out(tmp_path):
     log.write_text("nothing useful here\n")
     with pytest.raises(RuntimeError, match="did not announce"):
         launcher._read_ws_url(_dummy_proc(None), log, timeout_s=0.3)
+
+
+def test_launch_env_strips_display_when_headless(monkeypatch, tmp_path):
+    # Headless Firefox hangs on GTK init if a dead DISPLAY is inherited (e.g. a caller that sets
+    # DISPLAY=:99 out of habit), so headless launches must drop it.
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    env = launcher._launch_env(tmp_path, use_headless=True)
+    assert "DISPLAY" not in env
+    assert "WAYLAND_DISPLAY" not in env
+    assert env["MOZ_HEADLESS"] == "1"
+    assert any(k.startswith("CAMOU_CONFIG_") for k in env)
+
+
+def test_launch_env_keeps_display_when_headed(monkeypatch, tmp_path):
+    # Handover runs headed under its own Xvfb and needs the display.
+    monkeypatch.setenv("DISPLAY", ":99")
+    env = launcher._launch_env(tmp_path, use_headless=False)
+    assert env["DISPLAY"] == ":99"
+    assert "MOZ_HEADLESS" not in env
