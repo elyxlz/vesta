@@ -8,7 +8,6 @@ cc_sdk tests drive a fake claude rather than mocking the transport.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 
@@ -16,9 +15,7 @@ import websockets
 
 # 1x1 transparent PNG.
 _PNG_1X1 = base64.b64encode(
-    base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-    )
+    base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 ).decode()
 
 
@@ -58,7 +55,9 @@ class FakeBidiServer:
         elif method == "browsingContext.navigate":
             self.navigations.append(params["url"])
             await self._send(ws, {"type": "success", "id": command_id, "result": {"navigation": "nav-1", "url": params["url"]}})
-            await self._send(ws, {"type": "event", "method": "browsingContext.load", "params": {"context": params["context"], "url": params["url"]}})
+            await self._send(
+                ws, {"type": "event", "method": "browsingContext.load", "params": {"context": params["context"], "url": params["url"]}}
+            )
             return
         elif method == "browsingContext.captureScreenshot":
             result = {"data": _PNG_1X1}
