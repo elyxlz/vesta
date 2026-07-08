@@ -14,7 +14,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 ## Order of operations
 
 0. **Curiosity**: spend a real moment on yourself before the retrospective.
-1. **Self-improvement**: retrospective, review, fix, validate, upstream, dashboard, notification noise
+1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
 2. **User State**: update the snapshot in MEMORY.md
 3. **Memory curation**: prune, consolidate, move things out
 4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
@@ -30,7 +30,7 @@ Write a thorough plan first. For each phase: what you intend to fix, what to pru
 ## 0. Curiosity (do this first)
 Before reviewing the user's day, pick one thing you got curious about today or recently and actually read into it for five to ten minutes. Form a view. Carry forward what you are still curious about in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user. An autonomous mind needs its own curiosity to stay sharp.
 
-Self-improvement (retrospective plus validation) is the one phase that never gets skipped for time. If you are short on budget, cut workspace, sensitive, and dashboard work before cutting reflection.
+Self-improvement (retrospective plus validation) is the one phase that never gets skipped for time. If you are short on budget, cut workspace, sensitive, and recurrence-sweep work before cutting reflection.
 
 ## Self-Improvement
 
@@ -40,11 +40,7 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
-**Meta-retrospective: judge the self-improvement itself, and grade the days.** The retrospective above checks whether past fixes stuck. This is the layer above it: judge whether the self-improvement process is working, and turn the lens on this skill. For each of the last ~5 dreamer summaries, assign an explicit one-word grade for its self-improvement quality and write it in tonight's summary so the trend is visible across nights:
-- **real** = shipped a durable, validated improvement (a green PR, a structural gate, a fix that demonstrably held).
-- **churn** = renamed a defer, logged a learning as a MEMORY bullet while the artifact stayed broken, declared a costume blocker, or marked a twice-seen failure resolved on self-simulation alone.
-- **light** = a genuinely quiet day with little to improve (valid, but two `light` nights in a row while known fixes sit unfiled is itself a `churn` signal).
-Then audit the dream skill and the improvement loop itself: is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If the improver is the weak link, fixing the improver is the highest-priority work this pass: escalate the artifact class (rule -> runtime trigger -> structurally impossible), not the instance. A run of `churn` grades means the process needs a structural change, not another memory rule. This judgement is itself subject to the no-defer law: a found weakness in the dream skill is a skill edit this pass, not a note for next time.
+**Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class (rule -> runtime trigger -> structurally impossible), not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
 ### 2. Review the conversation
 
@@ -83,25 +79,12 @@ Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill i
 
 **File the moment you fix, never a queue for later.** When a fix is generalizable (litmus: "would another instance hit this?"), open the PR in the same step you make the fix. Don't park it in a list to file "later": the gap between finding and filing is exactly where upstreaming rots, so there is no local queue to drain. If you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates: file it and let CI catch errors. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now.
 
-### 6. Dashboard
+### 6. Recurrence sweep
 
-Mine the retrospective signals from §1 and the current User State for recurring user patterns: questions repeated across days ("what's my balance?", "did the build pass?"), states checked over and over, numbers requested again and again. Threshold: roughly 3+ occurrences across recent dreamer summaries before acting.
+One lens, two targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
 
-For each qualifying pattern, build the widget directly via the `dashboard` skill. The "ask first" gate has a carve-out for dreamer additions; use it.
-
-Rules for dreamer-added widgets:
-- **Anything that kills the recurring ask is fair game**: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links. Pick the lightest form that answers the question.
-- **Note the addition in tonight's summary** with the recurrence count and a one-liner the morning agent can surface ("Added a balance widget, you've been asking daily").
-
-Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
-
-### 7. Notification noise
-
-The same recurrence lens as the dashboard, pointed at your own interruptions. Scan recent notifications (the pool you triaged and what preempted you mid-task) for a kind that keeps arriving and keeps needing nothing: the same automated ping, a chatty group, a source you close every time. Threshold: roughly 3+ low-value occurrences across recent days before acting.
-
-For a clear-noise pattern, add a pool rule via the `notifications` skill so it stops breaking your focus, and note it in tonight's summary. Pooling defers, never drops, so this is reversible and safe to do on your own. For anything where importance is a real judgment call (a person, a topic that sometimes matters), don't decide it alone: surface it to the user with the pattern you saw and let them call it. Read the `notifications` skill for how rules match and place.
-
-Opposite direction too: if something important sat pooled when it should have reached you fast, propose an interrupt rule for it.
+- **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
+- **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a pool rule via the `notifications` skill so it stops breaking your focus. Pooling defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat pooled when it should have reached you fast, propose an interrupt rule.
 
 ## Personality
 
