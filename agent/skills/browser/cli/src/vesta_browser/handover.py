@@ -163,9 +163,10 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     webroot = _build_webroot()
 
     log = open(_session_file("handover-log"), "w")
-    # -cursor most + -cursorpos send the real X cursor shape (so it turns into a hand over
-    # links, a caret over text) and its position, instead of a static dot. -noxdamage keeps the
-    # mirror reliable on Xvfb; the client asks for high quality (see the page's qualityLevel).
+    # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
+    # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
+    # re-encoded, so typing on the big Retina framebuffer stays responsive instead of repolling
+    # the whole screen; -threads parallelises encoding for lower latency.
     x11vnc = subprocess.Popen(
         [
             "x11vnc",
@@ -178,7 +179,7 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
             "-shared",
             "-nopw",
             "-quiet",
-            "-noxdamage",
+            "-threads",
             "-cursor",
             "most",
             "-cursorpos",
@@ -270,10 +271,10 @@ _PAGE_TEMPLATE = """<!doctype html>
   body {
     background: radial-gradient(135% 105% at 50% -25%, var(--desk-1), var(--desk-2));
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
-    overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 3vmin;
+    overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 1.2vmin;
   }
-  /* the machine, kept at the photo's aspect and capped near native px so the frame stays sharp */
-  .macbook { position: relative; width: min(94vw, 1160px, calc(84vh * 1.5725)); aspect-ratio: 1280 / 814; }
+  /* the machine fills most of the viewport; container-type lets the chin engraving scale with it */
+  .macbook { container-type: inline-size; position: relative; width: min(99vw, calc(97vh * 1.5725)); aspect-ratio: 1280 / 814; }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
   #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%; overflow: hidden; background: var(--screen-bg); z-index: 0; }
   #screen { width: 100%; height: 100%; }
@@ -284,14 +285,10 @@ _PAGE_TEMPLATE = """<!doctype html>
   @keyframes spin { to { transform: rotate(360deg); } }
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
-  /* brand label on the desk under the machine */
-  .caption { display: inline-flex; align-items: center; gap: 9px; }
-  .wordmark { font-family: var(--serif); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; color: var(--label); }
-  .wordmark .dim { opacity: 0.6; }
-  .led { width: 7px; height: 7px; border-radius: 50%; background: var(--label); opacity: .45; animation: pulse 1.6s infinite; }
-  .caption.ok .led { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 7px 1px color-mix(in oklch, var(--ok) 70%, transparent); }
-  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: .7; } }
-  @media (prefers-reduced-motion: reduce) { .led, .spinner, #overlay { animation: none !important; transition: none !important; } }
+  /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
+  .engraving { position: absolute; left: 0; right: 0; top: 88.3%; text-align: center; z-index: 2; pointer-events: none;
+    font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
+  @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
@@ -306,21 +303,16 @@ _PAGE_TEMPLATE = """<!doctype html>
       </div>
     </div>
     <img class="frame" src="./macbook.png" alt="" draggable="false">
-  </div>
-  <div class="caption" id="caption">
-    <span class="wordmark">vesta<span class="dim">'s browser</span></span>
-    <span class="led"></span>
+    <div class="engraving">vesta</div>
   </div>
   <script type="module">
     import RFB from './core/rfb.js';
     const overlay = document.getElementById('overlay');
-    const caption = document.getElementById('caption');
     const base = location.pathname.replace(/[^/]*$/, '');
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
     let rfb = null, attempts = 0;
 
     function connect() {
-      caption.classList.remove('ok');
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
       // Downscale a dense fixed framebuffer (see SCREEN_W/H, rendered at 2x) into the cut-out and
       // ask for near-lossless tiles so text stays crisp; the link is local/tunnelled so quality
@@ -333,15 +325,23 @@ _PAGE_TEMPLATE = """<!doctype html>
       rfb.addEventListener('connect', () => {
         attempts = 0;
         overlay.classList.add('hidden');
-        caption.classList.add('ok');
         rfb.focus();
       });
       rfb.addEventListener('disconnect', () => {
         overlay.classList.remove('hidden');
-        caption.classList.remove('ok');
         if (attempts++ < 30) setTimeout(connect, 1500);
       });
+      // Seamless clipboard, no VNC paste box: when the remote selection changes, mirror it to the
+      // local clipboard; the local paste below forwards the other way.
+      rfb.addEventListener('clipboard', (e) => {
+        if (e.detail && e.detail.text && navigator.clipboard) navigator.clipboard.writeText(e.detail.text).catch(() => {});
+      });
     }
+    // A local Cmd/Ctrl+V anywhere on the page forwards the user's clipboard straight into the session.
+    document.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      if (text && rfb) rfb.clipboardPasteFrom(text);
+    });
     connect();
   </script>
 </body>
