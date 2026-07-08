@@ -12,6 +12,7 @@ mod auth;
 mod backup;
 mod websocket;
 mod ports;
+mod service_proxy_auth;
 mod agent_code;
 mod layout;
 mod rename;
