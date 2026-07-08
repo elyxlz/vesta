@@ -200,6 +200,18 @@ session cookies. `browser handover` wraps the plumbing (headed Chrome under Xvfb
 `websockify`) but serves a clean Vesta-branded page that auto-connects, so what the user opens
 looks like Vesta, not a sketchy remote-desktop applet.
 
+**Reach for this early, it is smooth now.** Do not grind on a hard browser task alone. Hand the
+browser to the user when:
+
+- **You need to log in somewhere** and do not already have a working session (any sign-in, SSO,
+  OAuth consent, 2FA). Never ask for a password in chat, hand over the browser instead.
+- **A CAPTCHA or bot check** (Cloudflare Turnstile, reCAPTCHA, "prove you are human") blocks you.
+- **You are really struggling**: repeated failures, a flow that keeps breaking, a page that
+  fights automation. A few honest attempts, then hand over rather than burning turns.
+
+The user sees their live browser and drives it directly; copy-paste, cursors, and typing all
+work. When they finish, you keep the session and carry on.
+
 The user is usually on a different machine, so the page needs a public URL. Register a
 `--public` vestad service (see the `service` skill) for a port, hand that port to
 `handover start`, and give the user the tunnel route:
@@ -229,8 +241,11 @@ browser handover status                 # {chrome, openbox, x11vnc, websockify, 
 browser handover stop                   # stops VNC + WM + Chrome, removes the web root
 ```
 
-The handover profile persists at `~/.browser/handover`, so afterwards you can reuse the cookies
-headless with `browser launch --stealth --user-data-dir ~/.browser/handover`.
+Handover uses the agent's **shared, persistent browsing profile** (`~/.browser/profile`, the
+default `browser launch` profile), so a sign-in during handover carries straight over to your
+normal browsing, no session juggling. Cookies, logins, and history accumulate here across
+sessions by default: treat this browser like your own, it gets more trusted the more you use it.
+Only pass `--user-data-dir` to isolate a one-off into a separate profile.
 
 ## Raw CDP escape hatch
 

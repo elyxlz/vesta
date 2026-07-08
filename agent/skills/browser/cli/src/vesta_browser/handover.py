@@ -26,7 +26,6 @@ from pathlib import Path
 from . import admin, launcher
 
 HANDOVER_SESSION = "handover"
-HANDOVER_PROFILE = Path.home() / ".browser" / "handover"
 WEBROOT = Path.home() / ".cache" / "vesta-browser" / "handover-web"
 ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
 FONTS_DIR = ASSETS_DIR / "fonts"
@@ -126,7 +125,12 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     _require_binaries()
     stop()
 
-    profile = Path(user_data_dir) if user_data_dir else HANDOVER_PROFILE
+    # Default to the shared browsing profile, not a throwaway one: whatever the user signs into
+    # during the handover persists into the agent's everyday browser, so it grows more trusted
+    # over time like a real user's. Chrome single-instances a profile, so free the lock by
+    # stopping the default session's browser before the headed handover takes it over.
+    profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
+    admin.stop_chrome("default")
 
     # launch() provisions Xvfb on demand for a stealth headed browser; pin the display so
     # x11vnc mirrors the exact same screen Chrome renders on. On a Wayland host, x11vnc and
