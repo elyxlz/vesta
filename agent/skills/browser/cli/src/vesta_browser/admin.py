@@ -120,6 +120,7 @@ def launch_chrome(
     executable: str | None = None,
     extra_args: list[str] | None = None,
     port: int | None = None,
+    initial_url: str | None = None,
 ) -> RunningChrome:
     """Launch Chrome for a session, record pid + port for later discovery."""
     session = _session_name(name)
@@ -131,6 +132,7 @@ def launch_chrome(
         no_sandbox=no_sandbox,
         executable=executable,
         extra_args=extra_args,
+        initial_url=initial_url,
     )
     _session_file(session, "chrome-pid").write_text(str(running.pid))
     _session_file(session, "cdp-port").write_text(str(running.cdp_port))

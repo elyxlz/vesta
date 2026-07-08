@@ -191,13 +191,44 @@ host can OOM. Prefer sequential for wide-scrape tasks.
 `VESTA_BROWSER_NO_STEALTH=1`. Cloudflare Turnstile: see `interaction-skills/` and
 `stealth.py::solve_cf_turnstile()`.
 
-## VNC takeover (when stealth loses)
+## Handover (let the user sign in on your browser)
 
-Some sites (Google sign-in, banking) fingerprint automated browsers even under stealth. Hand
-control to the user via noVNC: run Chromium headed under Xvfb on a persistent
-`--user-data-dir`, bridge it out with `x11vnc` + `websockify --web=/usr/share/novnc`, and send
-the user `http://<LAN_IP>:<PORT>/vnc.html` to log in once. Afterwards reuse their cookies with
-`browser launch --stealth --user-data-dir ~/.browser/profile`.
+Some sites (Microsoft/Google sign-in, banking) fingerprint automated browsers even under
+stealth, and locked tenants block device-code and scripted auth outright. The way through is to
+let the **user** drive your real headed Chrome: they sign in once by hand, then you reuse the
+session cookies. `browser handover` wraps the plumbing (headed Chrome under Xvfb, `x11vnc`,
+`websockify`) but serves a clean Vesta-branded page that auto-connects, so what the user opens
+looks like Vesta, not a sketchy remote-desktop applet.
+
+The user is usually on a different machine, so the page needs a public URL. Register a
+`--public` vestad service (see the `service` skill) for a port, hand that port to
+`handover start`, and give the user the tunnel route:
+
+```bash
+# 1. public port + route (idempotent: same port each call)
+PORT=$(~/agent/skills/service/scripts/register-service browser-handover --public)
+
+# 2. bring up the headed browser + branded page, pointed at the sign-in URL
+browser handover start --port "$PORT" \
+  --url "https://outlook.office.com/mail/" \
+  --message "Sign in to your Outlook account"
+
+# 3. send the user this link (vestad proxies the websocket through it):
+#    $VESTAD_TUNNEL/agents/$AGENT_NAME/browser-handover/handover.html
+```
+
+While they sign in, watch for completion however the site exposes it. To talk to the handover
+browser (poll for a cookie or token, screenshot), set `BROWSER_SESSION=handover` first, e.g.
+`BROWSER_SESSION=handover browser evaluate "location.href"`. When finished, capture what you need
+and tear it all down:
+
+```bash
+browser handover status                 # {chrome, x11vnc, websockify, web_port}
+browser handover stop                   # stops VNC + websockify + Chrome, removes the web root
+```
+
+The handover profile persists at `~/.browser/handover`, so afterwards you can reuse the cookies
+headless with `browser launch --stealth --user-data-dir ~/.browser/handover`.
 
 ## Raw CDP escape hatch
 
@@ -216,6 +247,6 @@ Or from stdin mode: `cdp("Network.getCookies", urls=["https://example.com"])`.
 - **`no Chrome for this session`**: run `browser launch` first, or set `VESTA_BROWSER_CDP_WS`.
 - **`daemon did not come up`**: check `/tmp/vesta-browser-<session>.log` for the reason.
 - **Bot detection / blocked**: `browser screenshot` to see the page, then try `--stealth`, or
-  drop to VNC takeover.
+  hand the sign-in to the user with `browser handover`.
 - **Stale refs**: take a fresh `browser snapshot` after navigation or major DOM change.
 - **Xvfb not running**: `screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp`.

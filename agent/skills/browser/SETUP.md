@@ -38,15 +38,17 @@ which makes Xvfb refuse to start with "Server is already active") and starts Xvf
 concurrent launches don't race. If it still can't come up, it degrades to headless instead of failing.
 One mechanism, lazy, self-healing: nothing to keep alive between calls.
 
-## Remote assist (user takeover)
+## Remote assist (handover)
 
-Install these when a site defeats stealth and you need the user to log in via noVNC:
+Install these when a site defeats stealth and you need the user to sign in on your browser
+(`browser handover`). `novnc` provides `websockify` plus the noVNC client assets under
+`/usr/share/novnc`, which the branded page symlinks:
 
 ```bash
 apt-get install -y novnc x11vnc openbox xdotool scrot
 ```
 
-See SKILL.md § "VNC takeover" for the flow.
+See SKILL.md § "Handover" for the flow.
 
 ## Connecting to the user's real browser
 

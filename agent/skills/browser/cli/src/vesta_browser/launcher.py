@@ -288,6 +288,7 @@ def launch(
     no_sandbox: bool = False,
     executable: str | None = None,
     extra_args: list[str] | None = None,
+    initial_url: str | None = None,
 ) -> RunningChrome:
     """Spawn a Chromium and wait for its CDP endpoint. Returns a RunningChrome handle."""
     exe = find_chromium_executable(executable)
@@ -345,7 +346,7 @@ def launch(
     if extra_args:
         args += extra_args
 
-    args.append("about:blank")
+    args.append(initial_url or "about:blank")
 
     chrome_env = {**os.environ, "HOME": str(Path.home())}
     # Pass the (possibly defaulted) display through so Chrome uses it even when

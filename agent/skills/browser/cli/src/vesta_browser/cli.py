@@ -13,7 +13,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from . import admin, helpers, snapshot
+from . import admin, handover, helpers, snapshot
 
 
 SESSION_ENV = "BROWSER_SESSION"
@@ -97,6 +97,18 @@ def cmd_stop_all(args: argparse.Namespace) -> int:
 
 def cmd_sessions(args: argparse.Namespace) -> int:
     print(json.dumps(admin.list_sessions(), indent=2))
+    return 0
+
+
+def cmd_handover(args: argparse.Namespace) -> int:
+    """Hand the live browser to the user over a branded page so they sign in by hand."""
+    if args.action == "start":
+        result = handover.start(url=args.url, port=args.port, message=args.message, user_data_dir=args.user_data_dir)
+    elif args.action == "stop":
+        result = handover.stop()
+    else:
+        result = handover.status()
+    print(json.dumps(result, indent=2))
     return 0
 
 
@@ -335,6 +347,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
     sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
     sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
+
+    hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
+    hv.add_argument("action", choices=["start", "stop", "status"])
+    hv.add_argument("--url", default=None, help="URL to open in the headed browser (e.g. the sign-in page).")
+    hv.add_argument("--port", type=int, default=None, help="Port to bind the web server on (from register-service --public).")
+    hv.add_argument("--message", default=None, help="One line shown in the page header telling the user what to do.")
+    hv.add_argument("--user-data-dir", default=None, help="Chrome profile dir; its cookies persist for later reuse.")
+    hv.set_defaults(func=cmd_handover)
 
     # Navigation
     op = sub.add_parser("open", help="Open a URL in a new tab.")
