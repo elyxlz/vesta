@@ -1,5 +1,10 @@
-"""Unit tests for microsoft_cli.monitor preview / timestamp helpers."""
+"""Unit tests for microsoft_cli.monitor preview / timestamp helpers and OWA REST polling."""
 
+import logging
+import types
+from datetime import datetime, UTC
+
+from microsoft_cli import monitor
 from microsoft_cli.monitor import clean_preview, strip_fractional
 
 
@@ -35,12 +40,6 @@ def test_strip_fractional_leaves_non_fractional_intact():
 # OWA REST polling: locked-tenant accounts get mail + calendar notifications,
 # and the fetch keeps their token warm (auto-refresh runs through load_token)
 # ---------------------------------------------------------------------------
-
-import logging
-import types
-from datetime import datetime, UTC
-
-from microsoft_cli import monitor
 
 
 def _fake_ctx(tmp_path):
@@ -98,7 +97,9 @@ def test_poll_owa_rest_fires_calendar_reminder(tmp_path, monkeypatch):
     monkeypatch.setattr(
         monitor.owa_rest,
         "list_events",
-        lambda *a, **k: [{"id": "e1", "subject": "Standup", "start": {"dateTime": "2026-07-08T13:00:00Z"}, "location": {"displayName": "Room 1"}}],
+        lambda *a, **k: [
+            {"id": "e1", "subject": "Standup", "start": {"dateTime": "2026-07-08T13:00:00Z"}, "location": {"displayName": "Room 1"}}
+        ],
     )
     # the 60-minute reminder (trigger 12:00) falls in this cycle's window
     last_dt = datetime(2026, 7, 8, 11, 59, tzinfo=UTC)
