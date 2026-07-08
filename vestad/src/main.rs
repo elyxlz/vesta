@@ -376,9 +376,40 @@ async fn bind_http_atomically(
 
 /// How many times startup tries to bring the tunnel up before giving up and
 /// starting anyway (with the failure shown in the banner). Absorbs a tunnel that
-/// is slow to register right after boot — e.g. the network isn't up yet.
+/// is slow to register right after boot (DNS-readiness is handled separately by
+/// wait_for_dns_ready, so these retries are for a slow first registration).
 const TUNNEL_STARTUP_ATTEMPTS: u32 = 3;
 const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
+
+/// A stable Cloudflare host whose resolution signals the local resolver is
+/// actually serving. Right after boot systemd-resolved can be up-but-not-ready
+/// and answer "server misbehaving"; cloudflared's edge discovery then fails
+/// fast and burns every tunnel retry in seconds. Waiting for one successful
+/// lookup first removes that race at its source.
+const DNS_READY_HOST: &str = "api.cloudflare.com:443";
+/// Bounded so a genuinely-offline box still finishes booting — the tunnel
+/// supervisor keeps retrying afterward — yet long enough to outlast a slow boot.
+const DNS_READY_MAX_WAIT_SECS: u64 = 60;
+const DNS_READY_POLL_SECS: u64 = 2;
+
+/// Wait (bounded) for DNS to resolve before the tunnel attempts. Returns as soon
+/// as a lookup succeeds, or after DNS_READY_MAX_WAIT_SECS regardless (the tunnel
+/// attempt and its supervisor handle a still-down resolver from there).
+async fn wait_for_dns_ready() {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(DNS_READY_MAX_WAIT_SECS);
+    loop {
+        if let Ok(mut addrs) = tokio::net::lookup_host(DNS_READY_HOST).await {
+            if addrs.next().is_some() {
+                return;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!("DNS still not resolving after {DNS_READY_MAX_WAIT_SECS}s; attempting tunnel anyway");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(DNS_READY_POLL_SECS)).await;
+    }
+}
 
 /// Bring the tunnel up at startup, retrying before giving up. On success the
 /// banner advertises the live URL and the supervisor keeps it alive; if every
@@ -400,6 +431,11 @@ fn should_forget_failed_tunnel(failed: bool, managed: bool, has_creds: bool) -> 
 }
 
 async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
+    // Managed boxes don't pre-flight cloudflared at boot (they trust the seeded
+    // config), so only the self-hosted pre-flight path needs a ready resolver.
+    if !is_cloud_managed() {
+        wait_for_dns_ready().await;
+    }
     let status = retry_tunnel(
         TUNNEL_STARTUP_ATTEMPTS,
         std::time::Duration::from_secs(TUNNEL_STARTUP_RETRY_DELAY_SECS),
