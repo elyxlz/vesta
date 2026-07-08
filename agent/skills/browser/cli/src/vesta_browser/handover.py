@@ -115,9 +115,13 @@ def start(*, url: str | None, port: int | None, message: str | None, user_data_d
     profile = Path(user_data_dir) if user_data_dir else HANDOVER_PROFILE
 
     # launch() provisions Xvfb on demand for a stealth headed browser; pin the display so
-    # x11vnc mirrors the exact same screen Chrome renders on.
+    # x11vnc mirrors the exact same screen Chrome renders on. On a Wayland host, x11vnc and
+    # Chrome both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc 0.9.x
+    # exits outright when WAYLAND_DISPLAY is set), so drop it: handover owns a dedicated X11
+    # display. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
     display = os.environ.get("DISPLAY") or ":99"
     os.environ["DISPLAY"] = display
+    os.environ.pop("WAYLAND_DISPLAY", None)
     running = admin.launch_chrome(
         HANDOVER_SESSION,
         headless=False,
