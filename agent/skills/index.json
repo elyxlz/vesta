@@ -145,7 +145,7 @@
   },
   {
     "name": "stripe-pay",
-    "description": "Use when the user wants the agent to make a payment on their behalf via Stripe Link Wallet for Agents. Always asks for explicit per-charge approval. Requires `stripe-pay authorize` setup first."
+    "description": "Use when the user wants Vesta to pay a merchant on their behalf (buy something, renew a domain, settle an invoice at a card-taking site). Drives Stripe's Link CLI; the user approves each spend in their Link app. Requires one-time setup (see SETUP.md)."
   },
   {
     "name": "tasks",
