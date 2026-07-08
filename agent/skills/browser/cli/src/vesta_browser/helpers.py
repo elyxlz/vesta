@@ -1,8 +1,9 @@
 """Browser control primitives. Edit, extend — this file is yours.
 
-Everything here relays through the per-session daemon over /tmp/vesta-browser-<session>.sock.
-The agent can edit this file at runtime; `uv tool install --editable` means changes are
-picked up on the next `browser` invocation without reinstall.
+Everything here relays through the per-session daemon over /tmp/vesta-browser-<session>.sock,
+which holds one WebDriver BiDi websocket to Camoufox. The agent can edit this file at
+runtime; `uv tool install --editable` means changes are picked up on the next `browser`
+invocation without reinstall.
 """
 
 from __future__ import annotations
@@ -19,53 +20,88 @@ from urllib.parse import urlparse
 from .admin import send
 from .daemon import INTERNAL_URL_PREFIXES
 
+# WebDriver key code points for named keys (BiDi input uses raw unicode values).
 SPECIAL_KEYS = {
-    "Enter": (13, "Enter", "\r"),
-    "Tab": (9, "Tab", "\t"),
-    "Backspace": (8, "Backspace", ""),
-    "Escape": (27, "Escape", ""),
-    "Delete": (46, "Delete", ""),
-    " ": (32, "Space", " "),
-    "ArrowLeft": (37, "ArrowLeft", ""),
-    "ArrowUp": (38, "ArrowUp", ""),
-    "ArrowRight": (39, "ArrowRight", ""),
-    "ArrowDown": (40, "ArrowDown", ""),
-    "Home": (36, "Home", ""),
-    "End": (35, "End", ""),
-    "PageUp": (33, "PageUp", ""),
-    "PageDown": (34, "PageDown", ""),
+    "Enter": "",
+    "Tab": "",
+    "Backspace": "",
+    "Escape": "",
+    "Delete": "",
+    " ": " ",
+    "ArrowLeft": "",
+    "ArrowUp": "",
+    "ArrowRight": "",
+    "ArrowDown": "",
+    "Home": "",
+    "End": "",
+    "PageUp": "",
+    "PageDown": "",
 }
 
+MODIFIER_KEYS = {"Alt": "", "Control": "", "Meta": "", "Shift": ""}
 MODIFIER_BITS = {"Alt": 1, "Control": 2, "Meta": 4, "Shift": 8}
+MOUSE_BUTTONS = {"left": 0, "middle": 1, "right": 2}
 
 
-# ── Core CDP relay ─────────────────────────────────────────────
+# ── Core BiDi relay ────────────────────────────────────────────
 
 
-def cdp(method: str, session_id: str | None = None, **params) -> dict:
-    """Raw CDP. `cdp('Page.navigate', url='...')`. Escape hatch for anything not wrapped here."""
-    resp = send({"method": method, "params": params, "session_id": session_id})
+def bidi(method: str, **params) -> dict:
+    """Raw BiDi. `bidi('browsingContext.navigate', url='...')`. The daemon injects the
+    current context where the command shape needs one. Escape hatch for anything not
+    wrapped here."""
+    resp = send({"method": method, "params": params})
     return resp["result"] if "result" in resp else {}
 
 
 def drain_events() -> list[dict]:
-    """Return and clear buffered CDP events (dialog opens, network, etc)."""
+    """Return and clear buffered BiDi events (load, dialogs, console, etc)."""
     return send({"meta": "drain_events"})["events"]
 
 
 def pending_dialog() -> dict | None:
-    """If a native dialog is open, returns its params. Otherwise None."""
+    """If a native user prompt is open, returns its params. Otherwise None."""
     resp = send({"meta": "pending_dialog"})
     return resp["dialog"] if "dialog" in resp else None
 
 
-def current_session_id() -> str | None:
-    resp = send({"meta": "session"})
-    return resp["session_id"] if "session_id" in resp else None
+def current_context_id() -> str | None:
+    resp = send({"meta": "context"})
+    return resp["context"] if "context" in resp else None
 
 
-def _set_session(session_id: str) -> None:
-    send({"meta": "set_session", "session_id": session_id})
+def _set_context(context_id: str) -> None:
+    send({"meta": "set_context", "context": context_id})
+
+
+# ── JS evaluation ──────────────────────────────────────────────
+
+
+def _eval(expression: str, context: str | None = None, await_promise: bool = True) -> dict:
+    params: dict = {"expression": expression, "awaitPromise": await_promise}
+    if context:
+        params["target"] = {"context": context}
+    return bidi("script.evaluate", **params)
+
+
+def _eval_value(expression: str, context: str | None = None):
+    """Evaluate an expression whose completion value is a JSON string; return it parsed."""
+    r = _eval(expression, context)
+    if "type" not in r:
+        raise RuntimeError(f"unexpected script.evaluate response: {r!r}")
+    if r["type"] == "exception":
+        detail = r["exceptionDetails"]["text"] if "exceptionDetails" in r else "unknown"
+        raise RuntimeError(f"js exception: {detail}")
+    value = r["result"]
+    if value["type"] in ("undefined", "null"):
+        return None
+    return json.loads(value["value"])
+
+
+def js(expression: str, target_id: str | None = None):
+    """Evaluate a JS expression. `target_id` to run inside an iframe/tab context."""
+    wrapped = f"Promise.resolve({expression}).then(v => JSON.stringify(v === undefined ? null : v))"
+    return _eval_value(wrapped, context=target_id)
 
 
 # ── Navigation ─────────────────────────────────────────────────
@@ -73,20 +109,19 @@ def _set_session(session_id: str) -> None:
 
 def goto(url: str) -> dict:
     """Navigate the current tab to `url`."""
-    return cdp("Page.navigate", url=url)
+    return bidi("browsingContext.navigate", url=url, wait="complete")
 
 
 def reload() -> dict:
-    return cdp("Page.reload")
+    return bidi("browsingContext.reload", wait="complete")
 
 
 def _go_history(step: int) -> dict:
-    hist = cdp("Page.getNavigationHistory")
-    entries = hist["entries"]
-    target = hist["currentIndex"] + step
-    if not 0 <= target < len(entries):
+    try:
+        return bidi("browsingContext.traverseHistory", delta=step)
+    except RuntimeError:
+        # No history entry that far — mirror the old out-of-range no-op.
         return {}
-    return cdp("Page.navigateToHistoryEntry", entryId=entries[target]["id"])
 
 
 def back() -> dict:
@@ -98,132 +133,160 @@ def forward() -> dict:
 
 
 def new_tab(url: str = "about:blank") -> str:
-    """Create a new tab, switch to it, optionally navigate. Returns target_id."""
-    tid = cdp("Target.createTarget", url="about:blank")["targetId"]
-    switch_tab(tid)
+    """Create a new tab, switch to it, optionally navigate. Returns its context id."""
+    ctx = bidi("browsingContext.create", type="tab")["context"]
+    _set_context(ctx)
     if url and url != "about:blank":
         goto(url)
-    return tid
+    return ctx
 
 
 def switch_tab(target_id: str) -> str:
-    cdp("Target.activateTarget", targetId=target_id)
-    sid = cdp("Target.attachToTarget", targetId=target_id, flatten=True)["sessionId"]
-    _set_session(sid)
-    return sid
+    bidi("browsingContext.activate", context=target_id)
+    _set_context(target_id)
+    return target_id
 
 
 def list_tabs(include_internal: bool = True) -> list[dict]:
     out = []
-    for t in cdp("Target.getTargets")["targetInfos"]:
-        if t["type"] != "page":
-            continue
-        url = t["url"] if "url" in t else ""
+    for node in bidi("browsingContext.getTree")["contexts"]:
+        url = node["url"] if "url" in node else ""
         if not include_internal and url.startswith(INTERNAL_URL_PREFIXES):
             continue
-        title = t["title"] if "title" in t else ""
-        out.append({"target_id": t["targetId"], "title": title, "url": url})
+        try:
+            title = js("document.title", target_id=node["context"]) or ""
+        except RuntimeError:
+            title = ""
+        out.append({"target_id": node["context"], "title": title, "url": url})
     return out
 
 
 def current_tab() -> dict:
-    resp = cdp("Target.getTargetInfo")
-    info = resp["targetInfo"] if "targetInfo" in resp else {}
+    ctx = current_context_id()
+    try:
+        info = js("({url:location.href,title:document.title})") or {}
+    except RuntimeError:
+        info = {}
     return {
-        "target_id": info["targetId"] if "targetId" in info else None,
+        "target_id": ctx,
         "url": info["url"] if "url" in info else "",
         "title": info["title"] if "title" in info else "",
     }
 
 
 def ensure_real_tab() -> dict | None:
-    """Switch to a real page if currently on chrome://, omnibox popup, or stale target."""
+    """Switch to a real page if currently on an internal page or stale context."""
     tabs = list_tabs(include_internal=False)
     if not tabs:
         return None
-    try:
-        cur = current_tab()
-    except RuntimeError:
-        cur = None
-    if cur and cur["url"] and not cur["url"].startswith(INTERNAL_URL_PREFIXES):
+    cur = current_tab()
+    if cur["url"] and not cur["url"].startswith(INTERNAL_URL_PREFIXES):
         return cur
     switch_tab(tabs[0]["target_id"])
     return tabs[0]
 
 
 def iframe_target(url_substring: str) -> str | None:
-    """First iframe target whose URL contains the substring."""
-    for t in cdp("Target.getTargets")["targetInfos"]:
-        url = t["url"] if "url" in t else ""
-        if t["type"] == "iframe" and url_substring in url:
-            return t["targetId"]
-    return None
+    """First iframe (child) context whose URL contains the substring."""
+
+    def walk(nodes: list[dict], depth: int) -> str | None:
+        for node in nodes:
+            url = node["url"] if "url" in node else ""
+            if depth > 0 and url_substring in url:
+                return node["context"]
+            children = node["children"] if "children" in node and node["children"] else []
+            found = walk(children, depth + 1)
+            if found:
+                return found
+        return None
+
+    return walk(bidi("browsingContext.getTree")["contexts"], 0)
 
 
 def close_tab(target_id: str) -> None:
-    cdp("Target.closeTarget", targetId=target_id)
+    bidi("browsingContext.close", context=target_id)
 
 
-# ── Input (coordinate-based) ──────────────────────────────────
+# ── Input (coordinate-based via input.performActions) ─────────
+
+
+def _perform(sources: list[dict]) -> None:
+    bidi("input.performActions", actions=sources)
 
 
 def click(x: float, y: float, button: str = "left", clicks: int = 1) -> None:
-    """Coordinate click. Goes through iframes/shadow/cross-origin at the compositor level.
+    """Coordinate click. Goes through iframes/shadow/cross-origin at the input level.
 
     Prefer this over ref-based clicks when:
     - Target is inside a shadow DOM / cross-origin iframe
     - Site's accessibility tree is misleading
     - You already know the pixel position from a screenshot
     """
-    cdp("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y, button=button, clickCount=clicks)
-    cdp("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button=button, clickCount=clicks)
+    btn = MOUSE_BUTTONS[button] if button in MOUSE_BUTTONS else 0
+    actions: list[dict] = [{"type": "pointerMove", "x": int(x), "y": int(y)}]
+    for _ in range(clicks):
+        actions.append({"type": "pointerDown", "button": btn})
+        actions.append({"type": "pointerUp", "button": btn})
+    _perform([{"type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"}, "actions": actions}])
 
 
 def type_text(text: str) -> None:
     """Insert text into the focused element."""
-    cdp("Input.insertText", text=text)
+    actions: list[dict] = []
+    for ch in text:
+        actions.append({"type": "keyDown", "value": ch})
+        actions.append({"type": "keyUp", "value": ch})
+    _perform([{"type": "key", "id": "kbd", "actions": actions}])
 
 
 def press_key(key: str, modifiers: int | list[str] = 0) -> None:
-    """Press a key. `modifiers` can be the CDP bitfield int or a list like ['Control', 'Shift']."""
-    if isinstance(modifiers, list):
-        modifiers = sum(MODIFIER_BITS[m] for m in set(modifiers) if m in MODIFIER_BITS)
-    if key in SPECIAL_KEYS:
-        vk, code, text = SPECIAL_KEYS[key]
-    elif len(key) == 1:
-        vk, code, text = ord(key[0]), key, key
+    """Press a key. `modifiers` can be the legacy CDP bitfield int or a list like ['Control', 'Shift']."""
+    if isinstance(modifiers, int):
+        mods = [name for name, bit in MODIFIER_BITS.items() if modifiers & bit]
     else:
-        vk, code, text = 0, key, ""
-    base = {
-        "key": key,
-        "code": code,
-        "modifiers": modifiers,
-        "windowsVirtualKeyCode": vk,
-        "nativeVirtualKeyCode": vk,
-    }
-    cdp("Input.dispatchKeyEvent", type="keyDown", **base, **({"text": text} if text else {}))
-    if text and len(text) == 1:
-        char_params = {k: v for k, v in base.items() if k != "text"}
-        cdp("Input.dispatchKeyEvent", type="char", text=text, **char_params)
-    cdp("Input.dispatchKeyEvent", type="keyUp", **base)
+        mods = [m for m in modifiers if m in MODIFIER_KEYS]
+    value = SPECIAL_KEYS[key] if key in SPECIAL_KEYS else key
+    actions: list[dict] = []
+    for m in mods:
+        actions.append({"type": "keyDown", "value": MODIFIER_KEYS[m]})
+    actions.append({"type": "keyDown", "value": value})
+    actions.append({"type": "keyUp", "value": value})
+    for m in reversed(mods):
+        actions.append({"type": "keyUp", "value": MODIFIER_KEYS[m]})
+    _perform([{"type": "key", "id": "kbd", "actions": actions}])
 
 
 def scroll(x: float, y: float, dy: float = -300, dx: float = 0) -> None:
-    cdp("Input.dispatchMouseEvent", type="mouseWheel", x=x, y=y, deltaX=dx, deltaY=dy)
+    _perform(
+        [{"type": "wheel", "id": "wheel", "actions": [{"type": "scroll", "x": int(x), "y": int(y), "deltaX": int(dx), "deltaY": int(dy)}]}]
+    )
 
 
-# ── Input (ref-based via accessibility snapshot) ──────────────
+# ── Input (ref-based via the in-page snapshot map) ────────────
+
+
+def _norm_ref(ref: str) -> str:
+    return ref[4:] if ref.startswith("ref=") else ref.removeprefix("@")
+
+
+def _resolve_center(ref: str) -> tuple[float, float]:
+    """Scroll a ref into view and return its viewport center via the in-page ref map."""
+    box = _eval_value(f"JSON.stringify(globalThis.__vestaResolveRef({json.dumps(_norm_ref(ref))}))")
+    if not box or not box["found"]:
+        raise RuntimeError(f"unknown ref {ref!r}. Take a fresh snapshot and use a ref from that output.")
+    return box["x"], box["y"]
 
 
 def click_ref(ref: str, button: str = "left", clicks: int = 1) -> None:
     """Click an element by ref (e.g. 'e5') from the most recent snapshot."""
-    box = _center_box(_resolve_ref(ref))
-    click(box[0], box[1], button=button, clicks=clicks)
+    x, y = _resolve_center(ref)
+    click(x, y, button=button, clicks=clicks)
 
 
 def type_ref(ref: str, text: str, submit: bool = False, slowly: bool = False) -> None:
-    backend = _resolve_ref(ref)
-    cdp("DOM.focus", backendNodeId=backend)
+    found = _eval_value(f"JSON.stringify(globalThis.__vestaFocusRef({json.dumps(_norm_ref(ref))}))")
+    if not found or not found["found"]:
+        raise RuntimeError(f"unknown ref {ref!r}. Take a fresh snapshot and use a ref from that output.")
     if slowly:
         for ch in text:
             press_key(ch)
@@ -235,46 +298,28 @@ def type_ref(ref: str, text: str, submit: bool = False, slowly: bool = False) ->
 
 
 def hover_ref(ref: str) -> None:
-    box = _center_box(_resolve_ref(ref))
-    cdp("Input.dispatchMouseEvent", type="mouseMoved", x=box[0], y=box[1])
+    x, y = _resolve_center(ref)
+    _perform(
+        [
+            {
+                "type": "pointer",
+                "id": "mouse",
+                "parameters": {"pointerType": "mouse"},
+                "actions": [{"type": "pointerMove", "x": int(x), "y": int(y)}],
+            }
+        ]
+    )
 
 
-def _resolve_ref(ref: str) -> int:
-    """Look up a ref in the latest snapshot, scroll it into view, return its backend node id."""
-    from .snapshot import read_ref
-
-    info = read_ref(_current_target_id(), ref)
-    backend = info["backend_node_id"]
-    _scroll_into_view(backend)
-    return backend
-
-
-def _current_target_id() -> str:
-    tid = current_tab()["target_id"]
-    if not tid:
-        raise RuntimeError("no current target")
-    return tid
-
-
-def _scroll_into_view(backend_node_id: int) -> None:
-    try:
-        cdp("DOM.scrollIntoViewIfNeeded", backendNodeId=backend_node_id)
-    except RuntimeError:
-        # Node may be hidden or not scrollable — click attempt will surface a better error.
-        pass
-
-
-def _center_box(backend_node_id: int) -> tuple[float, float]:
-    resp = cdp("DOM.getBoxModel", backendNodeId=backend_node_id)
-    if "model" not in resp or "content" not in resp["model"] or len(resp["model"]["content"]) < 8:
-        raise RuntimeError(f"element (backendNodeId={backend_node_id}) has no box. It may be hidden, 0×0, or detached — take a fresh snapshot.")
-    content = resp["model"]["content"]
-    cx = (content[0] + content[4]) / 2
-    cy = (content[1] + content[5]) / 2
-    return cx, cy
+def scroll_to_ref(ref: str) -> None:
+    """Scroll a ref into view (the resolver centers it in the viewport)."""
+    _resolve_center(ref)
 
 
 # ── Visual ────────────────────────────────────────────────────
+
+# Firefox BiDi captures png/jpeg only; webp maps to jpeg (also small, lossy).
+_FMT_MIME = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/jpeg"}
 
 
 def screenshot(
@@ -284,25 +329,27 @@ def screenshot(
     region: tuple[float, float, float, float] | None = None,
     quality: int | None = None,
 ) -> str:
-    """Capture a screenshot via CDP. `format` accepts 'png', 'jpeg', or 'webp'.
-    `region` is (x, y, width, height) for a clip rectangle. `quality` applies to jpeg/webp."""
+    """Capture a screenshot via BiDi. `format` accepts 'png', 'jpeg', or 'webp' (webp
+    is captured as jpeg). `region` is (x, y, width, height) for a clip rectangle.
+    `quality` (0-100) applies to jpeg/webp."""
     if format not in ("png", "jpeg", "webp"):
         raise ValueError(f"screenshot format must be png/jpeg/webp, got {format!r}")
-    params: dict = {"format": format, "captureBeyondViewport": full_page}
+    fmt: dict = {"type": _FMT_MIME[format]}
+    if quality is not None and format in ("jpeg", "webp"):
+        fmt["quality"] = max(0.0, min(1.0, quality / 100.0))
+    params: dict = {"origin": "document" if full_page else "viewport", "format": fmt}
     if region is not None:
         x, y, w, h = region
         if w <= 0 or h <= 0:
             raise ValueError("screenshot region width and height must be positive")
-        params["clip"] = {"x": x, "y": y, "width": w, "height": h, "scale": 1}
-    if quality is not None and format in ("jpeg", "webp"):
-        params["quality"] = quality
-    r = cdp("Page.captureScreenshot", **params)
+        params["clip"] = {"type": "box", "x": x, "y": y, "width": w, "height": h}
+    r = bidi("browsingContext.captureScreenshot", **params)
     Path(path).write_bytes(base64.b64decode(r["data"]))
     return path
 
 
 def pdf(path: str = "/tmp/page.pdf") -> str:
-    r = cdp("Page.printToPDF")
+    r = bidi("browsingContext.print")
     Path(path).write_bytes(base64.b64decode(r["data"]))
     return path
 
@@ -312,44 +359,26 @@ def page_info() -> dict:
     dialog = pending_dialog()
     if dialog:
         return {"dialog": dialog}
-    r = cdp(
-        "Runtime.evaluate",
-        expression="JSON.stringify({url:location.href,title:document.title,"
-        "w:innerWidth,h:innerHeight,sx:scrollX,sy:scrollY,"
-        "pw:document.documentElement.scrollWidth,ph:document.documentElement.scrollHeight})",
-        returnByValue=True,
+    return js(
+        "({url:location.href,title:document.title,w:innerWidth,h:innerHeight,"
+        "sx:scrollX,sy:scrollY,pw:document.documentElement.scrollWidth,ph:document.documentElement.scrollHeight})"
     )
-    return json.loads(r["result"]["value"])
+
+
+def set_viewport(width: int, height: int) -> dict:
+    return bidi("browsingContext.setViewport", viewport={"width": width, "height": height})
 
 
 # ── JS / DOM ──────────────────────────────────────────────────
 
 
-def js(expression: str, target_id: str | None = None):
-    """Evaluate a JS expression. `target_id` to run inside an iframe target."""
-    sid = None
-    if target_id:
-        sid = cdp("Target.attachToTarget", targetId=target_id, flatten=True)["sessionId"]
-    r = cdp(
-        "Runtime.evaluate",
-        session_id=sid,
-        expression=expression,
-        returnByValue=True,
-        awaitPromise=True,
-    )
-    if "result" not in r or "value" not in r["result"]:
-        return None
-    return r["result"]["value"]
-
-
 def upload_file(selector: str, path: str | list[str]) -> None:
     """Set files on a file-input element found by CSS selector."""
     paths = [path] if isinstance(path, str) else list(path)
-    doc = cdp("DOM.getDocument", depth=-1)
-    nid = cdp("DOM.querySelector", nodeId=doc["root"]["nodeId"], selector=selector)["nodeId"]
-    if not nid:
+    r = bidi("script.evaluate", expression=f"document.querySelector({json.dumps(selector)})", awaitPromise=False, resultOwnership="root")
+    if r["type"] == "exception" or r["result"]["type"] == "null":
         raise RuntimeError(f"no element for {selector}")
-    cdp("DOM.setFileInputFiles", files=paths, nodeId=nid)
+    bidi("input.setFiles", element={"sharedId": r["result"]["sharedId"]}, files=paths)
 
 
 # ── Waiting ───────────────────────────────────────────────────
@@ -410,6 +439,14 @@ def http_get(url: str, headers: dict[str, str] | None = None, timeout: float = 2
         if "Content-Encoding" in r.headers and r.headers["Content-Encoding"] == "gzip":
             data = gzip.decompress(data)
         return data.decode()
+
+
+def fetch_navigate(url: str, timeout: float = 20.0) -> str:
+    """Fetch a page through the stealth browser (full Camoufox fingerprint), returning
+    its rendered text. Use when a plain http_get is blocked or needs JS rendering."""
+    goto(url)
+    wait_for_load(timeout=timeout)
+    return js("document.body ? document.body.innerText : ''") or ""
 
 
 # ── Recipes banner on navigation ──────────────────────────────

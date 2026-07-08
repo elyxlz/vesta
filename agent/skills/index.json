@@ -17,7 +17,7 @@
   },
   {
     "name": "browser",
-    "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
+    "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages with a stealth (Camoufox) browser."
   },
   {
     "name": "claude-code",

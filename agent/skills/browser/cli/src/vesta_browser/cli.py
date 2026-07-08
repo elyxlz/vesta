@@ -43,23 +43,19 @@ def _print_snapshot(interactive_only: bool = False) -> None:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     profile = Path(args.user_data_dir) if args.user_data_dir else None
-    running = admin.launch_chrome(
+    running = admin.launch_browser(
         headless=args.headless,
-        stealth=args.stealth,
-        no_sandbox=args.no_sandbox,
         user_data_dir=profile,
         executable=args.executable,
-        port=args.port,
     )
     admin.ensure_daemon()
     print(
         json.dumps(
             {
                 "session": admin._session_name(),
-                "cdp_port": running.cdp_port,
+                "ws_url": running.ws_url,
                 "pid": running.pid,
                 "user_data_dir": str(running.user_data_dir),
-                "stealth": args.stealth,
                 "headless": args.headless,
             },
             indent=2,
@@ -69,17 +65,14 @@ def cmd_launch(args: argparse.Namespace) -> int:
 
 
 def cmd_connect(args: argparse.Namespace) -> int:
-    """Connect to an externally running Chrome via its /json/version URL."""
+    """Connect to an externally running Camoufox via its BiDi WebSocket URL."""
     import os
-    import urllib.request
 
-    with urllib.request.urlopen(f"{args.url.rstrip('/')}/json/version", timeout=5) as r:
-        data = json.loads(r.read())
-    if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
-        print(f"no webSocketDebuggerUrl at {args.url}/json/version", file=sys.stderr)
+    ws = args.url
+    if not (ws.startswith("ws://") or ws.startswith("wss://")):
+        print(f"connect expects a BiDi ws:// url, got {ws!r}", file=sys.stderr)
         return 1
-    ws = data["webSocketDebuggerUrl"]
-    os.environ["VESTA_BROWSER_CDP_WS"] = ws
+    os.environ["VESTA_BROWSER_BIDI_WS"] = ws
     admin.ensure_daemon()
     print(json.dumps({"session": admin._session_name(), "ws": ws}))
     return 0
@@ -233,8 +226,7 @@ def cmd_scroll(args: argparse.Namespace) -> int:
     elif args.up is not None:
         helpers.scroll(100, 300, dy=-args.up)
     elif args.ref:
-        info = snapshot.read_ref(helpers.current_tab()["target_id"], args.ref)
-        helpers.cdp("DOM.scrollIntoViewIfNeeded", backendNodeId=info["backend_node_id"])
+        helpers.scroll_to_ref(args.ref)
     return 0
 
 
@@ -263,16 +255,50 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cdp(args: argparse.Namespace) -> int:
+def cmd_bidi(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     params = json.loads(args.params) if args.params else {}
-    result = helpers.cdp(args.method, **params)
+    result = helpers.bidi(args.method, **params)
     print(json.dumps(result, default=str, indent=2))
     return 0
 
 
 def cmd_http_get(args: argparse.Namespace) -> int:
     print(helpers.http_get(args.url))
+    return 0
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    if args.navigate_first:
+        admin.ensure_daemon()
+        print(helpers.fetch_navigate(args.url))
+    else:
+        print(helpers.http_get(args.url))
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    import platform
+
+    from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed
+
+    report: dict = {
+        "arch": platform.machine(),
+        "camoufox_release": CAMOUFOX_RELEASE_TAG,
+        "camoufox_installed": camoufox_installed(),
+        "camoufox_home": str(camoufox_home()),
+        "sessions": admin.list_sessions(),
+    }
+    try:
+        report["asset"] = _asset_for_arch()[0]
+    except RuntimeError as e:
+        report["asset_error"] = str(e)
+    if admin.daemon_healthy():
+        try:
+            report["contexts"] = len(helpers.bidi("browsingContext.getTree")["contexts"])
+        except RuntimeError as e:
+            report["probe_error"] = str(e)
+    print(json.dumps(report, indent=2, default=str))
     return 0
 
 
@@ -297,13 +323,7 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 def cmd_resize(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
-    helpers.cdp(
-        "Emulation.setDeviceMetricsOverride",
-        width=args.width,
-        height=args.height,
-        deviceScaleFactor=1,
-        mobile=False,
-    )
+    helpers.set_viewport(args.width, args.height)
     return 0
 
 
@@ -340,9 +360,11 @@ def _build_parser() -> argparse.ArgumentParser:
     lp.add_argument("--port", type=int, default=None)
     lp.set_defaults(func=cmd_launch)
 
-    cp = sub.add_parser("connect", help="Connect to an externally running Chrome.")
-    cp.add_argument("url", help="Base URL, e.g. http://localhost:9222")
+    cp = sub.add_parser("connect", help="Connect to an externally running Camoufox.")
+    cp.add_argument("url", help="BiDi WebSocket URL, e.g. ws://localhost:9222/session")
     cp.set_defaults(func=cmd_connect)
+
+    sub.add_parser("doctor", help="Report Camoufox install + session health.").set_defaults(func=cmd_doctor)
 
     sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
     sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
@@ -429,14 +451,19 @@ def _build_parser() -> argparse.ArgumentParser:
     ep.add_argument("expression")
     ep.set_defaults(func=cmd_evaluate)
 
-    cdp_p = sub.add_parser("cdp", help="Raw CDP escape hatch.")
-    cdp_p.add_argument("method")
-    cdp_p.add_argument("params", nargs="?", help='JSON params, e.g. \'{"url":"..."}\'.')
-    cdp_p.set_defaults(func=cmd_cdp)
+    bidi_p = sub.add_parser("bidi", help="Raw WebDriver BiDi escape hatch.")
+    bidi_p.add_argument("method")
+    bidi_p.add_argument("params", nargs="?", help='JSON params, e.g. \'{"url":"..."}\'.')
+    bidi_p.set_defaults(func=cmd_bidi)
 
-    hg = sub.add_parser("http-get", aliases=["fetch"])
+    hg = sub.add_parser("http-get")
     hg.add_argument("url")
     hg.set_defaults(func=cmd_http_get)
+
+    fp2 = sub.add_parser("fetch", help="Fetch page text; --navigate-first renders it through the stealth browser.")
+    fp2.add_argument("url")
+    fp2.add_argument("--navigate-first", action="store_true")
+    fp2.set_defaults(func=cmd_fetch)
 
     sub.add_parser("tabs").set_defaults(func=cmd_tabs)
 

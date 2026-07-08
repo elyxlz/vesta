@@ -127,7 +127,7 @@ def test_stop_is_idempotent_with_nothing_running():
 
 def test_status_all_false_when_idle():
     st = handover.status()
-    assert st["chrome"] is False
+    assert st["browser"] is False
     assert st["openbox"] is False
     assert st["x11vnc"] is False
     assert st["websockify"] is False

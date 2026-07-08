@@ -127,42 +127,35 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
 
     # Default to the shared browsing profile, not a throwaway one: whatever the user signs into
     # during the handover persists into the agent's everyday browser, so it grows more trusted
-    # over time like a real user's. Chrome single-instances a profile, so free the lock by
-    # stopping the default session's browser and clearing its now-stale lock before the headed
-    # handover takes the profile over.
+    # over time like a real user's. Camoufox (Firefox) single-instances a profile, so free the
+    # lock by stopping the default session's browser and clearing its now-stale profile lock
+    # before the headed handover takes the profile over.
     profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
-    admin.stop_chrome("default")
-    for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+    admin.stop_browser("default")
+    for lock in ("lock", ".parentlock"):
         (profile / lock).unlink(missing_ok=True)
 
-    # launch() provisions Xvfb on demand for a stealth headed browser; pin the display so
-    # x11vnc mirrors the exact same screen Chrome renders on. On a Wayland host, x11vnc and
-    # Chrome both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc 0.9.x
-    # exits outright when WAYLAND_DISPLAY is set), so drop it: handover owns a dedicated X11
-    # display. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
+    # Pin the display so x11vnc mirrors the exact screen Camoufox renders on. On a Wayland host,
+    # x11vnc and Firefox both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc
+    # 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto X11 with
+    # MOZ_ENABLE_WAYLAND=0: handover owns a dedicated X11 display. Harmless where WAYLAND_DISPLAY
+    # is unset (e.g. the container). GDK_SCALE renders at 2x so the streamed screen stays crisp on
+    # HiDPI, the Firefox analog of Chrome's --force-device-scale-factor.
     display = os.environ.get("DISPLAY") or ":99"
     os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
+    os.environ["MOZ_ENABLE_WAYLAND"] = "0"
+    os.environ["GDK_SCALE"] = str(DEVICE_SCALE)
 
-    # Bring the display up, then a window manager, then the headed browser. Three flags make a
-    # headed Chrome usable through x11vnc on Xvfb: --ozone-platform=x11 forces the X11 backend
-    # (on a Wayland host Chrome's Ozone otherwise auto-selects Wayland from XDG_SESSION_TYPE and
-    # never paints the X screen x11vnc mirrors, so the stream is black); --window-size fills the
-    # Xvfb screen; --disable-gpu keeps it on the software path Xvfb provides.
+    # Bring the display up, then a window manager, then the headed browser. Camoufox fills the
+    # Xvfb screen under openbox; the sign-in URL is passed as a trailing arg so it opens there.
     launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
     openbox = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    running = admin.launch_chrome(
+    running = admin.launch_browser(
         HANDOVER_SESSION,
         headless=False,
-        stealth=True,
         user_data_dir=profile,
-        extra_args=[
-            f"--window-size={SCREEN_W},{SCREEN_H}",
-            f"--force-device-scale-factor={DEVICE_SCALE}",
-            "--disable-gpu",
-            "--ozone-platform=x11",
-        ],
-        initial_url=url,
+        extra_args=[url] if url else None,
     )
 
     vnc_port = _free_port(VNC_PORT_START)
@@ -212,7 +205,7 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
         "session": HANDOVER_SESSION,
         "web_port": web_port,
         "vnc_port": vnc_port,
-        "cdp_port": running.cdp_port,
+        "ws_url": running.ws_url,
         "display": display,
         "page": "handover.html",
         "profile": str(profile),
@@ -226,7 +219,7 @@ def stop() -> dict[str, object]:
         if pid is not None:
             admin._terminate_pid(pid)
         _session_file(suffix).unlink(missing_ok=True)
-    admin.stop_chrome(HANDOVER_SESSION)
+    admin.stop_browser(HANDOVER_SESSION)
     for suffix in ("web-port", "vnc-port", "handover-log"):
         _session_file(suffix).unlink(missing_ok=True)
     if WEBROOT.exists():
@@ -238,7 +231,7 @@ def status() -> dict[str, object]:
     web_port = _read_pid("web-port")
     return {
         "session": HANDOVER_SESSION,
-        "chrome": _alive(admin.read_session_chrome_pid(HANDOVER_SESSION)),
+        "browser": _alive(admin.read_session_browser_pid(HANDOVER_SESSION)),
         "openbox": _alive(_read_pid("openbox-pid")),
         "x11vnc": _alive(_read_pid("x11vnc-pid")),
         "websockify": _alive(_read_pid("websockify-pid")),

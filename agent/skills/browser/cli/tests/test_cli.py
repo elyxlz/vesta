@@ -30,8 +30,10 @@ def test_parser_accepts_all_documented_subcommands():
         "scroll",
         "wait",
         "evaluate",
-        "cdp",
+        "bidi",
         "http-get",
+        "fetch",
+        "doctor",
         "tabs",
         "focus",
         "close",
@@ -42,11 +44,11 @@ def test_parser_accepts_all_documented_subcommands():
 
 
 def _minimal_args_for(cmd: str) -> list[str]:
-    need_url = {"open", "navigate", "connect", "http-get"}
+    need_url = {"open", "navigate", "connect", "http-get", "fetch"}
     need_ref = {"type", "hover"}
     need_key = {"press"}
     need_expression = {"evaluate"}
-    need_cdp_method = {"cdp"}
+    need_bidi_method = {"bidi"}
     if cmd in need_url:
         return ["https://example.com"]
     if cmd in need_ref:
@@ -57,8 +59,8 @@ def _minimal_args_for(cmd: str) -> list[str]:
         return ["Enter"]
     if cmd in need_expression:
         return ["document.title"]
-    if cmd in need_cdp_method:
-        return ["Page.reload"]
+    if cmd in need_bidi_method:
+        return ["browsingContext.getTree"]
     if cmd == "click":
         return ["e1"]
     if cmd == "focus" or cmd == "close":
@@ -68,13 +70,20 @@ def _minimal_args_for(cmd: str) -> list[str]:
     return []
 
 
-def test_parser_launch_flags():
+def test_parser_launch_flags_compat():
+    # --stealth/--no-sandbox/--port stay accepted (no-ops now) so existing prompts keep parsing.
     parser = cli._build_parser()
     ns = parser.parse_args(["launch", "--headless", "--stealth", "--no-sandbox", "--port", "9999"])
     assert ns.headless is True
     assert ns.stealth is True
     assert ns.no_sandbox is True
     assert ns.port == 9999
+
+
+def test_parser_fetch_navigate_first():
+    parser = cli._build_parser()
+    ns = parser.parse_args(["fetch", "https://x.com", "--navigate-first"])
+    assert ns.navigate_first is True
 
 
 def test_parser_click_at_coords():
@@ -186,10 +195,10 @@ def test_snapshot_banner_format(monkeypatch):
 
 def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
     def blow_up(**kwargs):
-        raise RuntimeError("CDP dead")
+        raise RuntimeError("backend dead")
 
     monkeypatch.setattr(cli.snapshot, "snapshot", blow_up)
-    assert "snapshot failed: CDP dead" in cli._snapshot_banner()
+    assert "snapshot failed: backend dead" in cli._snapshot_banner()
 
 
 def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):
