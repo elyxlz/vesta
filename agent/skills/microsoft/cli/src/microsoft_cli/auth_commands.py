@@ -4,7 +4,8 @@ import json
 import subprocess
 
 from . import auth, owa_rest
-from .config import Config
+from .config import Config, OWA_REST_SCOPES
+from .settings import OWA_REST_CLIENT_ID
 
 # JS that extracts the OWA access token from the browser's MSAL storage.
 # Returns the token secret (a JWT) or the string 'NONE'.
@@ -121,16 +122,74 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     return {"status": "error", "message": "Authentication succeeded but no account was found"}
 
 
-def owa_login(config: Config, *, account_email: str) -> dict[str, str]:
-    """Capture the OWA web-client token from a signed-in browser session.
+def owa_login(config: Config, *, account_email: str, use_browser: bool = False) -> dict[str, str]:
+    """Authorize the OWA REST fallback for an account.
 
-    Opens https://outlook.office.com/mail/ via the vesta ``browser`` skill,
-    waits for the user to sign in (or finds an existing session), extracts the
-    MSAL access token for the outlook.office.com resource, decodes its expiry
-    from the JWT payload, and stores it where the OWA REST transport reads it.
+    Default: a device-code sign-in (no browser) with the first-party Microsoft Office
+    client for the outlook.office.com resource. Returns a code to enter at the URL; finish
+    with `microsoft auth owa-complete`. MSAL then auto-refreshes the token, so this is a
+    one-time step. Use `--browser` only on the rare tenant that blocks the device-flow grant
+    entirely (captures the token from a signed-in Outlook-on-the-web session instead)."""
+    if use_browser:
+        return _owa_login_browser(config, account_email=account_email)
 
-    Requires the ``browser`` skill daemon to be running with DISPLAY=:99.
-    """
+    app = auth.get_app(config.cache_file, OWA_REST_CLIENT_ID)
+    flow = app.initiate_device_flow(scopes=OWA_REST_SCOPES)
+    if "user_code" not in flow:
+        error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
+        raise Exception(f"Failed to get device code: {error_msg}")
+
+    verification_url = (
+        flow["verification_uri"]
+        if "verification_uri" in flow
+        else (flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin")
+    )
+    return {
+        "status": "authentication_required",
+        "instructions": "To authorize the OWA REST fallback (no browser needed):",
+        "step1": f"Visit: {verification_url}",
+        "step2": f"Enter code: {flow['user_code']}",
+        "step3": f"Sign in as {account_email}",
+        "step4": "Then finish with: microsoft auth owa-complete",
+        "device_code": flow["user_code"],
+        "verification_url": verification_url,
+        "expires_in": flow["expires_in"] if "expires_in" in flow else 900,
+        "_flow_cache": json.dumps(flow),
+    }
+
+
+def owa_complete(config: Config, *, account_email: str, flow_cache: str) -> dict[str, str]:
+    try:
+        flow = json.loads(flow_cache)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError("Invalid flow cache data")
+
+    app = auth.get_app(config.cache_file, OWA_REST_CLIENT_ID)
+    result = app.acquire_token_by_device_flow(flow)
+
+    if "error" in result:
+        error_msg = result["error_description"] if "error_description" in result else result["error"]
+        if "authorization_pending" in error_msg:
+            return {"status": "pending", "message": "Authorization is still pending."}
+        raise Exception(f"OWA REST authorization failed: {error_msg}")
+
+    cache = app.token_cache
+    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+        auth._write_cache(config.cache_file, content=cache.serialize())
+
+    claims = result["id_token_claims"] if "id_token_claims" in result else {}
+    username = (claims["preferred_username"] if "preferred_username" in claims else "") or account_email
+    owa_rest.mark_device_account(username, config)
+    return {
+        "status": "success",
+        "account": username,
+        "message": f"OWA REST fallback authorized for {username}. Tokens auto-refresh; no re-auth or browser needed.",
+    }
+
+
+def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
+    """Last-resort: capture the OWA token from a signed-in browser session (only for tenants
+    that block the device-flow grant). Requires the ``browser`` skill daemon with DISPLAY=:99."""
     import os
 
     env = dict(os.environ)

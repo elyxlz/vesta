@@ -571,3 +571,47 @@ def test_download_attachments_writes_files(tmp_path):
     result = owa_rest.download_attachments(client, "user@example.com", cfg, email_id="m1", out_dir=str(out))
     assert result["count"] == 1
     assert (out / "a.pdf").read_bytes() == b"aaa"
+
+
+# ---------------------------------------------------------------------------
+# Device-flow token path (no browser)
+# ---------------------------------------------------------------------------
+
+
+def test_mark_device_account_makes_token_available(tmp_path, monkeypatch):
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    owa_rest.mark_device_account("user@example.com", cfg)
+    monkeypatch.setattr(owa_rest.auth, "account_in_cache", lambda *a, **k: True)
+    assert owa_rest.has_valid_token("user@example.com", cfg) is True
+
+
+def test_device_account_absent_from_cache_is_unavailable(tmp_path, monkeypatch):
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    owa_rest.mark_device_account("user@example.com", cfg)
+    monkeypatch.setattr(owa_rest.auth, "account_in_cache", lambda *a, **k: False)
+    assert owa_rest.has_valid_token("user@example.com", cfg) is False
+
+
+def test_load_token_device_uses_msal_silent(tmp_path, monkeypatch):
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    owa_rest.mark_device_account("user@example.com", cfg)
+    monkeypatch.setattr(owa_rest.auth, "get_account_id_by_email", lambda *a, **k: "acct-1")
+    monkeypatch.setattr(owa_rest.auth, "get_token_silent", lambda *a, **k: "fresh-token")
+    assert owa_rest.load_token("user@example.com", cfg) == "fresh-token"
+
+
+def test_load_token_device_expired_raises(tmp_path, monkeypatch):
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    owa_rest.mark_device_account("user@example.com", cfg)
+    monkeypatch.setattr(owa_rest.auth, "get_account_id_by_email", lambda *a, **k: "acct-1")
+    monkeypatch.setattr(owa_rest.auth, "get_token_silent", lambda *a, **k: None)
+    with pytest.raises(owa_rest.OwaRestNoToken, match="owa-login"):
+        owa_rest.load_token("user@example.com", cfg)

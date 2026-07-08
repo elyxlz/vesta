@@ -27,6 +27,10 @@ from typing import Any
 
 import httpx
 
+from . import auth
+from .config import OWA_REST_SCOPES
+from .settings import OWA_REST_CLIENT_ID
+
 OWA_REST_BASE = "https://outlook.office.com/api/v2.0"
 
 # ---------------------------------------------------------------------------
@@ -81,32 +85,65 @@ def _token_path(account_email: str, config) -> pl.Path:
     return pl.Path(config.data_dir) / _TOKEN_SUBDIR / f"{account_email}.json"
 
 
-def has_valid_token(account_email: str, config) -> bool:
-    """Return True without network I/O if a non-expired token is on disk."""
+def _read_marker(account_email: str, config) -> dict | None:
     try:
-        d = json.loads(_token_path(account_email, config).read_text())
-        return float(d["expires_at"]) > time.time() + _TOKEN_EXPIRY_MARGIN
-    except (FileNotFoundError, KeyError, ValueError):
+        return json.loads(_token_path(account_email, config).read_text())
+    except FileNotFoundError:
+        return None
+
+
+def _source(marker: dict) -> str:
+    return marker["source"] if "source" in marker else "browser"
+
+
+def has_valid_token(account_email: str, config) -> bool:
+    """Return True (network-free) if this account can produce an OWA REST token: a device-flow
+    account still in the MSAL cache, or a browser-captured token that has not expired."""
+    marker = _read_marker(account_email, config)
+    if marker is None:
+        return False
+    if _source(marker) == "device":
+        try:
+            return auth.account_in_cache(config.cache_file, account_email, client_id=OWA_REST_CLIENT_ID)
+        except Exception:
+            return False
+    try:
+        return float(marker["expires_at"]) > time.time() + _TOKEN_EXPIRY_MARGIN
+    except (KeyError, ValueError):
         return False
 
 
 def load_token(account_email: str, config) -> str:
-    """Return the stored token or raise OwaRestNoToken."""
-    p = _token_path(account_email, config)
-    try:
-        d = json.loads(p.read_text())
-    except FileNotFoundError:
+    """Return a usable OWA REST access token or raise OwaRestNoToken.
+
+    Device-flow accounts mint a fresh token silently via MSAL (auto-refresh, no browser).
+    Browser-captured accounts return the stored token until it expires."""
+    marker = _read_marker(account_email, config)
+    if marker is None:
         raise OwaRestNoToken(f"No OWA REST token for {account_email}. Run: microsoft auth owa-login --account {account_email}")
-    if float(d["expires_at"]) <= time.time() + _TOKEN_EXPIRY_MARGIN:
-        raise OwaRestNoToken(f"OWA REST token expired for {account_email}. Run: microsoft auth owa-login --account {account_email}")
-    return d["token"]
+    if _source(marker) == "device":
+        account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+        token = auth.get_token_silent(config.cache_file, OWA_REST_SCOPES, account_id=account_id, client_id=OWA_REST_CLIENT_ID)
+        if not token:
+            raise OwaRestNoToken(f"OWA REST sign-in expired for {account_email}. Run: microsoft auth owa-login --account {account_email}")
+        return token
+    if float(marker["expires_at"]) <= time.time() + _TOKEN_EXPIRY_MARGIN:
+        raise OwaRestNoToken(f"OWA REST token expired for {account_email}. Run: microsoft auth owa-login --account {account_email} --browser")
+    return marker["token"]
 
 
-def save_token(account_email: str, config, *, token: str, expires_at: float) -> None:
-    """Persist a browser-captured token.  Never log the token value."""
+def mark_device_account(account_email: str, config) -> None:
+    """Record that this account authenticates OWA REST via device-flow (tokens come from MSAL)."""
     p = _token_path(account_email, config)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"token": token, "expires_at": expires_at}))
+    p.write_text(json.dumps({"source": "device"}))
+
+
+def save_token(account_email: str, config, *, token: str, expires_at: float, source: str = "browser") -> None:
+    """Persist a captured token.  Never log the token value."""
+    p = _token_path(account_email, config)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"source": source, "token": token, "expires_at": expires_at}))
 
 
 def jwt_exp(token: str) -> float:

@@ -39,21 +39,27 @@ microsoft auth remove --account <email>       # Sign an account out
 
 ## Fallback backend: OWA REST (locked tenants only)
 
-If the tenant blocks Graph entirely (third-party apps disabled, or even the
-device-flow grant blocked, e.g. a university), use the OWA REST fallback. It
-reuses the token from a signed-in Outlook-on-the-web session, so it works on any
-mailbox you can open in a browser. Requires the `browser` skill daemon running
-with `DISPLAY=:99`.
+If the tenant blocks Graph entirely (third-party apps disabled, missing scopes),
+use the OWA REST fallback. It's a **device-code sign-in, no browser** — the same
+flow as `auth login`, using the first-party Microsoft Office client for the
+`outlook.office.com` resource:
 
 ```bash
-microsoft auth owa-login --account you@company.com   # opens OWA, captures the token
+microsoft auth owa-login --account you@company.com                        # prints a code + URL
+microsoft auth owa-complete --account you@company.com --flow-cache <cache>  # after approving
 microsoft email list --account you@company.com --backend owa-rest
 ```
 
-The captured token lasts ~24 h; re-run `auth owa-login` when it expires. With a
-captured token present, `--backend auto` (the default) falls back to OWA REST
-automatically whenever Graph returns a permission error. Every command works on
-both backends **except** `block`/`unblock` (inbox rules), which are Graph-only.
+MSAL auto-refreshes the token, so this is a one-time setup. With it in place,
+`--backend auto` (the default) falls back to OWA REST automatically whenever Graph
+returns a permission error. Every command works on both backends **except**
+`block`/`unblock` (inbox rules), which are Graph-only.
+
+**Extreme tenants only:** if the tenant blocks even the device-flow grant (e.g.
+some universities), capture the token from a signed-in browser instead with
+`microsoft auth owa-login --account you@company.com --browser` (requires the
+`browser` skill daemon with `DISPLAY=:99`); that token lasts ~24 h and is re-captured
+by re-running the command.
 
 ## Troubleshooting: Adding New Azure Permissions
 

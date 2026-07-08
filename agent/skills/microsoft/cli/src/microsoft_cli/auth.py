@@ -45,7 +45,7 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
+def get_app(cache_file: pl.Path, client_id: str | None = None) -> msal.PublicClientApplication:
     settings = get_settings()
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"
 
@@ -54,9 +54,35 @@ def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
+    app = msal.PublicClientApplication(client_id or settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
 
     return app
+
+
+def get_token_silent(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None, client_id: str | None = None) -> str | None:
+    """Acquire a token from the cache without ever prompting; return None if none is available.
+
+    Used by the OWA REST fallback: after a device-flow `owa-login`, MSAL holds the refresh
+    token, so a fresh access token is minted silently on each call with no browser and no
+    re-auth (the cache is persisted on rotation, same as get_token)."""
+    app = get_app(cache_file, client_id)
+    accounts = app.get_accounts()
+    account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
+    if account is None:
+        return None
+    result = app.acquire_token_silent(scopes, account=account)
+    if not result:
+        return None
+    cache = app.token_cache
+    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+        _write_cache(cache_file, content=cache.serialize())
+    return result["access_token"]
+
+
+def account_in_cache(cache_file: pl.Path, account_email: str, *, client_id: str | None = None) -> bool:
+    """Local, network-free check: is this account present in the MSAL cache?"""
+    app = get_app(cache_file, client_id)
+    return any((a["username"] or "").lower() == account_email.lower() for a in app.get_accounts())
 
 
 def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:

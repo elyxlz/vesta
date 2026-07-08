@@ -9,6 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # scopes (dynamic consent); a user's own app uses ".default" (its configured permissions).
 DEFAULT_CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
 
+# First-party, pre-authorized "Microsoft Office" public client. It is trusted tenant-wide
+# and authorized for the outlook.office.com resource, so it can mint OWA REST tokens via
+# device-code flow on tenants that block third-party Graph apps. This is what lets the OWA
+# REST fallback authenticate with a code (no browser) instead of a browser token capture.
+OWA_REST_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+
 
 class MicrosoftSettings(BaseSettings):
     model_config = SettingsConfigDict(
