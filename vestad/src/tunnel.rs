@@ -710,7 +710,10 @@ pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
 /// instead of churning cloudflared every BASE seconds forever. Either way it
 /// keeps retrying, so a transient outage of any length still recovers on its own.
 const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 15;
-const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 300;
+/// Capped at the sustained-down window (TUNNEL_DOWN_SUSTAINED_SECS): never wait
+/// longer to retry than we wait to declare the tunnel down, so recovery after a
+/// long outage lags by at most one down-window rather than several minutes more.
+const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 120;
 const READY_PROBE_INTERVAL_SECS: u64 = 30;
 const READY_PROBE_TIMEOUT_SECS: u64 = 5;
 /// Consecutive failed /ready probes before cloudflared is restarted.
