@@ -307,6 +307,13 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.agent_dir / "notifications"
 
     @property
+    def notif_trash_dir(self) -> pl.Path:
+        # Trashed notifications are moved here rather than deleted, so a too-aggressive trash rule stays
+        # recoverable/auditable. A subdir of notifications_dir is safe: the loader globs "*.json"
+        # non-recursively and the watcher is recursive=False, so files parked here are never re-scanned.
+        return self.notifications_dir / "trash"
+
+    @property
     def data_dir(self) -> pl.Path:
         return self.agent_dir / "data"
 

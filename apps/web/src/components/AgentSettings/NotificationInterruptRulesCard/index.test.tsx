@@ -51,7 +51,28 @@ describe("NotificationInterruptRulesCard", () => {
     expect(screen.queryByRole("button", { name: /add rule/i })).toBeNull();
   });
 
-  it("toggles a rule's action and auto-saves", async () => {
+  it("cycles snooze -> trash only after confirming the destructive drop", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "pool" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    // pool renders as "snooze"; stepping into trash is destructive, so it must confirm first.
+    await userEvent.click(
+      await screen.findByRole("button", { name: /action: snooze/i }),
+    );
+    // No save yet — the confirm dialog is open.
+    expect(setSpy).not.toHaveBeenCalled();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /trash them/i }),
+    );
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("trash");
+  });
+
+  it("does not trash when the confirm is cancelled", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
       { id: "a", source: "twitter", action: "pool" },
     ]);
@@ -61,6 +82,24 @@ describe("NotificationInterruptRulesCard", () => {
     render(<NotificationInterruptRulesCard />);
     await userEvent.click(
       await screen.findByRole("button", { name: /action: snooze/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /cancel/i }),
+    );
+    // Cancelling leaves the rule untouched and saves nothing.
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders a trash rule and cycles it back to interrupt", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "whatsapp", action: "trash" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
+    render(<NotificationInterruptRulesCard />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /action: trash/i }),
     );
     await waitFor(() => expect(setSpy).toHaveBeenCalled());
     expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("interrupt");

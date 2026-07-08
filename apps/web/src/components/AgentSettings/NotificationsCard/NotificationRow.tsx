@@ -113,16 +113,26 @@ function parseFields(content: string): { key: string; value: string }[] {
   }));
 }
 
-// Shows what happened to this notification: the effective decision (interrupt vs snooze).
+// Shows what happened to this notification: the effective decision (interrupt, snooze, or trashed =
+// dropped without ever reaching the agent).
 function Disposition({ event }: { event: NotificationEvent }) {
   const decided = event.decided;
   if (!decided) return null;
+  const label =
+    decided === "interrupt"
+      ? "interrupt"
+      : decided === "trash"
+        ? "trashed"
+        : "snooze";
+  const variant =
+    decided === "interrupt"
+      ? "default"
+      : decided === "trash"
+        ? "destructive"
+        : "outline";
   return (
-    <Badge
-      variant={decided === "interrupt" ? "default" : "outline"}
-      className="w-[4.5rem]"
-    >
-      {decided === "interrupt" ? "interrupt" : "snooze"}
+    <Badge variant={variant} className="w-[4.5rem]">
+      {label}
     </Badge>
   );
 }

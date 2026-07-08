@@ -59,7 +59,7 @@ async def test_put_then_get_round_trip_and_applies(tmp_path, monkeypatch):
         # Persisted to the store for the loop to read, and it drives the decision.
         loaded = cfg.load_notification_rules(config)
         assert loaded[0].source == "twitter"
-        assert npn.should_interrupt(_notif(), loaded) is False
+        assert npn.notif_disposition(_notif(), loaded) == "pool"
     finally:
         await client.close()
 

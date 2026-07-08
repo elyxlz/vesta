@@ -46,6 +46,16 @@ def test_add_builds_match_predicates_from_shortcuts(monkeypatch, capsys):
     assert "applies next tick" in capsys.readouterr().out
 
 
+def test_add_builds_trash_rule(monkeypatch, capsys):
+    store = _store(monkeypatch)
+    rc = cli.cmd_add(_args(action="trash", source="whatsapp", match=["chat_name=status"]))
+    assert rc == 0
+    rule = store[0]
+    assert rule["action"] == "trash" and rule["source"] == "whatsapp"
+    assert rule["match"] == [{"field": "chat_name", "op": "contains", "value": "status", "negate": False}]
+    assert "-> trash" in capsys.readouterr().out
+
+
 def test_add_rejects_core_source(monkeypatch, capsys):
     _store(monkeypatch)
     assert cli.cmd_add(_args(action="pool", source="core")) == 1

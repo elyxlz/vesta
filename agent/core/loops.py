@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import pathlib as pl
 import time
+import typing as tp
 
 import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
@@ -71,13 +72,16 @@ def drop_core_notification(*, type_: str, body: str, config: vm.VestaConfig, nam
     return path
 
 
-def _notif_interrupts(notif: vm.Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]) -> bool:
-    """True if the notification preempts the current turn. Core notifications are exempt from the user's
-    rules — their disposition is control-flow, derived from the type (CORE_POOL_TYPES); everything else
-    goes through the ruleset (first match wins, else the producer's own interrupt default)."""
+def _notif_disposition(
+    notif: vm.Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]
+) -> tp.Literal["interrupt", "pool", "trash"]:
+    """The notification's effective disposition: `interrupt`, `pool`, or `trash`. Core notifications are
+    exempt from the user's rules — their disposition is control-flow, derived from the type
+    (CORE_POOL_TYPES), and is never trashed; everything else goes through the ruleset (first match wins,
+    else the producer's own interrupt default)."""
     if notif.source == CORE_SOURCE:
-        return notif.type not in CORE_POOL_TYPES
-    return notification_interrupt_policy.should_interrupt(notif, rules)
+        return "pool" if notif.type in CORE_POOL_TYPES else "interrupt"
+    return notification_interrupt_policy.notif_disposition(notif, rules)
 
 
 async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
@@ -99,6 +103,23 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
     _delete_paths([n.file_path for n in notifications if n.file_path])
+
+
+def _trash_paths(file_paths: list[str], trash_dir: pl.Path) -> None:
+    """Move each notification file into the trash dir, replacing any same-named entry. Trashing keeps the
+    file recoverable/auditable instead of deleting it; a parked file is never re-scanned (the loader
+    globs non-recursively and the watcher ignores subdirs)."""
+    if not file_paths:
+        return
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    for path_str in file_paths:
+        source = pl.Path(path_str)
+        if source.exists():
+            source.replace(trash_dir / source.name)
+
+
+async def trash_notification_files(notifications: list[vm.Notification], *, trash_dir: pl.Path) -> None:
+    _trash_paths([n.file_path for n in notifications if n.file_path], trash_dir)
 
 
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
@@ -572,15 +593,16 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             notifications = await load_notifications(config=config)
             rules = await asyncio.to_thread(cfg.load_notification_rules, config)
             fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
-            decisions = [(n, _notif_interrupts(n, rules)) for n in fresh]
-            interrupt_notifs = [n for n, hot in decisions if hot]
-            new_passive = [n for n, hot in decisions if not hot]
+            decisions = [(n, _notif_disposition(n, rules)) for n in fresh]
+            interrupt_notifs = [n for n, disposition in decisions if disposition == "interrupt"]
+            new_passive = [n for n, disposition in decisions if disposition == "pool"]
+            trashed = [n for n, disposition in decisions if disposition == "trash"]
 
             # Emit each genuinely-new notification to the bus exactly once, enriched with structured
-            # facets + the effective interrupt disposition for the history view. load_notifications
-            # re-reads every file each tick, so files kept on disk (e.g. deferred while
-            # unauthenticated) must not re-emit — that was the notification storm.
-            for notif, hot in decisions:
+            # facets + the effective disposition for the history view. load_notifications re-reads every
+            # file each tick, so files kept on disk (e.g. deferred while unauthenticated) must not
+            # re-emit — that was the notification storm.
+            for notif, disposition in decisions:
                 state.event_bus.emit(
                     {
                         "type": "notification",
@@ -589,12 +611,23 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                         "notif_type": notif.type,
                         "sender": notification_interrupt_policy.notif_sender(notif) or "",
                         "fields": notification_interrupt_policy.notif_facet_fields(notif),
-                        "decided": "interrupt" if hot else "pool",
+                        "decided": disposition,
                         "notif_id": pl.Path(notif.file_path).stem if notif.file_path else "",
                     }
                 )
 
-            queued_paths.update(n.file_path for n in fresh if n.file_path)
+            # Trashed notifications are recorded in history above but never reach the agent: move the
+            # files out of the active dir (recoverable, and so they never re-emit) and create no turn.
+            # They are resolved the moment they arrive, so clear each one's pending marker right away —
+            # the arrival emit carried a notif_id, and without a matching notification_cleared the
+            # history view would show a trashed notification pending forever.
+            if trashed:
+                await trash_notification_files(trashed, trash_dir=config.notif_trash_dir)
+                for notif in trashed:
+                    if notif.file_path:
+                        state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(notif.file_path).stem})
+
+            queued_paths.update(n.file_path for n, disposition in decisions if disposition != "trash" and n.file_path)
             pending_passive.extend(new_passive)
 
             if interrupt_notifs:

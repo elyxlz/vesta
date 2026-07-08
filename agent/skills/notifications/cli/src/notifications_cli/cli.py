@@ -1,10 +1,11 @@
 """Manage the agent's notification interrupt rules via the config API.
 
-An ordered ruleset routes each incoming notification to 'interrupt' (preempt the agent's current turn)
-or 'pool' (wait until the agent is idle). First matching rule wins; with no match the notification
-interrupts. Rules live on the agent config (VestaConfig.notification_rules) and are read/written through
-the agent's local HTTP API (GET/PUT /config), so a change applies on the next monitor tick with no
-restart. `facets` reads the notification history (events.db) directly to show what values you can target.
+An ordered ruleset routes each incoming notification to 'interrupt' (preempt the agent's current turn),
+'pool' (wait until the agent is idle), or 'trash' (drop it entirely: it never reaches the agent, costs no
+turn). First matching rule wins; with no match the notification interrupts. Rules live on the agent
+config (VestaConfig.notification_rules) and are read/written through the agent's local HTTP API
+(GET/PUT /config), so a change applies on the next monitor tick with no restart. `facets` reads the
+notification history (events.db) directly to show what values you can target.
 """
 
 import argparse
@@ -18,7 +19,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-ACTIONS = ("interrupt", "pool")
+ACTIONS = ("interrupt", "pool", "trash")
 OPS = ("contains", "regex")
 CORE_SOURCE = "core"
 # Facet label -> the field stored on the NotificationEvent in events.db (see core/events.py).
@@ -278,7 +279,12 @@ def main() -> int:
         help="Add a rule. First matching rule wins (top = highest priority). By default a new rule is "
         "placed above broader rules so a narrow exception is not shadowed; use --before/--after to override.",
     )
-    add.add_argument("--action", choices=ACTIONS, required=True, help="interrupt = preempt the current turn; pool = wait until idle.")
+    add.add_argument(
+        "--action",
+        choices=ACTIONS,
+        required=True,
+        help="interrupt = preempt the current turn; pool = wait until idle; trash = drop entirely (never reaches you).",
+    )
     add.add_argument("--source", help="Exact match on notification source (case-insensitive), e.g. twitter, whatsapp.")
     add.add_argument("--type", help="Exact match on notification type (case-insensitive), e.g. message, tweet.")
     add.add_argument("--sender", help="Shortcut: substring match (case-insensitive) on the sender/contact across identity fields.")

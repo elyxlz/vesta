@@ -353,7 +353,7 @@ export interface NotificationInterruptRule {
   // All conditions beyond source/type (sender, keyword, and any arbitrary field) are predicates here,
   // ANDed together. Empty = the rule matches every notification of the given source/type.
   match?: FieldPredicate[];
-  action: "interrupt" | "pool";
+  action: "interrupt" | "pool" | "trash";
 }
 
 /// Read the agent's ordered notification interrupt ruleset from its config (GET /config).

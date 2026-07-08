@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GripVertical, ListFilter } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +38,29 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { cn } from "@/lib/utils";
 
 const SAVE_DEBOUNCE_MS = 500;
+
+type RuleAction = NotificationInterruptRule["action"];
+
+// The action badge cycles on click. interrupt/snooze only change *timing*; trash is different in kind:
+// it drops the notification entirely (it never reaches the agent), so it reads as destructive.
+const ACTION_CYCLE: Record<RuleAction, RuleAction> = {
+  interrupt: "pool",
+  pool: "trash",
+  trash: "interrupt",
+};
+const ACTION_LABEL: Record<RuleAction, string> = {
+  interrupt: "interrupt",
+  pool: "snooze",
+  trash: "trash",
+};
+const ACTION_BADGE_VARIANT: Record<
+  RuleAction,
+  "default" | "outline" | "destructive"
+> = {
+  interrupt: "default",
+  pool: "outline",
+  trash: "destructive",
+};
 
 // One predicate -> a read-only badge. The sender/text aliases render under their friendly names;
 // any other field shows its name with a relation hint (~ regex, "not" when negated).
@@ -68,6 +101,10 @@ export function NotificationInterruptRulesCard() {
   const [saveError, setSaveError] = useState<string | null>(null);
   // The rule row currently being dragged, for reordering (null when not dragging).
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Index of the rule a click is about to move into trash, pending confirmation (null = no dialog).
+  const [confirmTrashIndex, setConfirmTrashIndex] = useState<number | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!agentName) return;
@@ -130,17 +167,26 @@ export function NotificationInterruptRulesCard() {
     [save],
   );
 
-  const toggleAction = (index: number) =>
+  const applyAction = (index: number, action: RuleAction) =>
     commit(
       (rules ?? []).map((rule, i) =>
-        i === index
-          ? {
-              ...rule,
-              action: rule.action === "interrupt" ? "pool" : "interrupt",
-            }
-          : rule,
+        i === index ? { ...rule, action } : rule,
       ),
     );
+
+  const cycleAction = (index: number) => {
+    const rule = (rules ?? [])[index];
+    if (!rule) return;
+    const next = ACTION_CYCLE[rule.action];
+    // Trash drops matching notifications entirely (they never reach the agent) and auto-saves, so
+    // confirm before stepping into it. Every other transition — including downgrading out of trash —
+    // is only a timing change and applies immediately.
+    if (next === "trash") {
+      setConfirmTrashIndex(index);
+      return;
+    }
+    applyAction(index, next);
+  };
 
   const deleteRule = (index: number) =>
     commit((rules ?? []).filter((_, i) => i !== index));
@@ -246,24 +292,14 @@ export function NotificationInterruptRulesCard() {
                         <ItemActions>
                           <Badge
                             asChild
-                            variant={
-                              rule.action === "interrupt"
-                                ? "default"
-                                : "outline"
-                            }
+                            variant={ACTION_BADGE_VARIANT[rule.action]}
                           >
                             <button
                               type="button"
-                              onClick={() => toggleAction(index)}
-                              aria-label={`action: ${
-                                rule.action === "interrupt"
-                                  ? "interrupt"
-                                  : "snooze"
-                              }, click to toggle`}
+                              onClick={() => cycleAction(index)}
+                              aria-label={`action: ${ACTION_LABEL[rule.action]}, click to change`}
                             >
-                              {rule.action === "interrupt"
-                                ? "interrupt"
-                                : "snooze"}
+                              {ACTION_LABEL[rule.action]}
                             </button>
                           </Badge>
                           <Button
@@ -308,6 +344,37 @@ export function NotificationInterruptRulesCard() {
           )}
         </div>
       </CardContent>
+      <AlertDialog
+        open={confirmTrashIndex !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmTrashIndex(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>trash matching notifications?</AlertDialogTitle>
+            <AlertDialogDescription>
+              a trash rule drops every matching notification entirely — they
+              never reach {agentName || "the agent"} and create no turn. they
+              still show in history, and you can change the rule back anytime.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmTrashIndex !== null)
+                  applyAction(confirmTrashIndex, "trash");
+                setConfirmTrashIndex(null);
+              }}
+            >
+              trash them
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

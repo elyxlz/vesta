@@ -548,6 +548,41 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
         await runner.aclose()
 
 
+@pytest.mark.anyio
+async def test_monitor_loop_trash_rule_drops_file_and_creates_no_turn(tmp_path):
+    """A trash rule moves the notification into the trash dir, records it in history with decided='trash',
+    and never queues a turn (even when the bus is idle, where a pooled notif would flush)."""
+    config = _passive_config(tmp_path)
+    _install_rule(config, source="test", action="trash")
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.event_bus.set_state("idle")
+    queue: asyncio.Queue = asyncio.Queue()
+    sub = state.event_bus.subscribe()
+
+    runner = _run_monitor(queue, state=state, config=config)
+    await runner.__anext__()
+    try:
+        path = _write_notif(config.notifications_dir, "status")
+        moved = config.notif_trash_dir / "status.json"
+        await wait_for_condition(moved.exists, message="trashed notification was never moved to the trash dir")
+
+        assert not path.exists(), "trashed file must leave the active notifications dir"
+        # A trashed notification must never create a turn; give the loop a moment to (not) queue one.
+        await asyncio.sleep(0.05)
+        assert queue.empty(), "a trashed notification must not create a turn"
+
+        emitted = [sub.get_nowait() for _ in range(sub.qsize())]
+        notifs = [e for e in emitted if e["type"] == "notification"]
+        assert len(notifs) == 1, f"trashed notification must still be recorded once, got {len(notifs)}"
+        assert notifs[0]["decided"] == "trash", "history must record the trash disposition"
+        # A trashed notification is resolved on arrival, so it must be cleared (no pending dot forever).
+        cleared = [e for e in emitted if e["type"] == "notification_cleared"]
+        assert [e["notif_id"] for e in cleared] == ["status"], "trashed notification must emit a matching notification_cleared"
+    finally:
+        await runner.aclose()
+
+
 # --- _notification_watcher local-stop bridge ---
 
 
