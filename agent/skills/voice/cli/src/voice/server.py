@@ -1,6 +1,6 @@
 """Standalone voice skill HTTP server.
 
-Started by the agent via `uv run python -m voice.server`.
+Started by the agent via the `voice-server` command.
 Reads SKILL_PORT from environment.
 """
 

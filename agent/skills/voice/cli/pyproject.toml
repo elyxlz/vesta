@@ -1,0 +1,19 @@
+[project]
+name = "voice"
+version = "0.1.0"
+description = "Voice STT/TTS server and key management for the agent"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9.0",
+]
+
+[project.scripts]
+voice-server = "voice.server:main"
+voice-keys = "voice.voice_keys:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

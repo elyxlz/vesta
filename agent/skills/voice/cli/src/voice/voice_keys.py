@@ -25,13 +25,8 @@ import ssl
 import sys
 import urllib.request
 
-# Add the skill dir to sys.path so config.py + providers/ are importable
-# as top-level modules.
-_SKILL_DIR = pl.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_SKILL_DIR))
-
-import config as vc  # noqa: E402
-import providers  # noqa: E402
+from . import config as vc
+from . import providers
 
 
 def _notify_invalidation(scope: str) -> None:

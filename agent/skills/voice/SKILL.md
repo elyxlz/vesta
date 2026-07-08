@@ -1,7 +1,7 @@
 ---
 name: voice
 description: Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json.
-serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT screen -dmS voice voice-server
 ---
 
 # Voice setup (STT/TTS)
@@ -22,23 +22,23 @@ Once configured, the user can manage voice settings directly from the **agent se
 2. **Walk them through getting a key**: see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate the key** before saving:
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
+   voice-keys validate --provider deepgram --key <key>
    ```
 4. **Save the key**:
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
+   voice-keys set-key --domain stt --provider deepgram --key <key>
    ```
 5. **Pick a voice** (TTS only). Ask the user if they'd prefer a male or female voice, then set an appropriate default:
    - Male voices: Roger (laid-back), Charlie (deep, Australian), George (warm, British), Liam (energetic), Chris (charming), Brian (deep, resonant), Daniel (steady, British)
    - Female voices: Sarah (mature), Laura (enthusiastic), Alice (clear, British), Matilda (professional), Jessica (playful), Lily (velvety, British)
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
+   voice-keys set-voice --id <voice_id>
    ```
    Let them know they can browse all voices and listen to previews in the app settings later.
 6. **Ensure the voice server is running.** The app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
    ```bash
    PORT=$(~/agent/skills/service/scripts/register-service voice)
-   SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+   SKILL_PORT=$PORT screen -dmS voice voice-server
    ```
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
@@ -46,29 +46,29 @@ Once configured, the user can manage voice settings directly from the **agent se
 
 ```bash
 # See current state
-uv run ~/agent/skills/voice/scripts/voice_keys.py status
+voice-keys status
 
 # Keys
-uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider {deepgram|elevenlabs} --key <k>
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
-uv run ~/agent/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}   # removes provider + keys entirely
+voice-keys validate --provider {deepgram|elevenlabs} --key <k>
+voice-keys set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
+voice-keys clear --domain {stt|tts}   # removes provider + keys entirely
 
 # Enable/disable (keeps configuration intact, just toggles on/off)
-uv run ~/agent/skills/voice/scripts/voice_keys.py enable --domain {stt|tts}
-uv run ~/agent/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
+voice-keys enable --domain {stt|tts}
+voice-keys disable --domain {stt|tts}
 
 # TTS voice selection
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
-uv run ~/agent/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name> --description "..."
-uv run ~/agent/skills/voice/scripts/voice_keys.py remove-voice --id <voice_id>
+voice-keys set-voice --id <voice_id>
+voice-keys add-voice --id <voice_id> --name <name> --description "..."
+voice-keys remove-voice --id <voice_id>
 
 # STT keyterms (words the transcription should bias toward)
-uv run ~/agent/skills/voice/scripts/voice_keys.py add-keyterm <term>
-uv run ~/agent/skills/voice/scripts/voice_keys.py remove-keyterm <term>
+voice-keys add-keyterm <term>
+voice-keys remove-keyterm <term>
 
 # STT end-of-turn tuning
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --threshold 0.8
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
+voice-keys set-eot --threshold 0.8
+voice-keys set-eot --timeout-ms 10000
 ```
 
 ## Common asks
