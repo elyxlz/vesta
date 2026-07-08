@@ -1,0 +1,16 @@
+[project]
+name = "recall"
+version = "0.1.0"
+description = "Full-text recall over the agent's conversation history"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+recall = "recall_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recall_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

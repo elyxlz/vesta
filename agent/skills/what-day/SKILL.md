@@ -9,10 +9,16 @@ description: Determine the day of the week for any date, always do this whenever
 
 Use this skill when working with any date to avoid mistakes about which day of the week it falls on. This prevents scheduling errors and date-related planning mistakes.
 
+## Setup
+
+```bash
+uv tool install --editable ~/agent/skills/what-day/cli
+```
+
 ## How to Determine Day of Week
 
 ```bash
-uv run ~/agent/skills/what-day/scripts/what_day.py 2025-11-14
+what-day 2025-11-14
 ```
 
 Output:

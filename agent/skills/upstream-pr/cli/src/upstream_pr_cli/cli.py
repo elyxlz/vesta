@@ -1,7 +1,3 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["PyJWT>=2.8.0", "cryptography>=41.0.0", "requests>=2.31.0"]
-# ///
 """Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse

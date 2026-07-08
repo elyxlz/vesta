@@ -1,0 +1,20 @@
+[project]
+name = "upstream-pr"
+version = "0.1.0"
+description = "Push contributions to the upstream vesta repo via the vesta-upstream GitHub App"
+requires-python = ">=3.11"
+dependencies = [
+    "PyJWT>=2.8.0",
+    "cryptography>=41.0.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+upstream-pr = "upstream_pr_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/upstream_pr_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
