@@ -38,6 +38,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
+import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerMeta } from "@/components/ProviderPicker/providers";
 import {
   setModel,
@@ -419,18 +420,20 @@ export function ProviderCard() {
             </div>
           ) : (
             <div className="flex flex-col items-center gap-4 py-2">
-              <ContextStep
-                presets={
-                  manifest.providers[provider.kind]?.context.presets ?? []
-                }
-                initial={
-                  provider.max_context_tokens ??
-                  manifest.providers[provider.kind]?.context.default ??
-                  0
-                }
-                submitLabel="apply"
-                onSubmit={(tokens) => void applyContext(tokens)}
-              />
+              {(() => {
+                const context = manifest.providers[provider.kind]?.context;
+                const { presets, initial } = context
+                  ? planContextOptions(context, provider.plan)
+                  : { presets: [], initial: 0 };
+                return (
+                  <ContextStep
+                    presets={presets}
+                    initial={provider.max_context_tokens ?? initial}
+                    submitLabel="apply"
+                    onSubmit={(tokens) => void applyContext(tokens)}
+                  />
+                );
+              })()}
               {error && (
                 <p className="text-xs text-destructive text-center">{error}</p>
               )}
