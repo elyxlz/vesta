@@ -125,7 +125,11 @@ def find_chromium_executable(override: str | None = None) -> str:
     pw_cache = Path.home() / ".cache" / "ms-playwright"
     if pw_cache.is_dir():
         for d in sorted(pw_cache.glob("chromium-*"), reverse=True):
-            for candidate in (d / "chrome-linux" / "chrome", d / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"):
+            for candidate in (
+                d / "chrome-linux" / "chrome",
+                d / "chrome-linux64" / "chrome",
+                d / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
+            ):
                 if candidate.is_file():
                     return str(candidate)
 
