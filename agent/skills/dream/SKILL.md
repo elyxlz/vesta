@@ -176,12 +176,19 @@ Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for AP
 
 ## Summary
 
-Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-04-14T0347.md`). The minutes matter: two dreams in the same hour must not overwrite each other. Include:
-- Key things that happened or were accomplished today
-- What each fix was and what triggered it
-- Whether each validated or not
-- Upstream contributions: PRs created, issues filed, what was synced
-- Anything left unresolved
+Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-04-14T0347.md`). The minutes matter: two dreams in the same hour must not overwrite each other.
+
+The user reviews this summary, so it's an accountability record, not a private log: it captures what you actually did across the night, and it's where the user confirms the work was done properly.
+
+Cover the whole night, not just the fixes. Walk the order of operations above and record an outcome for **every** phase you ran, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Concretely, make sure the summary reflects each of:
+- **Curiosity**: what you explored and the view you formed
+- **Self-improvement**: each fix and what triggered it, whether it validated, the meta-retrospective call (is the loop compounding), and what you filed upstream (PRs/issues) or why nothing
+- **Recurrence work**: any dashboard widgets or notification rules added or pruned
+- **User State + contacts**: what shifted in your model of the user, and which contact files you updated or reconciled
+- **Memory curation**: what you pruned, consolidated, or moved
+- **Cleanup**: workspace and sensitive-data passes, what was removed
+- **Personality**: any drift to the preset or voice
+- **Unresolved**: what's still open and what tomorrow should pick up
 
 ## Compaction on completion
 
