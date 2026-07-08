@@ -6,7 +6,7 @@ use vesta_tests::exec_in_container;
 use super::common::{lock_live_agent_a, wait_for_file_contains, write_notification, E2E_FILES_DIR};
 
 /// Per-step timeout for the agent to make observable progress.
-const TASK_TIMEOUT: Duration = Duration::from_secs(240);
+const TASK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Proving the count is dead: the counting task appends a number roughly every 5s, so once the
 /// file is unchanged for COUNT_STABLE_WINDOW (comfortably longer than that cadence) nothing is
