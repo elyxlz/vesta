@@ -153,7 +153,6 @@ async def process_batch(
     queue: asyncio.Queue[vm.QueuedTurn],
     state: vm.State,
     config: vm.VestaConfig,
-    external_suffix_name: str = "notification_suffix",
 ) -> None:
     """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
 
@@ -181,7 +180,7 @@ async def process_batch(
     if system:
         await queue_section(system, suffix="")
     if external:
-        await queue_section(external, suffix=load_prompt(external_suffix_name, config) or "")
+        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
 
 
 def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> str | None:
@@ -634,7 +633,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
 
             # Track how long the agent has been continuously idle; micro-gaps shorter than the
-            # grace never qualify, so a brief breather between turns doesn't trigger a triage pass.
+            # grace never qualify, so a brief breather between turns doesn't flush the pool.
             if state.event_bus.state == "idle":
                 if idle_since is None:
                     idle_since = now
@@ -642,7 +641,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 idle_since = None
 
             if pending_passive and idle_since is not None and (now - idle_since).total_seconds() >= config.notif_pool_idle_grace_seconds:
-                await process_batch(pending_passive, queue=queue, state=state, config=config, external_suffix_name="notification_triage")
+                await process_batch(pending_passive, queue=queue, state=state, config=config)
                 pending_passive = []
     finally:
         await _cancel_task(watcher_task)

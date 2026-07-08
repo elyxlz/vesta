@@ -700,21 +700,6 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_process_batch_external_suffix_name_selects_prompt(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
-    queue: asyncio.Queue = asyncio.Queue()
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
-
-    with patch("core.loops.load_prompt", side_effect=lambda name, config: f"SUFFIX:{name}"):
-        await process_batch([notif], queue=queue, state=state, config=config, external_suffix_name="notification_triage")
-    prompt, is_user, _, _, _ = await queue.get()
-    assert "SUFFIX:notification_triage" in prompt
-    assert is_user is False
-
-
-@pytest.mark.anyio
 async def test_process_batch_defaults_to_notification_suffix(tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
@@ -786,8 +771,8 @@ async def test_pool_not_flushed_before_grace(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_pool_triage_flushes_once_after_grace_with_triage_framing(tmp_path):
-    """After continuous idle >= grace, the pool is triaged once, framed notification_triage."""
+async def test_pool_flushes_once_after_grace(tmp_path):
+    """After continuous idle >= grace, the pooled notifications are flushed once."""
     config = _passive_config(tmp_path)
     _install_rule(config, action="pool")
     state = vm.State()
@@ -800,9 +785,9 @@ async def test_pool_triage_flushes_once_after_grace_with_triage_framing(tmp_path
         await runner.__anext__()
         try:
             _write_notif(config.notifications_dir, "p")
-            await wait_for_condition(lambda: pb.call_count >= 1, message="pool was never triaged after idle+grace")
-            _, kwargs = pb.call_args
-            assert kwargs["external_suffix_name"] == "notification_triage"
+            await wait_for_condition(lambda: pb.call_count >= 1, message="pool was never flushed after idle+grace")
+            (batch,), _ = pb.call_args
+            assert len(batch) == 1
             await asyncio.sleep(0.1)
             assert pb.call_count == 1  # interval prevents an immediate re-fire
         finally:
