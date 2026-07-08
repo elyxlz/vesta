@@ -389,6 +389,16 @@ const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
 /// can't reach the Cloudflare API. Managed (vesta.run) boxes are exempt: the
 /// control plane owns the tunnel, so we trust the seeded config and let the
 /// supervisor (re)connect rather than pre-flighting.
+///
+/// Whether a failed boot setup should discard the saved `tunnel.json`. Only
+/// forget when the box could rebuild it — i.e. it holds its own Cloudflare creds
+/// (the same predicate that gates the recreate path in `try_establish_tunnel`).
+/// Forgetting a config the box CANNOT rebuild turns a transient boot failure into
+/// a permanent outage. Managed boxes never forget (the control plane owns it).
+fn should_forget_failed_tunnel(failed: bool, managed: bool, has_creds: bool) -> bool {
+    failed && !managed && has_creds
+}
+
 async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
     let status = retry_tunnel(
         TUNNEL_STARTUP_ATTEMPTS,
@@ -403,10 +413,14 @@ async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelS
     )
     .await;
 
-    // Gave up. Drop the dead config (unless managed — the control plane owns it)
-    // so the supervisor isn't started into a "Tunnel not found" loop. vestad then
-    // starts anyway with the reason shown on the banner.
-    if matches!(status, TunnelStatus::Failed(_)) && !is_cloud_managed() {
+    // Gave up. Drop the saved config ONLY when this box could recreate it (has its
+    // own Cloudflare creds). On a creds-less box (e.g. a legacy vesta.run tunnel) a
+    // merely-transient boot failure — DNS not ready yet — would otherwise orphan a
+    // still-valid tunnel forever AND suppress the supervisor, which keys off
+    // tunnel.json existing. Keeping the config lets the supervisor respawn
+    // cloudflared and self-heal once DNS is up; a genuinely revoked tunnel just
+    // loops with its reason in `vestad logs` (recovery is `vestad connect`).
+    if should_forget_failed_tunnel(matches!(status, TunnelStatus::Failed(_)), is_cloud_managed(), tunnel::has_cf_creds(config)) {
         tunnel::forget_tunnel(config);
     }
     status
@@ -983,6 +997,20 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forget_failed_tunnel_only_when_the_box_can_recreate_it() {
+        // Transient boot failure on a creds-less box: keep the config so the
+        // supervisor can self-heal. Forgetting would permanently orphan it.
+        assert!(!should_forget_failed_tunnel(true, false, false));
+        // Failed WITH own creds: the recreate path already tried and failed, so
+        // dropping the dead config is safe — a fresh boot / connect rebuilds it.
+        assert!(should_forget_failed_tunnel(true, false, true));
+        // Managed boxes never forget — the control plane owns tunnel.json.
+        assert!(!should_forget_failed_tunnel(true, true, true));
+        // A tunnel that came up is never forgotten.
+        assert!(!should_forget_failed_tunnel(false, false, true));
+    }
 
     #[tokio::test]
     async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
