@@ -85,6 +85,14 @@ def _token_path(account_email: str, config) -> pl.Path:
     return pl.Path(config.data_dir) / _TOKEN_SUBDIR / f"{account_email}.json"
 
 
+def list_accounts(config) -> list[str]:
+    """Email addresses that have an OWA REST token on disk (browser- or device-captured)."""
+    token_dir = pl.Path(config.data_dir) / _TOKEN_SUBDIR
+    if not token_dir.is_dir():
+        return []
+    return sorted(p.stem for p in token_dir.glob("*.json"))
+
+
 def _read_marker(account_email: str, config) -> dict | None:
     try:
         return json.loads(_token_path(account_email, config).read_text())
