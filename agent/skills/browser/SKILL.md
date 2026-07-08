@@ -153,101 +153,30 @@ Drop to **`click(x, y)` / `browser click --at X Y`** when:
 `input.performActions` dispatches a real pointer event at that viewport point regardless of DOM
 structure.
 
-## When you need something new
+## When stealth isn't enough (escalation)
 
-Helpers are in `cli/src/vesta_browser/helpers.py`. The package is installed editable, so when
-you edit that file the next `browser` call uses the new code without rebuilding. Add a helper
-when you find yourself repeating the same BiDi dance. Keep it short.
+Camoufox stealth handles the large majority of sites. When one still blocks you, escalate in this
+order, most-preferred first:
 
-```bash
-$EDITOR ~/agent/skills/browser/cli/src/vesta_browser/helpers.py
-# add your helper, save
-browser <<'PY'
-my_new_helper(...)   # already available
-PY
-```
+1. **Stealth (default).** Just `browser launch`. The fingerprint is spoofed in C++, so most
+   automated-browser detection never fires. Try this first, always.
+2. **Handover (primary fallback).** If a site gates on *account trust* (sign-in walls, banking,
+   locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
+   the session persists in the shared profile and you resume automating. See
+   [interaction-skills/handover.md](interaction-skills/handover.md). This is the go-to when
+   stealth is not enough.
+3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
+   logged-in Chrome, drive it over a tunnel with `browser connect`. See
+   [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
 
-## Contribute back what you learn
+## More
 
-If you figured out something non-obvious about a site or mechanic, or wrote a broadly useful
-helper, contribute it upstream before you finish via the `upstream-pr` skill. Three kinds of
-upstreamable work, in order of frequency:
+Occasional topics live in their own files so this one stays lean:
 
-1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
-   framework quirks, URL patterns, waits, traps. See the pattern in existing skill files.
-2. **Interaction skill** under `interaction-skills/<mechanic>.md`. Reusable mechanics (new
-   dialog pattern, a shadow-DOM trick, an upload variant).
-3. **New helper in `helpers.py`** when the primitive is broadly useful (a new BiDi wrapper,
-   a smarter `wait_for_X`, a hardened `http_get` header handler). Filter: would every other
-   Vesta benefit, or is this a personal quirk? Upstream if generic. Keep it local if
-   site-specific or user-specific (put it in a `domain-skills/` recipe instead).
-
-What *not* to put anywhere shared:
-- Pixel coordinates (break on viewport/zoom). Describe how to locate the target.
-- Narration of the specific task you just did.
-- Secrets, cookies, session tokens, personal credentials.
-
-Flow: edit locally (takes effect immediately via `uv tool install --editable`), verify, then use
-the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
-
-## Multi-session (parallel sub-agents)
-
-Each sub-agent should set a unique `BROWSER_SESSION` so they don't share a daemon / socket /
-browser. Each session also gets its own profile (and therefore its own fingerprint).
-
-```bash
-BROWSER_SESSION=agent-1 browser launch
-BROWSER_SESSION=agent-1 browser open "https://a.com"
-
-BROWSER_SESSION=agent-2 browser launch
-BROWSER_SESSION=agent-2 browser open "https://b.com"
-```
-
-Each session's state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, bidi-ws, log).
-`browser stop` cleans its own; `browser stop-all` nukes everything.
-
-Memory warning: each Camoufox uses several hundred MB. Running 3+ concurrently on a
-memory-constrained host can OOM. Prefer sequential for wide-scrape tasks.
-
-## Stealth
-
-Stealth is built in. Camoufox spoofs the fingerprint (navigator, screen, WebGL, timezone,
-fonts, `navigator.webdriver=false`) in patched Gecko C++, below anything JS can observe, so it
-survives the CreepJS-tier `Function.prototype.toString` / descriptor / stack-frame battery that
-stock Chromium + CDP injection cannot. Each profile draws one coherent fingerprint preset
-(`presets.py`), stable across restarts and distinct across profiles. There is no `--stealth`
-flag to toggle and no Xvfb to provision; headless is the stealthy default.
-
-## Handover (when trust, not fingerprint, is the wall)
-
-Some sites (Google sign-in, banking) gate on account trust and want a human once. Hand the live
-headed browser to the user over a clean, Vesta-branded page and let them sign in by hand:
-
-```bash
-browser handover start --url "https://accounts.google.com" --port <service-port>
-browser handover status
-browser handover stop
-```
-
-`handover start` launches headed Camoufox on the shared profile under an X server, bridges it out
-(`x11vnc` + `websockify` serving the branded noVNC page), and returns the page to send the user.
-Whatever they sign into persists in the shared profile, so the agent's everyday browser grows more
-trusted over time. Get the public URL from a `--public` vestad service route (vestad proxies the
-websocket), and tell the user the task in chat (the page itself stays generic). Needs the handover
-binaries (see SETUP.md).
-
-## Raw BiDi escape hatch
-
-Anything not wrapped:
-
-```bash
-browser bidi "browsingContext.getTree"
-browser bidi "storage.setCookie" '{"cookie":{"name":"k","value":"v","domain":"example.com"}}'
-browser bidi "script.evaluate" '{"expression":"1+1","awaitPromise":true}'
-```
-
-Or from stdin mode: `bidi("storage.getCookies", filter={"domain": "example.com"})`. The daemon
-injects the current `context` (or `target`) where the command shape needs one.
+- [interaction-skills/handover.md](interaction-skills/handover.md) : hand the browser to the user to sign in (primary fallback)
+- [interaction-skills/remote-control.md](interaction-skills/remote-control.md) : drive the user's own Chrome over a tunnel (last resort)
+- [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
+- [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
 
 ## Troubleshooting
 
