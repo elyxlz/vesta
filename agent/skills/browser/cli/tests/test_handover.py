@@ -42,8 +42,8 @@ def test_page_is_generic_not_task_specific():
 
 def test_page_uses_vesta_cloud_fonts():
     page = handover.render_page()
-    assert "./fonts/outfit.woff2" in page
-    assert "./fonts/public-sans.woff2" in page
+    assert "./fonts/public-sans.woff2" in page  # bundled body font
+    assert "--serif:" in page  # wordmark uses the vesta.run logotype serif stack
 
 
 def test_page_connects_to_relative_websockify_path():
@@ -62,7 +62,6 @@ def test_build_webroot_writes_page_fonts_and_symlinks_novnc(isolated, monkeypatc
     monkeypatch.setattr(handover, "NOVNC_DIRS", [novnc])
     root = handover._build_webroot()
     assert (root / "handover.html").is_file()
-    assert (root / "fonts" / "outfit.woff2").is_file()
     assert (root / "fonts" / "public-sans.woff2").is_file()
     assert (root / "core" / "rfb.js").is_file()  # resolves through the symlink
     assert (root / "vendor" / "pako").is_dir()
@@ -76,8 +75,7 @@ def test_build_webroot_is_rebuildable(isolated, monkeypatch):
     assert (root / "handover.html").is_file()
 
 
-def test_bundled_fonts_exist_in_the_package():
-    assert (handover.FONTS_DIR / "outfit.woff2").is_file()
+def test_bundled_font_exists_in_the_package():
     assert (handover.FONTS_DIR / "public-sans.woff2").is_file()
 
 

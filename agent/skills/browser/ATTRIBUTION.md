@@ -8,10 +8,10 @@ content is otherwise unmodified from the upstream snapshot at import time.
 Subsequent edits and new skills are authored by Vesta agents and committed
 under the Vesta repository license.
 
-The handover page (`cli/src/vesta_browser/assets/handover/fonts/`) bundles two
-variable fonts, both under the SIL Open Font License 1.1: Public Sans (Copyright
-2015 The Public Sans Project Authors) and Outfit (Copyright 2021 The Outfit
-Project Authors). They match the vesta-cloud brand.
+The handover page (`cli/src/vesta_browser/assets/handover/fonts/`) bundles the
+Public Sans variable font (Copyright 2015 The Public Sans Project Authors, SIL
+Open Font License 1.1) for its small text, matching the vesta-cloud brand. The
+wordmark uses the system serif stack, as the vesta.run logotype does.
 
 Upstream MIT license text follows.
 

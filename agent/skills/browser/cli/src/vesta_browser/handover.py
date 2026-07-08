@@ -103,8 +103,7 @@ def _build_webroot() -> Path:
     WEBROOT.mkdir(parents=True, exist_ok=True)
     (WEBROOT / "handover.html").write_text(render_page())
     (WEBROOT / "fonts").mkdir()
-    for font in ("public-sans.woff2", "outfit.woff2"):
-        shutil.copyfile(FONTS_DIR / font, WEBROOT / "fonts" / font)
+    shutil.copyfile(FONTS_DIR / "public-sans.woff2", WEBROOT / "fonts" / "public-sans.woff2")
     for name in ("core", "vendor"):
         src = novnc / name
         if src.exists():
@@ -152,8 +151,26 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     webroot = _build_webroot()
 
     log = open(_session_file("handover-log"), "w")
+    # -cursor most + -cursorpos send the real X cursor shape (so it turns into a hand over
+    # links, a caret over text) and its position, instead of a static dot. -noxdamage keeps the
+    # mirror reliable on Xvfb; the client asks for high quality (see the page's qualityLevel).
     x11vnc = subprocess.Popen(
-        ["x11vnc", "-display", display, "-localhost", "-rfbport", str(vnc_port), "-forever", "-shared", "-nopw", "-quiet", "-noxdamage"],
+        [
+            "x11vnc",
+            "-display",
+            display,
+            "-localhost",
+            "-rfbport",
+            str(vnc_port),
+            "-forever",
+            "-shared",
+            "-nopw",
+            "-quiet",
+            "-noxdamage",
+            "-cursor",
+            "most",
+            "-cursorpos",
+        ],
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -211,26 +228,28 @@ def status() -> dict[str, object]:
 
 
 # Palette + type lifted from the vesta-cloud landing page: warm neutrals (oklch hue 80), a
-# champagne primary, Outfit for the wordmark and Public Sans for everything else. The trust
-# signal here is the look, not a paragraph of reassurance, so the chrome stays spare.
+# champagne primary, the same system serif the vesta.run logotype uses for the "vesta"
+# wordmark, and Public Sans for the small text. The trust signal here is the look, not a
+# paragraph of reassurance, so the chrome stays spare.
 _PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Vesta's browser</title>
+<title>vesta's browser</title>
 <style>
-  @font-face { font-family: "Outfit"; src: url("./fonts/outfit.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
   @font-face { font-family: "Public Sans"; src: url("./fonts/public-sans.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 
   :root {
     color-scheme: light dark;
+    --serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
     --bg: oklch(0.995 0.005 80);
     --card: oklch(0.995 0.005 80);
     --fg: oklch(0.147 0.005 80);
     --muted: oklch(0.553 0.015 80);
     --line: oklch(0.147 0.005 80 / 0.10);
     --primary: oklch(0.8186 0.0795 66.78);
+    --ok: oklch(0.68 0.17 150);
     --frame: oklch(0.97 0.006 80);
     --edge: oklch(1 0 0 / 0.6);
   }
@@ -241,6 +260,7 @@ _PAGE_TEMPLATE = """<!doctype html>
       --fg: oklch(0.985 0.006 80);
       --muted: oklch(0.709 0.02 80);
       --line: oklch(1 0 0 / 0.08);
+      --ok: oklch(0.78 0.19 150);
       --frame: oklch(0.19 0.007 80);
       --edge: oklch(1 0 0 / 0.06);
     }
@@ -248,12 +268,12 @@ _PAGE_TEMPLATE = """<!doctype html>
   :root[data-theme="light"] {
     color-scheme: light;
     --bg: oklch(0.995 0.005 80); --card: oklch(0.995 0.005 80); --fg: oklch(0.147 0.005 80);
-    --muted: oklch(0.553 0.015 80); --line: oklch(0.147 0.005 80 / 0.10); --frame: oklch(0.97 0.006 80); --edge: oklch(1 0 0 / 0.6);
+    --muted: oklch(0.553 0.015 80); --line: oklch(0.147 0.005 80 / 0.10); --ok: oklch(0.68 0.17 150); --frame: oklch(0.97 0.006 80); --edge: oklch(1 0 0 / 0.6);
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: oklch(0.147 0.005 80); --card: oklch(0.216 0.007 80); --fg: oklch(0.985 0.006 80);
-    --muted: oklch(0.709 0.02 80); --line: oklch(1 0 0 / 0.08); --frame: oklch(0.19 0.007 80); --edge: oklch(1 0 0 / 0.06);
+    --muted: oklch(0.709 0.02 80); --line: oklch(1 0 0 / 0.08); --ok: oklch(0.78 0.19 150); --frame: oklch(0.19 0.007 80); --edge: oklch(1 0 0 / 0.06);
   }
 
   * { box-sizing: border-box; }
@@ -269,16 +289,16 @@ _PAGE_TEMPLATE = """<!doctype html>
     background: var(--card); border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 var(--edge) inset;
   }
   .wordmark {
-    font-family: "Outfit", sans-serif; font-weight: 600; font-size: 16px; letter-spacing: -0.005em; color: var(--fg);
+    font-family: var(--serif); font-weight: 500; font-size: 20px; letter-spacing: -0.02em; color: var(--fg);
   }
-  .wordmark .dim { color: var(--muted); font-weight: 500; }
+  .wordmark .dim { color: var(--muted); }
   .pill {
     margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
     font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0.01em;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .6; animation: pulse 1.6s infinite; }
   .pill.ok { color: var(--fg); }
-  .pill.ok .dot { background: var(--primary); opacity: 1; animation: none; }
+  .pill.ok .dot { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 20%, transparent); }
   @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: .9; } }
 
   #stage { position: relative; flex: 1 1 auto; min-height: 0; background: var(--frame); }
@@ -302,7 +322,7 @@ _PAGE_TEMPLATE = """<!doctype html>
 </head>
 <body>
   <header>
-    <span class="wordmark">Vesta<span class="dim">'s browser</span></span>
+    <span class="wordmark">vesta<span class="dim">'s browser</span></span>
     <span class="pill" id="pill"><span class="dot"></span><span id="pilltext">Connecting</span></span>
   </header>
   <div id="stage">
@@ -327,8 +347,14 @@ _PAGE_TEMPLATE = """<!doctype html>
       pilltext.textContent = attempts ? 'Reconnecting' : 'Connecting';
       pill.classList.remove('ok');
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
+      // Ask the server to match its framebuffer to this window (1:1, no scaling blur) and to
+      // send near-lossless tiles so text stays crisp; the link is local/tunnelled so bandwidth
+      // is cheap. scaleViewport is the fallback if the server refuses to resize.
+      rfb.resizeSession = true;
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
+      rfb.qualityLevel = 9;
+      rfb.compressionLevel = 2;
       rfb.focusOnClick = true;
       rfb.addEventListener('connect', () => {
         attempts = 0;
