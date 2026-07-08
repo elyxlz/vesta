@@ -301,6 +301,30 @@ def test_batch_no_hint_for_non_message_type():
     assert "Reply using" not in formatted
 
 
+def test_group_message_flagged_maybe_not_for_you():
+    notif = vm.Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "message",
+            "chat_name": "Bride squad",
+            "sender": "bob",
+            "message": "hi",
+        }
+    )
+    formatted = format_notification_batch([notif])
+    assert "from a group chat" in formatted
+    assert "chip in or stay out" in formatted
+
+
+def test_direct_message_not_flagged_as_group():
+    notif = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"}
+    )
+    formatted = format_notification_batch([notif])
+    assert "from a group chat" not in formatted
+
+
 # --- process_batch ---
 
 
