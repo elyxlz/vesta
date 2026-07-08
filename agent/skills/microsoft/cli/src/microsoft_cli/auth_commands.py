@@ -26,6 +26,16 @@ _OWA_TOKEN_JS = """
 })()
 """.strip()
 
+# One-line version to hand the user for their own browser console: it copies the
+# outlook.office.com access token to their clipboard (or prints NONE if not signed in).
+# They paste it back into `microsoft auth owa-login --token <TOKEN>`, so their password
+# and MFA never leave their machine.
+OWA_TOKEN_SNIPPET = (
+    "copy((()=>{for(const s of[localStorage,sessionStorage])for(let i=0;i<s.length;i++){"
+    "const k=s.key(i);if(/accesstoken/i.test(k)){try{const v=JSON.parse(s.getItem(k));"
+    "if((v.target||'').includes('outlook.office.com'))return v.secret;}catch(e){}}}return 'NONE';})())"
+)
+
 
 def list_accounts(config: Config) -> list[dict[str, str]]:
     return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file)]
@@ -122,8 +132,13 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     return {"status": "error", "message": "Authentication succeeded but no account was found"}
 
 
-def owa_login(config: Config, *, account_email: str, use_device: bool = False) -> dict[str, str]:
+def owa_login(config: Config, *, account_email: str, use_device: bool = False, token: str | None = None) -> dict[str, str]:
     """Authorize the OWA REST fallback for an account.
+
+    `--token <JWT>`: save a token the user extracted from their own signed-in Outlook session
+    (run OWA_TOKEN_SNIPPET in their browser console). The user's password and MFA never leave
+    their machine, only the resulting bearer token. Best when the agent cannot reach the user's
+    browser.
 
     Default (browser): capture the OWA token from the agent's browser session. The tenants
     that need this fallback usually block Graph *and* device-code flow, and browser capture
@@ -134,6 +149,8 @@ def owa_login(config: Config, *, account_email: str, use_device: bool = False) -
 
     `--device`: a device-code sign-in instead (enter a code at a URL, no browser), for the
     subset of locked tenants that still permit device flow. MSAL then auto-refreshes it."""
+    if token:
+        return _owa_login_paste(config, account_email=account_email, token=token)
     if not use_device:
         return _owa_login_browser(config, account_email=account_email)
 
@@ -188,6 +205,23 @@ def owa_complete(config: Config, *, account_email: str, flow_cache: str) -> dict
         "status": "success",
         "account": username,
         "message": f"OWA REST fallback authorized for {username}. Tokens auto-refresh; no re-auth or browser needed.",
+    }
+
+
+def _owa_login_paste(config: Config, *, account_email: str, token: str) -> dict[str, str]:
+    token = token.strip()
+    try:
+        expires_at = owa_rest.jwt_exp(token)
+    except Exception:
+        return {
+            "status": "error",
+            "message": "That does not look like an OWA access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard.",
+        }
+    owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
+    return {
+        "status": "success",
+        "account": account_email,
+        "message": f"OWA REST token saved for {account_email}. Paste a fresh one (re-run the snippet) when it expires.",
     }
 
 

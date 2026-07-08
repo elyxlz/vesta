@@ -656,3 +656,30 @@ def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monk
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
+
+
+# ---------------------------------------------------------------------------
+# owa-login --token (user pastes a self-extracted token; no creds to the agent)
+# ---------------------------------------------------------------------------
+
+
+def test_owa_login_paste_saves_token(tmp_path):
+    from microsoft_cli import auth_commands
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    fresh = _make_token(time.time() + 7200)
+    result = auth_commands.owa_login(cfg, account_email="user@example.com", token=fresh)
+    assert result["status"] == "success"
+    assert owa_rest.has_valid_token("user@example.com", cfg) is True
+    assert owa_rest.load_token("user@example.com", cfg) == fresh
+
+
+def test_owa_login_paste_rejects_garbage(tmp_path):
+    from microsoft_cli import auth_commands
+    from microsoft_cli.config import Config
+
+    cfg = Config(data_dir=tmp_path)
+    result = auth_commands.owa_login(cfg, account_email="user@example.com", token="not-a-jwt")
+    assert result["status"] == "error"
+    assert owa_rest.has_valid_token("user@example.com", cfg) is False

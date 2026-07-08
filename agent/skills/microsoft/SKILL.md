@@ -38,6 +38,14 @@ microsoft auth owa-login --account you@company.com
 If the session is not signed in yet it returns `sign_in_required` (no blocking);
 finish the sign-in via the `browser` skill and run it again. The captured token
 lasts about 24 h; re-run to refresh. `auto` uses it automatically once captured.
+
+When the agent cannot reach the user's browser (agent on another machine), let the
+user sign in on their **own** browser and paste just the token, so their password and
+MFA never reach the agent. Give them the one-line snippet `auth_commands.OWA_TOKEN_SNIPPET`
+to run in the Outlook DevTools console (it copies the token to their clipboard), then:
+```bash
+microsoft auth owa-login --account you@company.com --token <PASTED_TOKEN>
+```
 On a tenant that still permits device flow, `owa-login --device` (then
 `owa-complete`) does a code sign-in instead, which MSAL auto-refreshes.
 
