@@ -1214,6 +1214,34 @@ pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerErro
     Ok(())
 }
 
+/// Namespaces of the throwaway per-agent snapshot images that `rebuild_agent` / `rename_agent`
+/// create via `docker export | docker import`. Only tags in one of these are ever auto-removed
+/// -- never the base image, a pulled image, or a restore image.
+const SNAPSHOT_IMAGE_PREFIXES: [&str; 2] = ["vesta-rebuild:", "vesta-rename:"];
+
+/// Remove the snapshot the just-replaced container was built from, so rebuilds and renames stop
+/// leaving a trail of multi-GB images. Deliberately narrow: it only ever touches the single
+/// predecessor snapshot (`prev`), and only when that tag is one of our throwaway snapshot images
+/// -- pre-existing older snapshots are left untouched. Best-effort, so cleanup can never fail a
+/// rebuild/rename that already succeeded.
+async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &str) {
+    let Some(prev) = prev else { return };
+    if !is_removable_snapshot(prev, keep) {
+        return;
+    }
+    match remove_image(docker, prev).await {
+        Ok(()) => tracing::info!(image = %prev, "removed replaced snapshot image"),
+        Err(e) => tracing::warn!(image = %prev, error = %e, "could not remove replaced snapshot image"),
+    }
+}
+
+/// The predecessor image is removable when it is one of our throwaway snapshot images and isn't
+/// the tag the new container now depends on (a defensive guard -- the two never match in practice
+/// because every snapshot tag carries a unique timestamp).
+fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
+    prev != keep && SNAPSHOT_IMAGE_PREFIXES.iter().any(|p| prev.starts_with(p))
+}
+
 /// Export a Docker image to a gzip-compressed tar file.
 /// Streams from Docker through gzip to disk without buffering the full image in memory.
 /// Cleans up the partial file on failure.
@@ -2233,6 +2261,10 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     let info = container_info_from(&cname, &raw, Some(&env_config.agents_dir));
     guard_alive(info.status, name)?;
 
+    // The image this container runs on -- its previous snapshot, orphaned once we recreate
+    // the container below. Captured before removal so we can drop it afterwards.
+    let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
+
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
     let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
@@ -2258,6 +2290,9 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
 
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
     create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, user_mounts).await?;
+
+    // Drop the snapshot the old container ran on so rebuilds don't pile up multi-GB images.
+    remove_replaced_snapshot(docker, prev_image.as_deref(), &backup_tag).await;
 
     Ok(())
 }
@@ -2295,6 +2330,7 @@ pub async fn rename_agent(
 
     let raw = docker.inspect_container(&old_cname, None).await.map_err(DockerError::from)?;
     let info = container_info_from(&old_cname, &raw, Some(&env_config.agents_dir));
+    let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
     if info.status == ContainerStatus::Dead {
         return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", old_name)));
     }
@@ -2333,12 +2369,29 @@ pub async fn rename_agent(
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(old_name, new_name)?;
 
+    // Drop the snapshot the old container ran on; the renamed container runs on `snapshot_tag`.
+    remove_replaced_snapshot(docker, prev_image.as_deref(), &snapshot_tag).await;
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removable_snapshot_only_matches_our_throwaway_namespaces() {
+        let keep = "vesta-rebuild:apollo_1783125483";
+        // The predecessor snapshot the old container ran on -> removable.
+        assert!(is_removable_snapshot("vesta-rebuild:apollo_1782646196", keep));
+        assert!(is_removable_snapshot("vesta-rename:a-to-b_1", keep));
+        // The tag the new container now depends on -> kept.
+        assert!(!is_removable_snapshot(keep, keep));
+        // Never touch the base image, a pulled image, or a restore image.
+        assert!(!is_removable_snapshot("vesta:local", keep));
+        assert!(!is_removable_snapshot("ghcr.io/elyxlz/vesta:v0.1.169", keep));
+        assert!(!is_removable_snapshot("vesta-restore:apollo", keep));
+    }
 
     // The agent restart policy, as a string for the Docker-gated test helper below. Production
     // sets it via the bollard enum (create_container / ensure_on_failure_policy); the tests only
