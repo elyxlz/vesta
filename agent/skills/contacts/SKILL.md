@@ -65,13 +65,7 @@ People don't live in one place, and you learn about them all day long. Two thing
 - **Capture the day**: go back over the day's conversations and activity and fold everything you learned about anyone into their file, a new fact, a mood, a plan, something they're going through, a handle you saw. Anyone who came up for the first time gets a file.
 - **Reconcile the sources**: the same person is a thread in one messaging app, an address in another, a guest on a calendar, a row in an address book. Contacts is the hub of truth that ties them together. Pull new people and facts in from everywhere that holds contacts, and push your canonical fields (name, number, email) back out to the services that can be written to. Non-destructive: fill gaps and fix what's clearly stale, never bulk-overwrite a service's data.
 
-Always keep this running. Maintain exactly **one** recurring reminder that triggers the pass:
-
-```bash
-tasks remind "Update contacts with everything learned today, then reconcile them across every messaging app and every other service that holds contacts" --recurring daily --at "2026-01-05T04:00:00" --tz "$TZ"
-```
-
-When it fires, do both: sweep the day's activity into the files, then work out which sources are worth reconciling this time and bring them in line. Check `tasks remind list` first so you never stack duplicates.
+The nightly `dream` runs this pass, so there's no separate reminder to maintain. On that pass, do both: sweep the day's activity into the files, then work out which sources are worth reconciling this time and bring them in line.
 
 ## [Your setup]
 

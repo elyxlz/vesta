@@ -15,7 +15,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 0. **Curiosity**: spend a real moment on yourself before the retrospective.
 1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
-2. **User State**: update the snapshot in MEMORY.md
+2. **User State**: update the MEMORY.md snapshot and the contacts files
 3. **Memory curation**: prune, consolidate, move things out
 4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
 5. **Sensitive data cleanup**: purge secrets from history and files
@@ -110,6 +110,8 @@ Update the "User State" section, your working model of where they're at. Write w
 - Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. Slowly evolving, not rewritten on one day. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong.
 
 Replace rather than append. It's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
+
+**Contacts.** The people-half of your model lives in `~/.contacts/`, a separate store, not MEMORY.md. Read the `contacts` skill and do its nightly pass: fold everyone who came up today into their file (anyone new gets one), then reconcile the sources worth bringing in line this time. This is the write pass the deeper-context mining above is deliberately barred from doing.
 
 ## Memory Curation
 
