@@ -126,20 +126,23 @@ _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
 
 
 def _format_one(notif: vm.Notification) -> str:
-    """Embed a reply hint inside the <notification> element so the model sees them as one unit.
+    """Embed a reply hint inside the <channel> element so the model sees them as one unit.
 
     The hint points the model at the originating channel's reply skill instead of copying its CLI syntax."""
     body = notif.format_for_display()
     if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return body
     hint = f"\n[Reply using the `{notif.source}` skill]"
-    return body.replace("</notification>", f"{hint}\n</notification>")
+    return body.replace("</channel>", f"{hint}\n</channel>")
 
 
 def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
+    """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
+    several native channel events together on one turn. No wrapper element: each <channel> is
+    self-contained."""
     suffix_str = f"\n\n{suffix}" if suffix else ""
     inner = "\n".join(_format_one(n) for n in notifications)
-    return f"<notifications>\n{inner}\n</notifications>{suffix_str}"
+    return f"{inner}{suffix_str}"
 
 
 def _delete_paths(file_paths: list[str]) -> None:
