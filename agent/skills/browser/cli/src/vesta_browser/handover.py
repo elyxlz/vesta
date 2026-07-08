@@ -31,10 +31,12 @@ WEBROOT = Path.home() / ".cache" / "vesta-browser" / "handover-web"
 FONTS_DIR = Path(__file__).parent / "assets" / "handover" / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-# A high-resolution virtual screen rendered at 2x device scale (like a Retina panel): Chrome
-# lays out at 1280x720 CSS but paints 2560x1440 real pixels, so the streamed image stays crisp
-# when noVNC scales it into the user's window.
-SCREEN_W, SCREEN_H = 2560, 1440
+# A MacBook Retina native screen (2880x1800, 16:10) rendered at 2x device scale: Chrome lays
+# out at 1440x900 CSS but paints 2x real pixels, so the streamed image is dense enough that
+# noVNC downscaling it into the user's window stays crisp even on a HiDPI display. We do NOT
+# ask the server to resize to the client (resizeSession): that would match CSS pixels and throw
+# the Retina density away, which is what made the stream look soft.
+SCREEN_W, SCREEN_H = 2880, 1800
 DEVICE_SCALE = 2
 
 # Debian's `novnc` package installs here; a few distros relocate it.
@@ -235,10 +237,11 @@ def status() -> dict[str, object]:
     }
 
 
-# Palette + type lifted from the vesta-cloud landing page: warm neutrals (oklch hue 80), a
-# champagne primary, the same system serif the vesta.run logotype uses for the "vesta"
-# wordmark, and Public Sans for the small text. The trust signal here is the look, not a
-# paragraph of reassurance, so the chrome stays spare.
+# The live browser is framed as vesta's own laptop: a modern MacBook, seen head-on, with the
+# stream as its screen. Silver aluminium in light, space-grey in dark (the machine is a physical
+# object; the desk behind it takes the theme). The wordmark is etched on the base in the same
+# system serif the vesta.run logotype uses; the status is a small light beside it. Personality
+# comes from the object, so the screen itself stays clean and crisp (no CRT effects).
 _PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -251,114 +254,110 @@ _PAGE_TEMPLATE = """<!doctype html>
   :root {
     color-scheme: light dark;
     --serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-    --bg: oklch(0.995 0.005 80);
-    --card: oklch(0.995 0.005 80);
-    --fg: oklch(0.147 0.005 80);
-    --muted: oklch(0.553 0.015 80);
-    --line: oklch(0.147 0.005 80 / 0.10);
-    --primary: oklch(0.8186 0.0795 66.78);
-    --ok: oklch(0.68 0.17 150);
-    --frame: oklch(0.97 0.006 80);
-    --edge: oklch(1 0 0 / 0.6);
+    --desk-1: oklch(0.95 0.008 80); --desk-2: oklch(0.89 0.012 75);
+    --alu: oklch(0.83 0.003 250); --alu-hi: oklch(0.93 0.003 250); --alu-lo: oklch(0.71 0.005 250);
+    --etch: oklch(0.46 0.004 250); --muted: oklch(0.553 0.015 80);
+    --bezel: oklch(0.17 0 0); --screen-bg: oklch(0.97 0.006 80); --ok: oklch(0.66 0.17 150);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: oklch(0.147 0.005 80);
-      --card: oklch(0.216 0.007 80);
-      --fg: oklch(0.985 0.006 80);
-      --muted: oklch(0.709 0.02 80);
-      --line: oklch(1 0 0 / 0.08);
-      --ok: oklch(0.78 0.19 150);
-      --frame: oklch(0.19 0.007 80);
-      --edge: oklch(1 0 0 / 0.06);
+      --desk-1: oklch(0.17 0.008 80); --desk-2: oklch(0.1 0.006 80);
+      --alu: oklch(0.42 0.004 265); --alu-hi: oklch(0.52 0.004 265); --alu-lo: oklch(0.33 0.005 265);
+      --etch: oklch(0.7 0.004 265); --muted: oklch(0.7 0.02 80);
+      --bezel: oklch(0.12 0 0); --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150);
     }
   }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --bg: oklch(0.995 0.005 80); --card: oklch(0.995 0.005 80); --fg: oklch(0.147 0.005 80);
-    --muted: oklch(0.553 0.015 80); --line: oklch(0.147 0.005 80 / 0.10); --ok: oklch(0.68 0.17 150); --frame: oklch(0.97 0.006 80); --edge: oklch(1 0 0 / 0.6);
-  }
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: oklch(0.147 0.005 80); --card: oklch(0.216 0.007 80); --fg: oklch(0.985 0.006 80);
-    --muted: oklch(0.709 0.02 80); --line: oklch(1 0 0 / 0.08); --ok: oklch(0.78 0.19 150); --frame: oklch(0.19 0.007 80); --edge: oklch(1 0 0 / 0.06);
-  }
+  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.89 0.012 75);--alu:oklch(0.83 0.003 250);--alu-hi:oklch(0.93 0.003 250);--alu-lo:oklch(0.71 0.005 250);--etch:oklch(0.46 0.004 250);--muted:oklch(0.553 0.015 80);--bezel:oklch(0.17 0 0);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
+  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.17 0.008 80);--desk-2:oklch(0.1 0.006 80);--alu:oklch(0.42 0.004 265);--alu-hi:oklch(0.52 0.004 265);--alu-lo:oklch(0.33 0.005 265);--etch:oklch(0.7 0.004 265);--muted:oklch(0.7 0.02 80);--bezel:oklch(0.12 0 0);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--bg); color: var(--fg);
+    background: radial-gradient(130% 100% at 50% -20%, var(--desk-1), var(--desk-2));
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-    display: flex; flex-direction: column; overflow: hidden;
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+    display: grid; place-items: center; padding: 2.5vmin;
   }
-  header {
-    flex: 0 0 auto; padding: 15px 22px; display: flex; align-items: center; gap: 12px;
-    background: var(--card); border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 var(--edge) inset;
-  }
-  .wordmark {
-    font-family: var(--serif); font-weight: 500; font-size: 20px; letter-spacing: -0.02em; color: var(--fg);
-  }
-  .wordmark .dim { color: var(--muted); }
-  .pill {
-    margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
-    font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0.01em;
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .6; animation: pulse 1.6s infinite; }
-  .pill.ok { color: var(--fg); }
-  .pill.ok .dot { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 20%, transparent); }
-  @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: .9; } }
 
-  #stage { position: relative; flex: 1 1 auto; min-height: 0; background: var(--frame); }
+  /* the machine: a lid (screen) + hinge + base, kept at a laptop aspect and centred */
+  .macbook { width: min(96vw, calc(92vh * 1.51)); display: flex; flex-direction: column; align-items: center; }
+  .lid {
+    width: 100%; aspect-ratio: 16 / 10.6; border-radius: 20px; padding: 11px 11px 26px;
+    background: linear-gradient(var(--alu-hi), var(--alu) 8%, var(--alu) 82%, var(--alu-lo));
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.4), inset 0 0 0 1px oklch(0 0 0 / 0.12), 0 26px 60px -26px oklch(0 0 0 / 0.55);
+    display: flex; flex-direction: column;
+  }
+  .bezel {
+    position: relative; flex: 1 1 auto; min-height: 0; border-radius: 11px; background: var(--bezel);
+    padding: 12px; box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.6);
+    display: flex; flex-direction: column;
+  }
+  .notch { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 15%; max-width: 150px; height: 8px; background: var(--bezel); border-radius: 0 0 6px 6px; z-index: 2; }
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; border-radius: 4px; overflow: hidden; background: var(--screen-bg); }
   #screen { width: 100%; height: 100%; }
+  .glare { position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    background: linear-gradient(128deg, oklch(1 0 0 / 0.07) 0%, transparent 16%, transparent 100%); }
+  /* etched brand on the aluminium below the screen */
+  .badge { flex: 0 0 auto; height: 15px; margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .wordmark { font-family: var(--serif); font-weight: 500; font-size: 13px; letter-spacing: -0.01em; color: var(--etch); text-shadow: 0 1px 0 oklch(1 0 0 / 0.35); }
+  .wordmark .dim { opacity: 0.62; }
+  .led { width: 6px; height: 6px; border-radius: 50%; background: var(--etch); opacity: .4; animation: pulse 1.6s infinite; }
+  .badge.ok .led { background: var(--ok); opacity: 1; animation: none; box-shadow: 0 0 6px 1px color-mix(in oklch, var(--ok) 70%, transparent); }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: .7; } }
 
-  #overlay {
-    position: absolute; inset: 0; display: grid; place-items: center;
-    background: var(--frame); transition: opacity .45s ease;
-  }
+  /* hinge + the base front lip (with the opening notch), grounding it as a laptop */
+  .hinge { width: 99%; height: 8px; background: linear-gradient(var(--alu-lo), var(--alu)); border-radius: 0 0 3px 3px; box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.4); }
+  .base { position: relative; width: 88%; height: 15px; background: linear-gradient(var(--alu), var(--alu-lo)); border-radius: 0 0 9px 9px;
+    box-shadow: 0 12px 22px -10px oklch(0 0 0 / 0.55); }
+  .base::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 13%; max-width: 120px; height: 5px; background: var(--alu-lo); border-radius: 0 0 5px 5px; box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.35); }
+
+  #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: var(--screen-bg); transition: opacity .45s ease; z-index: 1; }
   #overlay.hidden { opacity: 0; pointer-events: none; }
-  .spinner {
-    width: 26px; height: 26px; border-radius: 50%;
-    border: 2.5px solid var(--line); border-top-color: var(--primary); animation: spin .8s linear infinite;
-  }
+  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2); border-top-color: var(--ok); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #overlay p { margin: 14px 0 0; color: var(--muted); font-size: 13px; letter-spacing: 0.01em; }
+  #overlay p { margin: 14px 0 0; color: var(--muted); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
-
-  @media (prefers-reduced-motion: reduce) { .dot, .spinner, #overlay { animation: none !important; transition: none !important; } }
+  @media (prefers-reduced-motion: reduce) { .led, .spinner, #overlay { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-  <header>
-    <span class="wordmark">vesta<span class="dim">'s browser</span></span>
-    <span class="pill" id="pill"><span class="dot"></span><span id="pilltext">Connecting</span></span>
-  </header>
-  <div id="stage">
-    <div id="screen"></div>
-    <div id="overlay">
-      <div class="overlay-inner">
-        <div class="spinner"></div>
-        <p>Connecting to Vesta's browser</p>
+  <div class="macbook">
+    <div class="lid">
+      <div class="bezel">
+        <div class="notch"></div>
+        <div id="stage">
+          <div id="screen"></div>
+          <div id="overlay">
+            <div class="overlay-inner">
+              <div class="spinner"></div>
+              <p>Waking vesta's computer</p>
+            </div>
+          </div>
+          <div class="glare"></div>
+        </div>
+      </div>
+      <div class="badge" id="badge">
+        <span class="wordmark">vesta<span class="dim">'s browser</span></span>
+        <span class="led"></span>
       </div>
     </div>
+    <div class="hinge"></div>
+    <div class="base"></div>
   </div>
   <script type="module">
     import RFB from './core/rfb.js';
     const overlay = document.getElementById('overlay');
-    const pill = document.getElementById('pill');
-    const pilltext = document.getElementById('pilltext');
+    const badge = document.getElementById('badge');
     const base = location.pathname.replace(/[^/]*$/, '');
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
     let rfb = null, attempts = 0;
 
     function connect() {
-      pilltext.textContent = attempts ? 'Reconnecting' : 'Connecting';
-      pill.classList.remove('ok');
+      badge.classList.remove('ok');
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
-      // Ask the server to match its framebuffer to this window (1:1, no scaling blur) and to
-      // send near-lossless tiles so text stays crisp; the link is local/tunnelled so bandwidth
-      // is cheap. scaleViewport is the fallback if the server refuses to resize.
-      rfb.resizeSession = true;
+      // Downscale a dense fixed framebuffer (see SCREEN_W/H, rendered at 2x) into the window and
+      // ask for near-lossless tiles so text stays crisp; the link is local/tunnelled so quality
+      // is cheap. Do NOT resizeSession: that matches CSS pixels and discards the Retina density.
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
       rfb.qualityLevel = 9;
@@ -367,15 +366,13 @@ _PAGE_TEMPLATE = """<!doctype html>
       rfb.addEventListener('connect', () => {
         attempts = 0;
         overlay.classList.add('hidden');
-        pill.classList.add('ok');
-        pilltext.textContent = 'Connected';
+        badge.classList.add('ok');
         rfb.focus();
       });
       rfb.addEventListener('disconnect', () => {
         overlay.classList.remove('hidden');
-        pill.classList.remove('ok');
+        badge.classList.remove('ok');
         if (attempts++ < 30) setTimeout(connect, 1500);
-        else pilltext.textContent = 'Disconnected';
       });
     }
     connect();

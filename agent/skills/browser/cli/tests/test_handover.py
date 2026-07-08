@@ -34,9 +34,9 @@ def _fake_novnc(root):
 
 
 def test_page_is_generic_not_task_specific():
-    # The page names only "Vesta's browser"; the agent conveys the actual task in chat.
+    # The page names only "vesta's browser"; the agent conveys the actual task in chat.
     page = handover.render_page()
-    assert "Vesta" in page and "browser" in page
+    assert "vesta" in page and "browser" in page
     assert "Outlook" not in page
 
 
