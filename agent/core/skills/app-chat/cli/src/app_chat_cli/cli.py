@@ -1,7 +1,7 @@
 """App Chat CLI entry point.
 
 Commands:
-  serve   — daemon: connects to agent WS, writes notifications, accepts CLI commands via Unix socket
+  serve   — daemon: holds a WS connection to the agent, accepts CLI commands via Unix socket to send replies
   send    — send a message to the app (via daemon Unix socket)
   history — search/list chat history via agent API
 """
@@ -31,7 +31,10 @@ def main() -> None:
     http_default = f"http://localhost:{port}"
 
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon")
-    serve_p.add_argument("--notifications-dir", required=True, help="Directory for notification JSON files")
+    # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes
+    # --notifications-dir): accepted and ignored. Intake moved to core/api.py (#809); kept so
+    # existing launch lines don't break argparse.
+    serve_p.add_argument("--notifications-dir", default=None, help=argparse.SUPPRESS)
     serve_p.add_argument("--ws-url", default=ws_default, help=f"Agent WebSocket URL (default: {ws_default})")
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 

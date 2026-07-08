@@ -20,10 +20,12 @@ Routes:
 
 import asyncio
 import dataclasses as dc
+import datetime as dt
 import json
 import logging
 import typing as tp
 import sqlite3
+import uuid
 import weakref
 
 import aiohttp as _aiohttp
@@ -33,7 +35,7 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
-from .models import State
+from .models import Notification, State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
 
 
@@ -81,7 +83,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
             chat = SnapshotChat(events=events, cursor=cursor)
         pending = await asyncio.to_thread(_pending_notification_ids, config)
         await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
+        recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -96,7 +98,27 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
+def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
+    """Persist an inbound app message as a `source=app-chat` notification file — the in-process
+    intake the monitor loop picks up. This is what actually delivers app chat to the model.
+
+    Written here, in the same coroutine that receives the message, so intake no longer rides the
+    broadcast bus through the app-chat sidecar daemon: that subscriber could die (OOM, never
+    respawned after a restore) and silently drop messages the UI had already echoed as delivered,
+    and the bus drops the oldest event under load — both wrong for delivery-critical intake."""
+    directory = config.notifications_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    # `message` is an extra field (Notification allows extras); it renders as the notification's
+    # text, matching what the app-chat sidecar used to write. model_validate takes the dict so the
+    # extra passes the type checker.
+    notif = Notification.model_validate(
+        {"timestamp": dt.datetime.now(), "source": "app-chat", "type": "message", "message": text, "interrupt": True}
+    )
+    path = directory / f"{uuid.uuid4()}-app-chat-message.json"
+    path.write_text(notif.model_dump_json(), encoding="utf-8")
+
+
+async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig) -> None:
     """Receive events from clients and emit to event bus."""
     async for msg in ws:
         if msg.type == web.WSMsgType.TEXT:
@@ -113,13 +135,18 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                 text = data["text"].strip()
                 if text:
                     if msg_type == "message":
-                        # History + broadcast only: nothing routes this event to the message
-                        # processor. The app-chat daemon (a WS subscriber) turns it into a
-                        # notification file — that is how app chat reaches the model.
+                        # The `user` event is history + broadcast (the chat's own echo of the
+                        # message). Intake — turning the message into the notification the model
+                        # processes — is the file write below, done in-process off the loop.
                         event: UserEvent = {"type": "user", "text": text}
                         if "input_method" in data and data["input_method"] in ("voice", "typed"):
                             event["input_method"] = data["input_method"]
                         event_bus.emit(event)
+                        try:
+                            await asyncio.to_thread(_write_app_chat_notification, config, text)
+                        except OSError as e:
+                            # A lost intake write must surface loudly, never masquerade as delivered.
+                            logger.error("failed to write app-chat notification: %s", e)
                     else:
                         event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):

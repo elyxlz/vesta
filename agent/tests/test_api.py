@@ -135,6 +135,49 @@ async def test_ws_history_survives_notification_storm(event_bus):
         await runner.cleanup()
 
 
+async def _start_server_with_config(event_bus, config):
+    """Like _start_server but with a caller-supplied config, so the test can read the
+    notifications_dir the recv loop writes intake into."""
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app["config"] = config
+    app["websockets"] = weakref.WeakSet()
+    app.router.add_get("/ws", _ws_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    return runner, f"http://127.0.0.1:{port}"
+
+
+@pytest.mark.anyio
+async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
+    """Regression (#809): an inbound app `message` is turned into a `source=app-chat` notification
+    by the agent itself, in-process — not by a sidecar subscriber that could die and silently drop
+    it. A `chat` frame (the agent's own reply path) broadcasts but writes no intake."""
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+                await ws.send_json({"type": "chat", "text": "a reply, not intake"})
+                await ws.send_json({"type": "message", "text": "  deliver me  "})
+                await wait_for_condition(
+                    lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
+                    message="expected exactly one intake notification",
+                )
+        files = list(config.notifications_dir.glob("*-app-chat-message.json"))
+        assert len(files) == 1
+        notif = json.loads(files[0].read_text())
+        assert notif["source"] == "app-chat"
+        assert notif["type"] == "message"
+        assert notif["message"] == "deliver me"  # stripped
+        assert notif["interrupt"] is True
+    finally:
+        await runner.cleanup()
+
+
 # Regression: ws_runner.cleanup() used to sit on aiohttp's 60s default shutdown_timeout
 # per open WS handler because _ws_handler had no shutdown signal. Each connected client
 # (CLI + web + mobile) added another 60s wait. Now the app's on_shutdown closes them all.

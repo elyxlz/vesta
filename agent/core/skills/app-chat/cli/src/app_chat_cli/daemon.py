@@ -1,19 +1,18 @@
 """App Chat daemon.
 
-Connects to the agent's /ws endpoint. Writes notification files for inbound
-user messages and accepts CLI commands via Unix socket to send replies.
-"""
+Holds a kept-alive connection to the agent's /ws endpoint and accepts CLI commands via a Unix
+socket to send replies (`app-chat send` -> a `chat` frame). Inbound app messages are turned into
+notifications by the agent itself (core/api.py), not here — so a dead daemon can no longer silently
+swallow intake; it only fails the reply path, and loudly ("not connected to agent")."""
 
 import argparse
 import asyncio
-import datetime as dt
 import functools
 import json
 import os
 import pathlib as pl
 import signal
 import sys
-import uuid
 from dataclasses import dataclass, field
 
 import aiohttp
@@ -24,51 +23,21 @@ RECONNECT_DELAY = 2.0
 
 @dataclass
 class DaemonState:
-    notifications_dir: pl.Path
     ws_url: str
     sock_path: pl.Path
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     ws: aiohttp.ClientWebSocketResponse | None = None
     session: aiohttp.ClientSession | None = None
-    data_dir: pl.Path = field(default_factory=lambda: pl.Path.home() / ".app-chat")
-    last_seen_ts: str | None = None
-
-
-def _ts_path(state: DaemonState) -> pl.Path:
-    return state.data_dir / "last_seen_ts"
-
-
-def _load_last_seen_ts(state: DaemonState) -> None:
-    try:
-        state.last_seen_ts = _ts_path(state).read_text().strip() or None
-    except FileNotFoundError:
-        pass
-
-
-def _update_last_seen_ts(state: DaemonState, ts: str) -> None:
-    if ts == state.last_seen_ts:
-        return
-    state.last_seen_ts = ts
-    _ts_path(state).write_text(ts)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    notifications_dir = pl.Path(args.notifications_dir)
     ws_url = args.ws_url
     data_dir = pl.Path(args.data_dir or pl.Path.home() / ".app-chat")
-
-    notifications_dir.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
 
     sock_path = data_dir / "app-chat.sock"
 
-    state = DaemonState(
-        notifications_dir=notifications_dir,
-        ws_url=ws_url,
-        sock_path=sock_path,
-        data_dir=data_dir,
-    )
-    _load_last_seen_ts(state)
+    state = DaemonState(ws_url=ws_url, sock_path=sock_path)
     asyncio.run(_run(state))
 
 
@@ -105,10 +74,10 @@ async def _ws_loop(state: DaemonState) -> None:
             async with state.session.ws_connect(url) as ws:
                 state.ws = ws
                 _log(f"connected to {state.ws_url}")
+                # Drain inbound frames only to keep the connection live and notice a close; the
+                # agent owns intake now, so nothing here reacts to them.
                 async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        _handle_event(state, msg.data)
-                    elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                    if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
                         break
         except (aiohttp.ClientError, OSError) as exc:
             _log(f"ws error: {exc}")
@@ -116,66 +85,6 @@ async def _ws_loop(state: DaemonState) -> None:
             state.ws = None
         if not state.shutdown.is_set():
             await asyncio.sleep(RECONNECT_DELAY)
-
-
-def _handle_event(state: DaemonState, raw: str) -> None:
-    try:
-        event = json.loads(raw)
-    except json.JSONDecodeError:
-        _log(f"bad json from ws: {raw[:200]}")
-        return
-    if "type" not in event:
-        return
-
-    event_type = event["type"]
-
-    if event_type == "snapshot" and "chat" in event and "events" in event["chat"]:
-        _replay_missed(state, event["chat"]["events"])
-        return
-
-    if "ts" in event:
-        _update_last_seen_ts(state, event["ts"])
-
-    if event_type == "user" and "text" in event:
-        ts = event["ts"] if "ts" in event else None
-        _write_notification(state, event["text"], timestamp=ts)
-
-
-def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
-    """On reconnect, generate notifications for user messages missed during downtime."""
-    cutoff = state.last_seen_ts
-    count = 0
-    for past in events:
-        if "type" not in past or past["type"] != "user" or "text" not in past:
-            continue
-        ts = past["ts"] if "ts" in past else None
-        if cutoff and ts and str(ts) <= cutoff:
-            continue
-        _write_notification(state, str(past["text"]), timestamp=str(ts) if ts else None)
-        count += 1
-    for past in reversed(events):
-        if "ts" in past:
-            _update_last_seen_ts(state, str(past["ts"]))
-            break
-    if count:
-        _log(f"replayed {count} missed message(s)")
-
-
-def _write_notification(state: DaemonState, message: str, *, timestamp: str | None = None) -> None:
-    if not message.strip():
-        return
-    ts = timestamp or dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
-    notification = {
-        "timestamp": ts,
-        "source": "app-chat",
-        "type": "message",
-        "message": message,
-        "interrupt": True,
-    }
-    filename = f"{uuid.uuid4()}-app-chat-message.json"
-    path = state.notifications_dir / filename
-    path.write_text(json.dumps(notification), encoding="utf-8")
-    _log(f"notification: {filename}")
 
 
 async def _socket_server(state: DaemonState) -> None:
