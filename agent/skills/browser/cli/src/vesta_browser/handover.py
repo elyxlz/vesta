@@ -128,9 +128,12 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # Default to the shared browsing profile, not a throwaway one: whatever the user signs into
     # during the handover persists into the agent's everyday browser, so it grows more trusted
     # over time like a real user's. Chrome single-instances a profile, so free the lock by
-    # stopping the default session's browser before the headed handover takes it over.
+    # stopping the default session's browser and clearing its now-stale lock before the headed
+    # handover takes the profile over.
     profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
     admin.stop_chrome("default")
+    for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        (profile / lock).unlink(missing_ok=True)
 
     # launch() provisions Xvfb on demand for a stealth headed browser; pin the display so
     # x11vnc mirrors the exact same screen Chrome renders on. On a Wayland host, x11vnc and
