@@ -162,9 +162,9 @@ async def test_delete_handles_already_deleted(tmp_path):
 def test_batch_single():
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
     formatted = format_notification_batch([notif])
-    assert "<notifications>" in formatted
-    assert '<notification source="test" type="message">' in formatted
-    assert "</notifications>" in formatted
+    assert '<channel source="test" type="message"' in formatted
+    assert formatted.rstrip().endswith("</channel>")
+    assert "<notifications>" not in formatted
 
 
 def test_batch_multiple():
@@ -173,11 +173,11 @@ def test_batch_multiple():
         vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="alert"),
     ]
     formatted = format_notification_batch(notifs)
-    assert formatted.count("<notification ") == 2
-    assert '<notification source="test" type="message">' in formatted
-    assert '<notification source="test" type="alert">' in formatted
-    assert formatted.startswith("<notifications>\n")
-    assert formatted.endswith("</notifications>")
+    assert formatted.count("<channel ") == 2
+    assert '<channel source="test" type="message"' in formatted
+    assert '<channel source="test" type="alert"' in formatted
+    assert formatted.startswith("<channel ")
+    assert "<notifications>" not in formatted
 
 
 def test_batch_with_suffix():
@@ -189,9 +189,9 @@ def test_batch_with_suffix():
 def test_notification_format_for_display():
     notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
-    assert display.startswith('<notification source="email" type="message">')
-    assert display.endswith("</notification>")
-    assert "sender=alice" in display
+    assert display.startswith('<channel source="email" type="message"')
+    assert display.endswith("</channel>")
+    assert 'sender="alice"' in display
 
 
 def test_format_for_display_drops_empty_and_false_fields():
@@ -212,11 +212,11 @@ def test_format_for_display_drops_empty_and_false_fields():
         }
     )
     display = notif.format_for_display()
-    assert "contact_name=Alice" in display
-    assert "message=hi" in display
-    assert "contact_unknown=True" in display  # True bool kept (interesting case)
-    assert "chat_name=" not in display
-    assert "media_type=" not in display
+    assert 'contact_name="Alice"' in display
+    assert ">hi</channel>" in display  # message promoted to the element body
+    assert 'contact_unknown="true"' in display  # True bool kept (interesting case)
+    assert "chat_name" not in display
+    assert "media_type" not in display
     assert "is_forwarded" not in display
     assert "quoted_text" not in display
     assert "tags" not in display
@@ -234,7 +234,7 @@ def test_format_for_display_keeps_integer_zero():
         }
     )
     display = notif.format_for_display()
-    assert "minutes_until=0" in display
+    assert 'minutes_until="0"' in display
 
 
 def test_format_for_display_strips_timestamp_microseconds():
@@ -248,7 +248,7 @@ def test_format_for_display_strips_timestamp_microseconds():
     )
     display = notif.format_for_display()
     assert ".123456" not in display
-    assert "timestamp=2025-01-01T12:34:56+00:00" in display
+    assert 'timestamp="2025-01-01T12:34:56+00:00"' in display
 
 
 @pytest.mark.parametrize(
@@ -320,7 +320,7 @@ async def test_process_batch_queues_prompt(tmp_path):
 
     assert not queue.empty()
     prompt, is_user, file_paths, _, _ = await queue.get()
-    assert '<notification source="test" type="message">' in prompt
+    assert '<channel source="test" type="message"' in prompt
     assert is_user is False
 
 
@@ -432,7 +432,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
         prompt, is_user, file_paths, _, _ = await queue.get()
-        assert '<notification source="test" type="message">' in prompt
+        assert '<channel source="test" type="message"' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
     finally:
@@ -464,7 +464,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
         prompt, is_user, file_paths, _, _ = await queue.get()
-        assert '<notification source="test" type="message">' in prompt
+        assert '<channel source="test" type="message"' in prompt
         assert is_user is False
 
         # Exactly once: file stays on disk (deleted only after processing), but nothing re-queues.
@@ -667,7 +667,7 @@ async def test_policy_interrupts_a_notification(tmp_path):
         _write_notif(config.notifications_dir, "now-urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt rule did not queue the notif while busy")
         prompt, is_user, _, _, _ = await queue.get()
-        assert '<notification source="test" type="message">' in prompt
+        assert '<channel source="test" type="message"' in prompt
         assert is_user is False
     finally:
         await runner.aclose()

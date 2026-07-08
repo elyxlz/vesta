@@ -4,6 +4,7 @@ import dataclasses as dc
 import datetime as dt
 import time
 import typing as tp
+import xml.sax.saxutils as xml_utils
 
 import pydantic as pyd
 from aiohttp.web import AppRunner
@@ -173,6 +174,13 @@ class State:
     context_warning_active: bool = False
 
 
+# Fields promoted to the <channel> element's inner body (the message), in priority order.
+# Everything else on a notification renders as an attribute. Skills that carry a human-readable
+# message use one of these keys (whatsapp/app-chat write `message`); metadata-only notifications
+# (email, reactions) have none and render as attributes with an empty body.
+_CONTENT_FIELDS = ("message", "text", "content")
+
+
 class Notification(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="allow")
 
@@ -186,10 +194,13 @@ class Notification(pyd.BaseModel):
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
-        """Render the notification as an XML element for unambiguous parsing.
+        """Render the notification as a <channel> element: routing metadata as attributes, the
+        message as the inner body. This mirrors the shape Claude Code injects for native channel
+        events, so the model reads Vesta notifications in a structure it already handles well.
 
-        When `body` is set it becomes the inner text (used by multi-line system prompts).
-        Otherwise the remaining fields render as `key=value` attributes.
+        A multi-line `body` (core/system notifications) becomes the inner text directly. Otherwise
+        the first present content field (message/text/content) becomes the body and every other
+        field renders as an attribute.
 
         Drops empty strings, False bools, empty lists, and None since they cost tokens without
         carrying information. Booleans should be named so True is the interesting case
@@ -197,14 +208,20 @@ class Notification(pyd.BaseModel):
         datetime field.
         """
         if self.body is not None:
-            return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
+            return f'<channel source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</channel>'
         data = self.model_dump(exclude={"file_path", "type", "source", "body", "interrupt"})
-        parts = []
+        content = ""
+        for field in _CONTENT_FIELDS:
+            if field in data and isinstance(data[field], str) and data[field].strip():
+                content = xml_utils.escape(data.pop(field).strip())
+                break
+        attrs = [f'source="{self.source}"', f'type="{self.type}"']
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:
                 continue
             if isinstance(value, dt.datetime):
                 value = value.replace(microsecond=0).isoformat()
-            parts.append(f"{key}={value}")
-        body = ", ".join(parts)
-        return f'<notification source="{self.source}" type="{self.type}">{body}</notification>'
+            if value is True:
+                value = "true"
+            attrs.append(f"{key}={xml_utils.quoteattr(str(value))}")
+        return f"<channel {' '.join(attrs)}>{content}</channel>"

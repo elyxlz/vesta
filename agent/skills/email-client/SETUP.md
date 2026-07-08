@@ -169,7 +169,7 @@ EOF
 A notification arrives to you looking like this, so your rules can match on `from` / `subject` / `folder`:
 
 ```
-<notification source="email-client" type="email">account=personal, folder=INBOX, from=Jane Doe <jane@example.com>, subject=Q2 budget review, date=..., uid=12345</notification>
+<channel source="email-client" type="email" account="personal" folder="INBOX" from="Jane Doe &lt;jane@example.com&gt;" subject="Q2 budget review" date="..." uid="12345"></channel>
 ```
 
 Without this line you still handle email on request, but standing rules (especially "stay silent" / auto-handle rules) may not fire on their own.
