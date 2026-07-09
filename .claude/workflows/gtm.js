@@ -18,9 +18,10 @@ const run = (prompt, opts) => agent(prompt, { model: "sonnet", ...opts });
 const fast = (prompt, opts) => agent(prompt, { model: "haiku", ...opts });
 
 const EMIT = (args && args.emit) || "live";
+// sibling checkout of the main vesta repo; agents in worktrees resolve it against the main repo root
 const CLOUD = "../vesta-cloud";
 
-const BUSINESS = `The business: vesta.run sells a hosted personal AI agent. Open-core: the data plane (this repo, elyxlz/vesta: vestad daemon + CLI + apps) is open source; the control plane (${CLOUD}, elyxlz/vesta-cloud: marketing SPA + dashboard + Stripe billing + per-user Hetzner VM provisioning + referral rewards) is closed. The buyer is a consumer/prosumer who wants a personal AI living in their life (WhatsApp, Telegram, email, calendar), not a dev tool. Indie income, not venture scale; the moat is doing what the labs cannot.`;
+const BUSINESS = `The business: vesta.run sells a hosted personal AI agent. Open-core: the data plane (this repo, elyxlz/vesta: vestad daemon + CLI + apps) is open source; the control plane (${CLOUD}, a sibling checkout of the main vesta repo; if it is missing from your cwd, resolve it against the main repo root, elyxlz/vesta-cloud: marketing SPA + dashboard + Stripe billing + per-user Hetzner VM provisioning + referral rewards) is closed. The buyer is a consumer/prosumer who wants a personal AI living in their life (WhatsApp, Telegram, email, calendar), not a dev tool. Indie income, not venture scale; the moat is doing what the labs cannot.`;
 
 const VOICE = `Brand voice (intentional, never "fix"): lowercase, terse, human; no em/en dashes or " - " separators (CI enforces this in both repos; use commas/colons); "agent" never "box".`;
 

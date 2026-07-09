@@ -77,7 +77,7 @@ const LENSES = [
     title: "Interaction & motion",
     authority: "Rauno Freiberg Web Interface Guidelines + Emil Kowalski + Laws of UX",
     url: "https://interfaces.rauno.me/",
-    hig: "Motion, Feedback, Loading, Launching, Gestures, Keyboards, Focus and selection, Pointing devices",
+    hig: "Motion, Feedback, Loading, Launching, Gestures, Keyboards, Focus and selection, Pointing devices, Components",
     mandate:
       "Hover/focus/active/disabled states, focus rings, keyboard paths, touch-target size, easing & duration, anticipation/follow-through, optimistic UI, perceived latency (Doherty threshold), loading vs skeleton, the CreatingStep's fake rotating progress vs honest status, transitions between dashboard/chat.",
   },
@@ -86,7 +86,7 @@ const LENSES = [
     title: "Usability heuristics",
     authority: "Nielsen's 10 Heuristics + Norman (DOET)",
     url: "https://www.nngroup.com/articles/ten-usability-heuristics/",
-    hig: "Feedback, Modality, Alerts, Undo and redo, Settings",
+    hig: "Feedback, Modality, Alerts, Undo and redo, Settings, Searching",
     mandate:
       "Cite the specific heuristic per finding. Visibility of system status, match to mental model, user control/undo, consistency, error prevention, recognition over recall, flexibility, minimalist design, error recovery, help. The OAuth copy-paste and the long first-build wait are prime targets.",
   },
@@ -122,7 +122,7 @@ const LENSES = [
     title: "Accessibility",
     authority: "WCAG 2.2 AA + Apple accessibility HIG",
     url: "https://www.w3.org/WAI/WCAG22/quickref/",
-    hig: "Accessibility, Inclusion, Typography, Color",
+    hig: "Accessibility, Inclusion, Typography, Color, Components",
     mandate:
       "Color contrast (check oklch tokens in both themes), focus visibility & order, keyboard operability, touch-target minimums, semantic roles/labels for icon buttons, reduced-motion, screen-reader names for the orb/island/status. Cite the WCAG SC number.",
   },
@@ -191,6 +191,31 @@ const VERDICT_SCHEMA = {
   },
 };
 
+const PR_GROUP_ITEM = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "area", "tier", "summary", "changes"],
+  properties: {
+    title: { type: "string", description: "conventional-commit style, e.g. 'fix(web): honest setup progress copy'" },
+    area: { type: "string" },
+    tier: { type: "string", enum: ["cheap", "ambitious"] },
+    summary: { type: "string", description: "for ambitious: the design rationale, what the surface becomes, what gets removed" },
+    changes: { type: "array", items: { type: "string", description: "file:line -> before -> after (for ambitious, may describe new/removed components precisely)" } },
+  },
+};
+
+const ISSUE_ITEM = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "severity", "labels", "body"],
+  properties: {
+    title: { type: "string" },
+    severity: { type: "string", enum: ["low", "medium", "high"] },
+    labels: { type: "array", items: { type: "string" } },
+    body: { type: "string" },
+  },
+};
+
 const SYNTH_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -209,60 +234,28 @@ const SYNTH_SCHEMA = {
     prGroups: {
       type: "array",
       description: "batches of fixes, one PR each; tier cheap = trivial/small tweaks batched by theme, tier ambitious = one truly-needed redesign of one surface, fully specified",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["title", "area", "tier", "summary", "changes"],
-        properties: {
-          title: { type: "string", description: "conventional-commit style, e.g. 'fix(web): honest setup progress copy'" },
-          area: { type: "string" },
-          tier: { type: "string", enum: ["cheap", "ambitious"] },
-          summary: { type: "string", description: "for ambitious: the design rationale, what the surface becomes, what gets removed" },
-          changes: { type: "array", items: { type: "string", description: "file:line -> before -> after (for ambitious, may describe new/removed components precisely)" } },
-        },
-      },
+      items: PR_GROUP_ITEM,
     },
     issues: {
       type: "array",
       description: "only genuine design forks that need the user's decision",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["title", "severity", "labels", "body"],
-        properties: {
-          title: { type: "string" },
-          severity: { type: "string", enum: ["low", "medium", "high"] },
-          labels: { type: "array", items: { type: "string" } },
-          body: { type: "string" },
-        },
-      },
+      items: ISSUE_ITEM,
     },
     reportMarkdown: { type: "string", description: "the full human-readable report" },
   },
 };
 
-const GROUPS_SCHEMA = {
+const DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["groups"],
+  required: ["groups", "issues"],
   properties: {
-    groups: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["title", "area", "tier", "summary", "changes"],
-        properties: {
-          title: { type: "string" },
-          area: { type: "string" },
-          tier: { type: "string", enum: ["cheap", "ambitious"] },
-          summary: { type: "string" },
-          changes: { type: "array", items: { type: "string" } },
-        },
-      },
-    },
+    groups: { type: "array", items: PR_GROUP_ITEM },
+    issues: { type: "array", items: ISSUE_ITEM },
   },
 };
+
+const refSlug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "area";
 
 // one PR agent per group; shared by live emit and publish mode
 const emitPrGroups = (groups) =>
@@ -273,34 +266,47 @@ const emitPrGroups = (groups) =>
 Group: ${JSON.stringify(group)}
 ${STYLE_GUARD}
 ${NORTH_STAR}
-1. \`git fetch origin master && git checkout -b critique/${group.area}-${i} origin/master\`.
+1. \`git fetch origin master && git checkout -b critique/${refSlug(group.area)}-${i} origin/master\`; if that branch already exists (a prior run), append \`-b\`, \`-c\`, ... until it does not.
 2. ${group.tier === "ambitious"
           ? "Implement the redesign: read every touched component fully, match codebase patterns (Tailwind + shadcn/base-ui, folders with index.tsx), one surface only, adapt minimally where the spec misses current code. Sweat spacing, easing, focus states, reduced-motion, both themes."
           : "Apply ONLY the listed changes, surgically; adapt minimally where the spec misses current code, skip (and note in the PR body) what is impossible or already done."} No version bumps.
 3. \`cd apps && npm install\` (once), then \`./check.sh web\` from repo root until green; drop a change that cannot pass rather than the PR.${group.tier === "ambitious" ? " Then re-read the full diff: if the surface did not end simpler, abort with a note instead of opening the PR (a good outcome)." : ""}
 4. Commit (Co-Authored-By trailer), push -u, \`gh pr create --base master\` with title ${JSON.stringify(group.title)} and a body giving the rationale + cited principle${group.tier === "ambitious" ? " + what the journey loses (steps, decisions, waiting)" : ""}, ending with the Generated with Claude Code line.
 Return the PR url, or a short error string.`,
-        { label: `pr:${group.tier}:${group.area}-${i}`, phase: "Emit", isolation: "worktree" },
+        { label: `pr:${group.tier}:${refSlug(group.area)}-${i}`, phase: "Emit", isolation: "worktree" },
       ),
     ),
   );
 
-// ── Publish (skip the critique, emit PRs from the saved draft) ───────────────
+// one issue agent per design fork; shared by live emit and publish mode
+const emitIssues = (issues) =>
+  parallel(
+    issues.map((issue, i) => () =>
+      fast(
+        `Open a GitHub issue on ${REPO}: \`gh issue create --title ${JSON.stringify(issue.title)} --body <body> ${issue.labels.map((l) => `--label ${JSON.stringify(l)}`).join(" ")}\`. Body:\n${issue.body}\nCreate any missing labels first with \`gh label create\`. Return the issue url.`,
+        { label: `issue:${i}`, phase: "Emit" },
+      ),
+    ),
+  );
+
+// ── Publish (skip the critique, emit PRs + issues from the saved draft) ──────
 if (EMIT === "publish") {
   phase("Load");
   const loaded = await fast(
-    `Read .critique/out/prs.json and return its PR groups verbatim. If missing, fall back to the legacy .critique/out/cheap-wins.json with tier="cheap" and area="legacy" on every group. If neither exists, return groups=[].`,
-    { label: "load-draft", phase: "Load", schema: GROUPS_SCHEMA },
+    `Read .critique/out/prs.json and .critique/out/issues.json and return {groups, issues} verbatim (issues=[] when issues.json is missing). If prs.json is missing, fall back to the legacy .critique/out/cheap-wins.json with tier="cheap" and area="legacy" on every group. If no PR draft exists either, return groups=[] and issues=[].`,
+    { label: "load-draft", phase: "Load", schema: DRAFT_SCHEMA },
   );
   const savedGroups = loaded ? loaded.groups : [];
-  if (savedGroups.length === 0) {
+  const savedIssues = loaded ? loaded.issues : [];
+  if (savedGroups.length === 0 && savedIssues.length === 0) {
     log("no saved draft, run the critique first");
-    return { error: "no PR groups at .critique/out/prs.json" };
+    return { error: "no draft at .critique/out/prs.json" };
   }
-  log(`${savedGroups.length} PR group(s) to emit`);
+  log(`${savedGroups.length} PR group(s) + ${savedIssues.length} issue(s) to emit`);
   phase("Emit");
   const publishedPrs = await emitPrGroups(savedGroups);
-  return { mode: "publish", prs: publishedPrs.filter(Boolean) };
+  const publishedIssues = await emitIssues(savedIssues);
+  return { mode: "publish", prs: publishedPrs.filter(Boolean), issues: publishedIssues.filter(Boolean) };
 }
 
 // ── Brief ───────────────────────────────────────────────────────────────────
@@ -392,7 +398,7 @@ ${synth.reportMarkdown}
     prGroups: synth.prGroups.length,
     issues: synth.issues.length,
     report: ".critique/out/REPORT.md",
-    next: "re-run with args {emit:'publish'} to open the PRs",
+    next: "re-run with args {emit:'publish'} to open the PRs and issues",
   };
 }
 
@@ -401,14 +407,7 @@ log(`live emit: ${synth.prGroups.length} PRs, ${synth.issues.length} issues`);
 
 const prs = await emitPrGroups(synth.prGroups);
 
-const issues = await parallel(
-  synth.issues.map((issue, i) => () =>
-    fast(
-      `Open a GitHub issue on ${REPO}: \`gh issue create --title ${JSON.stringify(issue.title)} --body <body> ${issue.labels.map((l) => `--label ${JSON.stringify(l)}`).join(" ")}\`. Body:\n${issue.body}\nCreate any missing labels first with \`gh label create\`. Return the issue url.`,
-      { label: `issue:${i}`, phase: "Emit" },
-    ),
-  ),
-);
+const issues = await emitIssues(synth.issues);
 
 return {
   mode: "live",
