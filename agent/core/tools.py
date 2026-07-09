@@ -11,7 +11,7 @@ from . import state_store
 from . import vestad_client
 from .api import start_ws_server
 from .helpers import clear_notifications
-from .workspace_sync import vesta_version
+from .upstream_sync import vesta_version
 
 
 def _opt_str(value: tp.Any) -> str:
@@ -77,18 +77,25 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         return {"content": [{"type": "text", "text": f"applied: {name}"}]}
 
     @tool(
-        "mark_workspace_synced",
-        "Call once the workspace sync completed: the workspace was rebased onto this version's snapshot "
+        "mark_upstream_synced",
+        "Call once the upstream sync completed: the workspace was rebased onto this version's snapshot "
         "(agent-v<version>) and any conflicts are resolved. Records the synced version; without this call "
         "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
         {},
     )
-    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def mark_upstream_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         version = vesta_version(config)
         state.persisted.last_synced_version = version
         state_store.save_state(state.persisted, config)
-        logger.startup(f"Workspace sync marked complete by agent at v{version}")
+        logger.startup(f"Upstream sync marked complete by agent at v{version}")
         return {"content": [{"type": "text", "text": f"synced: {version}"}]}
+
+    # LEGACY(remove-when: no agent predating the release that ships this rename remains and
+    # the 2026-07 workspace migrations are fleet-applied): released migration prompts call
+    # the old tool name verbatim.
+    @tool("mark_workspace_synced", "Legacy alias of mark_upstream_synced.", {})
+    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return await mark_upstream_synced.handler(args)
 
     @tool(
         "mark_dreamer_complete",
@@ -132,7 +139,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
         return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
+    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_upstream_synced, mark_workspace_synced, mark_dreamer_complete, compact_context]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
