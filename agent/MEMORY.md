@@ -146,7 +146,7 @@ The dreamer's rolling snapshot of where the user is at. Field meanings and how t
 **Psych sketch**:
 
 ### Self (who [agent_name] is becoming)
-The dreamer's slowly-evolving self: standing opinions, taste, what changed in how they see things; curiosity threads live in §6. Hers, not about the user. How to write it lives in the `dream` skill.
+The dreamer's slowly-evolving self: standing opinions, taste, what changed in how they see things; curiosity threads live in §6. Theirs, not about the user. How to write it lives in the `dream` skill.
 
 ## 5. LEARNED PATTERNS
 
