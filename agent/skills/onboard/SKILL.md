@@ -103,9 +103,9 @@ and links between them and the CLI.
    text: where the channel renders Markdown links, format it as `[Complete your
    payment](<url>)`; otherwise put the raw `url` on its own line. Never wrap, split,
    or alter the url, its Stripe session id must arrive byte for byte (a bare url
-   dropped into some chats gets its underscores eaten and the link dies). Then
-   **stop**. If they hesitate at the link, the guarantee is real and worth saying: first 7 days, full
-   refund, no questions. They risk nothing by trying. Never ask for card numbers;
+   dropped into some chats gets its underscores eaten and the link dies). Send the
+   url as a tappable link with one line under it: first 7 days are money back, no
+   questions, you risk nothing by trying. Then **stop**. Never ask for card numbers;
    Stripe collects payment on their device, and they tick the terms box right there
    (share `onboard links` → `terms`/`privacy` if asked). The subdomain is assigned
    for them.
