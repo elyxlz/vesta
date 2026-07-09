@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
-use crate::serve::ServiceEntry;
+use crate::settings::ServiceEntry;
 
 const POLL_INTERVAL_SECS: u64 = 3;
 

@@ -27,6 +27,8 @@ mod self_log;
 mod time_utils;
 mod self_update;
 mod serve;
+mod settings;
+mod state;
 mod status;
 mod systemd;
 mod tunnel;
@@ -519,7 +521,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     // The systemd unit launches `serve --standalone` with no flag, so the
     // persisted preference is the source of truth; an explicit --standalone
     // --expose-lan (CI/dev) still wins.
-    let expose_lan = expose_lan || serve::expose_lan_setting();
+    let expose_lan = expose_lan || settings::expose_lan_setting();
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
@@ -675,7 +677,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     // --expose-lan is a persisted binding preference (like the port file), not part
     // of the static unit. Write it before the daemon (re)starts so it reads the new
     // value; a running daemon only re-binds on restart.
-    let lan_changed = serve::set_expose_lan(expose_lan);
+    let lan_changed = settings::set_expose_lan(expose_lan);
 
     if systemd::is_active() {
         if lan_changed {

@@ -8,7 +8,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 
-use crate::serve::SharedState;
+use crate::state::SharedState;
 
 #[derive(RustEmbed)]
 #[folder = "../apps/web/dist"]

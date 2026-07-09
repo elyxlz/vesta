@@ -4,9 +4,8 @@
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 
-use crate::auth;
 use crate::docker;
-use crate::serve::{SharedState, err_response};
+use crate::state::{err_response, AuthSession, SharedState};
 
 #[derive(Serialize)]
 pub struct OAuthStartResponse {
@@ -33,7 +32,7 @@ pub async fn oauth_start_handler(
     let mut sessions = state.auth_sessions.lock().await;
     sessions.insert(
         session_id.clone(),
-        auth::AuthSession {
+        AuthSession {
             code_verifier,
             state: auth_state,
             created: std::time::Instant::now(),
