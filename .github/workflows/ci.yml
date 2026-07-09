@@ -72,6 +72,8 @@ jobs:
               - 'check.sh'
             go:
               - 'agent/skills/whatsapp/cli/**'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
 
   # ── Version check ──────────────────────────────────────────────────────
   # Same skip as detect-changes; version-check has no `needs:` so the gate
@@ -214,7 +216,7 @@ jobs:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -223,21 +225,14 @@ jobs:
         with:
           go-version: '1.25'
 
-      - name: Format check
-        working-directory: agent/skills/whatsapp/cli
-        run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "❌ These files are not formatted:"
-            echo "$UNFORMATTED"
-            echo "Run 'gofmt -w .' and commit the result"
-            exit 1
-          fi
-          echo "✓ All Go files are formatted"
+      - name: Cache whisper.cpp static build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vesta-whisper
+          key: whisper-${{ hashFiles('agent/skills/whatsapp/cli/go.mod') }}
 
-      # go vet is skipped — requires whisper.cpp CGO headers that are only
-      # available in the Docker build environment. Compilation is verified
-      # by the container image build in CI.
+      - name: Run whatsapp checks
+        run: ./check.sh whatsapp
 
   # ── Web deployment guards ─────────────────────────────────────────────
   vite-base-check:
