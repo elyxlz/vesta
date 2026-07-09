@@ -95,6 +95,10 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 /// Lives in host config (keyed by agent name), separate from the core-code mount, so
 /// agent-code updates never touch it.
 pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
+/// vestad's per-host upstream snapshot repo, bind-mounted read-only so boxes `git fetch`
+/// stock content locally (no network, no auth). Lives under /run, so the /root/agent/
+/// git-noise INVARIANT below does not apply (same as ENV_MOUNT_DEST).
+pub(crate) const UPSTREAM_MOUNT_DEST: &str = "/run/vesta-upstream";
 // INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
 // checkout of the workspace snapshot, and a mount puts a file/dir on disk that the
 // snapshot does not contain -- so git reports it as untracked ("?? path") noise on every
@@ -104,7 +108,7 @@ pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 // Adding a new /root/agent/ mount without doing this dirties every box's tree. The
 // workspace attach integration test (vestad/tests/server/workspace.rs) asserts a clean
 // tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
-pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST];
+pub(crate) const MOUNT_DESTS: &[&str] = &[ENV_MOUNT_DEST, CORE_MOUNT_DEST, CONSTITUTION_MOUNT_DEST, UPSTREAM_MOUNT_DEST];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     let steps: [String; 11] = [
@@ -1455,10 +1459,10 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 
 // --- Container creation ---
 
-/// Assemble the full bind list for a container: base mounts (env, constitution, optional core)
-/// plus user-granted host mounts.
-fn assemble_binds(env_mount: String, constitution_mount: String, core_mount: Option<String>, user_mounts: &[crate::mounts::HostMount]) -> Vec<String> {
-    let mut binds = vec![env_mount, constitution_mount];
+/// Assemble the full bind list for a container: base mounts (env, constitution, upstream,
+/// optional core) plus user-granted host mounts.
+fn assemble_binds(env_mount: String, constitution_mount: String, upstream_mount: String, core_mount: Option<String>, user_mounts: &[crate::mounts::HostMount]) -> Vec<String> {
+    let mut binds = vec![env_mount, constitution_mount, upstream_mount];
     if let Some(core) = core_mount {
         binds.push(core);
     }
@@ -1489,13 +1493,19 @@ pub async fn create_container(
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
     let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), CORE_MOUNT_DEST);
 
+    let upstream_mount = format!(
+        "{}:{}:ro,z",
+        crate::upstream::upstream_dir(&env_config.config_dir).display(),
+        UPSTREAM_MOUNT_DEST
+    );
+
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
     labels.insert(LABEL_USER.to_string(), current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
     let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
-    let binds = assemble_binds(env_mount, constitution_mount, core_mount_opt, user_mounts);
+    let binds = assemble_binds(env_mount, constitution_mount, upstream_mount, core_mount_opt, user_mounts);
 
     let mut device_requests = None;
     match gpu_available(docker).await {
@@ -2183,6 +2193,12 @@ fn needs_rebuild(cname: &str, info: &bollard::models::ContainerInspectResponse, 
         return true;
     }
 
+    let has_upstream_mount = mounts.iter().any(|m| m.destination.as_deref() == Some(UPSTREAM_MOUNT_DEST));
+    if !has_upstream_mount {
+        tracing::info!(container = %cname, "rebuild needed: missing upstream mount");
+        return true;
+    }
+
     let cmd = info.config.as_ref()
         .and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
@@ -2407,9 +2423,27 @@ mod tests {
     #[test]
     fn assemble_binds_appends_user_mounts() {
         let m = crate::mounts::HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
-        let binds = assemble_binds("/e:/run/vestad-env:ro,z".into(), "/c:/root/agent/constitution.md:ro,z".into(), None, std::slice::from_ref(&m));
-        assert_eq!(binds.len(), 3);
-        assert_eq!(binds[2], "/mnt/media:/mnt/media:ro");
+        let binds = assemble_binds(
+            "/e:/run/vestad-env:ro,z".into(),
+            "/c:/root/agent/constitution.md:ro,z".into(),
+            "/u/upstream:/run/vesta-upstream:ro,z".into(),
+            None,
+            std::slice::from_ref(&m),
+        );
+        assert_eq!(binds.len(), 4);
+        assert_eq!(binds[3], "/mnt/media:/mnt/media:ro");
+    }
+
+    #[test]
+    fn assemble_binds_includes_the_upstream_mount() {
+        let binds = assemble_binds(
+            "/e:/run/vestad-env:ro,z".into(),
+            "/c:/root/agent/constitution.md:ro,z".into(),
+            "/u/upstream:/run/vesta-upstream:ro,z".into(),
+            Some("/x/core:/root/agent/core:ro,z".into()),
+            &[],
+        );
+        assert!(binds.iter().any(|bind| bind == "/u/upstream:/run/vesta-upstream:ro,z"));
     }
 
     #[test]
@@ -3085,11 +3119,31 @@ mod tests {
         let tc = TestContainer::new("rebuild-fresh");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
+
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
+
+        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "fresh container should NOT need rebuild");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_needs_rebuild_true_when_upstream_mount_missing() {
+        // The mount added by the upstream rename: its absence is exactly what converges
+        // the fleet's pre-rename containers via reconcile's rebuild path.
+        let docker = test_docker();
+        let tc = TestContainer::new("rebuild-upstream");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "fresh container should NOT need rebuild");
+        assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container without the upstream mount SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -3107,9 +3161,11 @@ mod tests {
 
         let src_core = code_dir.path().join("core");
 
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
@@ -3124,9 +3180,13 @@ mod tests {
         let tc = TestContainer::new("rebuild-cmd");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
-        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
 
-        create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong cmd SHOULD need rebuild");
     }
@@ -3149,9 +3209,13 @@ mod tests {
         let tc = TestContainer::new("rebuild-nocode");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
-        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
 
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "missing core code mounts should NOT trigger rebuild");
     }
@@ -3163,9 +3227,13 @@ mod tests {
         let tc = TestContainer::new("rebuild-net");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
-        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
 
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
         assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "container with wrong network SHOULD need rebuild");
     }
@@ -3180,9 +3248,13 @@ mod tests {
         let tc = TestContainer::new("rebuild-restart");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
-        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
 
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, "unless-stopped").await;
 
         assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "a policy mismatch must NOT trigger a rebuild — it's reconciled in place");
         assert_eq!(container_restart_policy(&docker, &tc.name).await, "unless-stopped");
@@ -3198,10 +3270,14 @@ mod tests {
         let img = TestImage::new("rebuild-full");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
-        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
 
         // Create with wrong network to force rebuild
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
         assert!(inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "precondition: should need rebuild");
 
         // Snapshot
@@ -3209,7 +3285,7 @@ mod tests {
 
         // Remove old, create new from snapshot with correct config
         remove_container_force(&docker, &tc.name).await.ok();
-        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!inspect_then_needs_rebuild(&docker, &tc.name, &[]).await, "rebuilt container should NOT need rebuild");
     }
