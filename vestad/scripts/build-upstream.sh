@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# Maintain this host's agent-workspace repo and bundle from the extracted agent content.
+# Maintain this host's upstream repo and bundle from the extracted agent content.
 # Run by vestad at startup (after ensure_agent_code); also tested directly by
-# agent/tests/test_build_workspace.py -- the same file in both places, so tests and
+# agent/tests/test_build_upstream.py -- the same file in both places, so tests and
 # production cannot drift.
 #
-# Usage: build-workspace.sh <content-dir> <workspace-dir> <version>
+# Usage: build-upstream.sh <content-dir> <upstream-dir> <version>
 #   content-dir    the extracted agent home (core/, skills/, MEMORY.md, .gitignore)
-#   workspace-dir  owns workspace.git (bare) and workspace.bundle
+#   upstream-dir   owns upstream.git (bare) and workspace.bundle
 #   version        the running vesta version; tags the snapshot agent-v<version>
 #
-# Append-only per host: one snapshot commit per content change on branch agent-workspace,
+# Append-only per host: one snapshot commit per content change on branch agent-upstream,
 # tag agent-v<version> force-set to the head (it only actually moves under dev churn --
-# releases bump the version every time). The bundle, not the repo, is what boxes fetch.
+# releases bump the version every time). Boxes fetch straight from the bind-mounted repo;
+# the bundle is only still generated for pre-rename boxes (see LEGACY below).
 set -euo pipefail
 
-CONTENT="${1:?Usage: build-workspace.sh <content-dir> <workspace-dir> <version>}"
-WS="${2:?workspace-dir required}"
+CONTENT="${1:?Usage: build-upstream.sh <content-dir> <upstream-dir> <version>}"
+WS="${2:?upstream-dir required}"
 VERSION="${3:?version required}"
-BRANCH="agent-workspace"
+BRANCH="agent-upstream"
+# LEGACY(remove-when: no agent predating the release that ships this rename remains and
+# the 2026-07 workspace migrations are fleet-applied): old boxes' checked-out
+# fetch-workspace.sh fetches refs/heads/agent-workspace; publish it alongside.
+LEGACY_BRANCH="agent-workspace"
 TAG="agent-v$VERSION"
-REPO="$WS/workspace.git"
+REPO="$WS/upstream.git"
 BUNDLE="$WS/workspace.bundle"
 
 mkdir -p "$WS"
@@ -47,14 +52,23 @@ export GIT_COMMITTER_NAME="vesta" GIT_COMMITTER_EMAIL="vesta@vesta"
 # other global setting) must not break or alter vestad's snapshot construction.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
+# LEGACY(remove-when: same condition as LEGACY_BRANCH): a repo carried over from the
+# workspace era has only agent-workspace; seed agent-upstream from it so the first
+# post-rename snapshot extends that history instead of starting an orphan root.
+if ! git rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null \
+   && git rev-parse -q --verify "refs/heads/$LEGACY_BRANCH" >/dev/null; then
+  git update-ref "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH"
+fi
+
 git add -A
 TREE="$(git write-tree)"
 PARENT="$(git rev-parse -q --verify "refs/heads/$BRANCH" || true)"
 
 if [ -n "$PARENT" ] && [ "$(git rev-parse "$PARENT^{tree}")" = "$TREE" ] \
    && [ "$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" || true)" = "$PARENT" ] \
+   && [ "$(git rev-parse -q --verify "refs/heads/$LEGACY_BRANCH" || true)" = "$PARENT" ] \
    && [ -f "$BUNDLE" ]; then
-  echo "workspace: no content change for v$VERSION; nothing to do"
+  echo "upstream: no content change for v$VERSION; nothing to do"
   exit 0
 fi
 
@@ -63,10 +77,11 @@ if [ -z "$PARENT" ] || [ "$(git rev-parse "$PARENT^{tree}")" != "$TREE" ]; then
   git update-ref "refs/heads/$BRANCH" "$COMMIT"
 fi
 git tag -f "$TAG" "refs/heads/$BRANCH" >/dev/null
+git update-ref "refs/heads/$LEGACY_BRANCH" "refs/heads/$BRANCH"
 
 # Regenerate atomically: boxes may be mid-download of the old bundle; rename is safe.
 TAG_REFS="$(git tag -l 'agent-v*' | sed 's|^|refs/tags/|')"
 # shellcheck disable=SC2086
-git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" $TAG_REFS 2>/dev/null
+git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH" $TAG_REFS 2>/dev/null
 mv "$BUNDLE.tmp" "$BUNDLE"
-echo "workspace: $BRANCH at $TAG ($(git rev-parse --short "refs/heads/$BRANCH"))"
+echo "upstream: $BRANCH at $TAG ($(git rev-parse --short "refs/heads/$BRANCH"))"
