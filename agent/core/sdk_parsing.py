@@ -132,31 +132,19 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
     message. Tool-use blocks carry no output here: tool/subagent activity is surfaced via the native
     hooks in make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
-        session_id: str | None = None
-        try:
-            session_id = msg.session_id
-        except AttributeError:
-            pass
-        try:
-            usage_data = msg.usage or {}
-            cost = msg.total_cost_usd
-            duration_s = msg.duration_ms / 1000 if msg.duration_ms is not None else None
-            parts = []
-            if usage_data:
-                input_tok = usage_data["input_tokens"] if "input_tokens" in usage_data else 0
-                output_tok = usage_data["output_tokens"] if "output_tokens" in usage_data else 0
-                cache_read = usage_data["cache_read_input_tokens"] if "cache_read_input_tokens" in usage_data else 0
-                cache_create = usage_data["cache_creation_input_tokens"] if "cache_creation_input_tokens" in usage_data else 0
-                parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
-            if cost is not None:
-                parts.append(f"cost=${cost:.4f}")
-            if duration_s is not None:
-                parts.append(f"duration={duration_s:.1f}s")
-            if parts:
-                logger.usage(" | ".join(parts))
-        except (AttributeError, TypeError, KeyError):
-            pass
-        return [], [], session_id
+        usage_data = msg.usage or {}
+        parts = []
+        if usage_data:
+            input_tok = usage_data["input_tokens"] if "input_tokens" in usage_data else 0
+            output_tok = usage_data["output_tokens"] if "output_tokens" in usage_data else 0
+            cache_read = usage_data["cache_read_input_tokens"] if "cache_read_input_tokens" in usage_data else 0
+            cache_create = usage_data["cache_creation_input_tokens"] if "cache_creation_input_tokens" in usage_data else 0
+            parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
+        if msg.total_cost_usd is not None:
+            parts.append(f"cost=${msg.total_cost_usd:.4f}")
+        parts.append(f"duration={msg.duration_ms / 1000:.1f}s")
+        logger.usage(" | ".join(parts))
+        return [], [], msg.session_id
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
@@ -185,7 +173,7 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
         return [], [], None
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else []), [], None
+        return [], [], None
 
     texts = []
     thinking_blocks = []
