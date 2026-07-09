@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -152,8 +153,7 @@ func runServe(logger waLog.Logger) {
 	notifDir := extractNotificationsDir()
 	noNotify := isNoNotifications()
 	if notifDir == "" && !noNotify {
-		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve (or pass --no-notifications)")
-		os.Exit(1)
+		notifDir = defaultNotificationsDir()
 	}
 
 	var err error
@@ -162,6 +162,7 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	writeDaemonInfo(dataDir, os.Args[1:])
 	if notifDir != "" {
 		notifDir, err = resolveDir(notifDir)
 		if err != nil {
@@ -224,7 +225,11 @@ func runServe(logger waLog.Logger) {
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	writeDeathNotification(notifDir, sig.String())
+	if _, err := os.Stat(stopRequestedPath(dataDir)); err == nil {
+		os.Remove(stopRequestedPath(dataDir))
+	} else {
+		writeDeathNotification(notifDir, sig.String())
+	}
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}
@@ -301,6 +306,30 @@ var commands = []command{
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
 	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
 	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
+	{name: "daemon-status", run: cmdDaemonStatus},
+}
+
+func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
+	status, _ := wac.GetAuthStatus()
+	info, _ := readDaemonInfo(wac.dataDir)
+	now := time.Now()
+	result := map[string]any{
+		"connected":                wac.client.IsConnected(),
+		"logged_in":                wac.client.IsLoggedIn(),
+		"auth_status":              string(status),
+		"started_at":               info.StartedAt,
+		"serve_args":               info.Args,
+		"sync_window_seconds_left": int(syncWindowRemaining(wac.dataDir, now).Seconds()),
+		"pair_attempts_last_hour":  pairAttemptsInWindow(wac.dataDir, now),
+	}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range build.Deps {
+			if dep.Path == "go.mau.fi/whatsmeow" {
+				result["whatsmeow_version"] = dep.Version
+			}
+		}
+	}
+	return result, nil
 }
 
 // lookupCommand finds a command by its canonical name or one of its aliases.
