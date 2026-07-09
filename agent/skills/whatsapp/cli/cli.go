@@ -307,6 +307,38 @@ var commands = []command{
 	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
 	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
 	{name: "daemon-status", run: cmdDaemonStatus},
+	{name: "link-start", run: cmdLinkStart},
+	{name: "link-status", run: cmdLinkStatus},
+	{name: "link-stop", run: cmdLinkStop},
+}
+
+func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
+	var port int
+	var acknowledged bool
+	fs := flag.NewFlagSet("link-start", flag.ContinueOnError)
+	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
+	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if wac.IsAuthenticated() {
+		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
+	}
+	if err := guardPairAttempt(wac.dataDir, time.Now(), acknowledged); err != nil {
+		return nil, err
+	}
+	wac.startLinkMode(port)
+	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
+}
+
+func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
+	status, _ := wac.GetAuthStatus()
+	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
+}
+
+func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
+	wac.stopLinkMode()
+	return map[string]any{"status": "link_stopped"}, nil
 }
 
 func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {

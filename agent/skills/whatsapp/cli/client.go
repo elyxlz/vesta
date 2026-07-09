@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,12 @@ type WhatsAppClient struct {
 	authStatus        AuthStatus
 	authMutex         sync.RWMutex
 	qrPath            string
+	currentQRCode     string // guarded by authMutex, cleared on success
 	reauthInProgress  bool
+	linkMu            sync.Mutex
+	linkActive        bool
+	linkDeadline      time.Time
+	linkServer        *http.Server
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
@@ -269,6 +275,69 @@ func (wac *WhatsAppClient) initiateReauth() error {
 	return nil
 }
 
+func (wac *WhatsAppClient) linkModeActive() bool {
+	wac.linkMu.Lock()
+	defer wac.linkMu.Unlock()
+	return wac.linkActive && time.Now().Before(wac.linkDeadline)
+}
+
+func (wac *WhatsAppClient) startLinkMode(port int) {
+	wac.linkMu.Lock()
+	wac.linkActive = true
+	wac.linkDeadline = time.Now().Add(LinkSessionTimeout)
+	wac.linkMu.Unlock()
+	if port > 0 {
+		wac.startLinkServer(port)
+	}
+	go wac.handleQRAuthentication()
+}
+
+func (wac *WhatsAppClient) stopLinkMode() {
+	wac.linkMu.Lock()
+	wac.linkActive = false
+	wac.linkMu.Unlock()
+	wac.stopLinkServer()
+}
+
+// consumeQRChannel drains one QR channel, publishing each rotated code to disk
+// and memory. Returns true on pairing success, false when the channel closes
+// without success (whatsmeow closes it after the last code times out).
+func (wac *WhatsAppClient) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelItem) bool {
+	for evt := range qrChan {
+		if evt.Event == "code" {
+			qrPath := filepath.Join(wac.dataDir, "qr-code.png")
+			if err := qrcode.WriteFile(evt.Code, qrcode.Medium, QRCodeSize, qrPath); err != nil {
+				wac.logger.Errorf("Failed to save QR code: %v", err)
+				continue
+			}
+			wac.authMutex.Lock()
+			wac.qrPath = qrPath
+			wac.currentQRCode = evt.Code
+			wac.authStatus = AuthStatusQRReady
+			wac.authMutex.Unlock()
+			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusQRReady)})
+			wac.logger.Infof("QR code saved to %s", qrPath)
+		} else if evt.Event == "success" {
+			wac.setAuthStatus(AuthStatusAuthenticated)
+			wac.logger.Infof("Successfully authenticated!")
+			if err := wac.EnsureOnline(); err != nil {
+				wac.logger.Warnf("Failed to set online status: %v", err)
+			}
+			wac.authMutex.Lock()
+			if wac.qrPath != "" {
+				os.Remove(wac.qrPath)
+				wac.qrPath = ""
+			}
+			wac.currentQRCode = ""
+			wac.authMutex.Unlock()
+			recordLinkedAt(wac.dataDir, time.Now())
+			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusAuthenticated)})
+			return true
+		}
+	}
+	return false
+}
+
 func (wac *WhatsAppClient) handleQRAuthentication() {
 	wac.authMutex.Lock()
 	if wac.reauthInProgress {
@@ -284,51 +353,27 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 	}()
 	wac.authMutex.Unlock()
 
-	qrChan, err := wac.client.GetQRChannel(context.Background())
-	if err != nil {
-		wac.logger.Errorf("Failed to get QR channel: %v", err)
-		return
-	}
-	err = wac.client.Connect()
-	if err != nil {
-		wac.logger.Errorf("Failed to connect for QR: %v", err)
-		return
-	}
-
-	for evt := range qrChan {
-		if evt.Event == "code" {
-			qrPath := filepath.Join(wac.dataDir, "qr-code.png")
-			err := qrcode.WriteFile(evt.Code, qrcode.Medium, QRCodeSize, qrPath)
-			if err != nil {
-				wac.logger.Errorf("Failed to save QR code: %v", err)
-				continue
-			}
-
-			wac.authMutex.Lock()
-			wac.qrPath = qrPath
-			wac.authStatus = AuthStatusQRReady
-			wac.authMutex.Unlock()
-
-			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusQRReady)})
-			wac.logger.Infof("QR code saved to %s", qrPath)
-		} else if evt.Event == "success" {
-			wac.setAuthStatus(AuthStatusAuthenticated)
-			wac.logger.Infof("Successfully authenticated!")
-
-			if err := wac.EnsureOnline(); err != nil {
-				wac.logger.Warnf("Failed to set online status: %v", err)
-			}
-
-			wac.authMutex.Lock()
-			if wac.qrPath != "" {
-				os.Remove(wac.qrPath)
-				wac.qrPath = ""
-			}
-			wac.authMutex.Unlock()
-
-			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusAuthenticated)})
-			break
+	for {
+		qrChan, err := wac.client.GetQRChannel(context.Background())
+		if err != nil {
+			wac.logger.Errorf("Failed to get QR channel: %v", err)
+			return
 		}
+		if err := wac.client.Connect(); err != nil {
+			wac.logger.Errorf("Failed to connect for QR: %v", err)
+			return
+		}
+		if wac.consumeQRChannel(qrChan) {
+			wac.stopLinkMode()
+			return
+		}
+		// Channel closed without success (codes exhausted). While link mode is
+		// active, disconnect and re-arm so the link page always shows a live
+		// code; a plain unpaired boot gets one pass and stops churning.
+		if !wac.linkModeActive() {
+			return
+		}
+		wac.client.Disconnect()
 	}
 }
 
