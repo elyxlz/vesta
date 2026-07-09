@@ -1820,7 +1820,7 @@ async fn list_backups_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.read().await;
 
-    let backups = backup::list_backups(&state.docker, &name)
+    let backups = backup::list_backups(&state.env_config.agents_dir, &name)
         .await
         .map_err(map_docker_err)?;
 
@@ -2539,7 +2539,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 }
 
-                let mut backups = match backup::list_backups(&state.docker, name).await {
+                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
                     Ok(b) => b,
                     Err(e) => {
                         tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
@@ -2824,7 +2824,45 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_cached_port_reusable;
+    use super::{is_cached_port_reusable, spawn_pipeline_sse};
+
+    // ── SSE cancellation safety ───────────────────────────────────
+    //
+    // Drives the real spawn_pipeline_sse (what create_backup_handler and
+    // restore_backup_handler both hand their pipeline future to), not a copy of it,
+    // so a regression to the non-spawned form fails this test.
+
+    #[tokio::test]
+    async fn sse_stream_drop_does_not_cancel_the_spawned_pipeline() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use tokio::sync::Notify;
+
+        let started = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(Notify::new());
+        let started_c = started.clone();
+        let gate_c = gate.clone();
+
+        let sse = spawn_pipeline_sse(async move {
+            gate_c.notified().await;
+            started_c.store(true, Ordering::SeqCst);
+            Ok("done".to_string())
+        });
+
+        // Simulate an SSE client disconnecting before the response is ever polled:
+        // hyper drops the response body the same way when a client goes away.
+        drop(sse);
+
+        gate.notify_one();
+        tokio::task::yield_now().await;
+
+        assert!(
+            started.load(Ordering::SeqCst),
+            "the pipeline spawned by spawn_pipeline_sse must run to completion regardless of SSE client disconnect"
+        );
+    }
 
     // --- auto_update defaults on (a fresh install and a settings.json predating the
     // field must both end up with auto-update enabled, not the bool's `false`) ---
