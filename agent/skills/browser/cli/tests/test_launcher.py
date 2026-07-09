@@ -121,3 +121,18 @@ def test_launch_env_keeps_display_when_headed(monkeypatch, tmp_path):
     env = launcher._launch_env(tmp_path, use_headless=False)
     assert env["DISPLAY"] == ":99"
     assert "MOZ_HEADLESS" not in env
+    assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"  # headed forces software GL (no glxtest helper)
+
+
+def test_ensure_headed_prefs_forces_software_webrender(tmp_path):
+    launcher._ensure_headed_prefs(tmp_path)
+    prefs = (tmp_path / "user.js").read_text()
+    assert 'gfx.webrender.software", true' in prefs
+    # WebGL must stay enabled or Camoufox's spoofed WebGL vendor/renderer would go missing.
+    assert "webgl.disabled" not in prefs
+
+
+def test_ensure_headed_prefs_is_idempotent(tmp_path):
+    launcher._ensure_headed_prefs(tmp_path)
+    launcher._ensure_headed_prefs(tmp_path)
+    assert (tmp_path / "user.js").read_text().count("gfx.webrender.software") == 1

@@ -7,7 +7,7 @@ Whatever they sign into persists in the shared profile, so the agent's everyday 
 more trusted over time, like a real user's.
 
 ```bash
-browser handover start --url "https://accounts.google.com" --port <service-port>
+browser handover start --url "https://accounts.google.com"
 browser handover status
 browser handover stop
 ```
@@ -15,23 +15,24 @@ browser handover stop
 ## How it works
 
 `handover start` launches headed Camoufox on the shared profile under an X server (Xvfb +
-openbox), then bridges it out with `x11vnc` + `websockify` serving a branded noVNC page. It
-returns the page path to send the user. `handover stop` tears the whole thing down; `status`
-reports what is up.
+openbox), then bridges it out with `x11vnc` + `websockify` serving a branded noVNC page. `handover
+stop` tears the whole thing down; `status` reports what is up.
 
-The public URL is the caller's job: register a `--public` vestad service to get a port, pass it
-as `--port`, and hand the user `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/handover.html`.
-vestad proxies the websocket through that route, so the same page works for a remote user with no
-extra tunnel.
+On a box, `start` registers a public vestad service itself and returns the ready-to-send
+`user_url` (`$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html`); vestad proxies the
+websocket through that route, so the same page works for a remote user with no extra tunnel. Off a
+box (dev), it returns a `http://localhost:<port>/handover.html` link instead. Pass `--port` only
+to override the port by hand.
 
 ## Talking to the user
 
 The page is deliberately generic (it says only "Vesta's browser"); you tell the user the task in
-chat. Point them at the URL, tell them exactly what to sign into, and wait. When they are done,
-`browser handover stop`, then resume automating on the same shared profile: the fresh session
-cookies are already there.
+chat. Send them the returned `user_url`, tell them exactly what to sign into, and wait. When they
+are done, `browser handover stop`, then resume automating on the same shared profile: the fresh
+session cookies are already there.
 
 ## Requirements
 
-Needs the handover binaries: `apt-get install -y novnc x11vnc openbox xdotool scrot` (see
-SETUP.md). If they are missing, `handover start` fails with an install hint.
+Needs the handover binaries: `apt-get install -y xvfb novnc x11vnc openbox` (see SETUP.md).
+`browser doctor` reports whether they are present; if any are missing, `handover start` fails with
+an install hint.

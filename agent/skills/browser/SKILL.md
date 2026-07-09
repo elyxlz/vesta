@@ -70,7 +70,7 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 ```bash
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
-browser launch --vision                           # ... and report back with screenshots, not the a11y tree
+browser launch --mode screenshot                  # ... and report back with screenshots, not the a11y tree
 browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
 browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
@@ -127,11 +127,11 @@ state). Camoufox captures PNG and JPEG natively; `--webp` is encoded as JPEG.
 You pick how the browser reports back after each action, once per session:
 
 ```bash
-browser mode a11y         # default: every action returns the accessibility tree with e1/e2 refs
-browser mode screenshot   # every action returns a screenshot path instead (work from the image)
-browser mode both         # return both
-browser mode              # print the current mode
-browser launch --vision   # shortcut for screenshot mode at launch
+browser mode a11y             # default: every action returns the accessibility tree with e1/e2 refs
+browser mode screenshot       # every action returns a screenshot path instead (work from the image)
+browser mode both             # return both
+browser mode                  # print the current mode
+browser launch --mode screenshot   # pick the mode at launch instead of switching after
 ```
 
 In **a11y** mode, drive with refs (`browser click e5`). In **screenshot** mode, read
@@ -162,7 +162,9 @@ order, most-preferred first:
    automated-browser detection never fires. Try this first, always.
 2. **Handover (primary fallback).** If a site gates on *account trust* (sign-in walls, banking,
    locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
-   the session persists in the shared profile and you resume automating. See
+   the session persists in the shared profile and you resume automating. One command does it:
+   `browser handover start --url "<sign-in URL>"` registers the public route itself and returns a
+   ready-to-send `user_url` (send the user that link, not `web_port`). See
    [interaction-skills/handover.md](interaction-skills/handover.md). This is the go-to when
    stealth is not enough.
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*

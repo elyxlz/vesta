@@ -99,6 +99,41 @@ def test_require_binaries_ok_when_present(monkeypatch):
     handover._require_binaries()  # does not raise
 
 
+def test_readiness_reports_missing_binaries(monkeypatch):
+    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
+    report = handover.readiness()
+    assert report["ready"] is False
+    assert set(handover.HANDOVER_BINARIES) <= set(report["missing"])
+
+
+def test_readiness_ok_when_all_present(monkeypatch, isolated):
+    monkeypatch.setattr(handover.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(handover, "NOVNC_DIRS", [_fake_novnc(isolated)])
+    assert handover.readiness() == {"ready": True, "missing": []}
+
+
+# ── public service registration ───────────────────────────────
+
+
+def test_register_public_service_none_off_box(monkeypatch):
+    # No tunnel / agent env means dev or tests: fall back to a local port, no registration.
+    monkeypatch.delenv("VESTAD_TUNNEL", raising=False)
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    assert handover._register_public_service() is None
+
+
+def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
+    monkeypatch.setenv("AGENT_NAME", "ada")
+    script = tmp_path / "register-service"
+    script.write_text("#!/bin/sh\necho 7431\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(handover, "REGISTER_SERVICE", script)
+    port, url = handover._register_public_service()
+    assert port == 7431
+    assert url == "https://box.vesta.run/agents/ada/browser/handover.html"
+
+
 # ── ports + liveness ──────────────────────────────────────────
 
 
@@ -123,6 +158,17 @@ def test_alive_false_for_none_and_dead_pid():
 def test_stop_is_idempotent_with_nothing_running():
     assert handover.stop() == {"stopped": True}
     assert handover.stop() == {"stopped": True}  # second call is a clean no-op
+
+
+def test_stop_removes_headed_prefs_from_recorded_profile(isolated):
+    # start records the profile it used; stop drops the handover-only user.js so later headless
+    # launches on that profile don't inherit software-render prefs.
+    profile = isolated / "profile"
+    profile.mkdir()
+    (profile / "user.js").write_text('user_pref("gfx.webrender.software", true);')
+    handover._session_file("profile").write_text(str(profile))
+    handover.stop()
+    assert not (profile / "user.js").exists()
 
 
 def test_status_all_false_when_idle():

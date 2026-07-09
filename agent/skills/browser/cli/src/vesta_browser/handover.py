@@ -2,17 +2,17 @@
 
 Some sites (Microsoft/Google/banking) fingerprint automated browsers and block
 device-code or scripted auth outright. The escape hatch is to let the *user* drive
-the agent's real headed Chrome: sign in once by hand, then reuse the resulting
-session cookies. This wraps the plumbing (headed Chrome under Xvfb + a window
+the agent's real headed Camoufox: sign in once by hand, then reuse the resulting
+session cookies. This wraps the plumbing (headed Camoufox under Xvfb + a window
 manager -> x11vnc -> websockify) but serves a branded page (Vesta's own type and
 palette) instead of noVNC's dated default UI, so what the user opens reads as
 Vesta, not a sketchy remote-desktop applet. It is deliberately generic: the page
 says only "Vesta's browser"; the agent tells the user what to do in chat.
 
-The public URL is the caller's job: register a `--public` vestad service to get a
-port, pass it here as `--port`, and hand the user
-`$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/handover.html`. vestad proxies the
-websocket upgrade through that route, so the same page works for a remote user.
+`start` makes the page reachable on its own: on a box it registers a public vestad
+service and returns the ready-to-send `user_url`, so the agent needs no separate
+register-service step and never hands the user a localhost link by mistake. Off a
+box (dev/tests) it falls back to a local port.
 """
 
 from __future__ import annotations
@@ -31,13 +31,32 @@ ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
 FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-# A MacBook Retina native screen (2880x1800, 16:10) rendered at 2x device scale: Chrome lays
-# out at 1440x900 CSS but paints 2x real pixels, so the streamed image is dense enough that
-# noVNC downscaling it into the user's window stays crisp even on a HiDPI display. We do NOT
-# ask the server to resize to the client (resizeSession): that would match CSS pixels and throw
-# the Retina density away, which is what made the stream look soft.
-SCREEN_W, SCREEN_H = 2880, 1800
-DEVICE_SCALE = 2
+# A 16:10 screen. Camoufox renders headed through software WebRender (it ships no GPU/glxtest
+# helper), so a huge framebuffer would rasterize far too slowly on the CPU; 1600x1000 keeps the
+# stream responsive, and 16:10 matches the MacBook frame in the page so the browser fills the
+# screen cut-out.
+SCREEN_W, SCREEN_H = 1600, 1000
+
+# Public vestad service name for the handover page. The tunnel routes it at
+# `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
+HANDOVER_SERVICE = "browser"
+REGISTER_SERVICE = Path.home() / "agent" / "skills" / "service" / "scripts" / "register-service"
+SERVICE_REGISTER_TIMEOUT_S = 35  # register-service polls vestad up to ~30s before giving up
+
+# The handover display shows exactly one app. Without this, openbox smart-places the window a
+# few pixels off origin and adds a titlebar, so the stream sits misaligned in the page's screen
+# cut-out. Strip decorations and pin every window maximized at the origin instead.
+OPENBOX_RC = """<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <position force="yes"><x>0</x><y>0</y></position>
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>
+"""
 
 # Debian's `novnc` package installs here; a few distros relocate it.
 NOVNC_DIRS = [
@@ -58,8 +77,22 @@ def _find_novnc_dir() -> Path:
     raise RuntimeError("noVNC not found (looked for core/rfb.js under /usr/share/novnc). Install it: apt-get install -y novnc x11vnc openbox")
 
 
+HANDOVER_BINARIES = ("x11vnc", "websockify", "openbox")
+
+
+def readiness() -> dict[str, object]:
+    """Report whether the handover prerequisites are installed, for `browser doctor` to surface the
+    gap before the agent commits to escalating rather than at the moment it first tries to."""
+    missing = [b for b in HANDOVER_BINARIES if not shutil.which(b)]
+    try:
+        _find_novnc_dir()
+    except RuntimeError:
+        missing.append("novnc")
+    return {"ready": not missing, "missing": missing}
+
+
 def _require_binaries() -> None:
-    missing = [b for b in ("x11vnc", "websockify", "openbox") if not shutil.which(b)]
+    missing = [b for b in HANDOVER_BINARIES if not shutil.which(b)]
     if missing:
         raise RuntimeError(f"missing {', '.join(missing)}. Install: apt-get install -y novnc x11vnc openbox")
 
@@ -96,6 +129,29 @@ def _read_pid(suffix: str) -> int | None:
         return None
 
 
+def _register_public_service() -> tuple[int, str] | None:
+    """Register (idempotently) the public handover service and return (port, public_url).
+
+    Returns None off a box, when there is no tunnel, agent name, or register-service script, so
+    dev/tests fall back to a local port. This is what lets `handover start` hand the agent a
+    ready-to-send URL instead of making it register a service and assemble the link by hand.
+    """
+    tunnel = os.environ["VESTAD_TUNNEL"] if "VESTAD_TUNNEL" in os.environ else ""
+    agent = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
+    if not tunnel or not agent or not REGISTER_SERVICE.exists():
+        return None
+    result = subprocess.run(
+        [str(REGISTER_SERVICE), HANDOVER_SERVICE, "--public"],
+        capture_output=True,
+        text=True,
+        timeout=SERVICE_REGISTER_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        return None
+    port = int(result.stdout.strip())
+    return port, f"{tunnel.rstrip('/')}/agents/{agent}/{HANDOVER_SERVICE}/handover.html"
+
+
 def render_page() -> str:
     return _PAGE_TEMPLATE
 
@@ -118,12 +174,23 @@ def _build_webroot() -> Path:
 
 
 def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
-    """Bring up headed Chrome + a window manager + x11vnc + websockify serving the branded page.
+    """Bring up headed Camoufox + a window manager + x11vnc + websockify serving the branded page.
 
-    Idempotent-ish: stops any prior handover first so ports and pids don't collide.
+    Idempotent-ish: stops any prior handover first so ports and pids don't collide. Returns a
+    ready-to-send `user_url` (public tunnel link on a box, localhost off one).
     """
     _require_binaries()
     stop()
+
+    # Resolve the port + the link to send the user. An explicit --port wins; otherwise, on a box,
+    # register a public vestad service and use its port so the returned URL is the public tunnel
+    # route; off a box, grab any local port.
+    service = _register_public_service() if port is None else None
+    if service is not None:
+        web_port, user_url = service
+    else:
+        web_port = port or _free_port(WEB_PORT_START)
+        user_url = f"http://localhost:{web_port}/handover.html"
 
     # Default to the shared browsing profile, not a throwaway one: whatever the user signs into
     # during the handover persists into the agent's everyday browser, so it grows more trusted
@@ -139,34 +206,39 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # x11vnc and Firefox both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc
     # 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto X11 with
     # MOZ_ENABLE_WAYLAND=0: handover owns a dedicated X11 display. Harmless where WAYLAND_DISPLAY
-    # is unset (e.g. the container). GDK_SCALE renders at 2x so the streamed screen stays crisp on
-    # HiDPI, the Firefox analog of Chrome's --force-device-scale-factor.
-    display = os.environ.get("DISPLAY") or ":99"
+    # is unset (e.g. the container).
+    display = os.environ["DISPLAY"] if "DISPLAY" in os.environ else ":99"
     os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"
-    os.environ["GDK_SCALE"] = str(DEVICE_SCALE)
 
-    # Bring the display up, then a window manager, then the headed browser. Camoufox fills the
-    # Xvfb screen under openbox; the sign-in URL is passed as a trailing arg so it opens there.
+    # Bring the display up, then a window manager, then the headed browser. Two levers make the
+    # window fill the cut-out for complementary reasons: openbox strips decorations and pins the
+    # window at the origin (physical placement), while window_size refits the fingerprint's
+    # screen/window geometry so what the page reports to JS matches the real 1600x1000 (fingerprint
+    # coherence). The sign-in URL is passed as a trailing arg so it opens there.
     launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
-    openbox = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    openbox_rc = _session_file("openbox-rc.xml")
+    openbox_rc.write_text(OPENBOX_RC)
+    openbox = subprocess.Popen(
+        ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+    )
     running = admin.launch_browser(
         HANDOVER_SESSION,
         headless=False,
         user_data_dir=profile,
         extra_args=[url] if url else None,
+        window_size=(SCREEN_W, SCREEN_H),
     )
 
     vnc_port = _free_port(VNC_PORT_START)
-    web_port = port or _free_port(WEB_PORT_START)
     webroot = _build_webroot()
 
     log = open(_session_file("handover-log"), "w")
     # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
     # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
-    # re-encoded, so typing on the big Retina framebuffer stays responsive instead of repolling
-    # the whole screen; -threads parallelises encoding for lower latency.
+    # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
+    # screen; -threads parallelises encoding for lower latency.
     x11vnc = subprocess.Popen(
         [
             "x11vnc",
@@ -200,9 +272,11 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     _session_file("websockify-pid").write_text(str(websockify.pid))
     _session_file("web-port").write_text(str(web_port))
     _session_file("vnc-port").write_text(str(vnc_port))
+    _session_file("profile").write_text(str(profile))
 
     return {
         "session": HANDOVER_SESSION,
+        "user_url": user_url,
         "web_port": web_port,
         "vnc_port": vnc_port,
         "ws_url": running.ws_url,
@@ -213,14 +287,19 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
 
 
 def stop() -> dict[str, object]:
-    """Tear down the handover: websockify, x11vnc, the WM, the headed Chrome, and the web root. Idempotent."""
+    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, and the web root. Idempotent."""
     for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
         if pid is not None:
             admin._terminate_pid(pid)
         _session_file(suffix).unlink(missing_ok=True)
     admin.stop_browser(HANDOVER_SESSION)
-    for suffix in ("web-port", "vnc-port", "handover-log"):
+    # The headed software-render prefs are handover-only; drop them from whichever profile this
+    # handover used so later headless launches don't inherit them.
+    profile_file = _session_file("profile")
+    if profile_file.exists():
+        (Path(profile_file.read_text().strip()) / "user.js").unlink(missing_ok=True)
+    for suffix in ("web-port", "vnc-port", "handover-log", "openbox-rc.xml", "profile"):
         _session_file(suffix).unlink(missing_ok=True)
     if WEBROOT.exists():
         shutil.rmtree(WEBROOT)
@@ -314,9 +393,9 @@ _PAGE_TEMPLATE = """<!doctype html>
 
     function connect() {
       rfb = new RFB(document.getElementById('screen'), wsUrl, { shared: true });
-      // Downscale a dense fixed framebuffer (see SCREEN_W/H, rendered at 2x) into the cut-out and
-      // ask for near-lossless tiles so text stays crisp; the link is local/tunnelled so quality
-      // is cheap. Do NOT resizeSession: that matches CSS pixels and discards the Retina density.
+      // Scale the fixed framebuffer (see SCREEN_W/H) to fit the cut-out and ask for near-lossless
+      // tiles so text stays crisp; the link is local/tunnelled so quality is cheap. Do NOT
+      // resizeSession: it would renegotiate the remote size to the CSS box and fight the fit.
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
       rfb.qualityLevel = 9;

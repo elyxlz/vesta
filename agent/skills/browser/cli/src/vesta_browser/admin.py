@@ -117,6 +117,7 @@ def launch_browser(
     user_data_dir: Path | None = None,
     executable: str | None = None,
     extra_args: list[str] | None = None,
+    window_size: tuple[int, int] | None = None,
 ) -> RunningCamoufox:
     """Launch Camoufox for a session, record pid + BiDi ws url for later discovery."""
     session = _session_name(name)
@@ -125,6 +126,7 @@ def launch_browser(
         headless=headless,
         executable=executable,
         extra_args=extra_args,
+        window_size=window_size,
     )
     _session_file(session, "browser-pid").write_text(str(running.pid))
     _session_file(session, "bidi-ws").write_text(running.ws_url)

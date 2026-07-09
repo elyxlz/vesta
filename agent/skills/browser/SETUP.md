@@ -31,12 +31,15 @@ fingerprint-spoofed in that mode. Check state any time with `browser doctor`.
 ## Handover dependencies
 
 Install these only for `browser handover` (letting the user sign in on the agent's headed
-browser when account trust, not fingerprint, is the wall). `novnc` provides `websockify` plus the
-noVNC client assets under `/usr/share/novnc`, which the branded page symlinks:
+browser when account trust, not fingerprint, is the wall). `xvfb` is the headless X server the
+headed browser renders on; `novnc` provides `websockify` plus the noVNC client assets under
+`/usr/share/novnc`, which the branded page symlinks:
 
 ```bash
-apt-get install -y novnc x11vnc openbox xdotool scrot
+apt-get install -y xvfb novnc x11vnc openbox
 ```
+
+`browser doctor` reports whether these are present, so you can check before escalating to handover.
 
 See SKILL.md § "Handover" for the flow.
 

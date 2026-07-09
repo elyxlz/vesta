@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from .presets import camou_config_env, select_preset
+from .presets import camou_config_env, fit_to_screen, select_preset
 
 CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
 # arm64 and x86_64 assets carry different build numbers within one release, so pin
@@ -230,10 +230,20 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
                 pass
 
 
-def _launch_env(profile_dir: Path, use_headless: bool) -> dict[str, str]:
-    """Build the child env: fingerprint config, plus headless hygiene."""
+# Prefs for the headed path (handover): force software WebRender so Camoufox renders without a
+# GPU. Camoufox ships no `glxtest` helper, so on a GL-less display (Xvfb) headed Gecko otherwise
+# stalls during graphics init. swgl needs no GL and does not touch the fingerprint (WebGL still
+# reports Camoufox's spoofed vendor/renderer, so we deliberately do NOT disable WebGL).
+_HEADED_PREFS = 'user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n'
+
+
+def _launch_env(profile_dir: Path, use_headless: bool, window_size: tuple[int, int] | None = None) -> dict[str, str]:
+    """Build the child env: fingerprint config, plus headless/headed rendering hygiene."""
     env = {**os.environ, "HOME": str(Path.home())}
-    env.update(camou_config_env(select_preset(profile_dir)))
+    preset = select_preset(profile_dir)
+    if window_size:
+        preset = fit_to_screen(preset, *window_size)
+    env.update(camou_config_env(preset))
     if use_headless:
         env["MOZ_HEADLESS"] = "1"
         # Strip any inherited DISPLAY/WAYLAND_DISPLAY: headless Firefox still runs GTK init and
@@ -241,7 +251,18 @@ def _launch_env(profile_dir: Path, use_headless: bool) -> dict[str, str]:
         # stock-Chromium habit, with no X server). Headless needs no display, so drop them.
         env.pop("DISPLAY", None)
         env.pop("WAYLAND_DISPLAY", None)
+    else:
+        env["LIBGL_ALWAYS_SOFTWARE"] = "1"
     return env
+
+
+def _ensure_headed_prefs(profile_dir: Path) -> None:
+    """Write the software-render user.js so headed Camoufox starts on a GL-less display.
+
+    handover.stop removes it again: the pref only matters for the headed handover, so it must
+    not linger in the shared profile and follow later headless launches.
+    """
+    (profile_dir / "user.js").write_text(_HEADED_PREFS)
 
 
 def launch(
@@ -251,8 +272,13 @@ def launch(
     executable: str | None = None,
     extra_args: list[str] | None = None,
     log_path: Path | None = None,
+    window_size: tuple[int, int] | None = None,
 ) -> RunningCamoufox:
-    """Spawn Camoufox and wait for its BiDi WebSocket. Returns a RunningCamoufox handle."""
+    """Spawn Camoufox and wait for its BiDi WebSocket. Returns a RunningCamoufox handle.
+
+    window_size refits the preset's spoofed screen/window geometry to a real screen so the
+    window fills it exactly (Camoufox sizes the window to the spoofed window.outer*).
+    """
     exe = ensure_camoufox(executable)
     profile_dir = user_data_dir or PROFILE_ROOT
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -265,10 +291,12 @@ def launch(
     args = [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
     if use_headless:
         args.insert(1, "-headless")
+    else:
+        _ensure_headed_prefs(profile_dir)
     if extra_args:
         args += extra_args
 
-    env = _launch_env(profile_dir, use_headless)
+    env = _launch_env(profile_dir, use_headless, window_size)
 
     stderr_log = log_path or Path(f"/tmp/vesta-camoufox-{os.getpid()}.log")
     log_handle = open(stderr_log, "w+b")

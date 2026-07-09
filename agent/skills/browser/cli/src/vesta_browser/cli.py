@@ -82,8 +82,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
         executable=args.executable,
     )
     admin.ensure_daemon()
-    if args.vision:
-        admin.set_mode("screenshot")
+    if args.mode:
+        admin.set_mode(args.mode)
     print(
         json.dumps(
             {
@@ -361,6 +361,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "camoufox_installed": camoufox_installed(),
         "camoufox_home": str(camoufox_home()),
         "sessions": admin.list_sessions(),
+        "handover": handover.readiness(),
     }
     try:
         report["asset"] = _asset_for_arch()[0]
@@ -428,7 +429,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lp.add_argument("--headless", action="store_true")
     lp.add_argument("--stealth", action="store_true")
     lp.add_argument("--no-sandbox", action="store_true")
-    lp.add_argument("--vision", action="store_true", help="Report back with screenshots instead of the a11y tree.")
+    lp.add_argument("--mode", choices=admin.PERCEPTION_MODES, default=None, help="Perception mode for this session: a11y | screenshot | both.")
     lp.add_argument("--user-data-dir", default=None)
     lp.add_argument("--executable", default=None)
     lp.add_argument("--port", type=int, default=None)
@@ -451,8 +452,10 @@ def _build_parser() -> argparse.ArgumentParser:
     hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
     hv.add_argument("action", choices=["start", "stop", "status"])
     hv.add_argument("--url", default=None, help="URL to open in the headed browser (e.g. the sign-in page).")
-    hv.add_argument("--port", type=int, default=None, help="Port to bind the web server on (from register-service --public).")
-    hv.add_argument("--user-data-dir", default=None, help="Chrome profile dir; its cookies persist for later reuse.")
+    hv.add_argument(
+        "--port", type=int, default=None, help="Override the web-server port; by default start registers a public service and returns its URL."
+    )
+    hv.add_argument("--user-data-dir", default=None, help="Profile dir; its cookies persist for later reuse.")
     hv.set_defaults(func=cmd_handover)
 
     # Navigation

@@ -92,9 +92,10 @@ def test_parser_mode_accepts_choices():
     assert parser.parse_args(["mode"]).mode is None
 
 
-def test_parser_launch_vision_flag():
+def test_parser_launch_mode_flag():
     parser = cli._build_parser()
-    assert parser.parse_args(["launch", "--vision"]).vision is True
+    assert parser.parse_args(["launch", "--mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["launch"]).mode is None
 
 
 def test_cmd_mode_sets_and_prints(monkeypatch, capsys):
