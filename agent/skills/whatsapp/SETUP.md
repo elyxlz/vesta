@@ -1,144 +1,53 @@
 # WhatsApp Setup
 
-## 1. Install dependencies
-
-`apt-get update` first if the index is stale (base image often is).
-
-```bash
-apt-get update
-apt-get install -y gcc g++ cmake ffmpeg
-ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-curl -fsSL "https://go.dev/dl/$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1).linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
-export PATH="/usr/local/go/bin:$PATH"
-```
-
-`g++` and `cmake` are NOT pulled in by `gcc` alone. Without them the whisper.cpp configure fails silently (cmake) or with `No CMAKE_CXX_COMPILER could be found` (g++).
-
-## 2. Build whisper.cpp (static libraries)
-
-The WhatsApp CLI links whisper.cpp statically via CGO for voice note transcription.
-
-The Go binding under `bindings/go` is pinned to a specific whisper.cpp commit in `cli/go.mod` (look for the `github.com/ggerganov/whisper.cpp` line, e.g. `v0.0.0-YYYYMMDDhhmmss-<short_sha>`). Master is usually ahead and breaks the binding (`undefined: whisper.Params`, etc.). Check out the matching commit before configuring:
+Everything the build needs (Go, whisper.cpp static libs, gcc, ffmpeg) ships in
+the agent image. Setup is one idempotent script:
 
 ```bash
-git clone https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp
-cd /opt/whisper.cpp
-PIN=$(grep 'ggerganov/whisper.cpp' ~/agent/skills/whatsapp/cli/go.mod | head -1 | awk -F'-' '{print $NF}')
-git checkout "$PIN"
-
-cmake -B build-static -S . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DGGML_OPENMP=ON
-cmake --build build-static --config Release -j$(nproc)
+~/agent/skills/whatsapp/setup.sh
 ```
 
-## 3. Download a whisper model
+It links the launcher onto PATH, warms the build cache (compile errors surface
+here), downloads the whisper voice-transcription model, adds the daemon line to
+the restart skill, and starts the daemon. Re-run it any time; it only does
+what's missing.
 
-Download to `/usr/local/share/`. The CLI tries models in order: `ggml-small.bin`, `ggml-small.en.bin`, `ggml-tiny.bin`, `ggml-tiny.en.bin`. Override with `WHISPER_MODEL` env var.
+## Linking an account
+
+**Before linking**, confirm the user is linking a DEDICATED WhatsApp account
+for the assistant, not their personal one (a linked personal account means the
+assistant reads and sends from their personal chats). No separate number yet?
+Read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting one.
 
 ```bash
-curl -fSL -o /usr/local/share/ggml-small.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+whatsapp link
 ```
 
-## 4. Install the WhatsApp CLI launcher
+Prints one shareable URL (public tunnel route, no token). The user opens it,
+goes to WhatsApp > Settings > Linked Devices > Link a Device, and scans. The
+page keeps the code current automatically, so there is no 20-second race. The
+command waits and reports success.
 
-**Never `go build` a static whatsapp binary.** A frozen binary silently drifts as the source gets fixes (issue #1073). Instead, `whatsapp` is a launcher script that compiles from source on every invocation (Go's build cache makes repeat runs fast) and pulls the latest whatsmeow before the daemon starts. Install it as a symlink:
+Fallback, pairing code (when the user can't scan): `whatsapp link --phone '+E.164'`.
+Confirm the echoed number is EXACTLY the one being linked, then send the user
+the code: WhatsApp > Linked Devices > Link a Device > Link with phone number.
 
-```bash
-mkdir -p ~/.local/bin
-ln -sf ~/agent/skills/whatsapp/whatsapp ~/.local/bin/whatsapp
-```
+**Pairing is rate-limited (2 attempts/hour).** Repeated pairing attempts get
+numbers flagged and banned by WhatsApp. If the limit trips, wait it out and
+retry only with the user's explicit go-ahead.
 
-The launcher owns the CGO build environment (whisper.cpp include/library paths, FTS5 flags); read the `whatsapp` script in this skill directory if the build fails. The first invocation compiles everything and can take a few minutes; later invocations reuse the build cache. At `serve` time it runs `go get go.mau.fi/whatsmeow@latest` so the daemon always compiles against current whatsmeow; if the module proxy is unreachable it warns and serves the source already on disk. Only whatsmeow floats: the whisper.cpp binding pin in `go.mod` is deliberate, never bump it to master.
+**Right after linking**, history sync runs and the daemon locks stop/restart
+for 5 minutes. Log lines like `can't send presence without PushName set` or a
+brief websocket EOF in this window are NORMAL; touch nothing.
 
-Verify the launcher works before continuing (expect a wait on first compile):
+## Troubleshooting
 
-```bash
-whatsapp --help
-```
-
-## 5. Start the daemon and authenticate
-
-```bash
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
-sleep 3
-```
-
-**Before authenticating**, confirm with the user that they should link from a dedicated WhatsApp account for the assistant, NOT their personal WhatsApp. Linking their personal account would mean the assistant reads/sends from their personal chats.
-
-If the user doesn't have a separate number yet, read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting a cheap prepaid SIM/eSIM and setting up a second WhatsApp account on their phone.
-
-### QR code (preferred)
-
-QR code is the default and preferred method:
-
-```bash
-whatsapp authenticate
-```
-
-A QR code image is saved to `~/.whatsapp/<instance>/qr-code.png` (or `~/.whatsapp/qr-code.png` for the default instance).
-
-**Preferred delivery: the auto-refresh QR page.** WhatsApp rotates the QR every ~20s and browsers cache a static image by URL, so sending a one-off PNG usually means the user scans a dead code (they refresh and nothing changes). Instead serve the self-contained page in `qr-link-server.py`, which always shows the CURRENT code.
-
-The page binds to localhost, so it needs a public route to be shareable. On vesta, register a public vestad service and bind the page to the port it hands back:
-
-```bash
-PORT=$(~/agent/skills/service/scripts/register-service wa-link --public)
-python3 ~/agent/skills/whatsapp/qr-link-server.py --instance <name> --port "$PORT" &
-```
-
-The shareable URL is then `$VESTAD_TUNNEL/agents/$AGENT_NAME/wa-link/` (public route, no token). Off vesta, bind any port and expose it with your own tunnel/ssh. The user opens it on a second screen, gets to Linked Devices > Link a Device, and scans whatever code is showing. The page re-fetches the QR every 3s with no-cache, so rotation, caching, and timing all stop being a problem.
-
-Fallback (one-off static image): upload the PNG to a temporary host:
-
-```bash
-curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/.whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
-```
-
-**QR codes expire in ~20 seconds.** Have the user on the Linked Devices > Link a Device screen with the camera ready before they open the page. If they scan and get "Could not link device, try again later", the daemon's WS to whatsapp.com went stale: restart the daemon (see Troubleshooting below) before the next attempt, the auto-refresh page then picks up the fresh code on its own.
-
-### Phone pairing (fallback)
-
-If QR scanning isn't convenient, use phone pairing instead:
-
-```bash
-whatsapp pair-phone --phone '+1234567890'
-```
-
-This returns a pairing code (e.g. `4YGP-5174`). Send it to the user and tell them:
-WhatsApp > Linked Devices > Link a Device > Link with phone number > enter code.
-
-### After authentication
-
-Check status:
-
-```bash
-whatsapp authenticate
-```
-
-**Don't restart the daemon after the user has authenticated.** Restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
-
-### Troubleshooting: "Can't link at this time"
-
-If the user scans the QR code but WhatsApp shows **"Can't link at this time"**, the daemon's WebSocket connection is stale. Fully restart the daemon and try again:
-
-```bash
-screen -S whatsapp -X quit
-sleep 2
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
-sleep 3
-whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
-```
-
-## 6. Register the service
-
-So the daemon comes back after a container restart, register it for restart (see [service](../service/SKILL.md)) with this startup command:
-
-```
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
-```
+- `whatsapp daemon status` is the one diagnostic: auth state, connection,
+  sync-window lock, pairing attempts, whatsmeow version.
+- Daemon won't start: run `whatsapp serve` in the foreground; the compile or
+  serve error prints directly.
+- Auth state `not_authenticated` after a restore/restart: the device session
+  was lost; re-link (with the user's go-ahead) via `whatsapp link`.
 
 ## How transcription works
 
@@ -147,7 +56,8 @@ screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
 3. The built-in whisper.cpp bindings transcribe the audio to text
 4. The transcription replaces the `[audio]` placeholder in the notification
 
-All transcription runs in-process, no external scripts or services needed.
+All transcription runs in-process. Model path override: `WHISPER_MODEL` env var
+(default `/usr/local/share/ggml-small.bin`, downloaded by setup.sh).
 
 ## Contact card support
 
@@ -163,9 +73,3 @@ The phone number is extracted from the `TEL` field of the vCard. Use `list-recei
 whatsapp list-received-contacts
 whatsapp list-received-contacts --to Alex --limit 10
 ```
-
-## Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `WHISPER_MODEL` | `/usr/local/share/ggml-small.bin` | Path to the GGML whisper model file |

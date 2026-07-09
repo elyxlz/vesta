@@ -5,8 +5,8 @@ description: WhatsApp messages, contacts, groups (not generic text/message). Req
 
 # WhatsApp - CLI: `whatsapp`
 
-**Setup / first-time auth / re-auth**: see [SETUP.md](SETUP.md).
-**Start daemon**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications`
+**Setup / linking**: run `~/agent/skills/whatsapp/setup.sh`, then `whatsapp link`, see [SETUP.md](SETUP.md).
+**Daemon**: `whatsapp daemon start|stop|restart|status` (start is idempotent and safe to re-run; status is the one diagnostic).
 
 ## Calling the CLI
 
@@ -64,14 +64,15 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `clear-all-chats` - destructive; wipes local message DB
 
 **Auth / daemon** (see SETUP.md for details)
-- `serve` - starts the background daemon; requires `--notifications-dir`
-- `authenticate` - QR-code pairing
-- `pair-phone` - phone-number pairing; `--phone <+E.164>`
+- `daemon start|stop|restart|status` - manage the background daemon; `stop`/`restart` refuse during the 5-minute post-link sync window (`--force` overrides, at the cost of a re-pair)
+- `link` - link an account: serves a self-refreshing public QR page and prints its URL; `--phone '+E.164'` for a pairing code instead. Rate-limited to 2 attempts/hour (`--acknowledge-ban-risk` overrides)
+- `serve` - runs the daemon in the foreground (what `daemon start` and `link` launch under the hood); `--notifications-dir` defaults to `~/agent/notifications`
+- `authenticate` - prints auth status
 
 ### `serve` flags
 
-- `--notifications-dir <dir>` (required unless `--no-notifications`): directory where inbound notification JSON files are written for the agent to pick up.
-- `--no-notifications` (optional): the daemon writes no notification files at all, so the agent receives nothing from this instance. When set, `--notifications-dir` is not required. Inbound messages are still stored locally and queryable on demand. Use for a passive linked account you want to read but never be pinged about.
+- `--notifications-dir <dir>` (optional, defaults to `~/agent/notifications`): directory where inbound notification JSON files are written for the agent to pick up.
+- `--no-notifications` (optional): the daemon writes no notification files at all, so the agent receives nothing from this instance. Inbound messages are still stored locally and queryable on demand. Use for a passive linked account you want to read but never be pinged about.
 - `--instance <name>` (optional): run a second, isolated account/session. State lives in `~/.whatsapp/<name>/` instead of `~/.whatsapp/`. This is how you link a second WhatsApp account (e.g. a personal account) alongside the agent's own line.
 - `--read-only` (optional): passive mode. Blocks every write command (`send-message`, `send-file`, `send-audio`, `send-reaction`, `revoke-message`, `add-contact`, `remove-contact`, all group ops, `archive-chat`, `archive-all-chats`, `delete-chat`, `clear-all-chats`); each returns `command "X" blocked: instance is read-only`. Suppresses delayed read receipts (incoming messages are NOT marked read, no blue ticks) AND suppresses presence: `EnsureOnline()` is a no-op under read-only, so the account never broadcasts `available` and does not appear online to contacts. Read-only alone does NOT stop notifications; use `--no-notifications` or `--skip-senders` for that.
 - `--skip-senders <phone,phone,...>` (optional): comma-separated E.164 numbers whose inbound messages never generate a notification. Messages are still stored and queryable, just silent.
@@ -80,30 +81,22 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 ```bash
 whatsapp serve --instance personal --read-only --no-notifications
 ```
-The agent can read/search that account on demand (`whatsapp list-chats --instance personal`, `list-messages`, `search-contacts`, etc.) but receives zero notifications, never sends or marks-read, and the account never shows online to its contacts. Deliver the linking QR with the auto-refresh page (see SETUP.md), then `whatsapp authenticate --instance personal`.
+The agent can read/search that account on demand (`whatsapp list-chats --instance personal`, `list-messages`, `search-contacts`, etc.) but receives zero notifications, never sends or marks-read, and the account never shows online to its contacts. Link it with `whatsapp link --instance personal`.
 
 ## Rules
 
 - **Send messages one tool call at a time. Never batch WhatsApp sends in a single parallel tool-call block.**
   *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees.
 
-- **`whatsapp serve` requires `--notifications-dir`.**
-  *Why:* Without it the daemon exits silently (no stderr), and every subsequent command reports "daemon not running."
+- **Manage the daemon only through `whatsapp daemon ...`** (never raw `screen` or signals). `stop`/`restart` refuse during the post-link sync window because restarting there logs the device out.
 
-- **Do not restart the daemon once the user is authenticated**, unless the user explicitly confirms a full re-auth is acceptable.
-  *Why:* Restarting mid-session can invalidate the WhatsApp pairing and force the user to rescan the QR.
-
-- **Never kill whatsapp processes with signals (pkill, killall, kill, os.kill, SIGTERM).** Use `screen -S whatsapp -X quit` only, then sleep briefly, then start a new screen session.
-  *Why:* Sending SIGTERM to `whatsapp serve` propagates too broadly and crashes the entire container (exit code 143/144). Screen quit is always sufficient.
+- **Never re-link / re-pair without the user's explicit go-ahead.** Pairing is rate-limited because repeated attempts get WhatsApp numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
 
 - **Before sending to an unknown phone number, save it first with `add-contact`.**
   *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
 
 - **Never `go build` a static whatsapp binary or run one directly.** `whatsapp` must stay the launcher symlink (`~/.local/bin/whatsapp` -> `~/agent/skills/whatsapp/whatsapp`), which compiles from source on every invocation and updates whatsmeow at daemon start.
   *Why:* A frozen binary silently drifts from the source as fixes land (issue #1073), and stale whatsmeow protocol code is what WhatsApp breaks and bans.
-
-- **Right after first-pair auth, `database is locked` can occur transiently during history backfill.**
-  *Why:* WhatsApp pushes up to 2 years of history; each conversation is persisted in a short transaction that can briefly exceed the 5s busy-timeout on large chats. If a write fails with "database is locked" within the first minute or two after authentication, wait 10-20 seconds and retry; do not treat it as a real failure. This does not occur on subsequent runs.
 
 ## Conventions
 
@@ -117,9 +110,7 @@ The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, lis
 
 1. **Restart daemon**: The running daemon is still the old build. Restart it to pick up source changes:
    ```bash
-   screen -S whatsapp -X quit
-   sleep 1
-   screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
+   whatsapp daemon restart
    ```
 2. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 1.
 
