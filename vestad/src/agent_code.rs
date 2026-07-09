@@ -137,7 +137,7 @@ mod tests {
         assert!(dir.join("core/prompts/nightly_dream.md").is_file());
         assert!(dir.join("core/prompts/notification_suffix.md").is_file());
         // The full home ships now: skills, the MEMORY template, and the agent .gitignore
-        // all feed build-workspace.sh.
+        // all feed build-upstream.sh.
         assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
         assert!(dir.join("MEMORY.md").is_file());
         assert!(dir.join(".gitignore").is_file());
@@ -146,7 +146,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             // Modes survive: the snapshot must record scripts as 100755, matching the image.
-            let attach = dir.join("core/skills/workspace-sync/scripts/attach.sh");
+            let attach = dir.join("core/skills/upstream-sync/scripts/attach.sh");
             let mode = attach.metadata().expect("attach.sh extracted").permissions().mode();
             assert!(mode & 0o111 != 0, "executable bit restored on extraction, got mode {mode:o}");
         }

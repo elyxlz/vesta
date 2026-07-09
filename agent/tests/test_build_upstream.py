@@ -4,7 +4,7 @@ scratch dirs: per-host append-only lineage, tag placement, bundle regeneration."
 import pathlib as pl
 import subprocess
 
-from test_workspace_sync import _env, _git  # hermetic-git env helpers
+from test_upstream_sync import _env, _git  # hermetic-git env helpers
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 BUILD = REPO_ROOT / "vestad/scripts/build-upstream.sh"
