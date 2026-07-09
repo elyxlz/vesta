@@ -3,8 +3,9 @@ export const meta = {
   description:
     "Frontier product/design critique of the Vesta app (visuals, interaction, onboarding, copy, a11y). Every truly-needed fix -> PR drafts (cheap or ambitious); only genuine design forks -> issue drafts. Vesta's voice/personality is out of scope.",
   whenToUse:
-    "Holistic design/UX pass on the Vesta app and onboarding journey. Run after capturing screenshots with tools/critique/capture-ui.mjs.",
+    "Holistic design/UX pass on the Vesta app and onboarding journey. Run after capturing screenshots with tools/critique/capture-ui.mjs. Opens PRs and issues by default; args {emit:'draft'} writes .critique/out/ for review instead, {emit:'publish'} skips the critique and emits PRs from the saved draft.",
   phases: [
+    { title: "Load", detail: "publish mode: read the saved PR groups" },
     { title: "Brief", detail: "list captured shots" },
     { title: "Critique", detail: "9 authority-grounded lenses, parallel" },
     { title: "Verify", detail: "adversarially refute each finding" },
@@ -19,8 +20,9 @@ const run = (prompt, opts) => agent(prompt, { model: "sonnet", ...opts });
 const fast = (prompt, opts) => agent(prompt, { model: "haiku", ...opts });
 
 const SHOTS_DIR = (args && args.shotsDir) || ".critique/shots";
-const EMIT = (args && args.emit) || "draft"; // "draft" | "live"
+const EMIT = (args && args.emit) || "live"; // "live" | "draft" | "publish"
 const REPO = (args && args.repo) || "elyxlz/vesta";
+const HIG_DIGEST = "tools/critique/apple-hig.md"; // distilled Apple HIG rulebook; regenerate when Apple ships major HIG updates
 
 // ── shared context baked in so lenses stay grounded, never generic ──────────
 
@@ -66,6 +68,7 @@ const LENSES = [
     title: "Visual craft & hierarchy",
     authority: "Apple Human Interface Guidelines + Refactoring UI (Wathan/Schoger)",
     url: "https://developer.apple.com/design/human-interface-guidelines/layout",
+    hig: "Layout, Typography, Color, Dark Mode, Materials, Icons, Images",
     mandate:
       "Spacing rhythm, type scale & weight, color usage, contrast, depth/elevation, alignment, density, optical balance, the orb/squircle treatment, empty states. Judge the rendered pixels in the shots first, then trace to tokens in index.css / className.",
   },
@@ -74,6 +77,7 @@ const LENSES = [
     title: "Interaction & motion",
     authority: "Rauno Freiberg Web Interface Guidelines + Emil Kowalski + Laws of UX",
     url: "https://interfaces.rauno.me/",
+    hig: "Motion, Feedback, Loading, Launching, Gestures, Keyboards, Focus and selection, Pointing devices",
     mandate:
       "Hover/focus/active/disabled states, focus rings, keyboard paths, touch-target size, easing & duration, anticipation/follow-through, optimistic UI, perceived latency (Doherty threshold), loading vs skeleton, the CreatingStep's fake rotating progress vs honest status, transitions between dashboard/chat.",
   },
@@ -82,6 +86,7 @@ const LENSES = [
     title: "Usability heuristics",
     authority: "Nielsen's 10 Heuristics + Norman (DOET)",
     url: "https://www.nngroup.com/articles/ten-usability-heuristics/",
+    hig: "Feedback, Modality, Alerts, Undo and redo, Settings",
     mandate:
       "Cite the specific heuristic per finding. Visibility of system status, match to mental model, user control/undo, consistency, error prevention, recognition over recall, flexibility, minimalist design, error recovery, help. The OAuth copy-paste and the long first-build wait are prime targets.",
   },
@@ -90,6 +95,7 @@ const LENSES = [
     title: "Onboarding & friction (time-to-value)",
     authority: "Fogg B=MAP + Growth.Design + Kathy Sierra (Badass) + Peak-End rule",
     url: "https://www.nngroup.com/articles/onboarding-tutorials/",
+    hig: "Onboarding, Launching, Entering data, Managing accounts, Offering help",
     mandate:
       "Walk install -> vestad run -> connect -> create agent -> auth -> first chat as a new user. Every paste, wait, decision, and dead-end. Reduce activation energy, shorten time-to-first-value, design the emotional peak and the ending. Include the CLI/vestad terminal copy in SURFACE_MAP.",
   },
@@ -98,6 +104,7 @@ const LENSES = [
     title: "Agent UX in the app: status, trust, errors",
     authority: "Google PAIR People+AI Guidebook + Microsoft HAX guidelines",
     url: "https://pair.withgoogle.com/guidebook/",
+    hig: "Feedback, Loading, Notifications, Alerts",
     mandate:
       "How the APP (not Vesta's voice) sets expectations, shows what the agent is doing (orb/island states, tool calls, thinking), calibrates trust, handles agent errors/offline/auth-expired, and lets the user steer/interrupt. Mental model of what an 'agent' is on first contact.",
   },
@@ -106,6 +113,7 @@ const LENSES = [
     title: "Copy / UX writing",
     authority: "Mailchimp Content Style Guide + Apple Style Guide + Microcopy (Yifrah)",
     url: "https://www.nngroup.com/articles/ux-writing-study-guide/",
+    hig: "Writing, Alerts, Offering help, Inclusion",
     mandate:
       "Every on-screen + CLI string: buttons (verbs), empty states, errors, placeholders, toasts, the wizard, vestad terminal output. Clarity, concreteness, consistency, helpful errors. Respect the intentional lowercase/no-dashes/texting voice (STYLE_GUARD): improve within it, never against it.",
   },
@@ -114,6 +122,7 @@ const LENSES = [
     title: "Accessibility",
     authority: "WCAG 2.2 AA + Apple accessibility HIG",
     url: "https://www.w3.org/WAI/WCAG22/quickref/",
+    hig: "Accessibility, Inclusion, Typography, Color",
     mandate:
       "Color contrast (check oklch tokens in both themes), focus visibility & order, keyboard operability, touch-target minimums, semantic roles/labels for icon buttons, reduced-motion, screen-reader names for the orb/island/status. Cite the WCAG SC number.",
   },
@@ -122,6 +131,7 @@ const LENSES = [
     title: "Elegance & reduction",
     authority: "Dieter Rams (less, but better) + Tufte (data-ink ratio) + Tesler's law + the Jobs/Ive subtraction ethos",
     url: "https://www.interaction-design.org/literature/article/dieter-rams-10-timeless-commandments-for-good-design",
+    hig: "Settings, Branding, Onboarding, Modality",
     mandate:
       "Hunt for what to REMOVE: steps in the wizard, decisions, states, settings, copy, chrome, concepts the user must hold. Where does the app make the user carry complexity the product could absorb or delete? 'Delete this' is a complete proposal when justified.",
   },
@@ -130,6 +140,7 @@ const LENSES = [
     title: "Holistic north-star",
     authority: "Apple design ethos + Linear/Raycast/Vercel as exemplars",
     url: "https://developer.apple.com/design/human-interface-guidelines/designing-for-ios",
+    hig: "Layout, Branding, Writing, Onboarding (skim every section header for anything relevant)",
     mandate:
       "Step back: what is Vesta trying to FEEL like (a calm, trustworthy, personal presence), and where does the whole fall short of that ideal? Coherence across screens, the 5 highest-leverage moves, what one exemplar product would do differently here.",
   },
@@ -230,6 +241,68 @@ const SYNTH_SCHEMA = {
   },
 };
 
+const GROUPS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["groups"],
+  properties: {
+    groups: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "area", "tier", "summary", "changes"],
+        properties: {
+          title: { type: "string" },
+          area: { type: "string" },
+          tier: { type: "string", enum: ["cheap", "ambitious"] },
+          summary: { type: "string" },
+          changes: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+};
+
+// one PR agent per group; shared by live emit and publish mode
+const emitPrGroups = (groups) =>
+  parallel(
+    groups.map((group, i) => () =>
+      (group.tier === "ambitious" ? deep : run)(
+        `Implement this ${group.tier} product PR and open it against ${REPO}.
+Group: ${JSON.stringify(group)}
+${STYLE_GUARD}
+${NORTH_STAR}
+1. \`git fetch origin master && git checkout -b critique/${group.area}-${i} origin/master\`.
+2. ${group.tier === "ambitious"
+          ? "Implement the redesign: read every touched component fully, match codebase patterns (Tailwind + shadcn/base-ui, folders with index.tsx), one surface only, adapt minimally where the spec misses current code. Sweat spacing, easing, focus states, reduced-motion, both themes."
+          : "Apply ONLY the listed changes, surgically; adapt minimally where the spec misses current code, skip (and note in the PR body) what is impossible or already done."} No version bumps.
+3. \`cd apps && npm install\` (once), then \`./check.sh web\` from repo root until green; drop a change that cannot pass rather than the PR.${group.tier === "ambitious" ? " Then re-read the full diff: if the surface did not end simpler, abort with a note instead of opening the PR (a good outcome)." : ""}
+4. Commit (Co-Authored-By trailer), push -u, \`gh pr create --base master\` with title ${JSON.stringify(group.title)} and a body giving the rationale + cited principle${group.tier === "ambitious" ? " + what the journey loses (steps, decisions, waiting)" : ""}, ending with the Generated with Claude Code line.
+Return the PR url, or a short error string.`,
+        { label: `pr:${group.tier}:${group.area}-${i}`, phase: "Emit", isolation: "worktree" },
+      ),
+    ),
+  );
+
+// ── Publish (skip the critique, emit PRs from the saved draft) ───────────────
+if (EMIT === "publish") {
+  phase("Load");
+  const loaded = await fast(
+    `Read .critique/out/prs.json and return its PR groups verbatim. If missing, fall back to the legacy .critique/out/cheap-wins.json with tier="cheap" and area="legacy" on every group. If neither exists, return groups=[].`,
+    { label: "load-draft", phase: "Load", schema: GROUPS_SCHEMA },
+  );
+  const savedGroups = loaded ? loaded.groups : [];
+  if (savedGroups.length === 0) {
+    log("no saved draft, run the critique first");
+    return { error: "no PR groups at .critique/out/prs.json" };
+  }
+  log(`${savedGroups.length} PR group(s) to emit`);
+  phase("Emit");
+  const publishedPrs = await emitPrGroups(savedGroups);
+  return { mode: "publish", prs: publishedPrs.filter(Boolean) };
+}
+
 // ── Brief ───────────────────────────────────────────────────────────────────
 phase("Brief");
 const shotList = await fast(
@@ -246,6 +319,7 @@ const verified = await pipeline(
     deep(
       `Critique Vesta through ONE lens: ${lens.title}. Ground every finding in ${lens.authority} (fetch ${lens.url} if useful).
 Mandate: ${lens.mandate}
+Apple HIG grounding: Read ${HIG_DIGEST}, sections: ${lens.hig}. Hold findings to those rules too, citing (HIG: <page>) where one applies; Vesta's intentional choices below override the HIG where they conflict.
 ${SURFACE_MAP}
 ${STYLE_GUARD}
 ${NORTH_STAR}
@@ -267,7 +341,7 @@ ${NORTH_STAR}
 - isReal: a genuine problem per the cited principle? Small details count.
 - violatesIdentity: fights an intentional choice above? Then keep=false.
 - fixIsBetter: actually superior, not just different. Superior usually means simpler; a fix adding UI/steps/concepts where a subtraction would do is not better.
-Unsure it is real -> keep=false. Never kill a real problem for having an ambitious fix. Verify any fileRef exists (grep it).`,
+Unsure it is real -> keep=false. Never kill a real problem for having an ambitious fix. Verify any fileRef exists (grep it); if the finding cites an HIG rule, check it against ${HIG_DIGEST}.`,
           { label: `verify:${lens.key}:${f.title.slice(0, 24)}`, phase: "Verify", schema: VERDICT_SCHEMA },
         ).then((v) => ({ ...f, lens: lens.key, verdict: v })),
       ),
@@ -318,30 +392,14 @@ ${synth.reportMarkdown}
     prGroups: synth.prGroups.length,
     issues: synth.issues.length,
     report: ".critique/out/REPORT.md",
+    next: "re-run with args {emit:'publish'} to open the PRs",
   };
 }
 
 // live: every PR group (cheap or ambitious) -> PR branch, design forks -> issues
 log(`live emit: ${synth.prGroups.length} PRs, ${synth.issues.length} issues`);
 
-const prs = await parallel(
-  synth.prGroups.map((group, i) => () =>
-    (group.tier === "ambitious" ? deep : run)(
-      `Implement this ${group.tier} product PR and open it against ${REPO}.
-Group: ${JSON.stringify(group)}
-${STYLE_GUARD}
-${NORTH_STAR}
-1. \`git fetch origin master && git checkout -b critique/${group.area}-${i} origin/master\`.
-2. ${group.tier === "ambitious"
-        ? "Implement the redesign: read every touched component fully, match codebase patterns (Tailwind + shadcn/base-ui, folders with index.tsx), one surface only, adapt minimally where the spec misses current code. Sweat spacing, easing, focus states, reduced-motion, both themes."
-        : "Apply ONLY the listed changes, surgically; skip (and note in the PR body) any change that no longer matches the code."} No version bumps.
-3. \`cd apps && npm install\` (once), then \`./check.sh web\` from repo root until green; drop a change that cannot pass rather than the PR.${group.tier === "ambitious" ? " Then re-read the full diff: if the surface did not end simpler, abort with a note instead of opening the PR (a good outcome)." : ""}
-4. Commit (Co-Authored-By trailer), push -u, \`gh pr create --base master\` with title "${group.title}" and a body giving the rationale + cited principle${group.tier === "ambitious" ? " + what the journey loses (steps, decisions, waiting)" : ""}, ending with the Generated with Claude Code line.
-Return the PR url, or an error string.`,
-      { label: `pr:${group.tier}:${group.area}-${i}`, phase: "Emit", isolation: "worktree" },
-    ),
-  ),
-);
+const prs = await emitPrGroups(synth.prGroups);
 
 const issues = await parallel(
   synth.issues.map((issue, i) => () =>
