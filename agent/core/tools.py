@@ -139,7 +139,16 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
         return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_upstream_synced, mark_workspace_synced, mark_dreamer_complete, compact_context]
+    return [
+        restart_vesta,
+        stop_vesta,
+        mark_setup_done,
+        mark_migration_applied,
+        mark_upstream_synced,
+        mark_workspace_synced,
+        mark_dreamer_complete,
+        compact_context,
+    ]
 
 
 def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
