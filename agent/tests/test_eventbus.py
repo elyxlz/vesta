@@ -54,6 +54,16 @@ def test_status_not_persisted(event_bus):
     assert len(events) == 0
 
 
+def test_emit_survives_history_write_failure(event_bus):
+    """A failed history write never crashes the emitting coroutine: any sqlite3.Error (a closed or
+    corrupt db, not only a locked one) drops the row with a warning and live subscribers still
+    receive the event."""
+    q = event_bus.subscribe()
+    event_bus._conn.close()
+    event_bus.emit(ChatEvent(type="chat", text="still delivered"))
+    assert q.get_nowait()["text"] == "still delivered"
+
+
 def test_no_data_dir():
     """EventBus works without persistence (no data_dir)."""
     bus = EventBus()

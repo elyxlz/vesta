@@ -94,8 +94,8 @@ def read_config_store() -> dict[str, pyd.JsonValue]:
         return {}
     try:
         data = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
-        logger.error(f"config store {path} is corrupt ({exc}); ignoring it")
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error(f"config store {path} is unreadable ({exc}); ignoring it")
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -135,7 +135,8 @@ def load_notification_rules(config: "VestaConfig") -> list[NotificationInterrupt
         return []
     try:
         store = json.loads(path.read_text())
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error(f"config store {path} is unreadable ({exc}); ignoring it")
         return []
     section = store["notification_rules"] if isinstance(store, dict) and "notification_rules" in store else []
     if not isinstance(section, list):

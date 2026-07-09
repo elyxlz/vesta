@@ -2,6 +2,7 @@
 
 import json
 import os
+import pathlib as pl
 
 import pytest
 
@@ -162,6 +163,27 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch, tmp_path):
     assert read_config_store() == {}
     config, _ = load_config()
     assert config.provider is None
+
+
+def _deny_read_text(self, *args, **kwargs):
+    raise PermissionError("permission denied")
+
+
+def test_unreadable_store_does_not_crash_read(agentdir, monkeypatch):
+    # An OSError on the read (permission flip, transient IO fault) is ignored like corruption:
+    # read_config_store sits on the boot path and never raises.
+    config_store_path().write_text("{}")
+    monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
+    assert read_config_store() == {}
+
+
+def test_unreadable_store_does_not_crash_rules_load(agentdir, monkeypatch):
+    # load_notification_rules runs on monitor_loop's per-tick hot path; an unreadable store must
+    # yield no rules, never an exception that kills notification processing.
+    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
+    config = vm.VestaConfig()
+    monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
+    assert load_notification_rules(config) == []
 
 
 def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path):
