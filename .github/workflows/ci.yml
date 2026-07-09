@@ -141,10 +141,8 @@ jobs:
           fi
           echo "✓ Tag matches version"
 
-  # ── Skills index auto-update ──────────────────────────────────────────
-  skills-index-check:
-    needs: detect-changes
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
+  # ── Fast repo-hygiene guards (skills index, uv.lock, dashboard sync, vite base) ──
+  guards:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -153,10 +151,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Check skills index is up to date
-        run: |
-          uv run python agent/skills/generate-index.py
-          git diff --exit-code agent/skills/index.json || (echo "skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" && exit 1)
+      - name: Run guard checks
+        run: ./check.sh guards
 
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
@@ -183,31 +179,6 @@ jobs:
 
       - name: Run agent checks
         run: ./check.sh agent
-
-  # ── uv.lock freshness ─────────────────────────────────────────────────
-  lockfile:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Check lockfile is up to date
-        working-directory: agent
-        run: |
-          cp core/uv.lock core/uv.lock.before
-          uv lock --project core
-
-          if ! diff -q core/uv.lock.before core/uv.lock > /dev/null; then
-            echo "❌ uv.lock is out of date"
-            echo "Please run 'cd agent && uv lock --project core' locally and commit the changes"
-            exit 1
-          fi
-
-          echo "✓ uv.lock is up to date"
 
   # ── Go checks (whatsapp CLI) ──────────────────────────────────────────
   go-checks:
@@ -239,22 +210,7 @@ jobs:
       # available in the Docker build environment. Compilation is verified
       # by the container image build in CI.
 
-  # ── Web deployment guards ─────────────────────────────────────────────
-  vite-base-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Ensure vite base is "/" (required for Cloudflare Pages)
-        run: |
-          if grep -q 'base:\s*"\.\/"' apps/web/vite.config.ts; then
-            echo '❌ apps/web/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
-            exit 1
-          fi
-          echo '✅ vite base path is correct'
-
+  # ── Windows install script guard ──────────────────────────────────────
   install-script-check:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
@@ -289,24 +245,6 @@ jobs:
             exit 1
           }
           Write-Host "✅ No PowerShell 5.1 compatibility issues found"
-
-  dashboard-sync-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Check dashboard shared files are in sync
-        run: |
-          bash scripts/sync-dashboard.sh
-          if ! git diff --quiet agent/skills/dashboard/app/; then
-            echo "❌ Dashboard shared files are out of sync with apps/web/"
-            echo "Run 'bash scripts/sync-dashboard.sh' and commit the changes"
-            git diff --stat agent/skills/dashboard/app/
-            exit 1
-          fi
-          echo "✅ Dashboard shared files are in sync"
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
@@ -1293,13 +1231,10 @@ jobs:
     if: always()
     needs:
       - version-check
-      - skills-index-check
+      - guards
       - agent-tests
-      - lockfile
       - go-checks
-      - vite-base-check
       - install-script-check
-      - dashboard-sync-check
       - test-frontend
       - test-integration
       - check-vesta

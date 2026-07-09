@@ -17,6 +17,7 @@ Suites:
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest
+  guards         skills index, uv.lock, and dashboard-sync freshness + the vite base check
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -55,6 +56,13 @@ check_agent() {
     done
     uv run --project core ty check
     uv run --project core pytest tests/ -v
+    # Each skill CLI is its own standalone uv project (own venv, own lockfile), so
+    # its suite runs against that project, not the shared core venv above.
+    for tool in skills/*/cli core/skills/*/cli; do
+      if [ -d "$tool/tests" ]; then
+        uv run --project "$tool" pytest "$tool/tests" -q
+      fi
+    done
   )
 }
 
@@ -94,6 +102,40 @@ check_web() {
     npm -w @vesta/web run check
     npm -w @vesta/web run test
   )
+}
+
+check_guards() {
+  # Fast repo-hygiene checks ci.yml otherwise runs as raw steps outside this
+  # entry point: skills index, uv.lock, and dashboard-sync freshness, plus the
+  # vite base path check. All run from the repo root; none need Docker.
+  local failed=0
+
+  uv run python agent/skills/generate-index.py
+  git diff --exit-code agent/skills/index.json || {
+    echo "error: agent/skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" >&2
+    failed=1
+  }
+
+  cp agent/core/uv.lock agent/core/uv.lock.before
+  uv lock --project agent/core
+  diff -q agent/core/uv.lock.before agent/core/uv.lock >/dev/null || {
+    echo "error: agent/core/uv.lock is out of date — run 'cd agent && uv lock --project core' and commit the changes" >&2
+    failed=1
+  }
+  rm -f agent/core/uv.lock.before
+
+  bash scripts/sync-dashboard.sh
+  git diff --quiet agent/skills/dashboard/app/ || {
+    echo "error: dashboard shared files are out of sync with apps/web/ — run 'bash scripts/sync-dashboard.sh' and commit the changes" >&2
+    failed=1
+  }
+
+  if grep -q 'base:\s*"\.\/"' apps/web/vite.config.ts; then
+    echo 'error: apps/web/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments' >&2
+    failed=1
+  fi
+
+  [ "$failed" = 0 ]
 }
 
 check_integration() {
@@ -151,6 +193,7 @@ for suite in "$@"; do
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
+    guards) check_guards ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_agent && check_cli && check_vestad && check_web ;;
