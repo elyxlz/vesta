@@ -62,25 +62,6 @@ async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<()
     Ok(())
 }
 
-pub fn now_timestamp() -> String {
-    now_timestamp_from_epoch(crate::time_utils::now_epoch_secs())
-}
-
-pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
-    let dt = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
-        .expect("epoch seconds within valid range");
-    let fmt = time::macros::format_description!("[year][month][day]-[hour][minute][second]");
-    dt.format(&fmt).expect("timestamp format never fails")
-}
-
-/// Parse a compact `YYYYMMDD-HHMMSS` UTC timestamp (the `created_at` format) back to epoch seconds.
-/// Inverse of `now_timestamp_from_epoch`; returns None on malformed input.
-pub fn parse_compact_utc_epoch(created_at: &str) -> Option<u64> {
-    let fmt = time::macros::format_description!("[year][month][day]-[hour][minute][second]");
-    let dt = time::PrimitiveDateTime::parse(created_at.trim(), &fmt).ok()?;
-    u64::try_from(dt.assume_utc().unix_timestamp()).ok()
-}
-
 /// Returns the container's age in seconds, or None if unknown.
 pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
     let cname = container_name(name);
@@ -481,19 +462,6 @@ mod tests {
     fn retention_empty_list() {
         let to_delete = compute_backups_to_delete(&[], &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
-    }
-
-    #[test]
-    fn parse_compact_utc_epoch_roundtrips() {
-        let epoch = 1_780_000_000u64;
-        let ts = now_timestamp_from_epoch(epoch);
-        assert_eq!(parse_compact_utc_epoch(&ts), Some(epoch));
-    }
-
-    #[test]
-    fn parse_compact_utc_epoch_rejects_malformed() {
-        assert_eq!(parse_compact_utc_epoch("not-a-timestamp"), None);
-        assert_eq!(parse_compact_utc_epoch(""), None);
     }
 
     #[test]

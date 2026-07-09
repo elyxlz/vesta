@@ -305,7 +305,7 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
         id,
         agent_name: name,
         backup_type,
-        created_at: crate::backup::now_timestamp(),
+        created_at: crate::time_utils::now_timestamp(),
         size: summary.total_bytes_processed,
     })
 }

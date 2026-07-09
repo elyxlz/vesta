@@ -2077,28 +2077,6 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Auto-backup background task ---
 
-fn local_tm(epoch_secs: u64) -> libc::tm {
-    let epoch = epoch_secs as libc::time_t;
-    // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
-    // duration of the call.
-    unsafe { libc::localtime_r(&epoch, &mut tm) };
-    tm
-}
-
-fn local_hour() -> u8 {
-    local_tm(crate::time_utils::now_epoch_secs()).tm_hour as u8
-}
-
-/// Host-local calendar date (YYYYMMDD) for an epoch. Keying the once-per-day backup dedup to this
-/// same wall clock as the firing window avoids the UTC-vs-local day-boundary mismatch that could
-/// otherwise double or skip a daily near midnight.
-fn local_date_of_epoch(epoch_secs: u64) -> String {
-    let tm = local_tm(epoch_secs);
-    format!("{:04}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday)
-}
-
 fn spawn_auto_backup_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
@@ -2119,7 +2097,7 @@ fn spawn_auto_backup_task(state: SharedState) {
             // etc.). This way a spring-forward DST jump that skips the target hour still triggers a
             // backup on the next cycle, and a daemon that was down through the hour catches up.
             let target_hour = backup_settings.hour;
-            let current_hour = local_hour();
+            let current_hour = crate::time_utils::local_hour();
             if current_hour < target_hour {
                 tracing::debug!(current_hour, target_hour, "auto-backup: before daily window, skipping");
                 continue;
@@ -2135,9 +2113,9 @@ fn spawn_auto_backup_task(state: SharedState) {
             tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = local_date_of_epoch(now_epoch);
-            let seven_days_ago = backup::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago = backup::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
+            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
+            let thirty_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2168,7 +2146,7 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && backup::parse_compact_utc_epoch(&b.created_at).map(local_date_of_epoch).as_deref() == Some(today_local.as_str())
+                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at).map(crate::time_utils::local_date_of_epoch).as_deref() == Some(today_local.as_str())
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
