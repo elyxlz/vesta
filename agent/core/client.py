@@ -14,6 +14,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    RateLimitEvent,
     ResultMessage,
     ThinkingBlock,
 )
@@ -224,6 +225,15 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
             filtered = sdk_parsing.filter_tool_lines(text)
             if filtered:
                 _emit_text(filtered, state=state)
+    if isinstance(msg, RateLimitEvent):
+        # Surface the rejection from the structured classification: the CLI's synthesized text
+        # for the same event misnames the window (issue #1071), so this event is what consumers
+        # trust. Once per window; the type/resets_at pair changes when a different limit trips.
+        notice = sdk_parsing.rate_limit_notice(msg.rate_limit_info, now=time.time())
+        window = (msg.rate_limit_info.rate_limit_type, msg.rate_limit_info.resets_at)
+        if notice and window != state.rate_limit_noticed:
+            state.rate_limit_noticed = window
+            state.event_bus.emit({"type": "error", "text": notice})
     # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
     # so a terminal auth/billing failure surfaces through the SDK either as the assistant
     # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP

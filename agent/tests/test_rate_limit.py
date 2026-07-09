@@ -1,0 +1,100 @@
+"""A rejected rate limit is surfaced from the SDK's structured classification, never the CLI's
+paraphrase (which has misreported a five_hour rejection as a "monthly spend limit", issue #1071)."""
+
+import pytest
+from claude_agent_sdk import RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType
+
+from conftest import consuming, make_stream_harness, result_msg
+from core.sdk_parsing import rate_limit_notice
+from wait_util import wait_for_condition
+
+NOW = 1_000_000.0
+
+
+@pytest.mark.parametrize(
+    "info,expected",
+    [
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(NOW) + 12_000),
+            "Claude rate limit hit: the 5-hour usage window is exhausted, resets in 3h 20m. "
+            "This is the rolling usage limit, not a spend or billing limit.",
+        ),
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="seven_day"),
+            "Claude rate limit hit: the weekly usage window is exhausted. This is the rolling usage limit, not a spend or billing limit.",
+        ),
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="seven_day_opus"),
+            "Claude rate limit hit: the weekly Opus usage window is exhausted. This is the rolling usage limit, not a spend or billing limit.",
+        ),
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="seven_day_sonnet"),
+            "Claude rate limit hit: the weekly Sonnet usage window is exhausted. "
+            "This is the rolling usage limit, not a spend or billing limit.",
+        ),
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="overage", resets_at=int(NOW) + 1_500),
+            "Claude rate limit hit: the extra usage budget is exhausted, resets in 25m.",
+        ),
+        (
+            RateLimitInfo(status="rejected", resets_at=int(NOW) + 1_500),
+            "Claude rate limit hit, resets in 25m.",
+        ),
+        (
+            RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(NOW) - 60),
+            "Claude rate limit hit: the 5-hour usage window is exhausted. This is the rolling usage limit, not a spend or billing limit.",
+        ),
+    ],
+)
+def test_rejected_rate_limit_wording_comes_from_the_structured_classification(info, expected):
+    assert rate_limit_notice(info, now=NOW) == expected
+
+
+@pytest.mark.parametrize("status", ["allowed", "allowed_warning"])
+def test_non_rejected_rate_limit_produces_no_notice(status):
+    info = RateLimitInfo(status=status, rate_limit_type="five_hour", utilization=0.9)
+    assert rate_limit_notice(info, now=NOW) is None
+
+
+def _rate_limit_event(status: RateLimitStatus, *, rate_limit_type: RateLimitType = "five_hour", resets_at: int | None = None) -> RateLimitEvent:
+    info = RateLimitInfo(status=status, rate_limit_type=rate_limit_type, resets_at=resets_at)
+    return RateLimitEvent(rate_limit_info=info, uuid="u1", session_id="s1")
+
+
+def _error_events(sub) -> list[str]:
+    events = [sub.get_nowait() for _ in range(sub.qsize())]
+    return [e["text"] for e in events if e["type"] == "error"]
+
+
+@pytest.mark.anyio
+async def test_rejected_rate_limit_emits_one_error_event_per_window():
+    """The rejection reaches the event stream as an authoritative error event; retries hitting
+    the same window are not repeated, a later distinct window is."""
+    state, config, _, _, message_queue, consumed = make_stream_harness()
+    sub = state.event_bus.subscribe()
+
+    async with consuming(state, config):
+        await message_queue.put(_rate_limit_event("rejected", resets_at=2_000_000))
+        await message_queue.put(_rate_limit_event("rejected", resets_at=2_000_000))
+        await message_queue.put(_rate_limit_event("rejected", resets_at=3_000_000))
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: len(consumed) >= 4, message="consumer never dispatched the rate limit events")
+
+    errors = _error_events(sub)
+    assert len(errors) == 2
+    assert all("5-hour usage window" in text for text in errors)
+    assert all("monthly" not in text for text in errors)
+
+
+@pytest.mark.anyio
+async def test_allowed_rate_limit_event_emits_nothing():
+    state, config, _, _, message_queue, consumed = make_stream_harness()
+    sub = state.event_bus.subscribe()
+
+    async with consuming(state, config):
+        await message_queue.put(_rate_limit_event("allowed"))
+        await message_queue.put(_rate_limit_event("allowed_warning"))
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: len(consumed) >= 3, message="consumer never dispatched the rate limit events")
+
+    assert _error_events(sub) == []

@@ -12,6 +12,7 @@ from claude_agent_sdk import (
     HookMatcher,
     Message,
     RateLimitEvent,
+    RateLimitInfo,
     ResultMessage,
     SystemMessage,
     TextBlock,
@@ -69,6 +70,35 @@ def build_priority_now_message(prompt: str, *, timestamp: dt.datetime) -> dict[s
         "parent_tool_use_id": None,
         "priority": "now",
     }
+
+
+_RATE_LIMIT_WINDOWS: dict[str, str] = {
+    "five_hour": "5-hour usage window",
+    "seven_day": "weekly usage window",
+    "seven_day_opus": "weekly Opus usage window",
+    "seven_day_sonnet": "weekly Sonnet usage window",
+    "overage": "extra usage budget",
+}
+_ROLLING_WINDOW_NOTE = " This is the rolling usage limit, not a spend or billing limit."
+
+
+def rate_limit_notice(info: RateLimitInfo, *, now: float) -> str | None:
+    """User-facing wording for a rejected rate limit, built from the CLI's structured
+    classification. The CLI's own text for the same rejection is a paraphrase (observed calling a
+    five_hour rejection a "monthly spend limit", issue #1071), so consumers get this instead."""
+    if info.status != "rejected":
+        return None
+    reset = ""
+    if info.resets_at is not None and info.resets_at > now:
+        remaining = int(info.resets_at - now)
+        hours, minutes = remaining // 3600, remaining % 3600 // 60
+        parts = ([f"{hours}h"] if hours else []) + ([f"{minutes}m"] if minutes or not hours else [])
+        reset = f", resets in {' '.join(parts)}"
+    if info.rate_limit_type not in _RATE_LIMIT_WINDOWS:
+        return f"Claude rate limit hit{reset}."
+    window = _RATE_LIMIT_WINDOWS[info.rate_limit_type]
+    note = "" if info.rate_limit_type == "overage" else _ROLLING_WINDOW_NOTE
+    return f"Claude rate limit hit: the {window} is exhausted{reset}.{note}"
 
 
 def thinking_tokens_estimate(msg: Message) -> int | None:
