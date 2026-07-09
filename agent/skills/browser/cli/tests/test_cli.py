@@ -30,8 +30,10 @@ def test_parser_accepts_all_documented_subcommands():
         "scroll",
         "wait",
         "evaluate",
-        "cdp",
+        "bidi",
         "http-get",
+        "fetch",
+        "doctor",
         "tabs",
         "focus",
         "close",
@@ -42,11 +44,11 @@ def test_parser_accepts_all_documented_subcommands():
 
 
 def _minimal_args_for(cmd: str) -> list[str]:
-    need_url = {"open", "navigate", "connect", "http-get"}
+    need_url = {"open", "navigate", "connect", "http-get", "fetch"}
     need_ref = {"type", "hover"}
     need_key = {"press"}
     need_expression = {"evaluate"}
-    need_cdp_method = {"cdp"}
+    need_bidi_method = {"bidi"}
     if cmd in need_url:
         return ["https://example.com"]
     if cmd in need_ref:
@@ -57,8 +59,8 @@ def _minimal_args_for(cmd: str) -> list[str]:
         return ["Enter"]
     if cmd in need_expression:
         return ["document.title"]
-    if cmd in need_cdp_method:
-        return ["Page.reload"]
+    if cmd in need_bidi_method:
+        return ["browsingContext.getTree"]
     if cmd == "click":
         return ["e1"]
     if cmd == "focus" or cmd == "close":
@@ -68,13 +70,68 @@ def _minimal_args_for(cmd: str) -> list[str]:
     return []
 
 
-def test_parser_launch_flags():
+def test_parser_launch_flags_compat():
+    # --stealth/--no-sandbox/--port stay accepted (no-ops now) so existing prompts keep parsing.
     parser = cli._build_parser()
     ns = parser.parse_args(["launch", "--headless", "--stealth", "--no-sandbox", "--port", "9999"])
     assert ns.headless is True
     assert ns.stealth is True
     assert ns.no_sandbox is True
     assert ns.port == 9999
+
+
+def test_parser_fetch_navigate_first():
+    parser = cli._build_parser()
+    ns = parser.parse_args(["fetch", "https://x.com", "--navigate-first"])
+    assert ns.navigate_first is True
+
+
+def test_parser_mode_accepts_choices():
+    parser = cli._build_parser()
+    assert parser.parse_args(["mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["mode"]).mode is None
+
+
+def test_parser_launch_mode_flag():
+    parser = cli._build_parser()
+    assert parser.parse_args(["launch", "--mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["launch"]).mode is None
+
+
+def test_cmd_mode_sets_and_prints(monkeypatch, capsys):
+    seen: dict = {"mode": "a11y"}
+    monkeypatch.setattr(cli.admin, "set_mode", lambda m: seen.__setitem__("mode", m))
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: seen["mode"])
+    cli.cmd_mode(argparse.Namespace(mode="both"))
+    assert seen["mode"] == "both"
+    assert '"both"' in capsys.readouterr().out
+
+
+def test_print_feedback_a11y_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "a11y")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap"]
+
+
+def test_print_feedback_screenshot_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "screenshot")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["view"]
+
+
+def test_print_feedback_both(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "both")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap", "view"]
 
 
 def test_parser_click_at_coords():
@@ -186,10 +243,10 @@ def test_snapshot_banner_format(monkeypatch):
 
 def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
     def blow_up(**kwargs):
-        raise RuntimeError("CDP dead")
+        raise RuntimeError("backend dead")
 
     monkeypatch.setattr(cli.snapshot, "snapshot", blow_up)
-    assert "snapshot failed: CDP dead" in cli._snapshot_banner()
+    assert "snapshot failed: backend dead" in cli._snapshot_banner()
 
 
 def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):

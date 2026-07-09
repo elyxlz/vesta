@@ -29,8 +29,8 @@ def test_socket_path_format(monkeypatch):
 
 def test_session_file_includes_session_and_suffix(monkeypatch):
     monkeypatch.setenv("BROWSER_SESSION", "work")
-    assert str(admin._session_file(None, "chrome-pid")) == "/tmp/vesta-browser-work.chrome-pid"
-    assert str(admin._session_file("other", "cdp-port")) == "/tmp/vesta-browser-other.cdp-port"
+    assert str(admin._session_file(None, "browser-pid")) == "/tmp/vesta-browser-work.browser-pid"
+    assert str(admin._session_file("other", "bidi-ws")) == "/tmp/vesta-browser-other.bidi-ws"
 
 
 def test_daemon_alive_false_when_missing(tmp_path, monkeypatch):
@@ -64,14 +64,10 @@ def test_pid_alive_self():
 
 
 def test_pid_alive_false_for_reserved_pid():
-    # PID 0 is reserved; os.kill(0, 0) raises PermissionError on most systems.
-    # Our helper treats PermissionError as not-alive (conservative).
-    # Pick an obviously-dead pid instead.
     assert admin._pid_alive(2**31 - 1) is False
 
 
 def test_terminate_pid_no_op_when_already_dead():
-    # Non-existent PID should not raise.
     admin._terminate_pid(2**31 - 1)
 
 
@@ -83,27 +79,60 @@ def test_terminate_pid_stops_a_child():
     try:
         admin._terminate_pid(p.pid)
     finally:
-        # Reap the zombie if it survived somehow.
         try:
             p.wait(timeout=2)
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
     assert p.returncode is not None
-    # SIGTERM yields -15 on posix, or 0 if child exits normally (not expected for sleep).
     assert p.returncode in (-signal.SIGTERM, 0)
 
 
-def test_read_session_port_none_when_missing(monkeypatch, tmp_path):
+def test_read_session_ws_url_none_when_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("BROWSER_SESSION", "missing-" + tmp_path.name)
-    assert admin.read_session_port() is None
+    assert admin.read_session_ws_url() is None
 
 
-def test_read_session_port_parses(tmp_path, monkeypatch):
-    session = "portcheck-" + tmp_path.name
+def test_read_session_ws_url_reads(tmp_path, monkeypatch):
+    session = "wscheck-" + tmp_path.name
     monkeypatch.setenv("BROWSER_SESSION", session)
-    admin._session_file(None, "cdp-port").write_text("9233\n")
+    admin._session_file(None, "bidi-ws").write_text("ws://127.0.0.1:5555/session\n")
     try:
-        assert admin.read_session_port() == 9233
+        assert admin.read_session_ws_url() == "ws://127.0.0.1:5555/session"
     finally:
-        admin._session_file(None, "cdp-port").unlink()
+        admin._session_file(None, "bidi-ws").unlink()
+
+
+def test_read_mode_defaults_to_a11y(monkeypatch, tmp_path):
+    monkeypatch.setenv("BROWSER_SESSION", "modemissing-" + tmp_path.name)
+    assert admin.read_mode() == "a11y"
+
+
+def test_set_and_read_mode_roundtrip(tmp_path, monkeypatch):
+    session = "modecheck-" + tmp_path.name
+    monkeypatch.setenv("BROWSER_SESSION", session)
+    try:
+        admin.set_mode("screenshot")
+        assert admin.read_mode() == "screenshot"
+        admin.set_mode("both")
+        assert admin.read_mode() == "both"
+    finally:
+        admin._session_file(None, "mode").unlink(missing_ok=True)
+
+
+def test_set_mode_rejects_unknown(monkeypatch, tmp_path):
+    monkeypatch.setenv("BROWSER_SESSION", "modebad-" + tmp_path.name)
+    import pytest
+
+    with pytest.raises(ValueError, match="mode must be one of"):
+        admin.set_mode("hologram")
+
+
+def test_read_mode_falls_back_on_garbage(tmp_path, monkeypatch):
+    session = "modegarbage-" + tmp_path.name
+    monkeypatch.setenv("BROWSER_SESSION", session)
+    admin._session_file(None, "mode").write_text("nonsense")
+    try:
+        assert admin.read_mode() == "a11y"
+    finally:
+        admin._session_file(None, "mode").unlink(missing_ok=True)
