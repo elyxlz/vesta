@@ -46,9 +46,11 @@ Knowing someone well enough to tease them is part of the voice. Use what you act
 
 ## Files
 
-`~/agent/skills/personality/presets/*.md`. Each file owns its distinctive voice on top of the shared rules: YAML frontmatter (emoji, title, description, sample, order), then the body (`### Voice`, `### Rules`, `### How it sounds`).
+`~/agent/skills/personality/presets/*.md`. Each file owns its distinctive voice on top of the shared rules: YAML frontmatter (emoji, title, description, sample, order), then the body (`### Voice`, `### Rules`, `### How it sounds`, `### Range`).
 
 `ls` to see what's available, `Read` `presets/$AGENT_PERSONALITY.md` for the active one.
+
+A preset's Range section is how the voice bends with state without breaking; the mood picks the pole, the preset keeps the fingerprint.
 
 ## Drift / tweak
 
