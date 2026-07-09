@@ -155,6 +155,16 @@ pub fn openrouter_auth(args: &OpenRouterArgs) -> serde_json::Value {
     serde_json::json!({ "kind": "openrouter", "model": args.model, "key": args.key })
 }
 
+/// The fields an `update_settings` call may change; unset fields are left as they are.
+#[derive(Debug, Default)]
+pub struct SettingsUpdate<'a> {
+    pub auth: Option<serde_json::Value>,
+    pub model: Option<&'a str>,
+    pub max_context_tokens: Option<u64>,
+    pub timezone: Option<&'a str>,
+    pub preempt_mode: Option<&'a str>,
+}
+
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
     value[field].as_bool().ok_or_else(|| format!("response missing {field}"))
 }
@@ -449,15 +459,8 @@ impl Client {
     /// bare model/context change goes to `PATCH /provider`; timezone goes to `PUT /config`. The writes
     /// don't restart on their own, so a fresh agent gets its provider in a single race-free restart.
     /// No-op (no restart) if nothing is set.
-    pub fn update_settings(
-        &self,
-        name: &str,
-        auth: Option<serde_json::Value>,
-        model: Option<&str>,
-        max_context_tokens: Option<u64>,
-        timezone: Option<&str>,
-        preempt_mode: Option<&str>,
-    ) -> Result<(), String> {
+    pub fn update_settings(&self, name: &str, update: SettingsUpdate) -> Result<(), String> {
+        let SettingsUpdate { auth, model, max_context_tokens, timezone, preempt_mode } = update;
         let mut changed = false;
         if let Some(mut signin) = auth {
             // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
@@ -725,19 +728,16 @@ impl Client {
     }
 
     /// The agent's notification interrupt rules, read from its GET /config (the `notification_rules`
-    /// array; empty when absent). Everything is a rule now — a notification with no matching rule interrupts.
-    pub fn get_notification_rules(&self, name: &str) -> Result<serde_json::Value, String> {
+    /// array; empty when absent). A notification with no matching rule interrupts.
+    pub fn get_notification_rules(&self, name: &str) -> Result<Vec<serde_json::Value>, String> {
         let config: serde_json::Value = read_json(self.get(&format!("/agents/{name}/config"))?)?;
-        match config["notification_rules"].as_array() {
-            Some(rules) => Ok(serde_json::Value::Array(rules.clone())),
-            None => Ok(serde_json::Value::Array(vec![])),
-        }
+        Ok(config["notification_rules"].as_array().cloned().unwrap_or_default())
     }
 
     /// Replace the agent's notification rules (PUT /config with {notification_rules}); the server assigns
     /// ids to any missing one and stores rules canonically. Live — applied on the agent's next monitor
     /// tick, no restart. Ignores the `{ok: true}` body.
-    pub fn set_notification_rules(&self, name: &str, rules: &serde_json::Value) -> Result<(), String> {
+    pub fn set_notification_rules(&self, name: &str, rules: &[serde_json::Value]) -> Result<(), String> {
         self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "notification_rules": rules }))?;
         Ok(())
     }
