@@ -44,6 +44,10 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		go wac.recoverOrRestart("stream_error:" + v.Code)
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
+		wac.writeAuthStatusFile(map[string]string{
+			"status": "logged_out",
+			"note":   "WhatsApp logged this device out (account under review, or unlinked from the phone). Re-linking needs the user's explicit go-ahead, do NOT retry-loop pairing.",
+		})
 		wac.initiateReauth()
 	}
 }
