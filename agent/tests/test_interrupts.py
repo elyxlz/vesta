@@ -876,18 +876,23 @@ async def test_converse_flips_auth_on_result_api_error_status(config):
 # --- Interrupted-tool rejection framing (issue #915) ---
 
 
-def test_system_prompt_frames_interrupted_tool_rejections_as_cancellations(tmp_path, state):
-    """An interrupted turn's in-flight tools come back as "The user doesn't want to proceed with
-    this tool use" tool_results synthesized by the CLI without ever consulting can_use_tool; the
-    system prompt must keep the model from reading that as a real human refusal (issue #915)."""
-    from core.client import build_client_options
+def test_system_prompt_frames_interrupted_tool_rejections_as_cancellations(tmp_path, state, monkeypatch):
+    """The CLI synthesizes "The user doesn't want to proceed with this tool use" tool_results for
+    calls canceled by a turn interrupt; the system prompt must frame those as cancellations, not a
+    real human refusal (issue #915)."""
+    from core.client import _TOOL_CANCELLATION_NOTE, build_client_options
     from core.config import ClaudeConfig
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig())
+    # Like conftest's config fixture: drive agent_dir through AGENT_DIR so config_store_path()
+    # stays inside the tmp dir instead of reading the host's real ~/agent store.
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = vm.VestaConfig(provider=ClaudeConfig())
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("my memory body")
+    (config.agent_dir / "constitution.md").write_text("Always tell the truth.")
 
     prompt = build_client_options(config, state).system_prompt
     assert isinstance(prompt, str)
-    assert "The user doesn't want to proceed with this tool use" in prompt
-    assert "never a real decision by your user" in prompt
+    assert "The user doesn't want to proceed with this tool use" in _TOOL_CANCELLATION_NOTE
+    assert _TOOL_CANCELLATION_NOTE in prompt
+    assert prompt.index("my memory body") < prompt.index(_TOOL_CANCELLATION_NOTE)

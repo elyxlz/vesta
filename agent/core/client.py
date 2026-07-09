@@ -465,18 +465,16 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
         _close_turn(state, turn)
 
 
-# The CLI stamps every tool call still in flight when a turn is interrupted (preempt_mode="interrupt",
-# or the silence-timeout/auth-loss interrupts) with a synthesized "The user doesn't want to proceed with
-# this tool use" rejection that never goes through can_use_tool, so the model reads a human refusal that
-# never happened and halts (issue #915). Headless with bypassPermissions, that message is always such an
-# artifact; this standing note keeps the model from treating it as a real decision.
+# The CLI stamps tool calls canceled by a turn interrupt with a synthesized "user rejected" tool_result
+# that never goes through can_use_tool, so the model reads a refusal no human made and halts (issue #915).
 _TOOL_CANCELLATION_NOTE = (
-    "# Canceled tool calls\n\n"
+    "# Runtime note: canceled tool calls\n\n"
     "You run headless: every tool call is auto-approved and your user never sees a permission dialog. "
-    'A tool result claiming a rejection or denial ("The user doesn\'t want to proceed with this tool use") '
-    "is never a real decision by your user; it is the runtime canceling in-flight tool calls when a turn is "
-    "interrupted or times out. Treat it as a canceled call: re-run the tool if you still need it, and do not "
-    "stop to wait for the user because of it."
+    "A tool result claiming the user rejected or declined a tool use (\"The user doesn't want to proceed "
+    'with this tool use") is never a real decision by your user; it is the runtime canceling in-flight '
+    "calls when a turn is interrupted or times out. Do not stop to wait for the user because of it. A "
+    "canceled call may still have taken effect and a timed-out call may hang again, so check before "
+    "re-running anything with side effects and change approach if the same call keeps getting canceled."
 )
 
 
