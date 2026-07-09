@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,6 +73,21 @@ func socketResultField(output []byte, field string) string {
 	return ""
 }
 
+// parsePortFlag parses a port flag value and returns an error if it is invalid.
+func parsePortFlag(value string) (int, error) {
+	if value == "" {
+		return 0, nil
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --port value %q: %v", value, err)
+	}
+	if port < 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid --port value %q: out of range (0-65535)", value)
+	}
+	return port, nil
+}
+
 func runLink() {
 	if phone, present := lookupFlag("phone"); present && phone != "" {
 		runLinkPhone(phone)
@@ -85,7 +101,12 @@ func runLink() {
 
 	port := 0
 	if flagPort, present := lookupFlag("port"); present {
-		fmt.Sscanf(flagPort, "%d", &port)
+		var err error
+		port, err = parsePortFlag(flagPort)
+		if err != nil {
+			printJSON(map[string]any{"error": err.Error()})
+			os.Exit(1)
+		}
 	}
 	if port == 0 {
 		registeredPort, err := registerVestadService("wa-link")
@@ -124,7 +145,7 @@ func runLink() {
 		if socketResultField(statusOutput, "status") == string(AuthStatusAuthenticated) {
 			printJSON(map[string]any{
 				"status": "linked",
-				"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL — do not restart anything.", SyncWindowDuration),
+				"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL. Do not restart anything.", SyncWindowDuration),
 			})
 			return
 		}
@@ -145,7 +166,7 @@ func runLinkPhone(phone string) {
 	}
 	output, exitCode, connected := trySocketCommand(getSocketPath(), "pair-phone", pairArgs)
 	if !connected {
-		printJSON(map[string]any{"error": "daemon not running — start with: whatsapp daemon start"})
+		printJSON(map[string]any{"error": "daemon not running. Start with: whatsapp daemon start"})
 		os.Exit(1)
 	}
 	fmt.Println(string(output))
