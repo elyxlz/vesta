@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import socket
 import tempfile
 import time
@@ -14,7 +15,8 @@ import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
 import core.models as vm
-from core.api import _ws_handler, start_ws_server
+import core.state_store as state_store
+from core.api import _ws_handler, _write_app_chat_notification, start_ws_server
 from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
 
@@ -176,6 +178,38 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
         assert notif["interrupt"] is True
     finally:
         await runner.cleanup()
+
+
+def test_app_chat_messages_delivered_in_send_order(config):
+    """Two app-chat messages written in quick succession must be read back in send order. The
+    monotonic time_ns() stem sorts lexically the same as send order; a uuid4 stem would not."""
+    _write_app_chat_notification(config, "first")
+    _write_app_chat_notification(config, "second")
+
+    files = sorted(config.notifications_dir.glob("*.json"))
+    assert len(files) == 2
+    texts = [json.loads(f.read_text())["message"] for f in files]
+    assert texts == ["first", "second"]
+
+
+def test_write_app_chat_notification_never_exposes_partial_file(config, monkeypatch):
+    """The write goes through atomic_write_text: a sibling .tmp file, then os.replace. A monitor
+    tick globbing the notifications dir mid-write can only ever see the tmp file (excluded by the
+    *.json glob) or the fully written target, never a truncated target."""
+    observed_matches: list[list[Path]] = []
+    real_replace = os.replace
+
+    def spying_replace(src, dst):
+        observed_matches.append(list(config.notifications_dir.glob("*.json")))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(state_store.os, "replace", spying_replace)
+    _write_app_chat_notification(config, "hello")
+
+    assert observed_matches == [[]]  # no *.json match existed right before the rename
+    files = list(config.notifications_dir.glob("*.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text())["message"] == "hello"
 
 
 # Regression: ws_runner.cleanup() used to sit on aiohttp's 60s default shutdown_timeout

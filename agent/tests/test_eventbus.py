@@ -253,6 +253,20 @@ def test_search_limit(event_bus):
     assert len(results) == 3
 
 
+def test_search_runs_off_the_connection_home_thread(event_bus):
+    """Like recent(), search() must work from a worker thread so /history can offload it via
+    asyncio.to_thread — an FTS MATCH over a years-old db must never block the event loop or
+    interleave with emit's writer-connection transactions. A connection bound to one thread
+    raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
+    import concurrent.futures
+
+    event_bus.emit(UserEvent(type="user", text="what is the weather in paris"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        results = pool.submit(event_bus.search, "paris").result()
+    assert len(results) == 1
+    assert results[0]["text"] == "what is the weather in paris"
+
+
 # --- Schema migration ---
 
 
@@ -287,3 +301,28 @@ def test_pre_versioned_db_upgraded_in_place(tmp_path):
     assert _db_user_version(tmp_path) == _SCHEMA_VERSION
     assert len(events) == 1
     assert tp.cast(tp.Any, events[0])["text"] == "legacy"
+
+
+def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
+    """A corrupt events.db (disk-full mid-write, bit rot, a restored hot backup) must not
+    crash-loop the container: it is renamed aside intact and the agent boots with empty history."""
+    db_path = tmp_path / "events.db"
+    original_bytes = b"not a sqlite database, just garbage bytes overwriting a once-valid file"
+    db_path.write_bytes(original_bytes)
+
+    bus = EventBus(data_dir=tmp_path)
+    try:
+        events, _ = bus.recent()
+        assert events == []
+
+        bus.emit(ChatEvent(type="chat", text="alive after recovery"))
+        events, _ = bus.recent()
+        assert len(events) == 1
+        assert tp.cast(tp.Any, events[0])["text"] == "alive after recovery"
+    finally:
+        bus.close()
+
+    assert db_path.exists(), "a fresh events.db must exist after quarantine"
+    quarantined = list(tmp_path.glob("events.db.corrupt-*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == original_bytes
