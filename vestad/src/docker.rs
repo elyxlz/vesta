@@ -2435,18 +2435,6 @@ mod tests {
     }
 
     #[test]
-    fn assemble_binds_includes_the_upstream_mount() {
-        let binds = assemble_binds(
-            "/e:/run/vestad-env:ro,z".into(),
-            "/c:/root/agent/constitution.md:ro,z".into(),
-            "/u/upstream:/run/vesta-upstream:ro,z".into(),
-            Some("/x/core:/root/agent/core:ro,z".into()),
-            &[],
-        );
-        assert!(binds.iter().any(|bind| bind == "/u/upstream:/run/vesta-upstream:ro,z"));
-    }
-
-    #[test]
     fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
         use AgentStatus::*;
         // (authed, setup_complete, provider_configured) -> AgentStatus

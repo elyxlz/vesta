@@ -488,3 +488,16 @@ def test_forwarding_workspace_sync_scripts_behave_identically(tmp_path):
     r = _run(home / "agent/core/skills/workspace-sync/scripts/fetch-workspace.sh", home, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _git(["rev-parse", "refs/remotes/upstream/agent-upstream"], home, env).strip()
+
+
+def test_fetch_without_mount_falls_into_the_endpoint_fallback(tmp_path):
+    """LEGACY(remove-when: no agent predating the rename release remains): a pre-rename
+    container has no /run/vesta-upstream; fetch must take the bundle-endpoint fallback
+    (demanding the vestad env) instead of failing on a missing repo path."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _env(home, {"AGENT_NAME": "testbox"})
+    env.pop("VESTAD_PORT", None)
+    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "VESTAD_PORT" in r.stderr

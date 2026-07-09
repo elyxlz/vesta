@@ -37,7 +37,7 @@ fn fresh_agent_has_expected_directory_structure() {
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, sparse-checkout, .gitignore) is not asserted here:
     // the workspace attaches lazily (first skills-install or upstream sync),
-    // which needs the workspace bundle from vestad (outside this test's scope).
+    // which fetches from the mounted upstream repo (outside this test's scope).
     for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }
