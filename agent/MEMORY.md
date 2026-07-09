@@ -148,6 +148,8 @@ The dreamer's rolling snapshot of where the user is at. Field meanings and how t
 ### Self (who [agent_name] is becoming)
 The dreamer's slowly-evolving self: standing opinions, taste, curiosity threads, what changed in how she sees things. Hers, not about the user. How to write it lives in the `dream` skill.
 
+**State**: (rewritten nightly by the dreamer: the charge carried out of today, energy level, what is anticipated or still stinging; the fast line on top of the slow self)
+
 ## 5. LEARNED PATTERNS
 
 ### Notification Preferences
