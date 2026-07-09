@@ -8,7 +8,6 @@ import time
 import typing as tp
 
 import pydantic
-from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
 from . import models as vm
@@ -19,22 +18,21 @@ from . import state_store
 from . import vestad_client
 from .config import DEFAULT_CONTEXT_WINDOW
 from .client import (
+    SDK_ERRORS,
     process_message,
-    build_client_options,
     attempt_interrupt,
     send_preempt,
     persist_session_id,
     resolve_openrouter_max_tokens,
     compact_session,
-    consume_stream,
-    _cancel_task,
+    client_session,
+    cancel_task,
 )
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context, clear_notifications
+from .notification import CORE_POOL_TYPES, CORE_SOURCE, Notification, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
-
-from .models import CORE_POOL_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
 
 
 def _now() -> dt.datetime:
@@ -59,12 +57,12 @@ def _load_notification_files(directory: pl.Path) -> list[tuple[pl.Path, str]]:
     return results
 
 
-def drop_core_notification(*, type_: str, body: str, config: vm.VestaConfig, name: str | None = None) -> pl.Path:
+def drop_core_notification(*, type_: str, body: str, config: cfg.VestaConfig, name: str | None = None) -> pl.Path:
     """Write a `source=core` notification file. `name` is the filename stem; defaults to type+millisecond timestamp for natural ordering.
 
     Core notifications are exempt from the user's rules; monitor_loop derives their disposition from
     the type (see CORE_POOL_TYPES)."""
-    notif = vm.Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, body=body)
+    notif = Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, body=body)
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     stem = name if name is not None else f"{type_}-{int(time.time() * 1000)}"
     path = config.notifications_dir / f"{stem}.json"
@@ -73,7 +71,7 @@ def drop_core_notification(*, type_: str, body: str, config: vm.VestaConfig, nam
 
 
 def _notif_disposition(
-    notif: vm.Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]
+    notif: Notification, rules: list[notification_interrupt_policy.NotificationInterruptRule]
 ) -> tp.Literal["interrupt", "pool", "trash"]:
     """The notification's effective disposition: `interrupt`, `pool`, or `trash`. Core notifications are
     exempt from the user's rules — their disposition is control-flow, derived from the type
@@ -84,14 +82,14 @@ def _notif_disposition(
     return notification_interrupt_policy.notif_disposition(notif, rules)
 
 
-async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
+async def load_notifications(*, config: cfg.VestaConfig) -> list[Notification]:
     file_contents = _load_notification_files(config.notifications_dir)
 
     notifications = []
     for file, content in file_contents:
         try:
             data = json.loads(content)
-            notif = vm.Notification(**data)
+            notif = Notification(**data)
             notif.file_path = str(file)
             notifications.append(notif)
         except (json.JSONDecodeError, pydantic.ValidationError, KeyError, TypeError) as e:
@@ -101,7 +99,7 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
     return notifications
 
 
-async def delete_notification_files(notifications: list[vm.Notification]) -> None:
+async def delete_notification_files(notifications: list[Notification]) -> None:
     _delete_paths([n.file_path for n in notifications if n.file_path])
 
 
@@ -118,14 +116,14 @@ def _trash_paths(file_paths: list[str], trash_dir: pl.Path) -> None:
             source.replace(trash_dir / source.name)
 
 
-async def trash_notification_files(notifications: list[vm.Notification], *, trash_dir: pl.Path) -> None:
+async def trash_notification_files(notifications: list[Notification], *, trash_dir: pl.Path) -> None:
     _trash_paths([n.file_path for n in notifications if n.file_path], trash_dir)
 
 
 _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
 
 
-def _format_one(notif: vm.Notification) -> str:
+def _format_one(notif: Notification) -> str:
     """Embed hints inside the <channel> element so the model sees them as one unit.
 
     A reply hint points the model at the originating channel's reply skill instead of copying its CLI
@@ -143,7 +141,7 @@ def _format_one(notif: vm.Notification) -> str:
     return body.replace("</channel>", f"{hint}\n</channel>")
 
 
-def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
+def format_notification_batch(notifications: list[Notification], *, suffix: str = "") -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
     self-contained."""
@@ -158,11 +156,11 @@ def _delete_paths(file_paths: list[str]) -> None:
 
 
 async def process_batch(
-    notifications: list[vm.Notification],
+    notifications: list[Notification],
     *,
     queue: asyncio.Queue[vm.QueuedTurn],
     state: vm.State,
-    config: vm.VestaConfig,
+    config: cfg.VestaConfig,
 ) -> None:
     """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
 
@@ -182,7 +180,7 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
-    async def queue_section(group: list[vm.Notification], *, suffix: str) -> None:
+    async def queue_section(group: list[Notification], *, suffix: str) -> None:
         text = format_notification_batch(group, suffix=suffix)
         paths = [n.file_path for n in group if n.file_path]
         await queue.put(vm.QueuedTurn(text, False, paths))
@@ -193,7 +191,7 @@ async def process_batch(
         await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
 
 
-def greeting_turn(*, config: vm.VestaConfig, state: vm.State, reason: str) -> str | None:
+def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> str | None:
     """The boot greeting as a prompt body (or None to skip): first start runs the setup prompt,
     a restart builds the wake-up context (reason + restart prompt + any pending dreamer summary).
 
@@ -238,7 +236,7 @@ async def _run_messages_with_interrupts(
     *,
     queue: asyncio.Queue[vm.QueuedTurn],
     state: vm.State,
-    config: vm.VestaConfig,
+    config: cfg.VestaConfig,
 ) -> None:
     """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
     mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
@@ -264,7 +262,7 @@ async def _run_messages_with_interrupts(
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
             raise
-        except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
+        except (*SDK_ERRORS, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             if not state.persisted.session_id and state.client:
                 # Belt-and-suspenders: sdk_parsing already persists the session_id from the init
@@ -345,7 +343,7 @@ async def _run_messages_with_interrupts(
                     await process_task
                     break
                 else:
-                    await _cancel_task(queue_task)
+                    await cancel_task(queue_task)
 
             await process_task
             state.noninterruptible_turn_active = False
@@ -360,7 +358,7 @@ async def _run_messages_with_interrupts(
             state.interrupt_event = None
     except asyncio.CancelledError:
         if process_task:
-            await _cancel_task(process_task)
+            await cancel_task(process_task)
         raise
     finally:
         state.noninterruptible_turn_active = False
@@ -378,7 +376,7 @@ def _followup_turn(followup: str, *, compacted_ok: bool) -> str:
     return f"{COMPACTION_ORIENTATION}\n\n{followup}" if compacted_ok else followup
 
 
-async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -> None:
+async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) -> None:
     """Drain a deferred compaction. Compact, then route the optional follow-up to the channel
     that survives a restart: a boot message when restarting (a live notification would race the
     SIGTERM), a live notification otherwise. Compaction failure is logged, not fatal: the
@@ -393,8 +391,8 @@ async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -
     state.compacting = True
     compacted_ok = True
     try:
-        await compact_session(state=state, prompt=pending.prompt)
-    except (ClaudeSDKError, OSError, RuntimeError, TimeoutError) as exc:
+        await compact_session(state=state, config=config, prompt=pending.prompt)
+    except (*SDK_ERRORS, TimeoutError) as exc:
         compacted_ok = False
         logger.warning(f"compaction failed: {exc}")
     finally:
@@ -422,7 +420,7 @@ async def drain_compaction_request(*, state: vm.State, config: vm.VestaConfig) -
         drop_core_notification(type_=TYPE_COMPACTION_FOLLOWUP, body=turn, config=config)
 
 
-async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: cfg.VestaConfig) -> None:
     # An agent with no authenticated provider can't drive the model. It still boots and stays reachable
     # so vestad can deliver credentials over the API, but there is nothing to process here until sign-in
     # restarts the process with a provider applied — so idle instead of building an SDK client (which
@@ -432,7 +430,7 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
         await state.shutdown_event.wait()
         return
     logger.client("Creating new client session...")
-    if isinstance(config.provider, vm.OpenRouterConfig):
+    if isinstance(config.provider, cfg.OpenRouterConfig):
         if state.openrouter_max_tokens is None:
             real_window = await resolve_openrouter_max_tokens(config)
             if real_window:
@@ -445,59 +443,25 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
                 logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
         if state.openrouter_proxy_url is None:
             await start_cache_proxy(config, state)
-    options = build_client_options(config, state)
-    retried = False
-    while True:
-        try:
-            async with ClaudeSDKClient(options=options) as client:
-                state.client = client
-                # The one consumer of the SDK stream for this whole session (see consume_stream);
-                # turn drivers only wait on state.turn signals, they never read the stream.
-                consumer_task = asyncio.create_task(consume_stream(state=state, config=config))
-                logger.client("Client session started")
+    async with client_session(state=state, config=config):
+        while not state.shutdown_event.is_set():
+            try:
+                turn = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
 
-                try:
-                    while not state.shutdown_event.is_set():
-                        try:
-                            turn = await asyncio.wait_for(queue.get(), timeout=1.0)
-                        except TimeoutError:
-                            continue
-
-                        state.processor_busy = True
-                        try:
-                            await _run_messages_with_interrupts(turn, queue=queue, state=state, config=config)
-                            await drain_compaction_request(state=state, config=config)
-                        finally:
-                            state.processor_busy = False
-                finally:
-                    await _cancel_task(consumer_task)
-                    state.client = None
-                    state.interrupt_event = None
-                    state.compacting = False
-                    state.turn = None
-                    logger.client("Client session closed")
-            break
-        except (ClaudeSDKError, OSError, RuntimeError) as exc:
-            if retried or not state.persisted.session_id:
-                raise
-            await asyncio.sleep(0.05)  # give stderr handler time to drain buffered subprocess output
-            exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
-            logger.warning(
-                f"Session resume failed ({state.persisted.session_id[:16]}...): {type(exc).__name__}: {exc}"
-                f" | exit_code={exit_code}"
-                f", starting fresh\nRecent stderr:\n{stderr_tail}"
-            )
-            state.persisted.session_id = None
-            state_store.save_state(state.persisted, config)
-            state.stderr_buffer.clear()
-            options = build_client_options(config, state)
-            retried = True
+            state.processor_busy = True
+            try:
+                await _run_messages_with_interrupts(turn, queue=queue, state=state, config=config)
+                await drain_compaction_request(state=state, config=config)
+            finally:
+                state.processor_busy = False
 
 
 # --- Proactive & dreamer ---
 
 
-def check_proactive_task(*, config: vm.VestaConfig) -> None:
+def check_proactive_task(*, config: cfg.VestaConfig) -> None:
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
@@ -508,7 +472,7 @@ def check_proactive_task(*, config: vm.VestaConfig) -> None:
 DREAMER_CATCHUP_HOURS = 6
 
 
-def process_nightly_memory(*, state: vm.State, config: vm.VestaConfig) -> None:
+def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but cannot preempt the agent for the rest of the day."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
@@ -557,11 +521,11 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
         bridge_task.cancel()
 
 
-async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: cfg.VestaConfig) -> None:
     last_proactive = _now()
     # Init one hour back so the first dreamer check runs on the first tick after boot.
     last_dreamer_check = _now() - dt.timedelta(hours=1)
-    pending_passive: list[vm.Notification] = []
+    pending_passive: list[Notification] = []
     idle_since: dt.datetime | None = None
     # Files sent to the queue but not yet processed (and thus not yet deleted from disk).
     # Trimmed each tick to the paths that still exist; prevents re-queueing mid-compaction.
@@ -600,7 +564,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
 
             notifications = await load_notifications(config=config)
-            rules = await asyncio.to_thread(cfg.load_notification_rules, config)
+            rules = await asyncio.to_thread(cfg.load_notification_rules)
             fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
             decisions = [(n, _notif_disposition(n, rules)) for n in fresh]
             interrupt_notifs = [n for n, disposition in decisions if disposition == "interrupt"]
@@ -654,4 +618,4 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 await process_batch(pending_passive, queue=queue, state=state, config=config)
                 pending_passive = []
     finally:
-        await _cancel_task(watcher_task)
+        await cancel_task(watcher_task)

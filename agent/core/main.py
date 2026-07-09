@@ -4,12 +4,14 @@ import asyncio
 import os
 import signal
 import sys
+import time
 import types
 import typing as tp
 
 from rich import print_json
 
 from . import models as vm
+from . import config as cfg
 from . import logger
 from . import state_store
 from .api import start_ws_server
@@ -41,7 +43,7 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: vm.VestaConfig) -> None:
+def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.graceful_shutdown.is_set():
         return
@@ -62,7 +64,7 @@ def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: 
 
 
 async def run_vesta(
-    config: vm.VestaConfig,
+    config: cfg.VestaConfig,
     *,
     state: vm.State,
     first_start: bool = False,
@@ -138,7 +140,7 @@ async def run_vesta(
     return crashed
 
 
-def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | None:
+def config_issues_turn(issues: list[str], *, config: cfg.VestaConfig) -> str | None:
     """Surface config vars that failed validation: log them and return a boot-turn body telling the
     agent to flag the bad values to the user (the agent ran with defaults), or None when clean."""
     if not issues:
@@ -152,7 +154,7 @@ def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | No
 
 
 def collect_boot_turns(
-    *, state: vm.State, config: vm.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
+    *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: migrations, then workspace sync, then
     default-skill sync, then config issues, then the greeting last — converge first, orient and
@@ -174,7 +176,7 @@ def collect_boot_turns(
     return turns
 
 
-def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
+def _consume_restart_reason(state: vm.State, config: cfg.VestaConfig, *, first_start: bool) -> str:
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
     # Drain the inbox on every boot, including first start: a file left behind would fire stale
     # on some later, unrelated boot.
@@ -192,7 +194,7 @@ def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_st
     return stored or vm.CRASH_RESTART
 
 
-def init_state(*, config: vm.VestaConfig) -> vm.State:
+def init_state(*, config: cfg.VestaConfig) -> vm.State:
     persisted = state_store.load_state(config)
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
@@ -206,7 +208,12 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 
 async def async_main() -> bool:
-    config, config_issues = vm.load_config()
+    config, config_issues = cfg.load_config()
+    # Apply the configured timezone to the process once, here at the entry point, so every consumer
+    # (shell `date`, calendar/reminders skills, tasks' tzlocal) inherits it. Config is inert data:
+    # a PUT /config timezone change applies on the next restart, never mid-request.
+    os.environ["TZ"] = config.timezone
+    time.tzset()
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
 

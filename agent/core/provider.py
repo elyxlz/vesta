@@ -14,7 +14,7 @@ import aiohttp
 import pydantic as pyd
 
 from . import logger
-from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, update_config_store
+from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, read_claude_oauth, update_config_store
 
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
@@ -157,7 +157,10 @@ def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
         return "none", False
     if isinstance(provider, OpenRouterConfig):
         return "openrouter", bool(provider.key.get_secret_value())
-    return "claude", provider.oauth is not None and _check_claude_oauth(provider.oauth)
+    # A config built outside load_config (validation paths never hydrate) carries oauth=None;
+    # read the blob from disk here so status derivation stays an honest reading of what's on disk.
+    oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
+    return "claude", oauth is not None and _check_claude_oauth(oauth)
 
 
 def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:

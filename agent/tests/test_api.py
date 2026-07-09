@@ -14,6 +14,7 @@ import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
 import core.models as vm
+import core.config as cfg
 from core.api import _ws_handler, start_ws_server
 from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
@@ -28,7 +29,7 @@ def _pick_port() -> int:
 async def _start_server(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
-    app["config"] = vm.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
+    app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -155,7 +156,7 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
     """Regression (#809): an inbound app `message` is turned into a `source=app-chat` notification
     by the agent itself, in-process — not by a sidecar subscriber that could die and silently drop
     it. A `chat` frame (the agent's own reply path) broadcasts but writes no intake."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     runner, base = await _start_server_with_config(event_bus, config)
     try:
         async with ClientSession() as session:
@@ -186,7 +187,7 @@ SHUTDOWN_BUDGET_SEC = 3.0
 
 @pytest.mark.anyio
 async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -212,7 +213,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
 @pytest.mark.anyio
 async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -355,7 +356,7 @@ async def test_status_reports_readiness_separate_from_provider(config):
 
     # A signed-in Claude agent: the chosen provider lives in the store, so /provider reports its kind.
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.persisted.first_start_done = True
@@ -381,12 +382,12 @@ async def test_provider_get_surfaces_claude_plan_tier():
     from core.config import ClaudeConfig, ClaudeOAuth
     from core.provider import ProviderAuthState, ProviderStatus
 
-    cfg = vm.VestaConfig.model_construct(provider=ClaudeConfig(oauth=ClaudeOAuth(subscriptionType="pro")))
+    config = cfg.VestaConfig.model_construct(provider=ClaudeConfig(oauth=ClaudeOAuth(subscriptionType="pro")))
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     class _Req:
-        app = {"state": state, "config": cfg}
+        app = {"state": state, "config": config}
 
     resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     body = json.loads(typing.cast("str", resp.text))

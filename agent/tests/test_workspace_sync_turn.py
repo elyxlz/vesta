@@ -3,13 +3,14 @@
 import asyncio
 
 import core.models as vm
+import core.config as cfg
 from core import state_store
 from core.tools import _vesta_tools
 from core.workspace_sync import workspace_sync_turn, vesta_version
 
 
-def _config(tmp_path, version: str | None = "0.1.170") -> vm.VestaConfig:
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+def _config(tmp_path, version: str | None = "0.1.170") -> cfg.VestaConfig:
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     (config.agent_dir / "core").mkdir(parents=True, exist_ok=True)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     if version is not None:

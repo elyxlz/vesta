@@ -7,6 +7,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from . import logger
 from . import models as vm
+from . import config as cfg
 from . import state_store
 from . import vestad_client
 from .api import start_ws_server
@@ -19,7 +20,7 @@ def _opt_str(value: tp.Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
-def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
+def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
         # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
         # SIGTERMs this process, the agent shuts down cleanly, and vestad restarts it or keeps it
@@ -135,5 +136,5 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
 
 
-def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+def build_vesta_tools_server(state: vm.State, config: cfg.VestaConfig) -> tp.Any:
     return create_sdk_mcp_server("vesta-tools", tools=_vesta_tools(state, config))

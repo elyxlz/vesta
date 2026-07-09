@@ -2,11 +2,11 @@
 
 All boot-time and cross-restart markers live in `~/agent/data/state.json`. Loaded once
 at boot, mutated in place via the `PersistedState` field on `vm.State`, and saved
-immediately via `save_state` after every mutation. Writes are atomic (tmp + rename).
+immediately via `save_state` after every mutation. Writes are atomic and durable
+(cfg.atomic_write_text: tmp + fsync + rename).
 """
 
 import datetime as dt
-import os
 import pathlib as pl
 
 import pydantic as pyd
@@ -15,17 +15,6 @@ from . import logger
 from . import config as cfg
 
 STATE_FILENAME = "state.json"
-
-
-def atomic_write_text(path: pl.Path, text: str) -> None:
-    """Write text to path atomically: write a sibling temp file, then rename over the target.
-
-    The single owner of the tmp-write + os.replace recipe (state.json, the notification interrupt
-    rules store, ...) so durability changes live in one place."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
 
 
 class PersistedState(pyd.BaseModel):
@@ -80,4 +69,4 @@ def load_state(config: cfg.VestaConfig) -> PersistedState:
 
 
 def save_state(state: PersistedState, config: cfg.VestaConfig) -> None:
-    atomic_write_text(state_path(config), state.model_dump_json())
+    cfg.atomic_write_text(state_path(config), state.model_dump_json())

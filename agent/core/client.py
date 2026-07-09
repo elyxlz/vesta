@@ -1,6 +1,7 @@
 """Conversation loop: builds queries, drives the SDK client, handles preemption and dash-correction."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import os
@@ -13,6 +14,8 @@ import aiohttp
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ClaudeSDKError,
     Message,
     RateLimitEvent,
     ResultMessage,
@@ -30,6 +33,7 @@ from .provider import (
     is_unauthenticated,
     observed_provider_failure,
 )
+from . import config as cfg
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -38,15 +42,20 @@ from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
+# The error surface of a dead or wedged CLI subprocess, caught by every consumer of the SDK seam
+# (the session open below, loops.py's turn and compaction error handlers). Owned here so loops.py
+# never imports claude_agent_sdk itself.
+SDK_ERRORS: tuple[type[Exception], ...] = (ClaudeSDKError, OSError, RuntimeError)
 
-async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
+
+async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
     """Look up the OpenRouter model's real context window. claude-code assumes a
     200k window for non-Anthropic models (claude-code#46416), so the value passed
     via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
     The caller caps this at config.provider.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default, same behavior as before."""
-    if not isinstance(config.provider, vm.OpenRouterConfig):
+    if not isinstance(config.provider, cfg.OpenRouterConfig):
         return None
     try:
         async with aiohttp.ClientSession() as session:
@@ -70,7 +79,7 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     return None
 
 
-async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
+async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason: str) -> bool:
     """Hard-abort the current turn via the SDK's interrupt control request.
 
     In headless mode the CLI's handler for this request also kills every running backgrounded
@@ -107,7 +116,7 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return False
 
 
-async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) -> bool:
+async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig) -> bool:
     """Preempt the running turn by delivering `prompt` as a priority:"now" user message (the
     envelope and its protocol story live in sdk_parsing.build_priority_now_message). A foreground
     tool call already executing is not cut short: the abort latches and applies when the tool
@@ -144,7 +153,7 @@ async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) 
         return False
 
 
-def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConfig) -> None:
+def persist_session_id(session_id: str, *, state: vm.State, config: cfg.VestaConfig) -> None:
     state.persisted.session_id = session_id
     state_store.save_state(state.persisted, config)
     logger.debug(f"Captured session_id: {session_id[:16]}...")
@@ -159,7 +168,7 @@ _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to lo
 _INTERRUPT_TURN_END_GRACE_S = 5.0
 
 
-async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
+async def cancel_task(task: asyncio.Task[tp.Any]) -> None:
     task.cancel()
     try:
         await task
@@ -190,7 +199,7 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
     state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
 
 
-async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
     close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
     continuation turn, or an interrupted turn's wind-down) still emit — nothing is ever lost —
@@ -263,7 +272,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
                 logger.debug("ResultMessage with no open turn (continuation or interrupted-turn wind-down); dropped")
 
 
-async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
+async def consume_stream(*, state: vm.State, config: cfg.VestaConfig) -> None:
     """Single long-lived consumer of the SDK stream — one per client session, connect to disconnect.
 
     Reading continuously is the fix for issue #958: with per-turn readers, messages left unconsumed
@@ -294,7 +303,54 @@ async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
     _fail_open_turn(RuntimeError("SDK stream ended"))
 
 
-async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
+@contextlib.asynccontextmanager
+async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.AsyncIterator[ClaudeSDKClient]:
+    """The SDK session lifecycle, owned end to end: build options, open the client, spawn the single
+    stream consumer for the session, and on exit cancel the consumer and reset the session fields.
+
+    A failed open with a persisted session_id is retried once on a fresh session (the CLI errors at
+    startup when the resumed session file is gone); the second failure, or any failure with nothing
+    to resume, propagates to the caller."""
+    options = build_client_options(config, state)
+    retried = False
+    while True:
+        opened = False
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                opened = True
+                state.client = client
+                # The one consumer of the SDK stream for this whole session (see consume_stream);
+                # turn drivers only wait on state.turn signals, they never read the stream.
+                consumer_task = asyncio.create_task(consume_stream(state=state, config=config))
+                logger.client("Client session started")
+                try:
+                    yield client
+                finally:
+                    await cancel_task(consumer_task)
+                    state.client = None
+                    state.interrupt_event = None
+                    state.compacting = False
+                    state.turn = None
+                    logger.client("Client session closed")
+            return
+        except SDK_ERRORS as exc:
+            if opened or retried or not state.persisted.session_id:
+                raise
+            await asyncio.sleep(0.05)  # give stderr handler time to drain buffered subprocess output
+            exit_code, stderr_tail = diagnostics.format_crash_detail(exc, state.stderr_buffer)
+            logger.warning(
+                f"Session resume failed ({state.persisted.session_id[:16]}...): {type(exc).__name__}: {exc}"
+                f" | exit_code={exit_code}"
+                f", starting fresh\nRecent stderr:\n{stderr_tail}"
+            )
+            state.persisted.session_id = None
+            state_store.save_state(state.persisted, config)
+            state.stderr_buffer.clear()
+            options = build_client_options(config, state)
+            retried = True
+
+
+async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
     """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
     wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
     this turn as an ordinary ResultMessage. preempt_mode="interrupt" only: the
@@ -364,9 +420,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     finally:
         state.compacting = False
         _close_turn(state, turn)
-        await _cancel_task(done_task)
+        await cancel_task(done_task)
         if interrupt_task and not interrupt_task.done():
-            await _cancel_task(interrupt_task)
+            await cancel_task(interrupt_task)
 
     return turn.texts
 
@@ -385,7 +441,7 @@ def _contains_dashes(texts: list[str]) -> bool:
 
 
 async def process_message(
-    msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool, pre_sent: bool = False
+    msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool, pre_sent: bool = False
 ) -> tuple[list[str], vm.State]:
     responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
     if responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
@@ -433,7 +489,7 @@ def _read_compaction_summary(session_id: str) -> str | None:
         return None
 
 
-async def compact_session(*, state: vm.State, prompt: str | None = None) -> None:
+async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
     The official Claude Agent SDK has no compact() method; the documented path is to send the
@@ -450,8 +506,10 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
     try:
         # A slash command is a single line: collapse whitespace so multi-line guidance (e.g. an
         # appended draft) reaches the summarizer intact instead of being truncated at the first newline.
+        # The send is a stdin write to the CLI subprocess: bound it like every other query so a wedged
+        # CLI fails the compaction instead of wedging the message processor.
         query = "/compact" if prompt is None else f"/compact {' '.join(prompt.split())}"
-        await client.query(query)
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:
             raise turn.error
@@ -465,7 +523,7 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
         _close_turn(state, turn)
 
 
-def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
+def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}, cannot start agent without it")
@@ -506,7 +564,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     betas: list[str] = []
     # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
     thinking_config = ThinkingConfigDisabled(type="disabled")
-    if isinstance(provider, vm.OpenRouterConfig):
+    if isinstance(provider, cfg.OpenRouterConfig):
         # The SDK always routes through the local caching proxy, never OpenRouter
         # directly. start_cache_proxy runs first in message_processor, so the URL is set.
         if not state.openrouter_proxy_url:

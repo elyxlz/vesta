@@ -35,7 +35,8 @@ from aiohttp import web
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
-from .models import Notification, State
+from .models import State
+from .notification import Notification
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
 
 
@@ -231,7 +232,7 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
-    data["notification_rules"] = [rule.model_dump() for rule in load_notification_rules(config)]
+    data["notification_rules"] = [rule.model_dump() for rule in load_notification_rules()]
     return web.json_response(data)
 
 
