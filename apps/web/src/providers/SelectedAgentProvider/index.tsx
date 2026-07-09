@@ -93,7 +93,6 @@ export function SelectedAgentProvider({
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
   const refreshBackups = async () => {
-    if (!name) return;
     try {
       setBackups(await listBackups(name));
     } catch {
@@ -102,16 +101,7 @@ export function SelectedAgentProvider({
   };
 
   useEffect(() => {
-    if (!name) return;
-    let ignore = false;
-    listBackups(name)
-      .then((b) => {
-        if (!ignore) setBackups(b);
-      })
-      .catch(() => {});
-    return () => {
-      ignore = true;
-    };
+    void refreshBackups();
   }, [name]);
 
   const backup = op(
