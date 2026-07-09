@@ -1,6 +1,31 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"reflect"
+	"testing"
+)
+
+func TestLinkServeArgs(t *testing.T) {
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"no instance flag", []string{"whatsapp", "link"}, nil},
+		{"instance flag", []string{"whatsapp", "link", "--instance", "personal"}, []string{"--instance", "personal"}},
+		{"instance flag with =", []string{"whatsapp", "link", "--instance=personal"}, []string{"--instance", "personal"}},
+	}
+	for _, tc := range cases {
+		os.Args = tc.args
+		if got := linkServeArgs(); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: linkServeArgs() = %#v, want %#v", tc.name, got, tc.want)
+		}
+	}
+}
 
 func TestLinkPageURL(t *testing.T) {
 	cases := []struct {

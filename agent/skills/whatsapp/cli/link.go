@@ -88,13 +88,25 @@ func parsePortFlag(value string) (int, error) {
 	return port, nil
 }
 
+// linkServeArgs is the passthrough for a daemon this command cold-starts: it
+// must land `whatsapp serve` on the same instance the link client polls
+// (getSocketPath()/sessionName() are instance-scoped via extractInstance()),
+// or a --instance link wedges polling a socket the default-instance daemon
+// never opens.
+func linkServeArgs() []string {
+	if instance := extractInstance(); instance != "" {
+		return []string{"--instance", instance}
+	}
+	return nil
+}
+
 func runLink() {
 	if phone, present := lookupFlag("phone"); present && phone != "" {
 		runLinkPhone(phone)
 		return
 	}
 
-	if err := startDaemonProcess(nil); err != nil {
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
 		printJSON(map[string]any{"error": err.Error()})
 		os.Exit(1)
 	}
@@ -156,7 +168,7 @@ func runLink() {
 }
 
 func runLinkPhone(phone string) {
-	if err := startDaemonProcess(nil); err != nil {
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
 		printJSON(map[string]any{"error": err.Error()})
 		os.Exit(1)
 	}
