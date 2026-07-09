@@ -35,7 +35,7 @@ mod tunnel;
 mod types;
 mod update_check;
 
-use status::{AgentEntry, Status, TunnelStatus};
+use status::{paint, AgentEntry, Status, TunnelStatus};
 
 
 #[derive(Parser)]
@@ -152,23 +152,6 @@ fn docker_exec_inherit(args: &[&str]) {
         .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
-    }
-}
-
-/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
-/// is unset. Without this, `vestad status > file` / piping captures raw escape
-/// codes.
-pub(crate) fn color_on() -> bool {
-    use std::io::IsTerminal;
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
-pub(crate) fn paint(code: &str, s: &str) -> String {
-    if color_on() {
-        format!("\x1b[{code}m{s}\x1b[0m")
-    } else {
-        s.to_string()
     }
 }
 

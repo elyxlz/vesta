@@ -355,7 +355,7 @@ async fn gateway_update_handler(
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents = docker::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
+    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
     Json(agents)
 }
 
@@ -435,7 +435,7 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = docker::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
+    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
     Ok(Json(status))
@@ -564,6 +564,7 @@ async fn destroy_agent_handler(
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
+    crate::restic::remove_repo(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -633,6 +634,9 @@ async fn rename_agent_handler(
     docker::rename_agent(&state.docker, &name, &new_name, &state.env_config, &user_mounts)
         .await
         .map_err(map_docker_err)?;
+
+    // Repos are keyed by agent name, so carry the backup history across the rename.
+    crate::restic::rename_repo(&name, &new_name).map_err(map_docker_err)?;
 
     {
         let mut settings = state.settings.write().await;
