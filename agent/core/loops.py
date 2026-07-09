@@ -585,10 +585,10 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
             now = _now()
 
             if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                last_proactive = now
                 if state.processor_busy or not queue.empty():
-                    logger.debug("Proactive check skipped: agent is busy, waiting full interval")
+                    logger.debug("Proactive check skipped: agent is busy, retrying next tick")
                 else:
+                    last_proactive = now
                     check_proactive_task(config=config)
 
             if (now - last_dreamer_check).total_seconds() >= 3600:
