@@ -107,6 +107,24 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Unlike chat previews, a hit rate limit fires even while the app is focused: the chat
+  // surface shows nothing for a throttled turn, so this is the user's only signal.
+  const notifyRateLimited = useCallback((agentName: string, text: string) => {
+    if (!permissionRef.current) return;
+    try {
+      const n = new Notification(`${agentName} hit a Claude rate limit`, {
+        body: text,
+        tag: `${agentName}-rate-limited`,
+      });
+      n.onclick = () => {
+        void focusAndNavigate(agentName);
+        n.close();
+      };
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const setChattingAgent = useCallback((agentName: string | null) => {
     chattingAgentRef.current = agentName;
   }, []);
@@ -146,6 +164,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           } catch {
             return;
           }
+          if (event.type === "rate_limited") {
+            notifyRateLimited(name, event.text);
+            return;
+          }
           if (event.type !== "chat") return;
           if (document.hidden) {
             setAppBadge(true);
@@ -166,7 +188,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       handle.close();
       tapsRef.current.delete(name);
     }
-  }, [aliveKey, reachable, notifyAssistant]);
+  }, [aliveKey, reachable, notifyAssistant, notifyRateLimited]);
 
   useEffect(() => {
     const taps = tapsRef.current;

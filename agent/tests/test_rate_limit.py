@@ -61,15 +61,16 @@ def _rate_limit_event(status: RateLimitStatus, *, rate_limit_type: RateLimitType
     return RateLimitEvent(rate_limit_info=info, uuid="u1", session_id="s1")
 
 
-def _error_events(sub) -> list[str]:
+def _rate_limited_events(sub) -> list[dict]:
     events = [sub.get_nowait() for _ in range(sub.qsize())]
-    return [e["text"] for e in events if e["type"] == "error"]
+    return [e for e in events if e["type"] == "rate_limited"]
 
 
 @pytest.mark.anyio
-async def test_rejected_rate_limit_emits_one_error_event_per_window():
-    """The rejection reaches the event stream as an authoritative error event; retries hitting
-    the same window are not repeated, a later distinct window is."""
+async def test_rejected_rate_limit_emits_one_rate_limited_event_per_window():
+    """The rejection reaches the event stream as an authoritative rate_limited event carrying the
+    structured classification; retries hitting the same window are not repeated, a later distinct
+    window is."""
     state, config, _, _, message_queue, consumed = make_stream_harness()
     sub = state.event_bus.subscribe()
 
@@ -80,10 +81,11 @@ async def test_rejected_rate_limit_emits_one_error_event_per_window():
         await message_queue.put(result_msg())
         await wait_for_condition(lambda: len(consumed) >= 4, message="consumer never dispatched the rate limit events")
 
-    errors = _error_events(sub)
-    assert len(errors) == 2
-    assert all("5-hour usage window" in text for text in errors)
-    assert all("monthly" not in text for text in errors)
+    events = _rate_limited_events(sub)
+    assert [e["resets_at"] for e in events] == [2_000_000, 3_000_000]
+    assert all(e["window"] == "five_hour" for e in events)
+    assert all("5-hour usage window" in e["text"] for e in events)
+    assert all("monthly" not in e["text"] for e in events)
 
 
 @pytest.mark.anyio
@@ -97,4 +99,4 @@ async def test_allowed_rate_limit_event_emits_nothing():
         await message_queue.put(result_msg())
         await wait_for_condition(lambda: len(consumed) >= 3, message="consumer never dispatched the rate limit events")
 
-    assert _error_events(sub) == []
+    assert _rate_limited_events(sub) == []
