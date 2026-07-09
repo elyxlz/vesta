@@ -351,16 +351,19 @@ async fn account_token_handler(State(state): State<SharedState>) -> axum::respon
     .into_response()
 }
 
-/// `GET /agents/{name}/workspace.bundle` — the host's workspace bundle (branch + agent-v*
-/// tags), fetched by the box's fetch-workspace.sh during attach/sync. Agent-token
-/// authenticated; the middleware scopes the token to `{name}`, so a box can only pull
-/// through its own identity (the content is host-global either way).
+/// `GET /agents/{name}/workspace.bundle` — the host's upstream snapshot as a bundle
+/// (both branches + agent-v* tags). Agent-token authenticated; the middleware scopes the
+/// token to `{name}`, so a box can only pull through its own identity (the content is
+/// host-global either way).
+/// LEGACY(remove-when: no agent predating the release that ships the upstream rename
+/// remains and the 2026-07 workspace migrations are fleet-applied): old boxes' checked-out
+/// fetch-workspace.sh curls this; converged boxes fetch from the /run/vesta-upstream mount.
 async fn workspace_bundle_handler(State(state): State<SharedState>) -> axum::response::Response {
     workspace_bundle_response(&state.env_config.config_dir).await
 }
 
 async fn workspace_bundle_response(config_dir: &std::path::Path) -> axum::response::Response {
-    let path = crate::workspace::bundle_path(config_dir);
+    let path = crate::upstream::bundle_path(config_dir);
     match tokio::fs::read(&path).await {
         Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response(),
         Err(_) => err_response(StatusCode::NOT_FOUND, "workspace bundle not built yet").into_response(),
@@ -2697,12 +2700,12 @@ pub async fn run_server(cfg: ServerConfig) {
             std::process::exit(1);
         }
     };
-    // The workspace bundle is how every box attaches, syncs, and installs skills, so a vestad
-    // that can't build it is not serviceable. A build failure (git missing, disk error) aborts
-    // startup with a clear error rather than serving a half-broken daemon whose boxes silently
-    // fail to sync.
-    if let Err(e) = crate::workspace::ensure_workspace(&env_config.config_dir, &code_dir) {
-        tracing::error!(error = %e, "workspace bundle build failed — aborting startup");
+    // The upstream repo is how every box attaches, syncs, and installs skills (bind-mounted
+    // at /run/vesta-upstream), so a vestad that can't build it is not serviceable. A build
+    // failure (git missing, disk error) aborts startup with a clear error rather than serving
+    // a half-broken daemon whose boxes silently fail to sync.
+    if let Err(e) = crate::upstream::ensure_upstream(&env_config.config_dir, &code_dir) {
+        tracing::error!(error = %e, "upstream repo build failed — aborting startup");
         std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
@@ -2941,7 +2944,7 @@ mod tests {
         assert!(message.contains("new-bot"), "message missing new name: {message}");
     }
 
-    // --- Workspace bundle: 404 before first build, bytes after ---
+    // --- Legacy workspace.bundle endpoint: 404 before first build, bytes after ---
 
     #[tokio::test]
     async fn workspace_bundle_404s_before_first_build_and_serves_bytes_after() {
@@ -2950,7 +2953,7 @@ mod tests {
         let missing = super::workspace_bundle_response(tmp.path()).await;
         assert_eq!(missing.status(), super::StatusCode::NOT_FOUND);
 
-        let bundle = crate::workspace::bundle_path(tmp.path());
+        let bundle = crate::upstream::bundle_path(tmp.path());
         std::fs::create_dir_all(bundle.parent().expect("bundle has a parent")).expect("mkdir");
         std::fs::write(&bundle, b"BUNDLEBYTES").expect("write bundle");
         let served = super::workspace_bundle_response(tmp.path()).await;

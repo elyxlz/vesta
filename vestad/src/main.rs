@@ -21,7 +21,7 @@ mod jwt;
 mod paths;
 mod providers;
 mod restic;
-mod workspace;
+mod upstream;
 mod restic_embed;
 mod self_log;
 mod time_utils;
