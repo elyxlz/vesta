@@ -126,13 +126,20 @@ _REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
 
 
 def _format_one(notif: vm.Notification) -> str:
-    """Embed a reply hint inside the <channel> element so the model sees them as one unit.
+    """Embed hints inside the <channel> element so the model sees them as one unit.
 
-    The hint points the model at the originating channel's reply skill instead of copying its CLI syntax."""
+    A reply hint points the model at the originating channel's reply skill instead of copying its CLI
+    syntax. A group-chat message (a `chat_name` attribute is present) also gets a note that it may not
+    be addressed to the agent, so the model decides whether to engage rather than always replying."""
     body = notif.format_for_display()
     if notif.type != "message" or notif.source not in _REPLY_SKILLS:
         return body
-    hint = f"\n[Reply using the `{notif.source}` skill]"
+    extras = notif.model_extra or {}
+    hints = []
+    if "chat_name" in extras and extras["chat_name"]:
+        hints.append("[This message is from a group chat and may not be for you; decide whether to chip in or stay out]")
+    hints.append(f"[Reply using the `{notif.source}` skill]")
+    hint = "\n" + "\n".join(hints)
     return body.replace("</channel>", f"{hint}\n</channel>")
 
 
