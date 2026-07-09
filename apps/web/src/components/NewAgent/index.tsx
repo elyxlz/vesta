@@ -80,9 +80,11 @@ export function NewAgent() {
     if (step === "provider")
       return (
         <ProviderPicker
+          defaultsOnly
           onDone={(result) => {
-            // The picker handles OAuth/key + model + context internally and hands
+            // The picker handles OAuth/key + defaults internally and hands
             // back a complete result; forward it verbatim to setProvider.
+            // Model/context stay editable later in AgentSettings.
             setProviderResult(result);
             setStep("personality");
           }}
