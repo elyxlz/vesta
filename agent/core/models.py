@@ -161,6 +161,10 @@ class State:
     # A deferred compaction scheduled by the compact_context tool, drained after the turn's
     # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
     pending_compaction: PendingCompaction | None = None
+    # The last rejected rate-limit window surfaced as an error event, as (rate_limit_type,
+    # resets_at): the CLI re-reports the same rejection on every retry, so _dispatch_message
+    # announces each window once (issue #1071).
+    rate_limit_noticed: tuple[str | None, int | None] | None = None
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))

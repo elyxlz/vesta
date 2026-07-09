@@ -64,6 +64,15 @@ class ErrorEvent(_BaseEvent):
     text: str
 
 
+class RateLimitedEvent(_BaseEvent):
+    type: tp.Literal["rate_limited"]
+    text: str
+    # The SDK's structured classification (see client._dispatch_message): the limit window that
+    # tripped (five_hour, seven_day, ...) and the unix timestamp it resets at, when reported.
+    window: str | None
+    resets_at: int | None
+
+
 class NotificationEvent(_BaseEvent):
     type: tp.Literal["notification"]
     source: str
@@ -118,6 +127,7 @@ type StreamEvent = (
     | ThinkingEvent
     | UserEvent
     | ErrorEvent
+    | RateLimitedEvent
     | NotificationEvent
     | NotificationClearedEvent
     | SubagentStartEvent

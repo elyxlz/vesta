@@ -87,6 +87,7 @@ describe("agent stream contract", () => {
       "tool_start",
       "tool_end",
       "error",
+      "rate_limited",
       "notification",
       "notification_cleared",
       "subagent_start",
