@@ -11,7 +11,6 @@ use crate::settings::ServiceEntry;
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
-
 // --- High-level status queries (used by serve.rs handlers and the poll task) ---
 
 pub async fn get_status(
