@@ -12,7 +12,6 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
-mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod manifest;
@@ -22,7 +21,6 @@ mod paths;
 mod providers;
 mod restic;
 mod workspace;
-mod restic_embed;
 mod self_log;
 mod time_utils;
 mod self_update;
@@ -34,6 +32,7 @@ mod systemd;
 mod tunnel;
 mod types;
 mod update_check;
+mod vendored_bin;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
 

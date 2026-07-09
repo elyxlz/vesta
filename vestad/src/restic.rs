@@ -1,7 +1,7 @@
 //! restic-backed backup storage: one deduplicated, compressed, encrypted restic
 //! repository per agent, snapshots tagged `agent:<name>` + `type:<backup_type>`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::docker::{container_name, DockerError};
 use crate::types::{BackupInfo, BackupType};
@@ -62,70 +62,18 @@ fn password_path() -> PathBuf {
 
 /// PATH restic if present, else the copy embedded at build time.
 pub fn ensure_restic() -> Result<PathBuf, DockerError> {
-    if let Some(path) = which(RESTIC_BIN) {
+    if let Some(path) = crate::vendored_bin::which(RESTIC_BIN) {
         return Ok(path);
     }
 
-    if let Some((bytes, fingerprint)) = crate::restic_embed::vendored_restic() {
-        return extract_embedded_restic(&config_dir(), bytes, fingerprint);
+    if let Some((bytes, fingerprint)) = crate::vendored_bin::vendored_restic() {
+        return crate::vendored_bin::extract_embedded(&config_dir(), RESTIC_BIN, bytes, fingerprint)
+            .map_err(|e| DockerError::Failed(e.to_string()));
     }
 
     Err(DockerError::Failed(
         "restic not found: not on PATH and not embedded in this build (VESTAD_SKIP_RESTIC=1?). Install restic.".into(),
     ))
-}
-
-const RESTIC_FINGERPRINT_MARKER: &str = ".restic-fingerprint";
-
-/// Serializes extraction so concurrent first-use callers don't write the binary
-/// while another thread is exec'ing it (ETXTBSY).
-static EXTRACT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Write the embedded binary to disk, re-extracting only if the fingerprint changed.
-fn extract_embedded_restic(
-    config_dir: &Path,
-    bytes: &[u8],
-    fingerprint: &str,
-) -> Result<PathBuf, DockerError> {
-    let local_bin = config_dir.join(RESTIC_BIN);
-    let marker = config_dir.join(RESTIC_FINGERPRINT_MARKER);
-    let _guard = EXTRACT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if local_bin.exists()
-        && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
-    {
-        return Ok(local_bin);
-    }
-
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| DockerError::Failed(format!("failed to create config dir: {e}")))?;
-    // Write to a temp file and atomically rename, so we never truncate a binary
-    // another thread is currently executing (which would fail with ETXTBSY).
-    let tmp = config_dir.join(format!("{RESTIC_BIN}.tmp"));
-    std::fs::write(&tmp, bytes)
-        .map_err(|e| DockerError::Failed(format!("failed to write embedded restic: {e}")))?;
-    set_executable(&tmp)?;
-    std::fs::rename(&tmp, &local_bin)
-        .map_err(|e| DockerError::Failed(format!("failed to install restic binary: {e}")))?;
-    std::fs::write(&marker, fingerprint)
-        .map_err(|e| DockerError::Failed(format!("failed to write restic fingerprint: {e}")))?;
-
-    tracing::info!(path = %local_bin.display(), "restic extracted from embed");
-    Ok(local_bin)
-}
-
-fn set_executable(path: &Path) -> Result<(), DockerError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| DockerError::Failed(format!("chmod failed: {e}")))
-}
-
-fn which(name: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new("which").arg(name).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() { None } else { Some(PathBuf::from(path)) }
 }
 
 /// Generate the repo encryption passphrase once (32 random bytes, hex) at 0600.

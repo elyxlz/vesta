@@ -291,14 +291,14 @@ pub fn ensure_docker_sync(docker: &Docker) -> Result<(), DockerError> {
 // --- Pure / sync helpers ---
 
 pub fn container_name(name: &str) -> String {
-    format!("vesta-{}-{}", current_user(), name)
+    format!("vesta-{}-{}", crate::paths::current_user(), name)
 }
 
 /// Strip the `vesta-{user}-` prefix from a container name, falling back to the
 /// raw name if it does not match. Modern containers carry the `vesta.agent_name`
 /// label and prefer that; this is only used as a fallback in error paths.
 pub fn name_from_cname(cname: &str) -> String {
-    let user = current_user();
+    let user = crate::paths::current_user();
     let user_prefix = format!("vesta-{user}-");
     cname.strip_prefix(&user_prefix).unwrap_or(cname).to_string()
 }
@@ -353,12 +353,6 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
         return Err(DockerError::InvalidName("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into()));
     }
     Ok(())
-}
-
-fn current_user() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".into())
 }
 
 // --- Tar helpers ---
@@ -1064,7 +1058,7 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
         Err(_) => return Vec::new(),
     };
 
-    let user = current_user();
+    let user = crate::paths::current_user();
     containers
         .into_iter()
         .filter_map(|c| {
@@ -1441,7 +1435,7 @@ pub async fn create_container(
 
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
-    labels.insert(LABEL_USER.to_string(), current_user());
+    labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
     let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
