@@ -170,18 +170,6 @@ def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:
     return False
 
 
-def _check_claude_auth(content: str) -> bool:
-    """The disk-boundary entry: parse a `.credentials.json` blob and delegate to _check_claude_oauth."""
-    try:
-        creds = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    oauth = creds["claudeAiOauth"] if isinstance(creds, dict) and "claudeAiOauth" in creds else None
-    if not isinstance(oauth, dict):
-        return False
-    return _check_claude_oauth(ClaudeOAuth.model_validate(oauth))
-
-
 # --- Plan usage (provider-agnostic) ---
 #
 # Each provider reports usage in its own upstream shape — Claude as time-windowed rate-limit buckets
