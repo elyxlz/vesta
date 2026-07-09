@@ -116,6 +116,13 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
+def _is_cli_error_text(text: str) -> bool:
+    """CLI-synthesized error strings arrive as assistant text blocks (an 'API Error:' prefix or the
+    bare 'Prompt is too long'); they are operational noise, not Vesta's speech, so parse excludes
+    them from published texts (same principle as rate_limit_notice replacing the CLI's raw text)."""
+    return text.startswith("API Error:") or text == "Prompt is too long"
+
+
 def _parse_agent_input(input_data: object) -> tuple[str, str]:
     if isinstance(input_data, dict):
         data = tp.cast(dict[str, tp.Any], input_data)
@@ -191,6 +198,9 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
     thinking_blocks = []
     for block in msg.content:
         if isinstance(block, TextBlock):
+            if _is_cli_error_text(block.text):
+                logger.warning(f"Suppressed CLI-synthesized error text from assistant output: {block.text[:500]}")
+                continue
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
