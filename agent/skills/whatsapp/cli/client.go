@@ -53,6 +53,8 @@ type WhatsAppClient struct {
 	linkActive        bool
 	linkDeadline      time.Time
 	linkServer        *http.Server
+	linkGeneration    int
+	linkTimer         *time.Timer
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
@@ -283,20 +285,60 @@ func (wac *WhatsAppClient) linkModeActive() bool {
 
 func (wac *WhatsAppClient) startLinkMode(port int) {
 	wac.linkMu.Lock()
+	wac.linkGeneration++
+	generation := wac.linkGeneration
 	wac.linkActive = true
 	wac.linkDeadline = time.Now().Add(LinkSessionTimeout)
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
+	wac.linkTimer = time.AfterFunc(LinkSessionTimeout, func() {
+		wac.stopLinkModeGeneration(generation)
+	})
 	wac.linkMu.Unlock()
+
 	if port > 0 {
+		// Shut down any orphaned server from a previous session before binding a new one.
+		wac.stopLinkServer()
 		wac.startLinkServer(port)
 	}
 	go wac.handleQRAuthentication()
 }
 
+// stopLinkModeGeneration tears down link mode when its session's deadline
+// timer fires. A stale generation means a newer session has since started
+// and owns linkActive/linkServer, so the old timer must not touch it.
+func (wac *WhatsAppClient) stopLinkModeGeneration(generation int) {
+	wac.linkMu.Lock()
+	if generation != wac.linkGeneration {
+		wac.linkMu.Unlock()
+		return
+	}
+	wac.linkActive = false
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
+	wac.linkMu.Unlock()
+
+	wac.stopLinkServer()
+	wac.authMutex.Lock()
+	wac.currentQRCode = ""
+	wac.authMutex.Unlock()
+}
+
 func (wac *WhatsAppClient) stopLinkMode() {
 	wac.linkMu.Lock()
+	wac.linkGeneration++
 	wac.linkActive = false
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
 	wac.linkMu.Unlock()
+
 	wac.stopLinkServer()
+	wac.authMutex.Lock()
+	wac.currentQRCode = ""
+	wac.authMutex.Unlock()
 }
 
 // consumeQRChannel drains one QR channel, publishing each rotated code to disk
