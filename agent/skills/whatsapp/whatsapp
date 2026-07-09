@@ -1,0 +1,35 @@
+#!/bin/bash
+# Launcher for the whatsapp CLI. Compiles cli/ from source on every invocation
+# so no stale binary can drift (issue #1073), and pulls the latest whatsmeow
+# before the daemon starts (WhatsApp breaks old protocol code). Installed as a
+# symlink at ~/.local/bin/whatsapp; never `go build` a static binary somewhere.
+set -euo pipefail
+
+CLI_DIR="$(dirname "$(readlink -f "$0")")/cli"
+
+# The box install puts Go at /usr/local/go without linking it onto PATH.
+if ! command -v go >/dev/null; then export PATH="/usr/local/go/bin:$PATH"; fi
+export CGO_ENABLED=1
+export C_INCLUDE_PATH="/opt/whisper.cpp/include:/opt/whisper.cpp/ggml/include"
+export LIBRARY_PATH="/opt/whisper.cpp/build-static/src:/opt/whisper.cpp/build-static/ggml/src"
+export CGO_CFLAGS="-DSQLITE_ENABLE_FTS5"
+export CGO_LDFLAGS="-lwhisper -lggml -lggml-base -lggml-cpu -lm -lstdc++ -fopenmp"
+
+# Only whatsmeow is floated to latest; the whisper.cpp binding pin in go.mod is
+# deliberate (master breaks it). Offline is not stale: on network failure we
+# warn and serve whatever source is on disk.
+if [ "${1:-}" = "serve" ]; then
+  if ! (cd "$CLI_DIR" && timeout 120 go get go.mau.fi/whatsmeow@latest); then
+    echo "whatsapp launcher: could not update whatsmeow to latest (offline?); serving current source" >&2
+  fi
+fi
+
+# Build to a temp path then rename: writing over the binary the running daemon
+# executes would fail with ETXTBSY, and rename keeps the old inode alive for it.
+BIN_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/whatsapp"
+mkdir -p "$BIN_DIR"
+BIN="$BIN_DIR/whatsapp"
+TMP="$BIN.$$"
+(cd "$CLI_DIR" && go build -tags fts5 -o "$TMP" .)
+mv -f "$TMP" "$BIN"
+exec "$BIN" "$@"

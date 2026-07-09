@@ -42,26 +42,22 @@ curl -fSL -o /usr/local/share/ggml-small.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
 ```
 
-## 4. Build the WhatsApp CLI
+## 4. Install the WhatsApp CLI launcher
+
+**Never `go build` a static whatsapp binary.** A frozen binary silently drifts as the source gets fixes (issue #1073). Instead, `whatsapp` is a launcher script that compiles from source on every invocation (Go's build cache makes repeat runs fast) and pulls the latest whatsmeow before the daemon starts. Install it as a symlink:
 
 ```bash
-cd ~/agent/skills/whatsapp/cli
-
-C_INCLUDE_PATH=/opt/whisper.cpp/include:/opt/whisper.cpp/ggml/include \
-LIBRARY_PATH=/opt/whisper.cpp/build-static/src:/opt/whisper.cpp/build-static/ggml/src \
-CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" \
-CGO_LDFLAGS="-lwhisper -lggml -lggml-base -lggml-cpu -lm -lstdc++ -fopenmp" \
-PATH="/usr/local/go/bin:$PATH" \
-go build -tags "fts5" -o /usr/local/bin/whatsapp .
+mkdir -p ~/.local/bin
+ln -sf ~/agent/skills/whatsapp/whatsapp ~/.local/bin/whatsapp
 ```
 
-| Variable | Purpose |
-|---|---|
-| `C_INCLUDE_PATH` | Points to whisper.cpp and ggml headers |
-| `LIBRARY_PATH` | Points to the static `.a` libraries |
-| `CGO_CFLAGS` | Enables SQLite FTS5 for message search |
-| `CGO_LDFLAGS` | Links whisper, ggml, and C++ runtime |
-| `-tags "fts5"` | Activates the FTS5 build tag for go-sqlite3 |
+The launcher owns the CGO build environment (whisper.cpp include/library paths, FTS5 flags); read the `whatsapp` script in this skill directory if the build fails. The first invocation compiles everything and can take a few minutes; later invocations reuse the build cache. At `serve` time it runs `go get go.mau.fi/whatsmeow@latest` so the daemon always compiles against current whatsmeow; if the module proxy is unreachable it warns and serves the source already on disk. Only whatsmeow floats: the whisper.cpp binding pin in `go.mod` is deliberate, never bump it to master.
+
+Verify the launcher works before continuing (expect a wait on first compile):
+
+```bash
+whatsapp --help
+```
 
 ## 5. Start the daemon and authenticate
 
