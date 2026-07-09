@@ -22,16 +22,27 @@ var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
 // WhatsApp spam filters silently drop messages containing user@IP patterns.
 var userAtIPPattern = regexp.MustCompile(`\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 
-// friendlySendError maps whatsmeow send failures to actionable messages.
-func friendlySendError(err error) string {
+// sendErrorMessage maps a whatsmeow send failure to an actionable, caller-facing
+// message. action names the operation ("send message", "send reaction", ...).
+// Pure: the timeout-recovery side effect lives in classifySendError.
+func sendErrorMessage(action string, err error, timeout time.Duration) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Sprintf("send timed out after %v: the connection stalled and the daemon is attempting one automatic reconnect. Check 'whatsapp daemon status' and retry once it reports connected", SendTimeout)
+		return fmt.Sprintf("%s timed out after %v: the connection stalled and the daemon is attempting one automatic reconnect. Check 'whatsapp daemon status' and retry once it reports connected", action, timeout)
 	}
 	message := err.Error()
 	if strings.Contains(message, "463") || strings.Contains(message, "no signal session") {
-		return fmt.Sprintf("send failed (error 463: no signal session for this device yet): %v. This happens right after linking and clears once the recipient's WhatsApp comes online, wait and retry the send later; do NOT re-pair or restart the daemon", err)
+		return fmt.Sprintf("%s failed (error 463: no signal session for this device yet): %v. This happens right after linking and clears once the recipient's WhatsApp comes online, wait and retry later; do NOT re-pair or restart the daemon", action, err)
 	}
-	return fmt.Sprintf("Failed to send message: %v", err)
+	return fmt.Sprintf("failed to %s: %v", action, err)
+}
+
+// classifySendError returns the caller-facing message for a send failure and
+// fires the one-shot stall recovery on a timeout.
+func (wac *WhatsAppClient) classifySendError(action string, err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		go wac.recoverOrRestart("send_timeout")
+	}
+	return sendErrorMessage(action, err, SendTimeout)
 }
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, quotedMessageID string) (bool, string) {
@@ -104,10 +115,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, qu
 	defer cancelSend()
 	resp, err := wac.client.SendMessage(sendCtx, jid, msg)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			go wac.recoverOrRestart("send_timeout")
-		}
-		return false, friendlySendError(err)
+		return false, wac.classifySendError("send message", err)
 	}
 
 	wac.recordOutgoingMessage(jid, StoreMessageParams{ID: resp.ID, Content: message})
@@ -212,10 +220,7 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption, displayName st
 	defer cancelSend()
 	resp, err := wac.client.SendMessage(sendCtx, jid, msg)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			go wac.recoverOrRestart("send_timeout")
-		}
-		return false, friendlySendError(err)
+		return false, wac.classifySendError("send file", err)
 	}
 
 	var filename string
@@ -301,10 +306,7 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	defer cancelSend()
 	resp, err := wac.client.SendMessage(sendCtx, jid, msg)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			go wac.recoverOrRestart("send_timeout")
-		}
-		return false, friendlySendError(err)
+		return false, wac.classifySendError("send audio", err)
 	}
 
 	wac.recordOutgoingMessage(jid, StoreMessageParams{

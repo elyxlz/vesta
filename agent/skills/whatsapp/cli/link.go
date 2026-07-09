@@ -118,8 +118,7 @@ func runLink() {
 	}
 
 	if err := startDaemonProcess(linkServeArgs()); err != nil {
-		printJSON(map[string]any{"error": err.Error()})
-		os.Exit(1)
+		failJSON("%s", err.Error())
 	}
 
 	port := 0
@@ -127,15 +126,13 @@ func runLink() {
 		var err error
 		port, err = parsePortFlag(flagPort)
 		if err != nil {
-			printJSON(map[string]any{"error": err.Error()})
-			os.Exit(1)
+			failJSON("%s", err.Error())
 		}
 	}
 	if port == 0 {
 		registeredPort, err := registerVestadService(linkServiceName())
 		if err != nil {
-			printJSON(map[string]any{"error": err.Error()})
-			os.Exit(1)
+			failJSON("%s", err.Error())
 		}
 		port = registeredPort
 	}
@@ -162,8 +159,7 @@ func runLink() {
 		time.Sleep(linkPollInterval)
 		statusOutput, _, statusConnected := trySocketCommand(getSocketPath(), "link-status", nil)
 		if !statusConnected {
-			printJSON(map[string]any{"error": "daemon stopped answering during linking; check 'whatsapp daemon status'"})
-			os.Exit(1)
+			failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
 		}
 		if socketResultField(statusOutput, "status") == string(AuthStatusAuthenticated) {
 			printJSON(map[string]any{
@@ -174,14 +170,12 @@ func runLink() {
 		}
 	}
 	trySocketCommand(getSocketPath(), "link-stop", nil)
-	printJSON(map[string]any{"error": fmt.Sprintf("no device linked within %s; link mode stopped. Retry with 'whatsapp link' when the user is ready (attempts are rate-limited)", LinkSessionTimeout)})
-	os.Exit(1)
+	failJSON("no device linked within %s; link mode stopped. Retry with 'whatsapp link' when the user is ready (attempts are rate-limited)", LinkSessionTimeout)
 }
 
 func runLinkPhone(phone string) {
 	if err := startDaemonProcess(linkServeArgs()); err != nil {
-		printJSON(map[string]any{"error": err.Error()})
-		os.Exit(1)
+		failJSON("%s", err.Error())
 	}
 	pairArgs := []string{"--phone", phone}
 	if hasBareFlag("acknowledge-ban-risk") {
@@ -189,8 +183,7 @@ func runLinkPhone(phone string) {
 	}
 	output, exitCode, connected := trySocketCommand(getSocketPath(), "pair-phone", pairArgs)
 	if !connected {
-		printJSON(map[string]any{"error": "daemon not running. Start with: whatsapp daemon start"})
-		os.Exit(1)
+		failJSON("daemon not running. Start with: whatsapp daemon start")
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)

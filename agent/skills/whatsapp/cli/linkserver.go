@@ -51,7 +51,7 @@ func (wac *WhatsAppClient) linkHTTPHandler(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(png)
 	case strings.HasSuffix(r.URL.Path, "/link-status.json"):
-		status, _ := wac.GetAuthStatus()
+		status := wac.GetAuthStatus()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(map[string]string{"status": string(status)})

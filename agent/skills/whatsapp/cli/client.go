@@ -54,7 +54,6 @@ type WhatsAppClient struct {
 	pairGuardMu       sync.Mutex
 	linkMu            sync.Mutex
 	linkActive        bool
-	linkDeadline      time.Time
 	linkServer        *http.Server
 	linkGeneration    int
 	linkTimer         *time.Timer
@@ -304,7 +303,7 @@ func (wac *WhatsAppClient) initiateReauth() error {
 func (wac *WhatsAppClient) linkModeActive() bool {
 	wac.linkMu.Lock()
 	defer wac.linkMu.Unlock()
-	return wac.linkActive && time.Now().Before(wac.linkDeadline)
+	return wac.linkActive
 }
 
 func (wac *WhatsAppClient) startLinkMode(port int) {
@@ -312,7 +311,6 @@ func (wac *WhatsAppClient) startLinkMode(port int) {
 	wac.linkGeneration++
 	generation := wac.linkGeneration
 	wac.linkActive = true
-	wac.linkDeadline = time.Now().Add(LinkSessionTimeout)
 	if wac.linkTimer != nil {
 		wac.linkTimer.Stop()
 	}
@@ -449,15 +447,14 @@ func (wac *WhatsAppClient) setAuthStatus(status AuthStatus) {
 	wac.authMutex.Unlock()
 }
 
-func (wac *WhatsAppClient) GetAuthStatus() (AuthStatus, string) {
+func (wac *WhatsAppClient) GetAuthStatus() AuthStatus {
 	wac.authMutex.RLock()
 	defer wac.authMutex.RUnlock()
-	return wac.authStatus, wac.qrPath
+	return wac.authStatus
 }
 
 func (wac *WhatsAppClient) IsAuthenticated() bool {
-	status, _ := wac.GetAuthStatus()
-	return status == AuthStatusAuthenticated
+	return wac.GetAuthStatus() == AuthStatusAuthenticated
 }
 
 func (wac *WhatsAppClient) PairPhone(phone string) (string, error) {

@@ -45,23 +45,18 @@ func extractFlag(name string) string {
 func extractInstance() string         { return extractFlag("instance") }
 func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
-func isNoNotifications() bool {
+// hasBareFlag reports whether --name is present as a standalone flag.
+func hasBareFlag(name string) bool {
 	for _, arg := range os.Args {
-		if arg == "--no-notifications" {
+		if arg == "--"+name {
 			return true
 		}
 	}
 	return false
 }
 
-func isReadOnly() bool {
-	for _, arg := range os.Args {
-		if arg == "--read-only" {
-			return true
-		}
-	}
-	return false
-}
+func isNoNotifications() bool { return hasBareFlag("no-notifications") }
+func isReadOnly() bool        { return hasBareFlag("read-only") }
 
 func extractSkipSenders() map[string]bool {
 	val := extractFlag("skip-senders")
@@ -102,6 +97,13 @@ func printJSON(v any) {
 		os.Exit(1)
 	}
 	fmt.Println(string(data))
+}
+
+// failJSON prints an {"error": ...} object and exits nonzero, the single owner
+// of the print-error-then-exit pattern the daemon and link commands share.
+func failJSON(format string, args ...any) {
+	printJSON(map[string]any{"error": fmt.Sprintf(format, args...)})
+	os.Exit(1)
 }
 
 func writeDeathNotification(notifDir string, sig string) {
@@ -260,8 +262,11 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		printJSON(map[string]any{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
-		os.Exit(1)
+		hint := "daemon not running. Start with: whatsapp daemon start"
+		if instance := extractInstance(); instance != "" {
+			hint += " --instance " + instance
+		}
+		failJSON("%s", hint)
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)
@@ -335,7 +340,7 @@ func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
-	status, _ := wac.GetAuthStatus()
+	status := wac.GetAuthStatus()
 	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
 }
 
@@ -345,7 +350,7 @@ func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
-	status, _ := wac.GetAuthStatus()
+	status := wac.GetAuthStatus()
 	info, _ := readDaemonInfo(wac.dataDir)
 	now := time.Now()
 	result := map[string]any{

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -154,10 +153,7 @@ func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string)
 	defer cancelSend()
 	_, err = wac.client.SendMessage(sendCtx, jid, reactionMsg)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			go wac.recoverOrRestart("send_timeout")
-		}
-		return false, friendlySendError(err)
+		return false, wac.classifySendError("send reaction", err)
 	}
 
 	action := "sent"
@@ -180,10 +176,7 @@ func (wac *WhatsAppClient) RevokeMessage(messageID, chatIdentifier string) (bool
 	defer cancelRevoke()
 	resp, err := wac.client.RevokeMessage(revokeCtx, jid, types.MessageID(messageID))
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			go wac.recoverOrRestart("send_timeout")
-		}
-		return false, friendlySendError(err)
+		return false, wac.classifySendError("revoke message", err)
 	}
 	return true, fmt.Sprintf("Message revoked successfully (revocation ID: %s)", resp.ID)
 }

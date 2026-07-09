@@ -65,19 +65,9 @@ func stopRefusal(remaining time.Duration, force bool) string {
 		remaining.Round(time.Second))
 }
 
-func hasBareFlag(name string) bool {
-	for _, arg := range os.Args {
-		if arg == "--"+name {
-			return true
-		}
-	}
-	return false
-}
-
 func runDaemon() {
 	if len(os.Args) < 2 {
-		printJSON(map[string]any{"error": "usage: whatsapp daemon <start|stop|restart|status> [--force] [serve flags]"})
-		os.Exit(1)
+		failJSON("usage: whatsapp daemon <start|stop|restart|status> [--force] [serve flags]")
 	}
 	sub := os.Args[1]
 	os.Args = append(os.Args[:1], os.Args[2:]...)
@@ -91,8 +81,7 @@ func runDaemon() {
 	case "status":
 		daemonStatus()
 	default:
-		printJSON(map[string]any{"error": fmt.Sprintf("unknown daemon subcommand %q (use start|stop|restart|status)", sub)})
-		os.Exit(1)
+		failJSON("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
 	}
 }
 
@@ -131,8 +120,7 @@ func daemonStart(serveArgs []string) {
 		return
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
-		printJSON(map[string]any{"error": err.Error()})
-		os.Exit(1)
+		failJSON("%s", err.Error())
 	}
 	printJSON(map[string]any{"status": "started", "session": sessionName()})
 }
@@ -144,8 +132,7 @@ func daemonStop() {
 		return
 	}
 	if msg := stopRefusal(syncWindowRemaining(dataDir, time.Now()), hasBareFlag("force")); msg != "" {
-		printJSON(map[string]any{"error": msg})
-		os.Exit(1)
+		failJSON("%s", msg)
 	}
 	// Mark the stop intentional so serve's shutdown skips the daemon_died
 	// notification the agent would otherwise investigate.
@@ -156,8 +143,7 @@ func daemonStop() {
 		// The daemon never got the quit, so remove the marker: leaving it behind
 		// would suppress the death notification of a later genuine crash.
 		os.Remove(stopRequestedPath(dataDir))
-		printJSON(map[string]any{"error": fmt.Sprintf("screen quit failed: %v", err)})
-		os.Exit(1)
+		failJSON("screen quit failed: %v", err)
 	}
 	deadline := time.Now().Add(DaemonStopTimeout)
 	for time.Now().Before(deadline) {
@@ -171,8 +157,7 @@ func daemonStop() {
 	// it: leaving it behind would suppress the death notification of a later
 	// genuine crash.
 	os.Remove(stopRequestedPath(dataDir))
-	printJSON(map[string]any{"error": "daemon still answering after screen quit; do NOT send signals — inspect with 'screen -r " + sessionName() + "'"})
-	os.Exit(1)
+	failJSON("daemon still answering after screen quit; do NOT send signals. Inspect with 'screen -r %s'", sessionName())
 }
 
 func daemonRestart() {
@@ -181,14 +166,12 @@ func daemonRestart() {
 	running := daemonAlive(getSocketPath())
 	if err != nil && running {
 		// LEGACY(remove-when: fleet daemons have all restarted once under the lifecycle commands): pre-lifecycle daemons have no daemon-info.json, so a faithful restart is impossible.
-		printJSON(map[string]any{"error": "running daemon has no daemon-info.json (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]"})
-		os.Exit(1)
+		failJSON("running daemon has no daemon-info.json (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]")
 	}
 	if !running {
 		serveArgs := linkServeArgs()
 		if err := startDaemonProcess(serveArgs); err != nil {
-			printJSON(map[string]any{"error": err.Error()})
-			os.Exit(1)
+			failJSON("%s", err.Error())
 		}
 		printJSON(map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs, "note": "daemon was not running; started fresh with instance args only"})
 		return
@@ -196,8 +179,7 @@ func daemonRestart() {
 	serveArgs := info.Args
 	daemonStop()
 	if err := startDaemonProcess(serveArgs); err != nil {
-		printJSON(map[string]any{"error": err.Error()})
-		os.Exit(1)
+		failJSON("%s", err.Error())
 	}
 	printJSON(map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs})
 }
