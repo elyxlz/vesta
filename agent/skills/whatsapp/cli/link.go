@@ -1,0 +1,153 @@
+package main
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+const (
+	vestadRequestTimeout = 10 * time.Second
+	linkPollInterval     = 2 * time.Second
+)
+
+// linkPageURL builds the URL the user opens: the public tunnel route when the
+// box has one, the raw local port otherwise (the caller then exposes it).
+func linkPageURL(tunnel, agentName string, port int) string {
+	if tunnel != "" && agentName != "" {
+		return strings.TrimSuffix(tunnel, "/") + "/agents/" + agentName + "/wa-link/"
+	}
+	return fmt.Sprintf("http://localhost:%d/", port)
+}
+
+// registerVestadService registers a public service with vestad over the
+// loopback (agent-token auth, self-signed TLS so verification is skipped, same
+// trust model as the service skill's register-service curl -k) and returns the
+// assigned port. Idempotent on vestad's side: same name, same port.
+func registerVestadService(name string) (int, error) {
+	vestadPort := os.Getenv("VESTAD_PORT")
+	agentName := os.Getenv("AGENT_NAME")
+	agentToken := os.Getenv("AGENT_TOKEN")
+	if vestadPort == "" || agentName == "" || agentToken == "" {
+		return 0, fmt.Errorf("VESTAD_PORT/AGENT_NAME/AGENT_TOKEN not set (not on a vesta box?); pass --port and expose it yourself")
+	}
+	client := &http.Client{
+		Timeout:   vestadRequestTimeout,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	url := fmt.Sprintf("https://localhost:%s/agents/%s/services", vestadPort, agentName)
+	body := fmt.Sprintf(`{"name":%q,"public":true}`, name)
+	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("X-Agent-Token", agentToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("vestad service registration failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		Port int `json:"port"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil || payload.Port == 0 {
+		return 0, fmt.Errorf("vestad service registration returned no port (HTTP %d)", resp.StatusCode)
+	}
+	return payload.Port, nil
+}
+
+func socketResultField(output []byte, field string) string {
+	var result map[string]any
+	if err := json.Unmarshal(output, &result); err != nil {
+		return ""
+	}
+	if value, ok := result[field].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func runLink() {
+	if phone, present := lookupFlag("phone"); present && phone != "" {
+		runLinkPhone(phone)
+		return
+	}
+
+	if err := startDaemonProcess(nil); err != nil {
+		printJSON(map[string]any{"error": err.Error()})
+		os.Exit(1)
+	}
+
+	port := 0
+	if flagPort, present := lookupFlag("port"); present {
+		fmt.Sscanf(flagPort, "%d", &port)
+	}
+	if port == 0 {
+		registeredPort, err := registerVestadService("wa-link")
+		if err != nil {
+			printJSON(map[string]any{"error": err.Error()})
+			os.Exit(1)
+		}
+		port = registeredPort
+	}
+
+	startArgs := []string{"--port", fmt.Sprintf("%d", port)}
+	if hasBareFlag("acknowledge-ban-risk") {
+		startArgs = append(startArgs, "--acknowledge-ban-risk")
+	}
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "link-start", startArgs)
+	if !connected || exitCode != 0 {
+		fmt.Println(string(output))
+		os.Exit(1)
+	}
+
+	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), port)
+	printJSON(map[string]any{
+		"status":       "linking",
+		"url":          pageURL,
+		"instructions": "Send the user this URL. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
+	})
+
+	deadline := time.Now().Add(LinkSessionTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(linkPollInterval)
+		statusOutput, _, statusConnected := trySocketCommand(getSocketPath(), "link-status", nil)
+		if !statusConnected {
+			printJSON(map[string]any{"error": "daemon stopped answering during linking; check 'whatsapp daemon status'"})
+			os.Exit(1)
+		}
+		if socketResultField(statusOutput, "status") == string(AuthStatusAuthenticated) {
+			printJSON(map[string]any{
+				"status": "linked",
+				"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL — do not restart anything.", SyncWindowDuration),
+			})
+			return
+		}
+	}
+	trySocketCommand(getSocketPath(), "link-stop", nil)
+	printJSON(map[string]any{"error": fmt.Sprintf("no device linked within %s; link mode stopped. Retry with 'whatsapp link' when the user is ready (attempts are rate-limited)", LinkSessionTimeout)})
+	os.Exit(1)
+}
+
+func runLinkPhone(phone string) {
+	if err := startDaemonProcess(nil); err != nil {
+		printJSON(map[string]any{"error": err.Error()})
+		os.Exit(1)
+	}
+	pairArgs := []string{"--phone", phone}
+	if hasBareFlag("acknowledge-ban-risk") {
+		pairArgs = append(pairArgs, "--acknowledge-ban-risk")
+	}
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "pair-phone", pairArgs)
+	if !connected {
+		printJSON(map[string]any{"error": "daemon not running — start with: whatsapp daemon start"})
+		os.Exit(1)
+	}
+	fmt.Println(string(output))
+	os.Exit(exitCode)
+}

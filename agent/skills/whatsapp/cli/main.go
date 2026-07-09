@@ -90,6 +90,8 @@ func main() {
 		runAuthenticate()
 	case "daemon":
 		runDaemon()
+	case "link":
+		runLink()
 	default:
 		runOneShot(command)
 	}

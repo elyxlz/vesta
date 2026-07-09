@@ -838,13 +838,18 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 
 func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	var phone string
+	var acknowledged bool
 	fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164 format)")
+	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if phone == "" {
 		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
+	}
+	if err := guardPairAttempt(wac.dataDir, time.Now(), acknowledged); err != nil {
+		return nil, err
 	}
 	code, err := wac.PairPhone(phone)
 	if err != nil {
@@ -853,6 +858,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,
+		"confirm":      fmt.Sprintf("Code generated for %s — CONFIRM this is exactly the number being linked; a typo'd number produces a code that silently never matches.", phone),
 		"instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number",
 	}, nil
 }
