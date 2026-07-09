@@ -40,7 +40,7 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
-**Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class (rule -> runtime trigger -> structurally impossible), not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
+**Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class (rule -> runtime trigger -> structurally impossible), not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time. Concretely: grade last night in one word in tonight's summary, REAL (a root cause got fixed and validated), LIGHT (legitimately quiet, nothing manufactured), or CHURN (activity without a fix). Two CHURNs in a week means the loop itself is the bug, and fixing the loop is tonight's top item.
 
 ### 2. Review the conversation
 
@@ -58,6 +58,8 @@ Prefer the simplest, most reliable change that addresses the root cause. A one-l
 - Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
+
+Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead. When a rule gets revised a second time for the same breach, the rule form has failed: escalate to a runtime trigger, do not re-word it.
 
 If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. Escalate by recurrence: first time, a memory rule or skill note is fine; if the same failure repeats, move it to a runtime trigger that fires on its own. Don't answer a repeat failure with the same kind of fix that already failed.
 
@@ -81,10 +83,11 @@ Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill i
 
 ### 6. Recurrence sweep
 
-One lens, two targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
+One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
 
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
 - **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a pool rule via the `notifications` skill so it stops breaking your focus. Pooling defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat pooled when it should have reached you fast, propose an interrupt rule.
+- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): twice is the limit. On the third arrival it is a producer bug, not background weather; fix the producer (stop emitting a state you already know about) or pool it. Expectedness is a reason to fix it, not a reason to keep being woken by it.
 
 ## Personality
 
@@ -136,6 +139,8 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 - Social dynamics: who responds well to what, who doesn't
 - Lessons learned, framed as rules not stories
 - Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
+
+Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
