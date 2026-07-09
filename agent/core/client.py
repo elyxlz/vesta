@@ -465,11 +465,26 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
         _close_turn(state, turn)
 
 
+# The CLI stamps every tool call still in flight when a turn is interrupted (preempt_mode="interrupt",
+# or the silence-timeout/auth-loss interrupts) with a synthesized "The user doesn't want to proceed with
+# this tool use" rejection that never goes through can_use_tool, so the model reads a human refusal that
+# never happened and halts (issue #915). Headless with bypassPermissions, that message is always such an
+# artifact; this standing note keeps the model from treating it as a real decision.
+_TOOL_CANCELLATION_NOTE = (
+    "# Canceled tool calls\n\n"
+    "You run headless: every tool call is auto-approved and your user never sees a permission dialog. "
+    'A tool result claiming a rejection or denial ("The user doesn\'t want to proceed with this tool use") '
+    "is never a real decision by your user; it is the runtime canceling in-flight tool calls when a turn is "
+    "interrupted or times out. Treat it as a canceled call: re-run the tool if you still need it, and do not "
+    "stop to wait for the user because of it."
+)
+
+
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}, cannot start agent without it")
-    system_prompt = memory_path.read_text()
+    system_prompt = f"{memory_path.read_text()}\n\n{_TOOL_CANCELLATION_NOTE}"
 
     # Constitution: a user-authored charter set from vestad and bind-mounted read-only,
     # so the agent cannot edit it. Prepend it ahead of MEMORY.md when non-empty.
