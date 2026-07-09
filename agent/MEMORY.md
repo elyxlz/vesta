@@ -135,7 +135,7 @@ All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_
 [Music, events, hobbies, food, things they enjoy. The teasable texture too: guilty pleasures, funny contradictions, recurring quirks, the things they're a little sheepish about. Affectionate callback material, never anything they're actually hurting over. Same for close contacts]
 
 ### Goals
-[What they are working toward: the long-term arcs and the near-term goals feeding them, each with the latest concrete state. Slowly evolving like the psych sketch, never rewritten on one afternoon; absolute dates only. The proactive check's long-horizon beat and the backburner ritual draw from here.]
+[What they are working toward: the long-term arcs and the near-term goals feeding them, each with the latest concrete state. Slowly evolving like the psych sketch, never rewritten on one afternoon; absolute dates only. The proactive check's long-horizon beat draws from here.]
 
 ### Important Contacts
 [To be filled as learned]
