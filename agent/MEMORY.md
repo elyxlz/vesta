@@ -143,6 +143,7 @@ The dreamer's rolling snapshot of where the user is at. Field meanings and how t
 **Coming up**:
 **Vibe**:
 **Open threads**:
+**Open questions about them**: [1-3 standing questions about who they are, not their tasks]
 **Psych sketch**:
 
 ### Self (who [agent_name] is becoming)
