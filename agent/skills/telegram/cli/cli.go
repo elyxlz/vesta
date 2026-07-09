@@ -151,8 +151,7 @@ func runServe() {
 
 	notifDir := extractNotificationsDir()
 	if notifDir == "" {
-		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve")
-		os.Exit(1)
+		notifDir = defaultNotificationsDir()
 	}
 
 	var err error
@@ -160,6 +159,7 @@ func runServe() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	writeDaemonInfo(dataDir, os.Args[1:])
 	if err = os.MkdirAll(notifDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -202,7 +202,11 @@ func runServe() {
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	writeDeathNotification(notifDir, sig.String())
+	if _, statErr := os.Stat(stopRequestedPath(dataDir)); statErr == nil {
+		os.Remove(stopRequestedPath(dataDir))
+	} else {
+		writeDeathNotification(notifDir, sig.String())
+	}
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}
@@ -233,7 +237,7 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications"})
+		printJSON(map[string]interface{}{"error": "daemon not running; start with: telegram daemon start"})
 		os.Exit(1)
 	}
 	fmt.Println(string(output))
