@@ -93,6 +93,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	info := evt.Info
 
 	content := extractTextContent(msg)
+	content = wac.resolveMentionsInContent(content, msg)
 	isForwarded := isMessageForwarded(msg)
 	quotedMessageID, quotedText := extractQuoteContext(msg)
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)

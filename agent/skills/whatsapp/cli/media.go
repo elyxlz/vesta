@@ -330,6 +330,57 @@ func isMessageForwarded(msg *waProto.Message) bool {
 	return messageContextInfo(msg).GetIsForwarded()
 }
 
+// resolveMentionsInContent rewrites @<lid-or-phone> tokens in an incoming message's text
+// to @<display name>, so a notification shows who was actually tagged instead of a raw
+// numeric LID. A mention of our own account is rewritten to @<agent name> so the agent
+// can tell when it is the one being addressed. General by construction: names come from
+// the shared contact/LID stores and self-detection from our own JID + LID, so it works
+// for any contact and any agent instance. No-op when the message carries no mentions.
+func (wac *WhatsAppClient) resolveMentionsInContent(content string, msg *waProto.Message) string {
+	ci := messageContextInfo(msg)
+	if ci == nil {
+		return content
+	}
+	mentioned := ci.GetMentionedJID()
+	if len(mentioned) == 0 {
+		return content
+	}
+	ownUser, ownLIDUser := "", ""
+	if wac.client != nil && wac.client.Store != nil {
+		if wac.client.Store.ID != nil {
+			ownUser = wac.client.Store.ID.User
+		}
+		if !wac.client.Store.LID.IsEmpty() {
+			ownLIDUser = wac.client.Store.LID.User
+		}
+	}
+	selfName := os.Getenv("AGENT_NAME")
+	if selfName == "" {
+		selfName = "me"
+	}
+	for _, raw := range mentioned {
+		jid, err := types.ParseJID(raw)
+		if err != nil || jid.User == "" {
+			continue
+		}
+		token := "@" + jid.User
+		var name string
+		if jid.User == ownUser || (ownLIDUser != "" && jid.User == ownLIDUser) {
+			name = "@" + selfName
+		} else {
+			resolved := jid
+			if isLIDServer(jid.Server) {
+				if pn, err := wac.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && !pn.IsEmpty() {
+					resolved = pn
+				}
+			}
+			name = "@" + wac.getChatName(resolved)
+		}
+		content = strings.ReplaceAll(content, token, name)
+	}
+	return content
+}
+
 func extractQuoteContext(msg *waProto.Message) (quotedMessageID, quotedText string) {
 	ci := messageContextInfo(msg)
 	if ci == nil {
