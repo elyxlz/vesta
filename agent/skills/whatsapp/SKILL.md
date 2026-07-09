@@ -99,6 +99,9 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 - **Before sending to an unknown phone number, save it first with `add-contact`.**
   *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
 
+- **Never `go build` a static whatsapp binary or run one directly.** `whatsapp` must stay the launcher symlink (`~/.local/bin/whatsapp` -> `~/agent/skills/whatsapp/whatsapp`), which compiles from source on every invocation and updates whatsmeow at daemon start.
+  *Why:* A frozen binary silently drifts from the source as fixes land (issue #1073), and stale whatsmeow protocol code is what WhatsApp breaks and bans.
+
 - **Right after first-pair auth, `database is locked` can occur transiently during history backfill.**
   *Why:* WhatsApp pushes up to 2 years of history; each conversation is persisted in a short transaction that can briefly exceed the 5s busy-timeout on large chats. If a write fails with "database is locked" within the first minute or two after authentication, wait 10-20 seconds and retry; do not treat it as a real failure. This does not occur on subsequent runs.
 
@@ -110,18 +113,19 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 
 ## Developing & Testing Changes
 
-The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. This means:
+The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. The `whatsapp` command is a launcher (the `whatsapp` script in this skill directory) that compiles from source on every invocation, so there is no rebuild step and never a static binary to manage:
 
-1. **Rebuild**: `cd ~/agent/skills/whatsapp/cli && CGO_ENABLED=1 go build -tags "fts5" -o ~/.local/bin/whatsapp .`
-2. **Restart daemon**: The running daemon uses the old binary. Restart it to pick up changes:
+1. **Restart daemon**: The running daemon is still the old build. Restart it to pick up source changes:
    ```bash
    screen -S whatsapp -X quit
    sleep 1
    screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
    ```
-3. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 2.
+2. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 1.
 
-**Common mistake**: rebuilding the binary and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be running the new binary.
+**Common mistake**: editing source and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be restarted to run the new code.
+
+**If the daemon won't start after a change** (screen session dies immediately), run any foreground command, e.g. `whatsapp --help`: the launcher recompiles and the compile error prints to your terminal. A daemon start also pulls the latest whatsmeow first, so an upstream breaking change surfaces the same way; fix the source against the new API rather than pinning back.
 
 ### Contact Preferences
 [How the user prefers to communicate with different contacts]
