@@ -88,6 +88,8 @@ func main() {
 		runServe(logger)
 	case "authenticate":
 		runAuthenticate()
+	case "daemon":
+		runDaemon()
 	default:
 		runOneShot(command)
 	}
