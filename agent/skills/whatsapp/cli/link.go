@@ -16,11 +16,22 @@ const (
 	linkPollInterval     = 2 * time.Second
 )
 
+// linkServiceName is the vestad service (and tunnel path segment) for the link
+// page: the shared "wa-link" for the default instance, suffixed per named
+// instance so two instances' link pages never collide on one box.
+func linkServiceName() string {
+	if instance := extractInstance(); instance != "" {
+		return "wa-link-" + instance
+	}
+	return "wa-link"
+}
+
 // linkPageURL builds the URL the user opens: the public tunnel route when the
-// box has one, the raw local port otherwise (the caller then exposes it).
-func linkPageURL(tunnel, agentName string, port int) string {
+// box has one, the raw local port otherwise (the caller then exposes it). The
+// service segment matches the registered vestad service name.
+func linkPageURL(tunnel, agentName, serviceName string, port int) string {
 	if tunnel != "" && agentName != "" {
-		return strings.TrimSuffix(tunnel, "/") + "/agents/" + agentName + "/wa-link/"
+		return strings.TrimSuffix(tunnel, "/") + "/agents/" + agentName + "/" + serviceName + "/"
 	}
 	return fmt.Sprintf("http://localhost:%d/", port)
 }
@@ -121,7 +132,7 @@ func runLink() {
 		}
 	}
 	if port == 0 {
-		registeredPort, err := registerVestadService("wa-link")
+		registeredPort, err := registerVestadService(linkServiceName())
 		if err != nil {
 			printJSON(map[string]any{"error": err.Error()})
 			os.Exit(1)
@@ -139,7 +150,7 @@ func runLink() {
 		os.Exit(1)
 	}
 
-	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), port)
+	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	printJSON(map[string]any{
 		"status":       "linking",
 		"url":          pageURL,

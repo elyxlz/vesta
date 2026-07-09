@@ -268,6 +268,13 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
+	// History backfill can outlast the fixed post-link window; slide the window
+	// while batches are still arriving so stop/restart stay refused mid-sync.
+	// An expired window is never re-armed: routine syncs outside it are ignored.
+	if syncWindowRemaining(wac.dataDir, time.Now()) > 0 {
+		recordLinkedAt(wac.dataDir, time.Now())
+	}
+
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))
 
 	// Commit one transaction per conversation so the writer lock releases between

@@ -32,23 +32,26 @@ const (
 )
 
 type WhatsAppClient struct {
-	client            *whatsmeow.Client
-	store             *MessageStore
-	logger            waLog.Logger
-	dataDir           string
-	notificationsDir  string
-	instance          string
-	readOnly          bool
-	noNotify          bool
-	skipSenders       map[string]bool
-	messageSenders    map[string]string
-	senderOrder       []string
-	sendersMutex      sync.RWMutex
-	authStatus        AuthStatus
-	authMutex         sync.RWMutex
-	qrPath            string
-	currentQRCode     string // guarded by authMutex, cleared on success
-	reauthInProgress  bool
+	client           *whatsmeow.Client
+	store            *MessageStore
+	logger           waLog.Logger
+	dataDir          string
+	notificationsDir string
+	instance         string
+	readOnly         bool
+	noNotify         bool
+	skipSenders      map[string]bool
+	messageSenders   map[string]string
+	senderOrder      []string
+	sendersMutex     sync.RWMutex
+	authStatus       AuthStatus
+	authMutex        sync.RWMutex
+	qrPath           string
+	currentQRCode    string // guarded by authMutex, cleared on success
+	reauthInProgress bool
+	// pairGuardMu serializes guardPairAttempt across concurrent link/pair
+	// callers so two can't read the same under-limit count and double-spend.
+	pairGuardMu       sync.Mutex
 	linkMu            sync.Mutex
 	linkActive        bool
 	linkDeadline      time.Time
@@ -142,8 +145,11 @@ func (wac *WhatsAppClient) Connect() error {
 		return nil
 	}
 	if err != nil {
-		wac.logger.Warnf("Failed to connect with existing session: %v - initiating re-auth", err)
-		return wac.initiateReauth()
+		// A valid device session plus a transient connect failure must never
+		// delete the store; recover under the supervisor instead of re-pairing.
+		wac.logger.Warnf("Failed to connect with existing session: %v; attempting recovery", err)
+		go wac.recoverOrRestart("connect_failed")
+		return nil
 	}
 
 	for i := 0; i < ConnectRetryAttempts; i++ {
@@ -159,8 +165,9 @@ func (wac *WhatsAppClient) Connect() error {
 		}
 	}
 
-	wac.logger.Warnf("Connection timeout — session may be invalid, initiating re-auth")
-	return wac.initiateReauth()
+	wac.logger.Warnf("Connection timeout with existing session; attempting recovery")
+	go wac.recoverOrRestart("connect_failed")
+	return nil
 }
 
 func (wac *WhatsAppClient) Disconnect() {
@@ -256,7 +263,24 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 	return nil
 }
 
+// initiateReauth is the logged-out re-pair path (reached from the LoggedOut
+// event, where the device session is genuinely invalid). The pairing guard here
+// is the ban protection: WhatsApp logging a device out repeatedly is exactly the
+// flag pattern, so a rate-limited re-pair refuses rather than deleting a
+// possibly-recoverable store and hammering pairing.
 func (wac *WhatsAppClient) initiateReauth() error {
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), false)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		wac.logger.Warnf("Re-pair after logout refused by pairing guard: %v", guardErr)
+		wac.writeAuthStatusFile(map[string]string{
+			"status": "logged_out",
+			"note":   "pairing rate-limited after repeated logouts, re-link with whatsapp link when the user is ready",
+		})
+		return nil
+	}
+
 	wac.logger.Infof("Initiating re-authentication...")
 	wac.client.Disconnect()
 

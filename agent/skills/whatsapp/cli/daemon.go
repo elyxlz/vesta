@@ -153,6 +153,9 @@ func daemonStop() {
 		fmt.Fprintf(os.Stderr, "warning: could not mark stop as intentional: %v\n", err)
 	}
 	if err := exec.Command("screen", "-S", sessionName(), "-X", "quit").Run(); err != nil {
+		// The daemon never got the quit, so remove the marker: leaving it behind
+		// would suppress the death notification of a later genuine crash.
+		os.Remove(stopRequestedPath(dataDir))
 		printJSON(map[string]any{"error": fmt.Sprintf("screen quit failed: %v", err)})
 		os.Exit(1)
 	}
@@ -174,13 +177,24 @@ func daemonStop() {
 
 func daemonRestart() {
 	dataDir := stateDataDir()
-	serveArgs := []string{}
-	if info, err := readDaemonInfo(dataDir); err == nil {
-		serveArgs = info.Args
+	info, err := readDaemonInfo(dataDir)
+	running := daemonAlive(getSocketPath())
+	if err != nil && running {
+		// LEGACY(remove-when: fleet daemons have all restarted once under the lifecycle commands): pre-lifecycle daemons have no daemon-info.json, so a faithful restart is impossible.
+		printJSON(map[string]any{"error": "running daemon has no daemon-info.json (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]"})
+		os.Exit(1)
 	}
-	if daemonAlive(getSocketPath()) {
-		daemonStop()
+	if !running {
+		serveArgs := linkServeArgs()
+		if err := startDaemonProcess(serveArgs); err != nil {
+			printJSON(map[string]any{"error": err.Error()})
+			os.Exit(1)
+		}
+		printJSON(map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs, "note": "daemon was not running; started fresh with instance args only"})
+		return
 	}
+	serveArgs := info.Args
+	daemonStop()
 	if err := startDaemonProcess(serveArgs); err != nil {
 		printJSON(map[string]any{"error": err.Error()})
 		os.Exit(1)

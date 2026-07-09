@@ -324,8 +324,11 @@ func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
 	if wac.IsAuthenticated() {
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
-	if err := guardPairAttempt(wac.dataDir, time.Now(), acknowledged); err != nil {
-		return nil, err
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		return nil, guardErr
 	}
 	wac.startLinkMode(port)
 	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
@@ -848,8 +851,14 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if phone == "" {
 		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
 	}
-	if err := guardPairAttempt(wac.dataDir, time.Now(), acknowledged); err != nil {
-		return nil, err
+	if wac.IsAuthenticated() {
+		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
+	}
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		return nil, guardErr
 	}
 	code, err := wac.PairPhone(phone)
 	if err != nil {
