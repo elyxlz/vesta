@@ -4,7 +4,7 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
+    ensure_container_removed, inspect_container, start_container, stop_container_with_timeout, validate_name,
     write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
@@ -127,7 +127,9 @@ where
         if let Err(err) = write_pending_restart_reason(docker, &cname, resume_reason).await {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
-        start_container(docker, &cname).await;
+        if !start_container(docker, &cname).await {
+            tracing::error!(agent = %name, "failed to restart agent after backup");
+        }
     }
     result
 }
@@ -291,7 +293,15 @@ pub async fn restore_backup(
         }
         return Err(DockerError::Failed(format!("pre-restore safety backup failed: {e}")));
     }
-    remove_container_force(docker, &cname).await.ok();
+    // Confirm it's actually gone (don't swallow): docker rm can return before the name frees,
+    // and a create colliding on the name would delete the env file while the old container
+    // still exists. The pre-restore safety backup is already taken, so restart and bail.
+    if let Err(e) = ensure_container_removed(docker, &cname).await {
+        if info.status == ContainerStatus::Running {
+            start_container(docker, &cname).await;
+        }
+        return Err(e);
+    }
 
     let port = info
         .port

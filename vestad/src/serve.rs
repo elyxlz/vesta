@@ -483,10 +483,9 @@ async fn gateway_update_handler(
     }
     let channel = effective_channel(&state).await;
     tracing::info!(channel = channel.as_str(), "gateway update requested via API");
-    let result = tokio::task::spawn_blocking(move || self_update::perform_update(channel))
-        .await
-        .unwrap();
+    let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
+    let result = join.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("update task panicked: {e}")))?;
     match result {
         Ok(outcome) => Ok(Json(serde_json::json!({
             "ok": true,
@@ -2446,7 +2445,7 @@ pub fn build_router(state: SharedState) -> Router {
                         let is_noisy = request.method() == axum::http::Method::OPTIONS
                             || path.ends_with("/logs");
                         if !is_noisy {
-                            tracing::info!(method = %request.method(), path = %request.uri(), "request");
+                            tracing::info!(method = %request.method(), path = %path, "request");
                         }
                     },
                 )
