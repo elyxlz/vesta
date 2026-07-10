@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,22 +32,31 @@ const (
 )
 
 type WhatsAppClient struct {
-	client            *whatsmeow.Client
-	store             *MessageStore
-	logger            waLog.Logger
-	dataDir           string
-	notificationsDir  string
-	instance          string
-	readOnly          bool
-	noNotify          bool
-	skipSenders       map[string]bool
-	messageSenders    map[string]string
-	senderOrder       []string
-	sendersMutex      sync.RWMutex
-	authStatus        AuthStatus
-	authMutex         sync.RWMutex
-	qrPath            string
-	reauthInProgress  bool
+	client           *whatsmeow.Client
+	store            *MessageStore
+	logger           waLog.Logger
+	dataDir          string
+	notificationsDir string
+	instance         string
+	readOnly         bool
+	noNotify         bool
+	skipSenders      map[string]bool
+	messageSenders   map[string]string
+	senderOrder      []string
+	sendersMutex     sync.RWMutex
+	authStatus       AuthStatus
+	authMutex        sync.RWMutex
+	qrPath           string
+	currentQRCode    string // guarded by authMutex, cleared on success
+	reauthInProgress bool
+	// pairGuardMu serializes guardPairAttempt across concurrent link/pair
+	// callers so two can't read the same under-limit count and double-spend.
+	pairGuardMu       sync.Mutex
+	linkMu            sync.Mutex
+	linkActive        bool
+	linkServer        *http.Server
+	linkGeneration    int
+	linkTimer         *time.Timer
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
@@ -56,6 +66,7 @@ type WhatsAppClient struct {
 	transcribeSem     chan struct{} // limits concurrent audio transcriptions
 	readQueueMu       sync.Mutex
 	readQueue         map[string]*chatReadBatch // keyed by chatJID|senderJID; coalesces read receipts in order
+	callMgr           *CallManager              // live voice calling; set in serve after Connect, nil for one-shot clients
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -67,7 +78,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	whatsappDBPath := filepath.Join(dataDir, "whatsapp.db")
 
-	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", whatsappDBPath), dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=30000", whatsappDBPath), dbLog)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to connect to whatsapp database: %v", err)
@@ -134,8 +145,11 @@ func (wac *WhatsAppClient) Connect() error {
 		return nil
 	}
 	if err != nil {
-		wac.logger.Warnf("Failed to connect with existing session: %v - initiating re-auth", err)
-		return wac.initiateReauth()
+		// A valid device session plus a transient connect failure must never
+		// delete the store; recover under the supervisor instead of re-pairing.
+		wac.logger.Warnf("Failed to connect with existing session: %v; attempting recovery", err)
+		go wac.recoverOrRestart("connect_failed")
+		return nil
 	}
 
 	for i := 0; i < ConnectRetryAttempts; i++ {
@@ -151,8 +165,9 @@ func (wac *WhatsAppClient) Connect() error {
 		}
 	}
 
-	wac.logger.Warnf("Connection timeout — session may be invalid, initiating re-auth")
-	return wac.initiateReauth()
+	wac.logger.Warnf("Connection timeout with existing session; attempting recovery")
+	go wac.recoverOrRestart("connect_failed")
+	return nil
 }
 
 func (wac *WhatsAppClient) Disconnect() {
@@ -248,7 +263,24 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 	return nil
 }
 
+// initiateReauth is the logged-out re-pair path (reached from the LoggedOut
+// event, where the device session is genuinely invalid). The pairing guard here
+// is the ban protection: WhatsApp logging a device out repeatedly is exactly the
+// flag pattern, so a rate-limited re-pair refuses rather than deleting a
+// possibly-recoverable store and hammering pairing.
 func (wac *WhatsAppClient) initiateReauth() error {
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), false)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		wac.logger.Warnf("Re-pair after logout refused by pairing guard: %v", guardErr)
+		wac.writeAuthStatusFile(map[string]string{
+			"status": "logged_out",
+			"note":   "pairing rate-limited after repeated logouts, re-link with whatsapp link when the user is ready",
+		})
+		return nil
+	}
+
 	wac.logger.Infof("Initiating re-authentication...")
 	wac.client.Disconnect()
 
@@ -269,6 +301,108 @@ func (wac *WhatsAppClient) initiateReauth() error {
 	return nil
 }
 
+func (wac *WhatsAppClient) linkModeActive() bool {
+	wac.linkMu.Lock()
+	defer wac.linkMu.Unlock()
+	return wac.linkActive
+}
+
+func (wac *WhatsAppClient) startLinkMode(port int) {
+	wac.linkMu.Lock()
+	wac.linkGeneration++
+	generation := wac.linkGeneration
+	wac.linkActive = true
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
+	wac.linkTimer = time.AfterFunc(LinkSessionTimeout, func() {
+		wac.stopLinkModeGeneration(generation)
+	})
+	wac.linkMu.Unlock()
+
+	if port > 0 {
+		// Shut down any orphaned server from a previous session before binding a new one.
+		wac.stopLinkServer()
+		wac.startLinkServer(port)
+	}
+	go wac.handleQRAuthentication()
+}
+
+// stopLinkModeGeneration tears down link mode when its session's deadline
+// timer fires. A stale generation means a newer session has since started
+// and owns linkActive/linkServer, so the old timer must not touch it.
+func (wac *WhatsAppClient) stopLinkModeGeneration(generation int) {
+	wac.linkMu.Lock()
+	if generation != wac.linkGeneration {
+		wac.linkMu.Unlock()
+		return
+	}
+	wac.linkActive = false
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
+	wac.linkMu.Unlock()
+
+	wac.stopLinkServer()
+	wac.authMutex.Lock()
+	wac.currentQRCode = ""
+	wac.authMutex.Unlock()
+}
+
+func (wac *WhatsAppClient) stopLinkMode() {
+	wac.linkMu.Lock()
+	wac.linkGeneration++
+	wac.linkActive = false
+	if wac.linkTimer != nil {
+		wac.linkTimer.Stop()
+	}
+	wac.linkMu.Unlock()
+
+	wac.stopLinkServer()
+	wac.authMutex.Lock()
+	wac.currentQRCode = ""
+	wac.authMutex.Unlock()
+}
+
+// consumeQRChannel drains one QR channel, publishing each rotated code to disk
+// and memory. Returns true on pairing success, false when the channel closes
+// without success (whatsmeow closes it after the last code times out).
+func (wac *WhatsAppClient) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelItem) bool {
+	for evt := range qrChan {
+		if evt.Event == "code" {
+			qrPath := filepath.Join(wac.dataDir, "qr-code.png")
+			if err := qrcode.WriteFile(evt.Code, qrcode.Medium, QRCodeSize, qrPath); err != nil {
+				wac.logger.Errorf("Failed to save QR code: %v", err)
+				continue
+			}
+			wac.authMutex.Lock()
+			wac.qrPath = qrPath
+			wac.currentQRCode = evt.Code
+			wac.authStatus = AuthStatusQRReady
+			wac.authMutex.Unlock()
+			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusQRReady)})
+			wac.logger.Infof("QR code saved to %s", qrPath)
+		} else if evt.Event == "success" {
+			wac.setAuthStatus(AuthStatusAuthenticated)
+			wac.logger.Infof("Successfully authenticated!")
+			if err := wac.EnsureOnline(); err != nil {
+				wac.logger.Warnf("Failed to set online status: %v", err)
+			}
+			wac.authMutex.Lock()
+			if wac.qrPath != "" {
+				os.Remove(wac.qrPath)
+				wac.qrPath = ""
+			}
+			wac.currentQRCode = ""
+			wac.authMutex.Unlock()
+			recordLinkedAt(wac.dataDir, time.Now())
+			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusAuthenticated)})
+			return true
+		}
+	}
+	return false
+}
+
 func (wac *WhatsAppClient) handleQRAuthentication() {
 	wac.authMutex.Lock()
 	if wac.reauthInProgress {
@@ -284,51 +418,27 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 	}()
 	wac.authMutex.Unlock()
 
-	qrChan, err := wac.client.GetQRChannel(context.Background())
-	if err != nil {
-		wac.logger.Errorf("Failed to get QR channel: %v", err)
-		return
-	}
-	err = wac.client.Connect()
-	if err != nil {
-		wac.logger.Errorf("Failed to connect for QR: %v", err)
-		return
-	}
-
-	for evt := range qrChan {
-		if evt.Event == "code" {
-			qrPath := filepath.Join(wac.dataDir, "qr-code.png")
-			err := qrcode.WriteFile(evt.Code, qrcode.Medium, QRCodeSize, qrPath)
-			if err != nil {
-				wac.logger.Errorf("Failed to save QR code: %v", err)
-				continue
-			}
-
-			wac.authMutex.Lock()
-			wac.qrPath = qrPath
-			wac.authStatus = AuthStatusQRReady
-			wac.authMutex.Unlock()
-
-			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusQRReady)})
-			wac.logger.Infof("QR code saved to %s", qrPath)
-		} else if evt.Event == "success" {
-			wac.setAuthStatus(AuthStatusAuthenticated)
-			wac.logger.Infof("Successfully authenticated!")
-
-			if err := wac.EnsureOnline(); err != nil {
-				wac.logger.Warnf("Failed to set online status: %v", err)
-			}
-
-			wac.authMutex.Lock()
-			if wac.qrPath != "" {
-				os.Remove(wac.qrPath)
-				wac.qrPath = ""
-			}
-			wac.authMutex.Unlock()
-
-			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusAuthenticated)})
-			break
+	for {
+		qrChan, err := wac.client.GetQRChannel(context.Background())
+		if err != nil {
+			wac.logger.Errorf("Failed to get QR channel: %v", err)
+			return
 		}
+		if err := wac.client.Connect(); err != nil {
+			wac.logger.Errorf("Failed to connect for QR: %v", err)
+			return
+		}
+		if wac.consumeQRChannel(qrChan) {
+			wac.stopLinkMode()
+			return
+		}
+		// Channel closed without success (codes exhausted). While link mode is
+		// active, disconnect and re-arm so the link page always shows a live
+		// code; a plain unpaired boot gets one pass and stops churning.
+		if !wac.linkModeActive() {
+			return
+		}
+		wac.client.Disconnect()
 	}
 }
 
@@ -338,15 +448,14 @@ func (wac *WhatsAppClient) setAuthStatus(status AuthStatus) {
 	wac.authMutex.Unlock()
 }
 
-func (wac *WhatsAppClient) GetAuthStatus() (AuthStatus, string) {
+func (wac *WhatsAppClient) GetAuthStatus() AuthStatus {
 	wac.authMutex.RLock()
 	defer wac.authMutex.RUnlock()
-	return wac.authStatus, wac.qrPath
+	return wac.authStatus
 }
 
 func (wac *WhatsAppClient) IsAuthenticated() bool {
-	status, _ := wac.GetAuthStatus()
-	return status == AuthStatusAuthenticated
+	return wac.GetAuthStatus() == AuthStatusAuthenticated
 }
 
 func (wac *WhatsAppClient) PairPhone(phone string) (string, error) {

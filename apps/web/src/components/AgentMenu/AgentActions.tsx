@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MenuSection } from "@/components/ui/menu-section";
-import type { MenuState } from "./types";
 
 export interface AgentActionsInput {
   isRunning: boolean;
@@ -34,26 +33,6 @@ export interface AgentActionsInput {
   onAgentSettings?: () => void;
   onDelete?: () => void;
   onDebugInfo?: () => void;
-}
-
-// The subset of MenuState the menus expose. Both the desktop dropdown and mobile drawer
-// deliberately drop delete/authenticate (those live elsewhere), so the projection lives
-// here once instead of being respelled in each menu.
-export function menuActionsInput(state: MenuState): AgentActionsInput {
-  return {
-    isRunning: state.isRunning,
-    showAliveActions: state.showAliveActions,
-    isBusy: state.isBusy,
-    showToolCalls: state.showToolCalls,
-    onLogs: state.onLogs,
-    onToolCalls: state.onToolCalls,
-    onToggle: state.onToggle,
-    onRestart: state.onRestart,
-    onRebuild: state.onRebuild,
-    onBackup: state.onBackup,
-    onOpenSettings: state.onOpenSettings,
-    onDebugInfo: state.onDebugInfo,
-  };
 }
 
 export interface ActionItem {

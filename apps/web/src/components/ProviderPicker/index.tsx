@@ -124,7 +124,7 @@ export function ProviderPicker({
         : null;
     const { initial } = context
       ? planContextOptions(context, plan)
-      : { presets: [], initial: 0 };
+      : { initial: 0 };
     const defaultModel = manifest.providers[provider]?.default_model ?? "";
     if (provider === "claude") {
       if (creds === null) return;

@@ -59,7 +59,10 @@ function resolveStatus(
     case "stopped":
       return { label: "stopped", orbState: "off" };
     case "dead":
-      return { label: "broken — delete and recreate", orbState: "off" };
+      return {
+        label: "broken, delete and recreate it in settings",
+        orbState: "off",
+      };
     default:
       return { label: agent.status, orbState: "off" };
   }

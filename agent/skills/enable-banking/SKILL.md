@@ -71,7 +71,7 @@ The watcher (`finance-watcher` / `python -m finance_cli.transaction_watcher`) po
 
 - **Poll interval**: 5 minutes
 - **Seen transactions**: tracked in `~/.finance/seen_transactions.json`
-- **Notifications**: written to `~/agent/notifications/finance_<timestamp>_<hash>.json`
+- **Notifications**: written to `~/agent/notifications/<time_ns>-finance-message.json`
 - **First-run seeding**: on first start, if no seen file exists, it seeds all transactions from the last 30 days so old ones don't trigger notifications
 - **Manual seed**: `/root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher seed`
 

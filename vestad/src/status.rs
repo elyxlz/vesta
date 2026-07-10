@@ -18,6 +18,9 @@ const BANNER_MARGIN: usize = 3; // spaces between the border and content
 const BANNER_LABEL_W: usize = 9; // config label column width
 const BANNER_ART_W: usize = 46; // fixed width of every VESTA_ART line
 
+const STATUS_FRESH_WAIT_MS: u64 = 5000; // longest we wait for a post-start status.json write
+const STATUS_FRESH_POLL_INTERVAL_MS: u64 = 100;
+
 /// "VESTA" in an ANSI-shadow block font. Every line is exactly BANNER_ART_W wide
 /// (a unit test enforces this, since the box geometry centers on that width).
 const VESTA_ART: [&str; 6] = [
@@ -314,6 +317,26 @@ impl Status {
         serde_json::from_str(&data).ok()
     }
 
+    /// Poll for `status.json` to be (re)written at or after `since`. The systemd
+    /// unit is not `Type=notify`, so the caller's "process is active" check only
+    /// confirms the daemon launched, not that its async startup (tunnel dial,
+    /// etc.) finished and persisted a fresh status. Gives up after
+    /// `STATUS_FRESH_WAIT_MS`; the caller renders whatever `status.json` holds
+    /// either way.
+    pub fn wait_for_fresh(config: &Path, since: std::time::SystemTime) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(STATUS_FRESH_WAIT_MS);
+        while std::time::Instant::now() < deadline {
+            let fresh = std::fs::metadata(Self::path(config))
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified >= since);
+            if fresh {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(STATUS_FRESH_POLL_INTERVAL_MS));
+        }
+        false
+    }
+
     pub fn set_tunnel(&mut self, tunnel: TunnelStatus) {
         self.tunnel = tunnel;
     }
@@ -329,12 +352,12 @@ impl Status {
         let local_url = format!("http://localhost:{}", self.port + 1);
         let tunnel_url = self.tunnel.url();
 
-        // enabled = tunnel up; disabled = --no-tunnel; error — <reason> = a tunnel
+        // enabled = tunnel up; disabled = --no-tunnel; error: <reason> = a tunnel
         // was wanted but couldn't be established (no creds, dead tunnel, API error).
         let tunnel_desc = match &self.tunnel {
             TunnelStatus::Active(_) => "enabled".to_string(),
             TunnelStatus::Disabled => "disabled".to_string(),
-            TunnelStatus::Failed(reason) => format!("error — {}", first_line_truncated(reason, 100)),
+            TunnelStatus::Failed(reason) => format!("error: {}", first_line_truncated(reason, 100)),
         };
         let lan_desc = if self.expose_lan { "enabled" } else { "disabled" }.to_string();
         let lan_url = self.lan_url.as_deref();
