@@ -16,7 +16,9 @@ Each card leads with a single primary value, its reason to exist, set large; eve
 
 ## Color carries meaning, not decoration
 
-The palette is not yours to invent: use the semantic Tailwind tokens that are automatically synced from the main app into `index.css` (`primary`, `secondary`, `muted`, `accent`, `destructive`, `warning`, `border`, and the `card`/`background`/`foreground` families), never raw scales like `bg-blue-500`. You never edit `index.css`; the tokens are always current, so build against them and they stay in step with the app's theme. Reserve color for signal: `destructive` for bad or failed, `warning` for attention, `primary` for the one thing to highlight, with everything at rest `muted`. A widget washed in one accent has no signal left to give. Use each token the same way across every widget so the user learns it once.
+Structure follows the design system. Buttons, cards, inputs, borders, and surfaces use the semantic Tailwind tokens that are automatically synced from the main app into `index.css` (`primary`, `secondary`, `muted`, `accent`, `destructive`, `warning`, `border`, and the `card`/`background`/`foreground` families), so the dashboard matches the wider app and stays in step with its theme. You never edit `index.css`; those tokens are always current, build against them.
+
+Raw scales (`text-green-500`, `bg-amber-100`) are fine where you need a color a token does not cover: a value that is up or down, a chart series, a status dot, a category. Reserve them for signal, not decoration, and use them the same way across every widget so the user learns them once. A widget washed in one accent has no signal left to give.
 
 ## Structure is information
 
