@@ -61,12 +61,22 @@ export function ChatComposer({
       ? {
           onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
             e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
             if (!useVoice.getState().isRecording) toggleVoice();
           },
           onPointerUp: () => {
             if (useVoice.getState().isRecording) toggleVoice();
           },
-          onPointerLeave: () => {
+          onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
+            if (e.repeat || (e.key !== " " && e.key !== "Enter")) return;
+            e.preventDefault();
+            if (!useVoice.getState().isRecording) toggleVoice();
+          },
+          onKeyUp: (e: KeyboardEvent<HTMLButtonElement>) => {
+            if (e.key !== " " && e.key !== "Enter") return;
+            if (useVoice.getState().isRecording) toggleVoice();
+          },
+          onBlur: () => {
             if (useVoice.getState().isRecording) toggleVoice();
           },
         }
@@ -141,7 +151,7 @@ export function ChatComposer({
               aria-label={isRecording ? "Stop recording" : "Start recording"}
               {...voiceButtonHandlers}
               className={cn(
-                "size-12 rounded-full [&_svg]:size-5",
+                "size-12 touch-none rounded-full [&_svg]:size-5",
                 isRecording && "bg-red-500 text-white hover:bg-red-600",
               )}
             >
