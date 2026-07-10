@@ -336,10 +336,9 @@ async fn gateway_update_handler(
     }
     let channel = effective_channel(&state).await;
     tracing::info!(channel = channel.as_str(), "gateway update requested via API");
-    let result = tokio::task::spawn_blocking(move || self_update::perform_update(channel))
-        .await
-        .unwrap();
+    let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
+    let result = join.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("update task panicked: {e}")))?;
     match result {
         Ok(outcome) => Ok(Json(serde_json::json!({
             "ok": true,
@@ -1441,7 +1440,7 @@ async fn list_backups_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.read().await;
 
-    let backups = backup::list_backups(&state.docker, &name)
+    let backups = backup::list_backups(&state.env_config.agents_dir, &name)
         .await
         .map_err(map_docker_err)?;
 
@@ -2060,14 +2059,17 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                // Custom span: DefaultMakeSpan records the full URI, and ?token= carries the live
+                // API key on browser WS connects; the span prefix lands in persisted logs.
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    tracing::info_span!("request", method = %request.method(), path = %request.uri().path())
+                })
                 .on_request(
                     |request: &axum::http::Request<_>, _span: &tracing::Span| {
-                        let path = request.uri().path();
                         let is_noisy = request.method() == axum::http::Method::OPTIONS
-                            || path.ends_with("/logs");
+                            || request.uri().path().ends_with("/logs");
                         if !is_noisy {
-                            tracing::info!(method = %request.method(), path = %request.uri(), "request");
+                            tracing::info!("request");
                         }
                     },
                 )
@@ -2138,7 +2140,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 }
 
-                let mut backups = match backup::list_backups(&state.docker, name).await {
+                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
                     Ok(b) => b,
                     Err(e) => {
                         tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
@@ -2423,7 +2425,45 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_cached_port_reusable;
+    use super::{is_cached_port_reusable, spawn_pipeline_sse};
+
+    // ── SSE cancellation safety ───────────────────────────────────
+    //
+    // Drives the real spawn_pipeline_sse (what create_backup_handler and
+    // restore_backup_handler both hand their pipeline future to), not a copy of it,
+    // so a regression to the non-spawned form fails this test.
+
+    #[tokio::test]
+    async fn sse_stream_drop_does_not_cancel_the_spawned_pipeline() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use tokio::sync::Notify;
+
+        let started = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(Notify::new());
+        let started_c = started.clone();
+        let gate_c = gate.clone();
+
+        let sse = spawn_pipeline_sse(async move {
+            gate_c.notified().await;
+            started_c.store(true, Ordering::SeqCst);
+            Ok("done".to_string())
+        });
+
+        // Simulate an SSE client disconnecting before the response is ever polled:
+        // hyper drops the response body the same way when a client goes away.
+        drop(sse);
+
+        gate.notify_one();
+        tokio::task::yield_now().await;
+
+        assert!(
+            started.load(Ordering::SeqCst),
+            "the pipeline spawned by spawn_pipeline_sse must run to completion regardless of SSE client disconnect"
+        );
+    }
 
     // --- Rename notification payload (the content contract the agent self-heals on) ---
 
@@ -2595,7 +2635,7 @@ mod tests {
 
     use super::{ServiceEntry, TreeEntry};
     use crate::providers::claude::OAuthStartResponse;
-    use crate::docker::{AgentStatus, ListEntry, StatusJson};
+    use crate::docker::{AgentStatus, ListEntry, StartAllResult, StatusJson};
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
 
@@ -2614,11 +2654,13 @@ mod tests {
         .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
         .collect();
 
-        // The control WS "agents" message, built by the production code path.
+        // Feeds both the plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`)
+        // and, further below, the control WS "agents" message built by the production code path.
         let agents = vec![
             ListEntry { name: "sample-agent".into(), status: AgentStatus::Alive, ws_port: 4200, started_at: Some("2026-01-01T00:00:00Z".into()) },
             ListEntry { name: "stopped-agent".into(), status: AgentStatus::Stopped, ws_port: 4201, started_at: None },
         ];
+        let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
         let mut activity = HashMap::new();
         activity.insert("sample-agent".to_string(), "thinking".to_string());
         let mut agent_services = HashMap::new();
@@ -2665,6 +2707,14 @@ mod tests {
         })
         .expect("serialize OAuthStartResponse");
 
+        // The POST /agents/start-all response body (the CLI's `vesta start --all`).
+        let start_all = serde_json::json!({
+            "results": [
+                StartAllResult { name: "sample-agent".into(), ok: true, error: None },
+                StartAllResult { name: "broken-agent".into(), ok: false, error: Some("failed to start".into()) },
+            ],
+        });
+
         let tree_entry = serde_json::to_value(TreeEntry {
             path: "notes/todo.md".into(),
             is_dir: false,
@@ -2686,44 +2736,59 @@ mod tests {
 
         serde_json::json!({
             "agent_statuses": agent_statuses,
+            "agents": agents_json,
             "agents_ws_message": agents_ws_message,
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,
+            "start_all": start_all,
             "tree_entry": tree_entry,
             "version": version,
         })
     }
 
-    #[test]
-    fn api_contract_fixtures_up_to_date() {
-        let fixtures = contract_fixtures();
-        let json = serde_json::to_string_pretty(&fixtures).expect("serialize fixtures");
-        let content = format!(
-            "// AUTO-GENERATED by vestad's API contract test. Do not edit by hand.\n\
-             // Regenerate: cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\n\
-             // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.\n\
-             export const vestadApiFixtures = {json} as const;\n"
-        );
-
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/web/src/lib/vestad-api-fixtures.ts");
+    // Writes (or checks) one generated fixture file, skipping it when its parent directory
+    // doesn't exist (a standalone vestad checkout without that sibling crate/app, e.g. a
+    // release tarball).
+    fn sync_fixture_file(path: &std::path::Path, content: &str, regen: bool) {
         if !path.parent().is_some_and(|dir| dir.exists()) {
-            // Standalone vestad checkout without the web app (e.g. release tarball): nothing to check.
             return;
         }
 
-        if std::env::var("REGEN_API_FIXTURES").is_ok() {
-            std::fs::write(&path, &content).expect("write fixtures");
+        if regen {
+            std::fs::write(path, content).expect("write fixtures");
             return;
         }
 
-        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        let committed = std::fs::read_to_string(path).unwrap_or_default();
         assert_eq!(
             committed,
             content,
             "\n\nAPI contract fixtures are stale.\nRegenerate with:\n  cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\nthen commit {}\n",
             path.display()
         );
+    }
+
+    #[test]
+    fn api_contract_fixtures_up_to_date() {
+        let fixtures = contract_fixtures();
+        let json = serde_json::to_string_pretty(&fixtures).expect("serialize fixtures");
+        let regen = std::env::var("REGEN_API_FIXTURES").is_ok();
+
+        let ts_content = format!(
+            "// AUTO-GENERATED by vestad's API contract test. Do not edit by hand.\n\
+             // Regenerate: cd vestad && REGEN_API_FIXTURES=1 cargo test -p vestad api_contract\n\
+             // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.\n\
+             export const vestadApiFixtures = {json} as const;\n"
+        );
+        let ts_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/web/src/lib/vestad-api-fixtures.ts");
+        sync_fixture_file(&ts_path, &ts_content, regen);
+
+        // Same fixtures, plain JSON: cli/src/client.rs deserializes it into the CLI's own
+        // response types so a wire rename breaks CI there too, not just for the web app.
+        let cli_content = format!("{json}\n");
+        let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/vestad-api.json");
+        sync_fixture_file(&cli_path, &cli_content, regen);
     }
 }
 

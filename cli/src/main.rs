@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::process;
 mod client;
 mod common;
-mod platform;
 
 use common::{fetch_latest_release_tag, version_less_than};
 
@@ -13,6 +12,8 @@ const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
 // Pads for first-start setup (git fetch, npm install, vite build, etc.).
 const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+// One bad paste (typo, stale code) shouldn't strand a just-created agent unauthenticated.
+const OAUTH_CODE_MAX_ATTEMPTS: u32 = 3;
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -24,6 +25,11 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{bytes}B")
     }
+}
+
+fn die(msg: &str) -> ! {
+    eprintln!("error: {msg}");
+    process::exit(1);
 }
 
 fn try_open_browser(url: &str) {
@@ -518,12 +524,12 @@ fn print_agent_backup_settings(result: &serde_json::Value) {
 }
 
 fn get_mount_entries(c: &client::Client, agent: &str) -> Vec<MountEntry> {
-    let value = c.get_agent_mounts(agent).unwrap_or_else(|e| platform::die(&e));
+    let value = c.get_agent_mounts(agent).unwrap_or_else(|e| die(&e));
     match value["mounts"].as_array() {
         Some(entries) => entries
             .iter()
             .cloned()
-            .map(|entry| serde_json::from_value(entry).unwrap_or_else(|e| platform::die(&format!("failed to parse mount entry: {e}"))))
+            .map(|entry| serde_json::from_value(entry).unwrap_or_else(|e| die(&format!("failed to parse mount entry: {e}"))))
             .collect(),
         None => Vec::new(),
     }
@@ -533,11 +539,11 @@ fn read_file_or_stdin(path: &std::path::Path) -> String {
     if path == std::path::Path::new("-") {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)
-            .unwrap_or_else(|e| platform::die(&format!("failed to read stdin: {e}")));
+            .unwrap_or_else(|e| die(&format!("failed to read stdin: {e}")));
         return buf;
     }
     std::fs::read_to_string(path)
-        .unwrap_or_else(|e| platform::die(&format!("failed to read {}: {e}", path.display())))
+        .unwrap_or_else(|e| die(&format!("failed to read {}: {e}", path.display())))
 }
 
 /// Open `initial` in $EDITOR (falling back to vi) and return the edited contents.
@@ -548,17 +554,17 @@ fn edit_in_editor(initial: &str) -> String {
     let mut tmp = std::env::temp_dir();
     tmp.push(format!("vesta-constitution-{}.md", process::id()));
     std::fs::write(&tmp, initial)
-        .unwrap_or_else(|e| platform::die(&format!("failed to write temp file: {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to write temp file: {e}")));
     let status = process::Command::new(&editor)
         .arg(&tmp)
         .status()
-        .unwrap_or_else(|e| platform::die(&format!("failed to launch editor '{editor}': {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to launch editor '{editor}': {e}")));
     if !status.success() {
         std::fs::remove_file(&tmp).ok();
-        platform::die("editor exited with an error, aborting");
+        die("editor exited with an error, aborting");
     }
     let edited = std::fs::read_to_string(&tmp)
-        .unwrap_or_else(|e| platform::die(&format!("failed to read temp file: {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to read temp file: {e}")));
     std::fs::remove_file(&tmp).ok();
     edited
 }
@@ -569,14 +575,14 @@ fn prompt_raw(label: &str) -> String {
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
-        .unwrap_or_else(|_| platform::die(&format!("failed to read {label}")));
+        .unwrap_or_else(|_| die(&format!("failed to read {label}")));
     input.trim().to_string()
 }
 
 fn prompt(label: &str) -> String {
     let value = prompt_raw(label);
     if value.is_empty() {
-        platform::die(&format!("{label} is required"));
+        die(&format!("{label} is required"));
     }
     value
 }
@@ -587,7 +593,7 @@ fn prompt_name() -> String {
 
 fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArgs> {
     let key = flags.openrouter_key?;
-    let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
+    let model = flags.openrouter_model.unwrap_or_else(|| die("--openrouter-model is required with --openrouter-key"));
     Some(client::OpenRouterArgs { key, model })
 }
 
@@ -618,12 +624,12 @@ enum ProvisionPlan {
 #[allow(clippy::too_many_arguments)]
 fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, claude_model: Option<String>, context_window: Option<u64>, yes: bool) -> ProvisionPlan {
     if flags.openrouter_key.is_some() && claude_token.is_some() {
-        platform::die("--openrouter-key and --claude-token are mutually exclusive");
+        die("--openrouter-key and --claude-token are mutually exclusive");
     }
     if flags.openrouter_key.is_some() {
-        let args = build_openrouter_args(flags).unwrap_or_else(|| platform::die("internal: openrouter key vanished"));
+        let args = build_openrouter_args(flags).unwrap_or_else(|| die("internal: openrouter key vanished"));
         eprintln!("checking OpenRouter key...");
-        c.validate_openrouter_key(&args.key).unwrap_or_else(|e| platform::die(&e));
+        c.validate_openrouter_key(&args.key).unwrap_or_else(|e| die(&e));
         return ProvisionPlan::OpenRouter(args);
     }
     if let Some(credentials) = claude_token {
@@ -701,8 +707,8 @@ fn prompt_context_window(c: &client::Client) -> Option<u64> {
 /// account (empty input or "1"). Returns true if the user picked OpenRouter.
 fn prompt_use_openrouter() -> bool {
     eprintln!("how should this agent authenticate?");
-    eprintln!("  1) Claude account  — log in with your Claude subscription (default)");
-    eprintln!("  2) OpenRouter      — run on an OpenRouter API key");
+    eprintln!("  1) claude account: log in with your claude subscription (default)");
+    eprintln!("  2) openrouter:     run on an openrouter api key");
     loop {
         match prompt_raw("choice [1]").as_str() {
             "" | "1" => return false,
@@ -769,8 +775,8 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
     eprintln!("top models on OpenRouter this week:");
     for (idx, model) in models.iter().enumerate() {
         match fmt_model_price(model.input_price, model.output_price, model.cache_read_price) {
-            Some(price) => eprintln!("  {:>2}) {} ({}) — {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
-            None => eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug),
+            Some(price) => eprintln!("  {:>2}) {} ({}): {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
+            None => eprintln!("  {:>2}) {} ({}): {}", idx + 1, model.label, model.author, model.slug),
         }
     }
     eprintln!("  or type a custom provider/model slug");
@@ -794,30 +800,53 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
 fn oauth_dance(client: &client::Client) -> String {
     let auth = client
         .start_auth_standalone()
-        .unwrap_or_else(|e| platform::die(&e));
+        .unwrap_or_else(|e| die(&e));
     eprintln!("open this URL to authenticate:");
     eprintln!("  {}", auth.auth_url);
     try_open_browser(&auth.auth_url);
 
-    let code = prompt("paste the auth code");
-    client
-        .complete_auth_standalone(&auth.session_id, &code)
-        .unwrap_or_else(|e| platform::die(&e))
+    for attempt in 1..=OAUTH_CODE_MAX_ATTEMPTS {
+        let code = prompt("after signing in, claude shows a code. paste it here");
+        match client.complete_auth_standalone(&auth.session_id, &code) {
+            Ok(credentials) => return credentials,
+            Err(_) if attempt < OAUTH_CODE_MAX_ATTEMPTS => {
+                eprintln!("that code didn't verify, open the link again for a fresh code and paste it");
+            }
+            Err(e) => die(&e),
+        }
+    }
+    unreachable!("loop always returns or dies")
 }
 
-fn authenticate_agent(client: &client::Client, name: &str) {
-    let credentials = oauth_dance(client);
-    // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
-    client
-        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None, None)
-        .unwrap_or_else(|e| platform::die(&e));
-    eprintln!("authenticated!");
+/// Resolve the server config from flags, env vars, or the config file, in that order.
+fn resolve_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> Option<common::ServerConfig> {
+    let from_host_token = |host: &str, token: &str| common::ServerConfig {
+        url: common::normalize_url(host),
+        api_key: token.to_string(),
+        cert_fingerprint: None,
+        cert_pem: None,
+    };
+
+    // 1. Flags
+    if let (Some(host), Some(token)) = (host_flag, token_flag) {
+        return Some(from_host_token(host, token));
+    }
+
+    // 2. Env vars
+    let env_host = std::env::var("VESTA_HOST").ok();
+    let env_token = std::env::var("VESTA_TOKEN").ok();
+    if let (Some(host), Some(token)) = (env_host.as_deref(), env_token.as_deref()) {
+        return Some(from_host_token(host, token));
+    }
+
+    // 3. config.json
+    common::load_server_config()
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
-    let config = platform::load_server_config(host, token)
-        .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
-    let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
+    let config = resolve_server_config(host, token)
+        .unwrap_or_else(|| die("no server configured. run: vesta connect <host>"));
+    let client = client::Client::new(&config).unwrap_or_else(|e| die(&e));
     enforce_version_match(&client);
     client
 }
@@ -868,7 +897,7 @@ fn enforce_version_match(client: &client::Client) {
         VersionGate::GatewayOlder => {
             eprintln!("version mismatch: gateway v{gateway} is older than vesta CLI v{cli}");
             if confirm("update the gateway now?") {
-                client.update_gateway().unwrap_or_else(|e| platform::die(&format!("gateway update failed: {e}")));
+                client.update_gateway().unwrap_or_else(|e| die(&format!("gateway update failed: {e}")));
                 eprintln!("gateway update started; wait for it to restart, then re-run your command.");
             } else {
                 eprintln!("update the gateway, then retry.");
@@ -911,7 +940,7 @@ fn check_latest_version() -> Option<String> {
 
     let latest = fetch_latest_via_gateway(true)
         .or_else(|| fetch_latest_release_tag(None))
-        .unwrap_or_else(|| platform::die("failed to check for updates"));
+        .unwrap_or_else(|| die("failed to check for updates"));
 
     if latest == current {
         eprintln!("already up to date");
@@ -946,10 +975,10 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
     );
 
     let current_exe =
-        std::env::current_exe().unwrap_or_else(|e| platform::die(&format!("cannot determine binary path: {e}")));
+        std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {e}")));
     let exe_dir = current_exe
         .parent()
-        .unwrap_or_else(|| platform::die("cannot determine binary directory"));
+        .unwrap_or_else(|| die("cannot determine binary directory"));
 
     let tmp_dir = {
         let primary = exe_dir.join(".vesta-update-tmp");
@@ -960,7 +989,7 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
             let fallback = std::env::temp_dir().join("vesta-update");
             let _ = std::fs::remove_dir_all(&fallback);
             std::fs::create_dir_all(&fallback)
-                .unwrap_or_else(|e| platform::die(&format!("failed to create temp dir: {e}")));
+                .unwrap_or_else(|e| die(&format!("failed to create temp dir: {e}")));
             fallback
         }
     };
@@ -971,10 +1000,10 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
         .arg(&archive)
         .arg(&url)
         .status()
-        .unwrap_or_else(|_| platform::die("curl not found"));
+        .unwrap_or_else(|_| die("curl not found"));
     if !dl.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die("failed to download update");
+        die("failed to download update");
     }
 
     let tar_flag = if is_zip { "-xf" } else { "-xzf" };
@@ -984,16 +1013,16 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
         .arg("-C")
         .arg(&tmp_dir)
         .status()
-        .unwrap_or_else(|_| platform::die("tar not found"));
+        .unwrap_or_else(|_| die("tar not found"));
     if !extract.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die("failed to extract update");
+        die("failed to extract update");
     }
 
     let new_binary = tmp_dir.join(binary_subpath);
     self_replace::self_replace(&new_binary).unwrap_or_else(|e| {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die(&format!("failed to replace binary: {e}"));
+        die(&format!("failed to replace binary: {e}"));
     });
 
     eprintln!("updated to v{latest}");
@@ -1008,7 +1037,7 @@ fn update_target() -> (&'static str, bool, &'static str) {
         let target = match std::env::consts::ARCH {
             "x86_64" => "x86_64-unknown-linux-gnu",
             "aarch64" => "aarch64-unknown-linux-gnu",
-            other => platform::die(&format!("unsupported architecture: {other}")),
+            other => die(&format!("unsupported architecture: {other}")),
         };
         (target, false, "vesta")
     }
@@ -1017,7 +1046,7 @@ fn update_target() -> (&'static str, bool, &'static str) {
         let target = match std::env::consts::ARCH {
             "x86_64" => "x86_64-apple-darwin",
             "aarch64" => "aarch64-apple-darwin",
-            other => platform::die(&format!("unsupported architecture: {other}")),
+            other => die(&format!("unsupported architecture: {other}")),
         };
         (target, false, "vesta")
     }
@@ -1096,11 +1125,11 @@ fn print_update_available(latest: &str) {
 }
 
 fn print_welcome() {
-    println!("vesta — your personal AI assistant");
+    println!("vesta: your personal AI assistant");
     println!();
     println!("quick start:");
-    println!("  vesta setup        create an agent, authenticate, and start");
-    println!("  vesta list         list all agents");
+    println!("  vesta connect <link>   link this machine to your server (from vestad status)");
+    println!("  vesta setup            create an agent, authenticate, and start");
     println!();
     println!("run 'vesta --help' for all commands.");
 }
@@ -1142,35 +1171,51 @@ fn run(cli: Cli) {
                     name.clone()
                 }
                 Err(e) if e.contains("already exists") => {
-                    platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
+                    die(&format!("agent '{name}' already exists. use --yes to continue"));
                 }
-                Err(e) => platform::die(&e),
+                Err(e) => die(&e),
             };
 
             // 2. Wait for the agent's HTTP server to be up so it can receive PUT /config.
             eprintln!("waiting for agent to start...");
             c.wait_until_running(&created_name, START_READY_TIMEOUT)
-                .unwrap_or_else(|e| platform::die(&e));
+                .unwrap_or_else(|e| die(&e));
 
             // 3. Provision the provider. OpenRouter and supplied Claude credentials
             //    are a single API call; an interactive Claude setup runs the OAuth
             //    dance first.
             match plan {
                 ProvisionPlan::OpenRouter(or) => {
-                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref(), None)
-                        .unwrap_or_else(|e| platform::die(&e));
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::openrouter_auth(&or)),
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .unwrap_or_else(|e| die(&e));
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
                 ProvisionPlan::ClaudeCredentials { credentials, opts } => {
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
-                        .unwrap_or_else(|e| platform::die(&e));
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::claude_auth(&credentials)),
+                        model: opts.model.as_deref(),
+                        max_context_tokens: opts.max_context_tokens,
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .unwrap_or_else(|e| die(&e));
                     eprintln!("authenticated (claude)");
                 }
                 ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
-                        .unwrap_or_else(|e| platform::die(&e));
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::claude_auth(&credentials)),
+                        model: opts.model.as_deref(),
+                        max_context_tokens: opts.max_context_tokens,
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .unwrap_or_else(|e| die(&e));
                     eprintln!("authenticated!");
                 }
             }
@@ -1185,7 +1230,7 @@ fn run(cli: Cli) {
                 "starting" => eprintln!("waiting for the agent to boot..."),
                 _ => {}
             })
-            .unwrap_or_else(|e| platform::die(&format!(
+            .unwrap_or_else(|e| die(&format!(
                 "{e}\nfirst-start setup did not complete. check the agent's logs: vesta logs {created_name}"
             )));
             eprintln!("agent '{created_name}' is ready.");
@@ -1203,11 +1248,11 @@ fn run(cli: Cli) {
             if let Some(or) = &openrouter {
                 eprintln!("checking OpenRouter key...");
                 c.validate_openrouter_key(&or.key)
-                    .unwrap_or_else(|e| platform::die(&e));
+                    .unwrap_or_else(|e| die(&e));
             }
 
             let name = c.create_agent(&name, !no_manage_core_code)
-                .unwrap_or_else(|e| platform::die(&e));
+                .unwrap_or_else(|e| die(&e));
 
             // If --openrouter-key was provided, finish provisioning the agent immediately, carrying
             // the timezone in the same call. Otherwise leave it unprovisioned for `vesta auth` later;
@@ -1215,9 +1260,13 @@ fn run(cli: Cli) {
             if let Some(or) = &openrouter {
                 eprintln!("waiting for agent to start...");
                 c.wait_until_running(&name, START_READY_TIMEOUT)
-                    .unwrap_or_else(|e| platform::die(&e));
-                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref(), None)
-                    .unwrap_or_else(|e| platform::die(&e));
+                    .unwrap_or_else(|e| die(&e));
+                c.update_settings(&name, client::SettingsUpdate {
+                    auth: Some(client::openrouter_auth(or)),
+                    timezone: timezone.as_deref(),
+                    ..Default::default()
+                })
+                .unwrap_or_else(|e| die(&e));
                 eprintln!("created (running on OpenRouter)");
             } else {
                 eprintln!("created (run 'vesta auth {name}' to authenticate)");
@@ -1227,11 +1276,16 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window, preempt_mode } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() || preempt_mode.is_some() {
-                c.update_settings(&name, None, model.as_deref(), context_window, None, preempt_mode.map(PreemptMode::as_str))
-                    .unwrap_or_else(|e| platform::die(&e));
+                c.update_settings(&name, client::SettingsUpdate {
+                    model: model.as_deref(),
+                    max_context_tokens: context_window,
+                    preempt_mode: preempt_mode.map(PreemptMode::as_str),
+                    ..Default::default()
+                })
+                .unwrap_or_else(|e| die(&e));
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
-                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+                let result = c.get_agent_settings(&name).unwrap_or_else(|e| die(&e));
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
                 if let Ok(config) = c.get_agent_config(&name) {
                     if let Some(mode) = config["preempt_mode"].as_str() {
@@ -1269,7 +1323,7 @@ fn run(cli: Cli) {
             } else if let Some(path) = file {
                 Some(read_file_or_stdin(&path))
             } else if edit {
-                let current = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                let current = c.get_agent_constitution(&name).unwrap_or_else(|e| die(&e));
                 Some(edit_in_editor(&current))
             } else {
                 None
@@ -1277,16 +1331,16 @@ fn run(cli: Cli) {
 
             match new_content {
                 None => {
-                    let content = c.get_agent_constitution(&name).unwrap_or_else(|e| platform::die(&e));
+                    let content = c.get_agent_constitution(&name).unwrap_or_else(|e| die(&e));
                     print!("{content}");
                     if !content.ends_with('\n') {
                         println!();
                     }
                 }
                 Some(content) => {
-                    c.set_agent_constitution(&name, &content).unwrap_or_else(|e| platform::die(&e));
+                    c.set_agent_constitution(&name, &content).unwrap_or_else(|e| die(&e));
                     // Restart so the new constitution is loaded into the system prompt.
-                    c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
+                    c.restart_agent(&name).unwrap_or_else(|e| die(&e));
                     eprintln!("{name}: constitution updated, agent restarting");
                 }
             }
@@ -1294,13 +1348,7 @@ fn run(cli: Cli) {
 
         Command::Notifications { name, action } => {
             let c = get_client(host_ref, token_ref);
-            let fetch_rules = || {
-                c.get_notification_rules(&name)
-                    .unwrap_or_else(|e| platform::die(&e))
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-            };
+            let fetch_rules = || c.get_notification_rules(&name).unwrap_or_else(|e| die(&e));
             match action {
                 NotificationsAction::Show => {
                     let rules = serde_json::Value::Array(fetch_rules());
@@ -1314,22 +1362,22 @@ fn run(cli: Cli) {
                         let mut rules = fetch_rules();
                         rules.push(build_rule(action, source, r#type, sender, keyword));
                         let count = rules.len();
-                        c.set_notification_rules(&name, &serde_json::Value::Array(rules))
-                            .unwrap_or_else(|e| platform::die(&e));
+                        c.set_notification_rules(&name, &rules)
+                            .unwrap_or_else(|e| die(&e));
                         eprintln!("added rule. now {count} rule(s); applies on the agent's next tick.");
                     }
                     RulesAction::Remove { id } => match remove_rule(&fetch_rules(), &id) {
-                        None => platform::die(&format!("no rule with id {id}")),
+                        None => die(&format!("no rule with id {id}")),
                         Some(kept) => {
                             let count = kept.len();
-                            c.set_notification_rules(&name, &serde_json::Value::Array(kept))
-                                .unwrap_or_else(|e| platform::die(&e));
+                            c.set_notification_rules(&name, &kept)
+                                .unwrap_or_else(|e| die(&e));
                             eprintln!("removed rule {id}. now {count} rule(s); applies on the agent's next tick.");
                         }
                     },
                     RulesAction::Clear => {
-                        c.set_notification_rules(&name, &serde_json::json!([]))
-                            .unwrap_or_else(|e| platform::die(&e));
+                        c.set_notification_rules(&name, &[])
+                            .unwrap_or_else(|e| die(&e));
                         eprintln!("cleared all rules; applies on the agent's next tick.");
                     }
                 },
@@ -1340,13 +1388,13 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             match name {
                 Some(name) => {
-                    c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
+                    c.start_agent(&name).unwrap_or_else(|e| die(&e));
                     c.wait_until_alive(&name, START_READY_TIMEOUT)
-                        .unwrap_or_else(|e| platform::die(&e));
+                        .unwrap_or_else(|e| die(&e));
                     eprintln!("{name}: ready");
                 }
                 None => {
-                    let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
+                    let results = c.start_all().unwrap_or_else(|e| die(&e));
                     if results.is_empty() {
                         eprintln!("no agents found. create one with: vesta setup");
                     } else {
@@ -1371,36 +1419,36 @@ fn run(cli: Cli) {
 
         Command::Stop { name } => {
             let c = get_client(host_ref, token_ref);
-            c.stop_agent(&name).unwrap_or_else(|e| platform::die(&e));
+            c.stop_agent(&name).unwrap_or_else(|e| die(&e));
             eprintln!("{name}: stopped");
         }
 
         Command::Restart { name } => {
             let c = get_client(host_ref, token_ref);
-            c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
+            c.restart_agent(&name).unwrap_or_else(|e| die(&e));
             eprintln!("{name}: restarted");
         }
 
         Command::Logout { name } => {
             let c = get_client(host_ref, token_ref);
-            c.logout(&name).unwrap_or_else(|e| platform::die(&e));
+            c.logout(&name).unwrap_or_else(|e| die(&e));
             eprintln!("{name}: signed out (reconnect a provider with `vesta auth {name}`)");
         }
 
         Command::Gateway { action } => match action {
             GatewayAction::Restart => {
                 let c = get_client(host_ref, token_ref);
-                c.restart_gateway().unwrap_or_else(|e| platform::die(&e));
+                c.restart_gateway().unwrap_or_else(|e| die(&e));
                 eprintln!("vestad: restart initiated");
             }
             GatewayAction::Logs { tail, follow } => {
                 let c = get_client(host_ref, token_ref);
-                c.stream_gateway_logs(tail, follow).unwrap_or_else(|e| platform::die(&e));
+                c.stream_gateway_logs(tail, follow).unwrap_or_else(|e| die(&e));
             }
             GatewayAction::Info => {
                 let c = get_client(host_ref, token_ref);
-                let settings = c.get_gateway_settings().unwrap_or_else(|e| platform::die(&e));
-                let info = c.get_gateway_info().unwrap_or_else(|e| platform::die(&e));
+                let settings = c.get_gateway_settings().unwrap_or_else(|e| die(&e));
+                let info = c.get_gateway_info().unwrap_or_else(|e| die(&e));
 
                 let lan = &info["lan"];
                 let lan_line = if lan["exposed"].as_bool().unwrap_or(false) {
@@ -1427,23 +1475,21 @@ fn run(cli: Cli) {
 
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
-            if let Some(token_str) = token {
-                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None, None)
-                    .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("{name}: authenticated");
-            } else {
-                authenticate_agent(&c, &name);
-            }
+            let credentials = token.unwrap_or_else(|| oauth_dance(&c));
+            // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
+            c.update_settings(&name, client::SettingsUpdate { auth: Some(client::claude_auth(&credentials)), ..Default::default() })
+                .unwrap_or_else(|e| die(&e));
+            eprintln!("{name}: authenticated");
         }
 
         Command::Chat { name } => {
             let c = get_client(host_ref, token_ref);
-            client::chat(&c, &name).unwrap_or_else(|e| platform::die(&e));
+            client::chat(&c, &name).unwrap_or_else(|e| die(&e));
         }
 
         Command::Logs { name, tail } => {
             let c = get_client(host_ref, token_ref);
-            c.stream_logs(&name, tail).unwrap_or_else(|e| platform::die(&e));
+            c.stream_logs(&name, tail).unwrap_or_else(|e| die(&e));
         }
 
         Command::Status { name, json } => {
@@ -1460,10 +1506,10 @@ fn run(cli: Cli) {
                     );
                     process::exit(0);
                 }
-                platform::die(&e);
+                die(&e);
             });
             if json {
-                println!("{}", serde_json::to_string(&status).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
+                println!("{}", serde_json::to_string(&status).unwrap_or_else(|e| die(&format!("failed to serialize: {e}"))));
             } else {
                 println!("name:   {}", status.name);
                 println!("status: {}", status.status);
@@ -1476,9 +1522,9 @@ fn run(cli: Cli) {
 
         Command::List { json } => {
             let c = get_client(host_ref, token_ref);
-            let agents = c.list_agents().unwrap_or_else(|e| platform::die(&e));
+            let agents = c.list_agents().unwrap_or_else(|e| die(&e));
             if json {
-                println!("{}", serde_json::to_string(&agents).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
+                println!("{}", serde_json::to_string(&agents).unwrap_or_else(|e| die(&format!("failed to serialize: {e}"))));
             } else if agents.is_empty() {
                 println!("no agents. run: vesta setup");
             } else {
@@ -1496,11 +1542,11 @@ fn run(cli: Cli) {
             match action {
                 BackupAction::Create { name } => {
                     eprintln!("creating backup for '{name}'...");
-                    let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
+                    let backup = c.create_backup(&name).unwrap_or_else(|e| die(&e));
                     eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
                 }
                 BackupAction::List { name } => {
-                    let backups = c.list_backups(&name).unwrap_or_else(|e| platform::die(&e));
+                    let backups = c.list_backups(&name).unwrap_or_else(|e| die(&e));
                     if backups.is_empty() {
                         eprintln!("no backups for '{name}'");
                     } else {
@@ -1514,7 +1560,7 @@ fn run(cli: Cli) {
                     }
                 }
                 BackupAction::ListAll => {
-                    let backups = c.list_all_backups().unwrap_or_else(|e| platform::die(&e));
+                    let backups = c.list_all_backups().unwrap_or_else(|e| die(&e));
                     if backups.is_empty() {
                         eprintln!("no backups found");
                     } else {
@@ -1530,47 +1576,47 @@ fn run(cli: Cli) {
                 BackupAction::Restore { name, backup_id } => {
                     eprintln!("restoring '{name}' from backup...");
                     c.restore_backup(&name, &backup_id)
-                        .unwrap_or_else(|e| platform::die(&e));
+                        .unwrap_or_else(|e| die(&e));
                     eprintln!("{name}: restored from {backup_id}");
                 }
                 BackupAction::Delete { name, backup_id } => {
                     c.delete_backup(&name, &backup_id)
-                        .unwrap_or_else(|e| platform::die(&e));
+                        .unwrap_or_else(|e| die(&e));
                     eprintln!("backup deleted: {backup_id}");
                 }
                 BackupAction::AutoBackup { toggle } => match toggle {
                     Some(toggle) => {
                         let enabled = matches!(toggle, Toggle::On);
                         c.set_auto_backup_settings(&serde_json::json!({"enabled": enabled}))
-                            .unwrap_or_else(|e| platform::die(&e));
+                            .unwrap_or_else(|e| die(&e));
                         eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
                     }
                     None => {
-                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
+                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| die(&e));
                         let enabled = settings["enabled"].as_bool().unwrap_or(true);
                         eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
                     }
                 },
                 BackupAction::Retention { daily, weekly, monthly } => {
                     if daily.is_none() && weekly.is_none() && monthly.is_none() {
-                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
+                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| die(&e));
                         print_retention(&settings["retention"]);
                     } else {
                         let ret = retention_map(daily, weekly, monthly);
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
-                            .unwrap_or_else(|e| platform::die(&e));
+                            .unwrap_or_else(|e| die(&e));
                         print_retention(&settings["retention"]);
                     }
                 },
                 BackupAction::Settings { name, enabled, daily, weekly, monthly, reset } => {
                     if reset {
                         let result = c.delete_agent_backup_settings(&name)
-                            .unwrap_or_else(|e| platform::die(&e));
+                            .unwrap_or_else(|e| die(&e));
                         eprintln!("{name}: backup settings reset to global defaults");
                         print_agent_backup_settings(&result);
                     } else if enabled.is_none() && daily.is_none() && weekly.is_none() && monthly.is_none() {
                         let result = c.get_agent_backup_settings(&name)
-                            .unwrap_or_else(|e| platform::die(&e));
+                            .unwrap_or_else(|e| die(&e));
                         print_agent_backup_settings(&result);
                     } else {
                         let mut body = serde_json::Map::new();
@@ -1581,7 +1627,7 @@ fn run(cli: Cli) {
                             body.insert("retention".into(), retention_map(daily, weekly, monthly).into());
                         }
                         let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
-                            .unwrap_or_else(|e| platform::die(&e));
+                            .unwrap_or_else(|e| die(&e));
                         eprintln!("{name}: backup settings updated");
                         print_agent_backup_settings(&result);
                     }
@@ -1615,7 +1661,7 @@ fn run(cli: Cli) {
                     } else {
                         mounts.push(MountEntry { host_path: host_path.clone(), container_path, writable });
                         let body = serde_json::json!({ "mounts": mounts });
-                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                        c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| die(&e));
                         eprintln!("granted {host_path}; applies on restart: vesta restart {agent}");
                     }
                 }
@@ -1629,7 +1675,7 @@ fn run(cli: Cli) {
                                 .filter(|m| m.host_path != entry.host_path || m.container_path != entry.container_path)
                                 .collect();
                             let body = serde_json::json!({ "mounts": filtered });
-                            c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| platform::die(&e));
+                            c.set_agent_mounts(&agent, &body).unwrap_or_else(|e| die(&e));
                             let target = if entry.container_path == entry.host_path {
                                 String::new()
                             } else {
@@ -1650,58 +1696,51 @@ fn run(cli: Cli) {
 
         Command::Destroy { name } => {
             let c = get_client(host_ref, token_ref);
-            c.destroy_agent(&name).unwrap_or_else(|e| platform::die(&e));
+            c.destroy_agent(&name).unwrap_or_else(|e| die(&e));
             eprintln!("{name}: destroyed");
         }
 
         Command::Rebuild { name } => {
             let c = get_client(host_ref, token_ref);
-            c.rebuild_agent(&name).unwrap_or_else(|e| platform::die(&e));
+            c.rebuild_agent(&name).unwrap_or_else(|e| die(&e));
             eprintln!("{name}: rebuilt and running");
         }
 
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
             c.wait_until_alive(&name, std::time::Duration::from_secs(timeout))
-                .unwrap_or_else(|e| platform::die(&e));
+                .unwrap_or_else(|e| die(&e));
             eprintln!("{name}: ready");
         }
 
         Command::Connect { link } => {
             let (url, key) = common::parse_connect_link(&link)
-                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
+                .unwrap_or_else(|| die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {
-                platform::die("API key is required");
+                die("API key is required");
             }
 
-            let config = platform::ServerConfig {
+            let config = common::ServerConfig {
                 url: url.clone(),
                 api_key: key,
                 cert_fingerprint: None,
                 cert_pem: None,
             };
 
-            let client = client::Client::new(&config).unwrap_or_else(|e| platform::die(&e));
+            let client = client::Client::new(&config).unwrap_or_else(|e| die(&e));
             client
                 .health()
-                .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {e}")));
+                .unwrap_or_else(|e| die(&format!("cannot reach server: {e}")));
 
-            platform::save_server_config(&config)
-                .unwrap_or_else(|e| platform::die(&e));
+            common::save_server_config(&config)
+                .unwrap_or_else(|e| die(&e));
             eprintln!("connected to {url}");
         }
 
         Command::Uninstall => {
-            eprint!("This will remove the vesta CLI binary and its config. Continue? [y/N] ");
-            io::stderr().flush().ok();
-            let mut answer = String::new();
-            if io::stdin().read_line(&mut answer).is_err() {
-                eprintln!("failed to read input");
-                process::exit(1);
-            }
-            if !answer.trim().eq_ignore_ascii_case("y") {
+            if !confirm("This will remove the vesta CLI binary and its config. Continue?") {
                 eprintln!("Aborted.");
                 process::exit(0);
             }
@@ -1736,12 +1775,12 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             match channel {
                 Some(channel) => {
-                    let set = c.set_channel(&channel).unwrap_or_else(|e| platform::die(&e));
+                    let set = c.set_channel(&channel).unwrap_or_else(|e| die(&e));
                     eprintln!("release channel set to '{set}' on vestad");
                     eprintln!("run 'vesta update' to move the daemon onto the {set} channel");
                 }
                 None => {
-                    let current = c.get_channel().unwrap_or_else(|e| platform::die(&e));
+                    let current = c.get_channel().unwrap_or_else(|e| die(&e));
                     println!("{current}");
                 }
             }
@@ -1752,11 +1791,11 @@ fn run(cli: Cli) {
             match toggle {
                 Some(toggle) => {
                     let enabled = matches!(toggle, Toggle::On);
-                    let set = c.set_auto_update(enabled).unwrap_or_else(|e| platform::die(&e));
+                    let set = c.set_auto_update(enabled).unwrap_or_else(|e| die(&e));
                     eprintln!("auto-update: {}", if set { "enabled" } else { "disabled" });
                 }
                 None => {
-                    let enabled = c.get_auto_update().unwrap_or_else(|e| platform::die(&e));
+                    let enabled = c.get_auto_update().unwrap_or_else(|e| die(&e));
                     eprintln!("auto-update: {}", if enabled { "enabled" } else { "disabled" });
                 }
             }

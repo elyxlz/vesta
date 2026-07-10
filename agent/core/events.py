@@ -10,6 +10,8 @@ import typing as tp
 
 logger = logging.getLogger("vesta.events")
 
+EVENTS_DB_FILENAME = "events.db"
+
 # Upper bound on events buffered per subscriber. A slow-but-alive WS client (phone
 # on a weak link, wedged webview) whose send loop stalls would otherwise grow its
 # queue without limit. 1000 events covers a long burst of streamed text/tool blocks
@@ -236,6 +238,32 @@ def _migrate(conn: sqlite3.Connection) -> None:
         current = version
 
 
+def _open(db_path: pl.Path) -> sqlite3.Connection:
+    # timeout sets SQLite's busy handler: a write waits up to N seconds for a held lock (e.g. a
+    # long-running VACUUM/maintenance op) instead of raising "database is locked" immediately.
+    # Pairs with the guard in emit() below.
+    conn = sqlite3.connect(str(db_path), timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    # Catches deep-page corruption (a hot-copied backup, bit rot) that a plain connect() would
+    # let through lazily, so it surfaces here at boot rather than mid-turn during emit/recent.
+    check = conn.execute("PRAGMA quick_check").fetchone()
+    if check is None or check[0] != "ok":
+        conn.close()
+        raise sqlite3.DatabaseError(f"quick_check failed: {check}")
+    _migrate(conn)
+    return conn
+
+
+def _quarantine(db_path: pl.Path) -> None:
+    """Rename the corrupt db and its WAL/SHM siblings aside so a fresh one can take its place,
+    preserving the original bytes for offline recovery instead of discarding history."""
+    stamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    for suffix in ("", "-wal", "-shm"):
+        sibling = db_path.with_name(db_path.name + suffix)
+        if sibling.exists():
+            sibling.rename(db_path.with_name(f"{sibling.name}.corrupt-{stamp}"))
+
+
 class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
@@ -243,14 +271,23 @@ class EventBus:
         self._conn: sqlite3.Connection | None = None
         self._db_path: pl.Path | None = None
         if data_dir:
+            from . import logger
+
             data_dir.mkdir(parents=True, exist_ok=True)
-            self._db_path = data_dir / "events.db"
-            # timeout sets SQLite's busy handler: a write waits up to N seconds for a
-            # held lock (e.g. a long-running VACUUM/maintenance op) instead of raising
-            # "database is locked" immediately. Pairs with the guard in emit() below.
-            self._conn = sqlite3.connect(str(self._db_path), timeout=30)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            _migrate(self._conn)
+            self._db_path = data_dir / EVENTS_DB_FILENAME
+            try:
+                self._conn = _open(self._db_path)
+            except sqlite3.DatabaseError as e:
+                if isinstance(e, sqlite3.OperationalError):
+                    # OperationalError is transient environment trouble (locked, disk full,
+                    # IO error), not corruption: crash and let Docker's on-failure policy
+                    # retry rather than quarantining a healthy db.
+                    raise
+                # A corrupt db must not crash-loop the container: quarantine it and boot with
+                # empty history rather than burning Docker's on-failure restarts.
+                logger.error(f"events.db corrupt ({e}), quarantining and starting fresh")
+                _quarantine(self._db_path)
+                self._conn = _open(self._db_path)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
         q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
@@ -276,7 +313,7 @@ class EventBus:
                     (event["ts"], json.dumps(event)),
                 )
                 self._conn.commit()
-            except sqlite3.OperationalError as e:
+            except sqlite3.Error as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
         for q in self._subscribers:
             self._offer(q, event)
@@ -382,21 +419,28 @@ class EventBus:
 
     def search(self, query: str, *, limit: int = 20) -> list[StreamEvent]:
         """Full-text search over events, returning the matching events in the same shape as recent()
-        (so /history can serve both recency and search), ranked by FTS relevance decayed toward recent."""
-        if not self._conn:
+        (so /history can serve both recency and search), ranked by FTS relevance decayed toward recent.
+        Short-lived read connection so it can run off the event loop (see _page): an FTS MATCH over a
+        years-old db must never freeze the agent, and never interleave with emit's writer-connection
+        transactions."""
+        if not self._db_path:
             return []
-        rows = self._conn.execute(
-            """
-            SELECT e.data,
-                   f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
-            FROM events_fts f
-            JOIN events e ON e.id = f.rowid
-            WHERE events_fts MATCH ?
-            ORDER BY score ASC
-            LIMIT ?
-            """,
-            (_RECENCY_DECAY_RATE, query, limit),
-        ).fetchall()
+        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        try:
+            rows = conn.execute(
+                """
+                SELECT e.data,
+                       f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
+                FROM events_fts f
+                JOIN events e ON e.id = f.rowid
+                WHERE events_fts MATCH ?
+                ORDER BY score ASC
+                LIMIT ?
+                """,
+                (_RECENCY_DECAY_RATE, query, limit),
+            ).fetchall()
+        finally:
+            conn.close()
         return [json.loads(r[0]) for r in rows]
 
     def close(self) -> None:

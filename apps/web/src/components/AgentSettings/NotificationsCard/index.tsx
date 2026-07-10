@@ -160,7 +160,7 @@ export function NotificationsCard() {
                 disabled={loadingMore}
                 onClick={loadMore}
               >
-                {loadingMore ? "loading…" : "load older"}
+                {loadingMore ? "loading..." : "load older"}
               </Button>
             ) : null}
           </div>

@@ -69,16 +69,8 @@ const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
-const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
-
-const OAUTH_HTTP_TIMEOUT_SECS: u64 = 30;
-
-pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
-pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 // --- Expected container config (single source of truth) ---
 
@@ -561,13 +553,13 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     builder.sparse(false);
     builder.follow_symlinks(true);
 
-    let ignore_patterns = load_dockerignore(context);
+    let ignore_patterns = load_dockerignore(context)?;
 
     fn visit_dir(
         builder: &mut tar::Builder<Vec<u8>>,
         base: &std::path::Path,
         dir: &std::path::Path,
-        ignore: &[String],
+        ignore: &Dockerignore,
     ) -> Result<(), DockerError> {
         let entries = std::fs::read_dir(dir)
             .map_err(|e| DockerError::Failed(format!("failed to read directory {}: {e}", dir.display())))?;
@@ -601,114 +593,67 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     Ok(bytes::Bytes::from(tar_bytes))
 }
 
-/// Load and parse dockerignore patterns. Prefers `<dockerfile>.dockerignore`
+/// Compiled `.dockerignore` patterns; `negated` holds each glob's `!` flag.
+#[derive(Debug)]
+struct Dockerignore {
+    set: globset::GlobSet,
+    negated: Vec<bool>,
+}
+
+/// Load and compile dockerignore patterns. Prefers `<dockerfile>.dockerignore`
 /// next to the Dockerfile (Docker 20.10+ convention); falls back to a
 /// `.dockerignore` at the build context root.
-fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
+fn load_dockerignore(context: &std::path::Path) -> Result<Dockerignore, DockerError> {
     let content = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
         .or_else(|_| std::fs::read_to_string(context.join(".dockerignore")))
         .unwrap_or_default();
-    content.lines()
-        .map(|l| l.trim())
+    let patterns: Vec<&str> = content.lines()
+        .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.to_string())
-        .collect()
+        .collect();
+    compile_dockerignore(&patterns)
+}
+
+/// Compile dockerignore patterns into one `GlobSet`. Each pattern becomes two
+/// globs, the pattern itself plus `<pattern>/**` so a matched directory also
+/// ignores its contents; slash-free glob patterns get a `**/` prefix to match
+/// filenames at any depth, while literals and slashed patterns anchor at the
+/// context root.
+fn compile_dockerignore(patterns: &[&str]) -> Result<Dockerignore, DockerError> {
+    let mut builder = globset::GlobSetBuilder::new();
+    let mut negated = Vec::with_capacity(patterns.len() * 2);
+    for raw in patterns {
+        let (negate, pat) = match raw.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, *raw),
+        };
+        let pat = pat.trim_end_matches('/');
+        let anchored = if !pat.contains('/') && (pat.contains('*') || pat.contains('?')) {
+            format!("**/{pat}")
+        } else {
+            pat.to_string()
+        };
+        let contents = format!("{anchored}/**");
+        for glob in [anchored, contents] {
+            let compiled = globset::GlobBuilder::new(&glob)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| DockerError::Failed(format!("invalid dockerignore pattern {raw:?}: {e}")))?;
+            builder.add(compiled);
+            negated.push(negate);
+        }
+    }
+    let set = builder.build()
+        .map_err(|e| DockerError::Failed(format!("failed to compile dockerignore patterns: {e}")))?;
+    Ok(Dockerignore { set, negated })
 }
 
 /// Check if a relative path matches `.dockerignore` patterns.
-/// Supports `!` negation, `*` (non-separator wildcard), `**` (multi-directory),
-/// and `?` (single character). Last matching pattern wins.
-fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
-    let mut ignored = false;
-    for raw in patterns {
-        let (negated, pat) = match raw.strip_prefix('!') {
-            Some(p) => (true, p.trim()),
-            None => (false, raw.as_str()),
-        };
-        let pat = pat.trim_end_matches('/');
-        if docker_pattern_matches(rel_path, pat) {
-            ignored = !negated;
-        }
-    }
-    ignored
-}
-
-/// Check if `path` starts with `prefix` as a complete directory segment.
-fn is_path_prefix(path: &str, prefix: &str) -> bool {
-    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
-}
-
-/// Match a path against a single dockerignore glob pattern.
-fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
-    // "**/" prefix: match against any subpath
-    if let Some(rest) = pattern.strip_prefix("**/") {
-        if docker_pattern_matches(path, rest) {
-            return true;
-        }
-        let mut remaining = path;
-        while let Some(pos) = remaining.find('/') {
-            remaining = &remaining[pos + 1..];
-            if docker_pattern_matches(remaining, rest) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // No slash in pattern.
-    if !pattern.contains('/') {
-        // Glob patterns (*, ?) match against the filename component at any depth —
-        // e.g. "*.pyc" matches "dir/foo.pyc".
-        if pattern.contains('*') || pattern.contains('?') {
-            let filename = path.rsplit('/').next().unwrap_or(path);
-            if glob_match(filename.as_bytes(), pattern.as_bytes()) {
-                return true;
-            }
-        }
-        // Literal names match only from the context root — "app" matches "./app"
-        // but not "agent/skills/dashboard/app".
-        return glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern);
-    }
-
-    // Pattern has slashes: match from context root, or as directory prefix
-    glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern)
-}
-
-/// Simple glob: `*` matches non-`/` chars, `?` matches single non-`/` char,
-/// `**` between slashes matches any number of path segments.
-fn glob_match(text: &[u8], pattern: &[u8]) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
-    }
-    match pattern[0] {
-        b'*' => {
-            // "**/" inside pattern: match zero or more path segments
-            if pattern.starts_with(b"**/") {
-                let rest = &pattern[3..];
-                if glob_match(text, rest) {
-                    return true;
-                }
-                for (i, &byte) in text.iter().enumerate() {
-                    if byte == b'/' && glob_match(&text[i + 1..], rest) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            // Single `*`: match any sequence of non-`/` characters
-            let rest = &pattern[1..];
-            for i in 0..=text.len() {
-                if i > 0 && text[i - 1] == b'/' {
-                    break;
-                }
-                if glob_match(&text[i..], rest) {
-                    return true;
-                }
-            }
-            false
-        }
-        b'?' => !text.is_empty() && text[0] != b'/' && glob_match(&text[1..], &pattern[1..]),
-        c => !text.is_empty() && text[0] == c && glob_match(&text[1..], &pattern[1..]),
+/// Last matching pattern wins, honoring `!` negation.
+fn is_dockerignored(rel_path: &str, ignore: &Dockerignore) -> bool {
+    match ignore.set.matches(rel_path).last() {
+        Some(&glob_idx) => !ignore.negated[glob_idx],
+        None => false,
     }
 }
 
@@ -1523,145 +1468,6 @@ pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content:
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
 }
 
-// --- Auth flow (split for HTTP API) ---
-
-pub(crate) fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => {
-                out.push('%');
-                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
-                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
-            }
-        }
-    }
-    out
-}
-
-fn base64url_encode(data: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
-}
-
-use ring::rand::SecureRandom;
-
-fn generate_pkce() -> (String, String) {
-    let rng = ring::rand::SystemRandom::new();
-    let mut verifier_bytes = [0u8; 32];
-    rng.fill(&mut verifier_bytes).expect("random failed");
-    let verifier = base64url_encode(&verifier_bytes);
-
-    let challenge_hash = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
-    let challenge = base64url_encode(challenge_hash.as_ref());
-
-    (verifier, challenge)
-}
-
-fn generate_state() -> String {
-    let rng = ring::rand::SystemRandom::new();
-    let mut state_bytes = [0u8; 32];
-    rng.fill(&mut state_bytes).expect("random failed");
-    base64url_encode(&state_bytes)
-}
-
-/// Start the OAuth PKCE flow. Returns (auth_url, code_verifier, state).
-pub fn start_auth_flow() -> (String, String, String) {
-    let (code_verifier, code_challenge) = generate_pkce();
-    let state = generate_state();
-
-    let auth_url = format!(
-        "{}?code=true&client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
-        OAUTH_AUTHORIZE_URL,
-        OAUTH_CLIENT_ID,
-        percent_encode(OAUTH_REDIRECT_URI),
-        percent_encode("org:create_api_key user:profile user:inference"),
-        code_challenge,
-        state,
-    );
-
-    (auth_url, code_verifier, state)
-}
-
-/// Complete the OAuth flow by exchanging the auth code for tokens.
-/// Returns the credentials JSON string.
-pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier: &str, expected_state: &str) -> Result<String, DockerError> {
-    let (auth_code, pasted_state) = match input.split_once('#') {
-        Some((code, st)) => (code, st),
-        None => (input, expected_state),
-    };
-
-    if pasted_state != expected_state {
-        return Err(DockerError::Failed("state mismatch — possible CSRF, please retry auth".into()));
-    }
-
-    let body = serde_json::json!({
-        "grant_type": "authorization_code",
-        "code": auth_code,
-        "state": pasted_state,
-        "client_id": OAUTH_CLIENT_ID,
-        "redirect_uri": OAUTH_REDIRECT_URI,
-        "code_verifier": code_verifier,
-    });
-
-    let response = client.post(OAUTH_TOKEN_URL)
-        .header("User-Agent", "axios/1.13.6")
-        .timeout(std::time::Duration::from_secs(OAUTH_HTTP_TIMEOUT_SECS))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                DockerError::Failed(format!("token exchange timed out after {OAUTH_HTTP_TIMEOUT_SECS}s"))
-            } else {
-                DockerError::Failed(format!("token exchange request failed: {e}"))
-            }
-        })?;
-
-    let response_str = response.text().await
-        .map_err(|e| DockerError::Failed(format!("failed to read token response: {e}")))?;
-
-    let token_data: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|_| DockerError::Failed(format!("token exchange failed: {}", response_str)))?;
-
-    if let Some(error) = token_data.get("error") {
-        return Err(DockerError::Failed(format!(
-            "auth failed: {} — {}",
-            error,
-            token_data
-                .get("error_description")
-                .unwrap_or(error)
-        )));
-    }
-
-    let access_token = token_data["access_token"]
-        .as_str()
-        .ok_or(DockerError::Failed("no access_token in response".into()))?;
-    let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
-    let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
-
-    let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
-
-    let mut creds = serde_json::json!({
-        "claudeAiOauth": {
-            "accessToken": access_token,
-            "expiresAt": expires_at as u64,
-        }
-    });
-    if let Some(rt) = refresh_token {
-        creds["claudeAiOauth"]["refreshToken"] = serde_json::json!(rt);
-    }
-    if let Some(scopes) = token_data.get("scope").and_then(|v| v.as_str()) {
-        let scope_list: Vec<&str> = scopes.split_whitespace().collect();
-        creds["claudeAiOauth"]["scopes"] = serde_json::json!(scope_list);
-    }
-
-    Ok(creds.to_string())
-}
-
 /// Coarse, user-facing stage of first-time agent creation, emitted in order so the
 /// onboarding UI can show honest status instead of a decorative loop. The dominant
 /// wait is the image step (`Pulling` on a release, `Building` from a local checkout).
@@ -1995,7 +1801,9 @@ pub async fn reconcile_containers(
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
-                start_container(docker, cname).await;
+                if !start_container(docker, cname).await {
+                    tracing::error!(agent = %name, "boot-start failed");
+                }
             } else if agent_code_changed && has_core_mount {
                 // vestad re-extracted the embedded core this boot. A running agent still holds the
                 // old code in memory and its core mount points at the now-replaced dir, so restart
@@ -2257,7 +2065,10 @@ pub async fn rename_agent(
     snapshot_container(docker, &old_cname, &snapshot_tag, &[]).await?;
 
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
-    remove_container_force(docker, &old_cname).await.ok();
+    // Confirm it's actually gone (don't swallow): the snapshot is safely captured and the env
+    // file and constitution are still untouched, so failing here leaves the old agent fully
+    // intact instead of leaving a live container squatting on the WS port under the old name.
+    ensure_container_removed(docker, &old_cname).await?;
     // Carry the constitution across the rename before the new container is created, so its
     // bind mount resolves to the existing content rather than a fresh empty file.
     let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
@@ -2730,6 +2541,8 @@ mod tests {
             ("doublestar matches one level", &["**/logs"], "a/logs", true),
             ("doublestar matches two levels", &["**/logs"], "a/b/logs", true),
             ("doublestar matches contents", &["**/logs"], "a/b/logs/debug.log", true),
+            ("interior doublestar matches zero levels", &["agent/**/*.pyc"], "agent/foo.pyc", true),
+            ("interior doublestar matches deep", &["agent/**/*.pyc"], "agent/a/b/foo.pyc", true),
             ("negation re-includes file", &["*.md", "!README.md"], "README.md", false),
             ("negation leaves others ignored", &["*.md", "!README.md"], "CHANGELOG.md", true),
             ("slash pattern exact", &["agent/tests"], "agent/tests", true),
@@ -2739,8 +2552,8 @@ mod tests {
             ("prefix dir matches contents", &["app"], "app/foo", true),
         ];
         for (label, pats, path, expected) in cases {
-            let pats: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
-            assert_eq!(is_dockerignored(path, &pats), *expected, "{label}");
+            let ignore = compile_dockerignore(pats).expect("patterns compile");
+            assert_eq!(is_dockerignored(path, &ignore), *expected, "{label}");
         }
     }
 
@@ -2792,6 +2605,21 @@ mod tests {
         assert!(
             !rebuild_body.contains("remove_container_force"),
             "rebuild_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+
+        // rename_agent has the same shape (snapshot, remove, create) and the same failure mode:
+        // a surviving old container keeps the same baked-in WS_PORT while its env file and
+        // constitution are deleted, and the next reconcile boot-starts it alongside the new one.
+        let tests_start = src.find("#[cfg(test)]").expect("test module present");
+        let rename_body = &src[rename_start..tests_start];
+        let rename_remove_pos = rename_body
+            .find("ensure_container_removed")
+            .expect("rename_agent must confirm the old container is gone via ensure_container_removed before recreating");
+        let rename_create_pos = rename_body.find("create_container").expect("create_container must be called in rename_agent");
+        assert!(rename_remove_pos < rename_create_pos, "rename_agent must remove the old container before creating the new one");
+        assert!(
+            !rename_body.contains("remove_container_force"),
+            "rename_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
     }
 

@@ -250,7 +250,7 @@ fn report_restart_readiness(config: &std::path::Path) {
             None => false,
         };
         if !local_ready {
-            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            eprintln!("vestad restarted, but its local API did not come up in time. check 'vestad logs'.");
             return;
         }
 
@@ -685,25 +685,23 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     if !is_cloud_managed()
         && tunnel::get_tunnel_config(&config).is_none()
         && !tunnel::has_cf_creds(&config)
+        && !tunnel::has_declined_tunnel(&config)
     {
         tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
     }
 
+    let start_time = std::time::SystemTime::now();
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
+    // The unit is not Type=notify, so being "active" only means the process
+    // launched, not that async startup (tunnel dial, etc.) finished and wrote a
+    // fresh status.json; wait for that so the banner below isn't stale/empty.
+    Status::wait_for_fresh(&config, start_time);
 
     eprintln!();
     eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
-    eprintln!("  run {} to see your connection info.", paint("1", "vestad status"));
-    eprintln!();
-
-    eprintln!("manage with:");
-    eprintln!("  vestad status     show status + your URL");
-    eprintln!("  vestad connect    connect a domain for a public URL");
-    eprintln!("  vestad logs       show service logs");
-    eprintln!("  vestad restart    restart the service");
-    eprintln!("  vestad update     update to the latest version");
-    eprintln!("  vestad stop       stop the service");
+    status::print_status_banner(&config, read_api_key(&config).as_deref());
+    eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
 }
 
 /// Log to stdout (captured by journald under systemd, shown in the terminal under
