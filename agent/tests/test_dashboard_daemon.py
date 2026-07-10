@@ -4,6 +4,7 @@ screen/curl/register-service, mirroring the telegram/tasks lifecycle transplant.
 import json
 import os
 import pathlib as pl
+import shutil
 import subprocess
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
@@ -32,6 +33,14 @@ esac
 """
 
 FAKE_CURL = """#!/bin/sh
+# Counts calls in $SCREEN_STATE_DIR/curl-calls; fails the first
+# $FAKE_CURL_FAIL_FIRST calls so tests can pin readiness polling.
+count_file="$SCREEN_STATE_DIR/curl-calls"
+count=$(($(cat "$count_file" 2>/dev/null || echo 0) + 1))
+echo "$count" > "$count_file"
+if [ "$count" -le "${FAKE_CURL_FAIL_FIRST:-0}" ]; then
+  exit 7
+fi
 exit "${FAKE_CURL_EXIT:-0}"
 """
 
@@ -81,6 +90,15 @@ def test_daemon_start_is_idempotent(tmp_path):
     second = _run(DAEMON, ["start"], env)
     assert second.returncode == 0
     assert json.loads(second.stdout) == {"status": "already_running"}
+
+
+def test_daemon_start_polls_until_the_server_answers(tmp_path):
+    env = _rig(tmp_path)
+    env["FAKE_CURL_FAIL_FIRST"] = "3"
+    result = _run(DAEMON, ["start"], env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"status": "started"}
+    assert int((tmp_path / "screen-state/curl-calls").read_text()) == 4
 
 
 def test_daemon_status_reports_running_port_and_http(tmp_path):
@@ -141,26 +159,26 @@ def test_unknown_subcommand_exits_nonzero(tmp_path):
 
 def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
     env = _rig(tmp_path)
-    app_dir = REPO_ROOT / "agent/skills/dashboard/app"
-    # node_modules/dist are untracked build artifacts; pre-seed real paths so the
-    # test never shells out to npm/vite, only exercises the lifecycle+append logic.
-    (app_dir / "node_modules").mkdir(exist_ok=True)
-    (app_dir / "dist").mkdir(exist_ok=True)
-    try:
-        restart_skill = pl.Path(env["HOME"]) / "agent/skills/restart/SKILL.md"
-        restart_skill.write_text("# Restart\n\n## Daemons\n")
+    # Copy the skill scripts into tmp_path (preserving the scripts/../app layout)
+    # and pre-seed the app build artifacts there, so setup.sh never shells out to
+    # npm/vite and the test never touches the real checkout.
+    skill_dir = tmp_path / "dashboard"
+    shutil.copytree(SETUP.parent, skill_dir / "scripts")
+    (skill_dir / "app/node_modules").mkdir(parents=True)
+    (skill_dir / "app/dist").mkdir(parents=True)
+    setup = skill_dir / "scripts/setup.sh"
 
-        first = subprocess.run(["sh", str(SETUP)], env=env, capture_output=True, text=True)
-        assert first.returncode == 0, first.stdout + first.stderr
-        assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
+    restart_skill = pl.Path(env["HOME"]) / "agent/skills/restart/SKILL.md"
+    restart_skill.write_text("# Restart\n\n## Daemons\n")
 
-        line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
-        content_after_first = restart_skill.read_text()
-        assert content_after_first.count(line) == 1
+    first = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
 
-        second = subprocess.run(["sh", str(SETUP)], env=env, capture_output=True, text=True)
-        assert second.returncode == 0, second.stdout + second.stderr
-        assert restart_skill.read_text().count(line) == 1
-    finally:
-        (app_dir / "node_modules").rmdir()
-        (app_dir / "dist").rmdir()
+    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
+    content_after_first = restart_skill.read_text()
+    assert content_after_first.count(line) == 1
+
+    second = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert restart_skill.read_text().count(line) == 1

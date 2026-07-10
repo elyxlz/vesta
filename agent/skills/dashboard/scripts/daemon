@@ -21,23 +21,46 @@ running() {
   test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.${SESSION}[[:space:]]" | grep -v "Dead")"
 }
 
+# Port registered with vestad; empty when vestad is unreachable.
+service_port() {
+  ~/agent/skills/service/scripts/register-service dashboard --public 2>/dev/null || true
+}
+
+# True iff the dashboard answers a 200 on port $1.
+answers_http() {
+  [ -n "$1" ] && curl -fsS -o /dev/null "http://localhost:$1" 2>/dev/null
+}
+
+# Blocks until the server actually answers a 200, so callers can probe
+# immediately after start; the session existing is not readiness (serve may
+# still be installing deps or building before vite binds the port).
 daemon_start() {
   if running; then
     echo '{"status":"already_running"}'
     return 0
   fi
   screen -dmS "$SESSION" "$DIR/serve"
+  seen="false"
   i=0
   while [ "$i" -lt 60 ]; do
-    running && break
+    if running; then
+      seen="true"
+      if answers_http "$(service_port)"; then
+        echo '{"status":"started"}'
+        return 0
+      fi
+    elif [ "$seen" = "true" ]; then
+      break
+    fi
     sleep 0.5
     i=$((i + 1))
   done
-  if ! running; then
+  if running; then
+    echo '{"error":"dashboard is up but never answered a 200 on its port; inspect with: screen -r dashboard"}' >&2
+  else
     echo '{"error":"dashboard exited during startup; run scripts/serve in the foreground to see the error"}' >&2
-    return 1
   fi
-  echo '{"status":"started"}'
+  return 1
 }
 
 daemon_stop() {
@@ -66,10 +89,8 @@ daemon_status() {
   port=""
   http_ok="false"
   if [ "$running_flag" = "true" ]; then
-    port=$(~/agent/skills/service/scripts/register-service dashboard --public 2>/dev/null) || port=""
-    if [ -n "$port" ] && curl -fsS -o /dev/null "http://localhost:$port"; then
-      http_ok="true"
-    fi
+    port=$(service_port)
+    answers_http "$port" && http_ok="true"
   fi
 
   if [ -n "$port" ]; then
