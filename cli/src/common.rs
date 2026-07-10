@@ -30,6 +30,16 @@ pub struct ListEntry {
     pub ws_port: u16,
 }
 
+/// A single host filesystem grant, as returned by / sent to GET|PUT /agents/{name}/mounts.
+/// The server validates and canonicalizes host_path/container_path on PUT.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MountEntry {
+    pub host_path: String,
+    pub container_path: String,
+    #[serde(default)]
+    pub writable: bool,
+}
+
 #[derive(Deserialize)]
 pub struct AuthFlowResponse {
     pub auth_url: String,

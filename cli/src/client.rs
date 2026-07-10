@@ -5,12 +5,17 @@ use ureq::http::Response;
 use ureq::Body;
 
 use crate::common::{
-    AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
+    AuthFlowResponse, BackupInfo, ListEntry, MountEntry, ServerConfig, StartAllResult, StatusJson,
 };
 
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bounds time-to-headers only (recv_response); SSE streams and long bodies stay unbounded.
 const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MountsBody {
+    mounts: Vec<MountEntry>,
+}
 
 // ── TLS fingerprint verification ────────────────────────────────
 
@@ -141,7 +146,7 @@ fn status_error_message(status: u16, error_msg: Option<String>) -> String {
         401 => "invalid API key".into(),
         404 => error_msg.unwrap_or_else(|| "not found".into()),
         409 => error_msg.unwrap_or_else(|| "conflict".into()),
-        503 => error_msg.unwrap_or_else(|| "vestad is not reachable — is it running?".into()),
+        503 => error_msg.unwrap_or_else(|| "vestad is not reachable, is it running?".into()),
         _ => error_msg.unwrap_or_else(|| format!("server error ({status})")),
     }
 }
@@ -181,7 +186,7 @@ fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> 
 fn map_error(host: &str, e: ureq::Error) -> String {
     match e {
         ureq::Error::ConnectionFailed | ureq::Error::Io(_) => {
-            format!("server not reachable at {host} — run 'vesta connect <host>' to point at a different one")
+            format!("server not reachable at {host}, run 'vesta connect <host>' to point at a different one")
         }
         other => format!("request failed: {other}"),
     }
@@ -725,12 +730,14 @@ impl Client {
         read_json(self.get("/backups")?)
     }
 
-    pub fn get_agent_mounts(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/mounts"))?)
+    pub fn get_agent_mounts(&self, name: &str) -> Result<Vec<MountEntry>, String> {
+        let body: MountsBody = read_json(self.get(&format!("/agents/{name}/mounts"))?)?;
+        Ok(body.mounts)
     }
 
-    pub fn set_agent_mounts(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        read_json(self.put_json(&format!("/agents/{name}/mounts"), body)?)
+    pub fn set_agent_mounts(&self, name: &str, mounts: Vec<MountEntry>) -> Result<serde_json::Value, String> {
+        let body = serde_json::to_value(MountsBody { mounts }).map_err(|e| e.to_string())?;
+        read_json(self.put_json(&format!("/agents/{name}/mounts"), &body)?)
     }
 
     pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
@@ -1172,7 +1179,7 @@ mod tests {
             Case { status: 409, body: Some("name taken"), expected: "name taken" },
             Case { status: 409, body: None, expected: "conflict" },
             Case { status: 503, body: Some("down for maintenance"), expected: "down for maintenance" },
-            Case { status: 503, body: None, expected: "vestad is not reachable — is it running?" },
+            Case { status: 503, body: None, expected: "vestad is not reachable, is it running?" },
             // Other statuses fall through to the generic formatted default.
             Case { status: 500, body: Some("boom"), expected: "boom" },
             Case { status: 500, body: None, expected: "server error (500)" },
