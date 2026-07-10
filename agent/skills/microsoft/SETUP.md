@@ -69,6 +69,15 @@ default) falls back to OWA REST automatically whenever Graph returns a permissio
 error. Every command works on both backends **except** `block`/`unblock` (inbox
 rules), which are Graph-only.
 
+When the agent cannot reach the user's browser (agent on another machine), let the user sign in on
+their **own** browser and paste just the token, so their password and MFA never reach the agent. Give
+them the one-line snippet `auth_commands.OWA_TOKEN_SNIPPET` to run in the Outlook DevTools console (it
+copies the token to their clipboard), then:
+
+```bash
+microsoft auth owa-login --account you@company.com --token <PASTED_TOKEN>
+```
+
 **Tenants that still permit device flow:** `microsoft auth owa-login --account you@company.com --device`
 does a device-code sign-in instead (enter a code at a URL, no browser), finished with
 `microsoft auth owa-complete --account you@company.com --flow-cache <cache>`. MSAL then
