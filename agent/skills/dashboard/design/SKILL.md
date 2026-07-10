@@ -14,6 +14,10 @@ How to build dashboard widgets that feel considered. You work inside a fixed sys
 
 Each card leads with a single primary value, its reason to exist, set large; everything else is secondary and muted. If a widget has two equally loud numbers, split it into two or demote one. The eye should land in one place, then travel to the supporting detail.
 
+## Build from the components
+
+Build the chrome from shadcn components: `Button`, `Card`, `Tabs`, `Dialog`, `Sheet`, `Input`, and the rest, using their built-in variants and sizes (density-adjusted). Compose existing components before writing anything custom, and reach for a custom component only when shadcn genuinely cannot express what the spec needs. When you do go custom, build it from the same tokens, spacing, and density so it reads as part of the set, not bolted on.
+
 ## Density and sizing
 
 A high density command center, not a roomy app: default shadcn sizes are too large, so override them so a lot fits without feeling cramped.
