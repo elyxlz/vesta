@@ -110,6 +110,18 @@ def save_token(account_email: str, config, *, token: str, expires_at: float, sou
     p.write_text(json.dumps({"source": source, "token": token, "expires_at": expires_at}))
 
 
+def browser_token_expiry(account_email: str, config) -> float | None:
+    """Unix expiry of a browser-captured token, or None for a device account / no marker. Used by
+    the daemon to know when to silently re-capture."""
+    marker = _read_marker(account_email, config)
+    if marker is None or _source(marker) != "browser":
+        return None
+    try:
+        return float(marker["expires_at"])
+    except (KeyError, ValueError):
+        return None
+
+
 def has_token(account_email: str, config) -> bool:
     """True (network-free) if this account can produce a Teams token: a device account still in
     the MSAL cache, or a browser-captured token that has not expired."""

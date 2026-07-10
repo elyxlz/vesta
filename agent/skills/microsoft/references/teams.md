@@ -1,29 +1,15 @@
 # Microsoft Teams (CLI: microsoft teams)
 
-Teams runs over the same Graph transport as mail, with its **own** sign-in so a mail-only account is
-never prompted for Teams scopes. Pick the path by account type (ask the user first, same rule as the
-mail sign-in): a **personal** account uses device-code, a **work/school** account on a locked tenant
-uses the browser capture below.
-
-```bash
-microsoft auth teams-login                       # personal accounts: device-code sign-in; returns a URL + code
-microsoft auth teams-complete --flow-cache <cache>  # finish after signing in
-```
-
-If `teams-complete` returns `admin_consent_required`, the tenant is locked (a work/school account),
-switch to the browser capture. Capture a token from Teams on the web (same browser-capture path as
-email's `owa-login`, agent-driven and non-blocking):
-
-```bash
-microsoft auth teams-capture --account you@company.com   # captures, or returns sign_in_required
-```
-
-If the browser is not signed in, drive the sign-in with the `browser` skill, then run it again. When
-the agent cannot reach the browser, let the user run `auth_commands.TEAMS_TOKEN_SNIPPET` in their own
-Teams DevTools console and paste the token: `microsoft auth teams-capture --account you@company.com --token <TOKEN>`.
+**Teams is set up by `microsoft auth setup --account <email>`** along with mail and calendar; you do
+not authorize it separately (see [SETUP.md](../SETUP.md)). On a locked tenant the one browser sign-in
+covers Teams too, and the daemon keeps its token fresh.
 
 Every command takes `--backend {auto,graph,owa-rest}` (default `auto`): `graph` uses the device-flow
-token, `owa-rest` uses the browser-captured token, `auto` tries Graph then falls back.
+token, `owa-rest` uses the browser-captured token, `auto` tries Graph then falls back. If a command
+returns a scope error, the token was captured without that permission, re-run `auth setup --browser`.
+
+The lower-level `auth teams-login` / `teams-complete` / `teams-capture` still exist for manual
+control, but `auth setup` is the path.
 
 ## Chats
 

@@ -78,6 +78,14 @@ def main():
     p_owa_complete.add_argument("--account", required=True)
     p_owa_complete.add_argument("--flow-cache", required=True)
 
+    p_setup = auth_sub.add_parser(
+        "setup", help="One-step onboarding for mail, calendar, and Teams (device code, or browser for locked tenants)."
+    )
+    p_setup.add_argument("--account", required=True)
+    p_setup.add_argument("--browser", action="store_true", help="Skip device code and capture from the browser (locked work/school tenant).")
+    p_setup.add_argument("--flow-cache", default=None, help="Finish a device-code sign-in started by a prior `auth setup`.")
+    p_setup.add_argument("--capture", action="store_true", help="Finish after signing in through the browser handover.")
+
     auth_sub.add_parser("teams-login", help="Authorize Microsoft Teams via device code (separate from the mail login).")
     p_teams_complete = auth_sub.add_parser("teams-complete", help="Finish a Teams sign-in started with teams-login.")
     p_teams_complete.add_argument("--flow-cache", required=True)
@@ -458,6 +466,10 @@ def _print_result(args, result) -> None:
 def _dispatch_auth(args, config):
     if args.command == "list":
         return auth_commands.list_accounts(config)
+    elif args.command == "setup":
+        return auth_commands.auth_setup(
+            config, account_email=args.account, use_browser=args.browser, flow_cache=args.flow_cache, do_capture=args.capture
+        )
     elif args.command == "login":
         return auth_commands.authenticate_account(config)
     elif args.command == "complete":
@@ -731,7 +743,15 @@ def _dispatch_teams(args, config, client):
     def call(fn):
         graph_fn = lambda: fn(client, teams.graph_token(config, acct))  # noqa: E731
         rest_fn = lambda: fn(client, teams.captured_token(config, acct))  # noqa: E731
-        return backend.run(args.backend, graph_fn, rest_fn)
+        try:
+            return backend.run(args.backend, graph_fn, rest_fn)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                raise PermissionError(
+                    f"the Teams token for {acct} lacks the scope for `teams {args.command}`. Re-authorize: "
+                    f"microsoft auth setup --account {acct} --browser"
+                ) from e
+            raise
 
     if args.command == "chats":
         return call(lambda c, t: teams.list_chats(c, t, limit=args.limit))

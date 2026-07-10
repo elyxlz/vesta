@@ -2,7 +2,9 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
-from . import graph, auth, notifications, notify, folders, owa_rest, teams
+import time
+
+from . import graph, auth, notifications, notify, folders, owa_rest, teams, capture
 from .config import Config
 from .context import MicrosoftContext
 
@@ -259,11 +261,28 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         )
 
 
+def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set[str]) -> None:
+    """Silently re-mint browser-captured tokens before they expire, so the user signs in only once.
+    On a lapsed sign-in, notify once and stop retrying that account until the daemon restarts."""
+    logger = ctx.monitor_logger
+    for account in capture.due_accounts(config, time.time()):
+        if account in gave_up:
+            continue
+        try:
+            saved = capture.refresh_and_save(config, account)
+            logger.info(f"Refreshed Microsoft tokens for {account}: {', '.join(saved)}")
+        except capture.CaptureError as e:
+            logger.warning(f"Token refresh failed for {account}: {e}")
+            gave_up.add(account)
+            notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
+
+
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
     first_run = True
     catching_up = False
+    refresh_gave_up: set[str] = set()
 
     while not ctx.monitor_stop_event.is_set():
         try:
@@ -367,6 +386,9 @@ def run(ctx: MicrosoftContext):
             for account_email in teams.list_accounts(config):
                 logger.info(f"Checking Teams account: {account_email}")
                 _poll_teams_account(ctx, config, account_email, last_dt, catching_up)
+
+            # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
+            _refresh_captured_tokens(ctx, config, refresh_gave_up)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())

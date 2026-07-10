@@ -30,22 +30,35 @@ Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your
 
 ## Authentication
 
-**First, ask the user: is this a personal account (outlook.com / hotmail / live) or a work/school
-account (a university or company address)?** The answer picks the path, so ask before signing anyone in:
+**Run one command: `microsoft auth setup --account <email>`.** It provisions mail, calendar, and
+Teams together and picks the right path on its own; each step returns a `next:` command telling you
+exactly what to run.
 
-- **Personal account**: device-code flow works. Use `auth login` below.
-- **Work/school account**: many tenants block the default app, so device-code sign-in dead-ends at
-  an admin-approval wall you cannot clear. Prefer the **browser-capture fallback** from the start
-  (`auth owa-login` for mail, `auth teams-capture` for Teams; see the two sections below). It reuses
-  the tenant's own trusted web session and needs **no admin consent**. Device flow is worth trying
-  only if the user says their IT allows third-party app sign-ins; if `auth complete` returns
-  `admin_consent_required`, that tenant is locked, switch to browser capture.
+```bash
+microsoft auth setup --account you@example.com          # start (device code by default)
+microsoft auth setup --account you@example.com --flow-cache <cache>   # finish a device-code sign-in
+microsoft auth setup --account you@example.com --browser             # locked tenant: browser sign-in
+microsoft auth setup --account you@example.com --capture             # finish after the browser sign-in
+```
+
+How it chooses:
+- **Personal / permissive tenant**: device-code sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely.
+- **Locked work/school tenant** (a university/company that blocks the sign-in, like UCL): if the device code is rejected, `auth setup` **automatically switches** to a browser handover, it hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. If you already know the tenant is locked, skip the device-code round-trip with `--browser`.
+- **Ask the user personal vs work/school** if you want to pick `--browser` up front and save a step; otherwise just run `auth setup` and let it pivot.
+
+**Auto-refresh (locked tenants):** the user signs in **once**. The browser sign-in is saved to a per-account profile, and the daemon silently re-mints fresh tokens from it before they expire (works for weeks, until the SSO session itself ends), so there's no daily re-login. If the session finally lapses, the daemon emits a `type=auth_needed` notification to sign in again.
+
+```bash
+microsoft auth list                           # List device-flow (Graph) accounts
+microsoft auth remove --account <email>       # Sign a device-flow account out
+```
+
+The commands below (`auth login`/`complete`, `owa-login`, `teams-login`/`teams-capture`) are the
+lower-level pieces `auth setup` orchestrates; reach for them only for manual control.
 
 ```bash
 microsoft auth login                         # Start device flow - gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
-microsoft auth list                           # List authenticated accounts
-microsoft auth remove --account <email>       # Sign an account out
 ```
 
 ## Fallback backend: OWA REST (locked tenants only)

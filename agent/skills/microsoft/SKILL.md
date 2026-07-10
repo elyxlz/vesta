@@ -5,7 +5,7 @@ description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forwa
 
 # Microsoft - CLI: microsoft
 
-**Setup, sign-in, and the two backends** (Graph + browser-capture fallback for locked tenants): see [SETUP.md](SETUP.md). **Ask the user whether the account is personal or work/school before signing in**: personal accounts use device-code flow, work/school accounts on a locked tenant use browser capture (needs no admin consent).
+**Setup / sign-in**: run **`microsoft auth setup --account <email>`**, one command provisions mail, calendar, and Teams and auto-picks device-code (personal / permissive) or a one-URL browser sign-in (locked work/school tenants), then auto-refreshes so the user signs in only once. Details and the two backends (Graph + browser-capture fallback): see [SETUP.md](SETUP.md).
 
 **Background daemon**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 

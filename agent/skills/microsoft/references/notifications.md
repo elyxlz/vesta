@@ -11,4 +11,6 @@ microsoft notify remove --account user@example.com --folder inbox     # stop not
 
 `notify add --folder` validates the folder exists first. Removing every folder mutes the account. The watch list lives in `~/.microsoft/notify.json`. Watching is time-based: it fires on **new arrivals** (including rule-routed mail), not on messages you manually move into a folder.
 
-Once an account has authorized Teams (`auth teams-login` or `auth teams-capture`), the daemon also watches its Teams chats and writes one notification per incoming chat message (source `microsoft`, type `teams`, with `sender`, `topic`, `chat_id`; your own outgoing messages are skipped). Teams chat notifications interrupt by default, like a direct message. Reply with `microsoft teams send --chat <chat_id>`.
+Once an account has authorized Teams (via `auth setup`), the daemon also watches its Teams chats and writes one notification per incoming chat message (source `microsoft`, type `teams`, with `sender`, `topic`, `chat_id`; your own outgoing messages are skipped). Teams chat notifications interrupt by default, like a direct message. Reply with `microsoft teams send --chat <chat_id>`.
+
+The daemon silently refreshes browser-captured tokens before they expire. If a sign-in finally lapses (the SSO session ended), it emits a `type=auth_needed` notification (with `account` and a `message`); re-run `microsoft auth setup --account <email> --browser` to sign in again.
