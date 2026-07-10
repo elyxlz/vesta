@@ -366,6 +366,7 @@ export class Transcriber {
       if (this.active) {
         this.active = false;
         this.opts.onError("Transcription connection closed unexpectedly");
+        this.cleanup();
       }
     };
 
