@@ -15,17 +15,8 @@ EVENTS_DB_FILENAME = "events.db"
 # Upper bound on events buffered per subscriber. A slow-but-alive WS client (phone
 # on a weak link, wedged webview) whose send loop stalls would otherwise grow its
 # queue without limit. 1000 events covers a long burst of streamed text/tool blocks
-# while capping memory; on overflow we drop the oldest event (see _offer) so the
-# stream stays current rather than replaying a stale backlog.
+# while capping memory; a subscriber that overflows it is evicted (see _offer).
 SUBSCRIBER_QUEUE_MAXSIZE = 1000
-
-# Consecutive dropped events after which a queue-full subscriber is evicted. A client
-# that far behind (a full queue plus this many straight drops) gets no value from the
-# live stream; endless drop-oldest instead degraded its UI silently and logged one
-# warning per dropped event, a self-sustaining storm while the stalled socket lingered.
-# Eviction hands the subscriber an EvictedEvent so its send loop closes the WS and the
-# client reconnects, resyncing from the connect snapshot.
-SUBSCRIBER_EVICT_AFTER_DROPS = 100
 
 type AgentState = tp.Literal["idle", "thinking"]
 
@@ -280,8 +271,7 @@ def _quarantine(db_path: pl.Path) -> None:
 
 class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
-        # queue -> consecutive dropped-event count, the eviction meter (see _offer).
-        self._subscribers: dict[asyncio.Queue[VestaEvent], int] = {}
+        self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
         self._conn: sqlite3.Connection | None = None
         self._db_path: pl.Path | None = None
@@ -307,12 +297,11 @@ class EventBus:
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
         """A live event queue; yields a final EvictedEvent if the bus evicts it (see _offer)."""
         q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
-        self._subscribers[q] = 0
+        self._subscribers.add(q)
         return q
 
     def unsubscribe(self, q: asyncio.Queue[VestaEvent]) -> None:
-        if q in self._subscribers:
-            del self._subscribers[q]
+        self._subscribers.discard(q)
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
@@ -336,38 +325,29 @@ class EventBus:
             self._offer(q, event)
 
     def _offer(self, q: asyncio.Queue[VestaEvent], event: StreamEvent) -> None:
-        """Enqueue for one subscriber, dropping its oldest event on overflow.
+        """Enqueue for one subscriber, evicting it on overflow.
 
-        A stalled send loop must not pin memory: when the queue is full we evict
-        the oldest buffered event to make room for the newest, keeping the live
-        stream current. History replay is delivered out-of-band on connect (api.py),
-        never through this queue, so it is unaffected.
-
-        A subscriber that stays full for SUBSCRIBER_EVICT_AFTER_DROPS consecutive
-        drops is evicted: its stale backlog is replaced by an EvictedEvent telling
-        its send loop to close the WS, and the whole stall logs one warning instead
-        of one per dropped event. The client reconnects and resyncs from the connect
-        snapshot; a drained put resets the meter (with the burst's drop count logged)."""
+        A subscriber either receives every event or gets a clean disconnect: one
+        whose send loop stalls long enough to fall a full queue behind is getting
+        no value from the live stream, so on overflow its stale backlog is replaced
+        by a single EvictedEvent (with one warning, not one per event) telling its
+        send loop to close the WS; the client reconnects and resyncs from the
+        connect snapshot. History replay is delivered out-of-band on connect
+        (api.py), never through this queue, so it is unaffected."""
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
-            drops = self._subscribers[q] + 1
-            if drops >= SUBSCRIBER_EVICT_AFTER_DROPS:
-                del self._subscribers[q]
-                while not q.empty():
-                    q.get_nowait()
-                q.put_nowait(EvictedEvent(type="evicted"))
-                logger.warning("subscriber stalled, evicting after %d consecutive dropped events (latest type=%s)", drops, event["type"])
-                return
-            self._subscribers[q] = drops
+            self._subscribers.discard(q)
             # emit runs on the loop thread, so no other coroutine drains between
-            # full and get_nowait: the queue is non-empty here by construction.
-            q.get_nowait()
-            q.put_nowait(event)
-            return
-        if self._subscribers[q]:
-            logger.info("subscriber recovered after dropping %d events", self._subscribers[q])
-            self._subscribers[q] = 0
+            # full here and the drain below: the queue stays at capacity.
+            while not q.empty():
+                q.get_nowait()
+            q.put_nowait(EvictedEvent(type="evicted"))
+            logger.warning(
+                "subscriber stalled %d events behind, evicting so its client reconnects (latest type=%s)",
+                SUBSCRIBER_QUEUE_MAXSIZE,
+                event["type"],
+            )
 
     @property
     def state(self) -> AgentState:
