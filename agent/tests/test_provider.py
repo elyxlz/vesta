@@ -12,7 +12,7 @@ from core.provider import (
     ProviderAuthState,
     UsageCredits,
     UsageError,
-    _check_claude_auth,
+    _check_claude_oauth,
     _derive_kind_and_auth,
     clear_provider,
     derive_status,
@@ -77,18 +77,15 @@ def test_is_terminal_auth_error(error, expected):
 
 
 @pytest.mark.parametrize(
-    "creds,expected",
+    "oauth,expected",
     [
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}}), True),  # valid, unexpired
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}}), True),  # expired but refreshable
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}), False),  # expired, no refresh
-        ("not json", False),
-        ("{}", False),
-        (json.dumps({"claudeAiOauth": None}), False),
+        ({"accessToken": "a", "expiresAt": 2**62}, True),  # valid, unexpired
+        ({"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}, True),  # expired but refreshable
+        ({"accessToken": "a", "expiresAt": 0}, False),  # expired, no refresh
     ],
 )
-def test_claude_auth(creds, expected):
-    assert _check_claude_auth(creds) is expected
+def test_claude_auth(oauth, expected):
+    assert _check_claude_oauth(ClaudeOAuth.model_validate(oauth)) is expected
 
 
 # --- State transitions (free functions) ---

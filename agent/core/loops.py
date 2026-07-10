@@ -22,7 +22,6 @@ from .client import (
     process_message,
     attempt_interrupt,
     send_preempt,
-    persist_session_id,
     resolve_openrouter_max_tokens,
     compact_session,
     client_session,
@@ -99,10 +98,6 @@ async def load_notifications(*, config: cfg.VestaConfig) -> list[Notification]:
     return notifications
 
 
-async def delete_notification_files(notifications: list[Notification]) -> None:
-    _delete_paths([n.file_path for n in notifications if n.file_path])
-
-
 def _trash_paths(file_paths: list[str], trash_dir: pl.Path) -> None:
     """Move each notification file into the trash dir, replacing any same-named entry. Trashing keeps the
     file recoverable/auditable instead of deleting it; a parked file is never re-scanned (the loader
@@ -148,11 +143,6 @@ def format_notification_batch(notifications: list[Notification], *, suffix: str 
     suffix_str = f"\n\n{suffix}" if suffix else ""
     inner = "\n".join(_format_one(n) for n in notifications)
     return f"{inner}{suffix_str}"
-
-
-def _delete_paths(file_paths: list[str]) -> None:
-    for path_str in file_paths:
-        pl.Path(path_str).unlink(missing_ok=True)
 
 
 async def process_batch(
@@ -265,16 +255,6 @@ async def _run_messages_with_interrupts(
             raise
         except (*SDK_ERRORS, ValueError, TimeoutError) as e:
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
-            if not state.persisted.session_id and state.client:
-                # Belt-and-suspenders: sdk_parsing already persists the session_id from the init
-                # message. The official claude_agent_sdk client has no session_id attribute, so this
-                # very-early-crash fallback degrades to None rather than AttributeError-ing here.
-                try:
-                    sid = state.client.session_id  # ty: ignore[unresolved-attribute]
-                except AttributeError:
-                    sid = None
-                if sid:
-                    await persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:

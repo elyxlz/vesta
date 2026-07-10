@@ -8,12 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import core.models as vm
 import core.config as cfg
+from core.events import EventBus
+from core.helpers import clear_notifications
 from core.notification import Notification
 from core.loops import (
     _is_new_json,
     _load_notification_files,
     _notification_watcher,
-    delete_notification_files,
     format_notification_batch,
     greeting_turn,
     load_notifications,
@@ -125,37 +126,40 @@ async def test_load_notifications_partial_success(tmp_path):
     assert not bad_file.exists()
 
 
-# --- delete_notification_files ---
+# --- clear_notifications ---
 
 
 @pytest.mark.anyio
-async def test_delete_notification_files(tmp_path):
-    f1 = tmp_path / "a.json"
-    f2 = tmp_path / "b.json"
-    f1.write_text("x")
-    f2.write_text("y")
+async def test_clear_notifications_unlinks_and_emits_cleared(tmp_path):
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        state = vm.State()
+        state.event_bus = bus
+        sub = bus.subscribe()
+        f1 = tmp_path / "a.json"
+        f2 = tmp_path / "b.json"
+        f1.write_text("x")
+        f2.write_text("y")
 
-    notifs = [
-        Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f1)),
-        Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f2)),
-    ]
-    await delete_notification_files(notifs)
+        clear_notifications(state, [str(f1), str(f2)])
 
-    assert not f1.exists()
-    assert not f2.exists()
-
-
-@pytest.mark.anyio
-async def test_delete_ignores_none_paths():
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m")
-    assert notif.file_path is None
-    await delete_notification_files([notif])  # should not raise
+        assert not f1.exists()
+        assert not f2.exists()
+        events = [sub.get_nowait() for _ in range(sub.qsize())]
+        assert [e["notif_id"] for e in events if e["type"] == "notification_cleared"] == ["a", "b"]
+    finally:
+        bus.close()
 
 
 @pytest.mark.anyio
-async def test_delete_handles_already_deleted(tmp_path):
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(tmp_path / "gone.json"))
-    await delete_notification_files([notif])  # missing_ok=True, should not raise
+async def test_clear_notifications_handles_already_deleted(tmp_path):
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        state = vm.State()
+        state.event_bus = bus
+        clear_notifications(state, [str(tmp_path / "gone.json")])  # missing_ok=True, should not raise
+    finally:
+        bus.close()
 
 
 # --- format_notification_batch ---

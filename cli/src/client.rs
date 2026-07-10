@@ -8,10 +8,13 @@ use crate::common::{
     AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
 };
 
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bounds time-to-headers only (recv_response); SSE streams and long bodies stay unbounded.
+const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+
 // ── TLS fingerprint verification ────────────────────────────────
 
-fn make_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+fn make_rustls_config(fingerprint: String) -> Arc<rustls::ClientConfig> {
     Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()
@@ -24,7 +27,7 @@ fn make_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> 
 
 #[derive(Debug)]
 struct FingerprintVerifier {
-    expected: Option<String>,
+    expected: String,
 }
 
 impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
@@ -36,32 +39,38 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let Some(expected) = &self.expected else {
-            return Ok(rustls::client::danger::ServerCertVerified::assertion());
-        };
-
         let actual = cert_fingerprint(end_entity.as_ref());
 
-        match fingerprint_match(expected, &actual) {
+        match fingerprint_match(&self.expected, &actual) {
             Ok(()) => Ok(rustls::client::danger::ServerCertVerified::assertion()),
             Err(msg) => Err(rustls::Error::General(msg)),
         }
     }
     fn verify_tls12_signature(
         &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
     }
     fn verify_tls13_signature(
         &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
     }
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         rustls::crypto::ring::default_provider()
@@ -302,6 +311,8 @@ impl Client {
         };
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .timeout_connect(Some(HTTP_CONNECT_TIMEOUT))
+            .timeout_recv_response(Some(HTTP_RESPONSE_TIMEOUT))
             .tls_config(tls_config)
             .build()
             .new_agent();
@@ -440,7 +451,14 @@ impl Client {
     /// timezone at create time — the agent owns its config store).
     pub fn create_agent(&self, name: &str, manage_agent_code: bool) -> Result<String, String> {
         let body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
-        let v: serde_json::Value = read_json(self.post_json("/agents", &body)?)?;
+        // vestad pulls/builds the agent image before responding; a cold multi-GB pull
+        // legitimately exceeds any fixed response ceiling.
+        let request = self
+            .authorized(self.agent.post(self.url("/agents")))
+            .config()
+            .timeout_recv_response(None)
+            .build();
+        let v: serde_json::Value = read_json(self.finish(request.send_json(&body))?)?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
@@ -545,7 +563,7 @@ impl Client {
 
     pub fn stream_gateway_logs(&self, tail: u64, follow: bool) -> Result<(), String> {
         let resp = self.get(&format!("/gateway/logs?tail={tail}&follow={follow}"))?;
-        consume_sse_log_stream(resp, "gateway_stopped", None)
+        consume_sse_log_stream(std::io::BufReader::new(resp.into_body().into_reader()), "gateway_stopped", None)
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
@@ -554,7 +572,13 @@ impl Client {
     }
 
     pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{name}/rebuild"))?;
+        // A rebuild may pull a fresh agent image before responding, same as create_agent.
+        let request = self
+            .authorized(self.agent.post(self.url(&format!("/agents/{name}/rebuild"))))
+            .config()
+            .timeout_recv_response(None)
+            .build();
+        self.finish(request.send_empty())?;
         Ok(())
     }
 
@@ -602,19 +626,29 @@ impl Client {
         let mut backoff = Duration::from_millis(200);
         let mut last = String::new();
         loop {
-            let status = self.agent_status(name)?;
-            if status.status != last {
-                on_change(&status.status);
-                last = status.status.clone();
-            }
-            if ready.contains(&status.status.as_str()) {
-                return Ok(());
-            }
-            if TERMINAL_STATES.contains(&status.status.as_str()) {
-                return Err(format!("{}: {}", name, status.status));
-            }
-            if Instant::now() >= deadline {
-                return Err(format!("{}: timeout waiting for {} (status: {})", name, wait_label, status.status));
+            // A transient transport error is not terminal: a missing agent comes back as a
+            // 200 with status "not_found", so an Err here is only the network blipping.
+            match self.agent_status(name) {
+                Ok(status) => {
+                    if status.status != last {
+                        on_change(&status.status);
+                        last = status.status.clone();
+                    }
+                    if ready.contains(&status.status.as_str()) {
+                        return Ok(());
+                    }
+                    if TERMINAL_STATES.contains(&status.status.as_str()) {
+                        return Err(format!("{}: {}", name, status.status));
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(format!("{}: timeout waiting for {} (status: {})", name, wait_label, status.status));
+                    }
+                }
+                Err(poll_err) => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("{name}: timeout waiting for {wait_label} (last error: {poll_err})"));
+                    }
+                }
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(Duration::from_secs(1));
@@ -721,7 +755,7 @@ impl Client {
 
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{name}/logs?tail={tail}"))?;
-        consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
+        consume_sse_log_stream(std::io::BufReader::new(resp.into_body().into_reader()), "agent_stopped", Some("agent stopped"))
     }
 
     /// The agent's notification interrupt rules, read from its GET /config (the `notification_rules`
@@ -743,25 +777,21 @@ impl Client {
     }
 }
 
-fn consume_sse_log_stream(
-    resp: Response<Body>,
-    stop_event: &str,
-    stop_message: Option<&str>,
-) -> Result<(), String> {
-    let reader = std::io::BufReader::new(resp.into_body().into_reader());
-    let stop_marker = format!("event:{stop_event}");
-    for line in std::io::BufRead::lines(reader) {
+fn consume_sse_log_stream(reader: impl BufRead, stop_event: &str, stop_message: Option<&str>) -> Result<(), String> {
+    for line in reader.lines() {
         let line = line.map_err(|e| format!("read error: {e}"))?;
         if let Some(data) = line.strip_prefix("data:") {
             println!("{}", data.trim_start());
-        } else if line.starts_with(&stop_marker) {
-            if let Some(msg) = stop_message {
-                eprintln!("{msg}");
+        } else if let Some(event) = line.strip_prefix("event:") {
+            if event.trim() == stop_event {
+                if let Some(msg) = stop_message {
+                    eprintln!("{msg}");
+                }
+                return Ok(());
             }
-            break;
         }
     }
-    Ok(())
+    Err("log stream closed unexpectedly".into())
 }
 
 // ── WebSocket chat (CLI-only) ──────────────────────────────────
@@ -813,11 +843,21 @@ enum SessionEnd {
     /// The server closed the stream cleanly (agent stopped) — exit without retrying.
     Closed,
     /// The connection dropped unexpectedly — the agent is likely restarting, so reconnect.
-    Lost(String),
+    /// `unsent` carries a message the drop swallowed mid-send, already rendered on screen,
+    /// so the reconnect loop can deliver it on the fresh socket.
+    Lost { reason: String, unsent: Option<String> },
 }
 
-/// Open one chat WebSocket. Shares the same TLS fingerprint verification as the HTTP client.
+fn chat_message_frame(text: &str) -> tungstenite::Message {
+    tungstenite::Message::Text(serde_json::json!({"type": "message", "text": text}).to_string().into())
+}
+
+/// Open one chat WebSocket. A pinned fingerprint gets the same verification as the HTTP
+/// client; without one, tungstenite's default connector verifies against native roots.
 fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String> {
+    // Both ring and aws-lc-rs are compiled in, so tungstenite's default rustls config
+    // needs a process-level provider picked before the handshake.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let parsed: url::Url = url.parse().map_err(|e| format!("invalid ws url: {e}"))?;
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port_or_known_default().unwrap_or(443);
@@ -832,9 +872,10 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
     let timeout_handle = tcp
         .try_clone()
         .map_err(|e| format!("failed to clone ws socket: {e}"))?;
-    let connector =
-        tungstenite::Connector::Rustls(make_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
-    let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, Some(connector))
+    let connector = client
+        .cert_fingerprint()
+        .map(|fp| tungstenite::Connector::Rustls(make_rustls_config(fp.to_string())));
+    let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, connector)
         .map_err(|e| format!("ws connect failed: {e}"))?;
     timeout_handle
         .set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
@@ -860,9 +901,11 @@ fn run_chat_session(
                 }
                 render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
                 std::io::stdout().flush().ok();
-                let msg = serde_json::json!({"type": "message", "text": input});
-                if let Err(send_err) = socket.send(tungstenite::Message::Text(msg.to_string().into())) {
-                    return SessionEnd::Lost(format!("connection lost while sending: {send_err}"));
+                if let Err(send_err) = socket.send(chat_message_frame(&input)) {
+                    return SessionEnd::Lost {
+                        reason: format!("connection lost while sending: {send_err}"),
+                        unsent: Some(input),
+                    };
                 }
             }
         }
@@ -907,7 +950,12 @@ fn run_chat_session(
             Err(tungstenite::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(read_err) => return SessionEnd::Lost(format!("connection lost: {read_err}")),
+            Err(read_err) => {
+                return SessionEnd::Lost {
+                    reason: format!("connection lost: {read_err}"),
+                    unsent: None,
+                }
+            }
         }
     }
 }
@@ -968,12 +1016,21 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     loop {
         match run_chat_session(&mut socket, &rx, name, color, render_history) {
             SessionEnd::Closed => return Ok(()),
-            SessionEnd::Lost(reason) => match reconnect_chat_socket(client, &url, name, &reason) {
-                Some(fresh) => {
-                    socket = fresh;
-                    render_history = false;
+            SessionEnd::Lost { reason, unsent } => loop {
+                match reconnect_chat_socket(client, &url, name, &reason) {
+                    Some(fresh) => socket = fresh,
+                    None => return Err(reason),
                 }
-                None => return Err(reason),
+                render_history = false;
+                // The lost message is already on screen as sent; deliver it silently on the
+                // fresh socket, and if that send also dies, retry through another reconnect.
+                let resent = match &unsent {
+                    Some(text) => socket.send(chat_message_frame(text)).is_ok(),
+                    None => true,
+                };
+                if resent {
+                    break;
+                }
             },
         }
     }
@@ -1029,6 +1086,37 @@ mod tests {
         let socket = connect_chat_socket(&test_client(), &url).expect("handshake should survive a slow server");
         drop(socket);
         server.join().expect("server thread");
+    }
+
+    #[test]
+    fn wait_for_status_treats_poll_errors_as_transient_until_the_deadline() {
+        // An unreachable server is a transport blip, not a terminal state: the wait keeps
+        // polling and only reports the failure once the deadline passes.
+        let err = test_client()
+            .wait_until_alive("ghost", Duration::from_millis(300))
+            .unwrap_err();
+        assert!(err.contains("timeout waiting for ready"), "got: {err}");
+        assert!(err.contains("server not reachable"), "got: {err}");
+    }
+
+    #[test]
+    fn consume_sse_log_stream_requires_the_stop_event() {
+        struct Case {
+            stream: &'static str,
+            ok: bool,
+        }
+        let cases = [
+            // Stop event without and with the SSE-valid space after the colon.
+            Case { stream: "data: hello\nevent:agent_stopped\ndata: \n\n", ok: true },
+            Case { stream: "data: hello\nevent: agent_stopped\ndata: \n\n", ok: true },
+            // A longer event name must not match, and a dropped stream is an error.
+            Case { stream: "data: hello\nevent: agent_stopped_late\ndata: \n\n", ok: false },
+            Case { stream: "data: hello\n", ok: false },
+        ];
+        for case in cases {
+            let result = consume_sse_log_stream(case.stream.as_bytes(), "agent_stopped", None);
+            assert_eq!(result.is_ok(), case.ok, "stream: {:?} got: {result:?}", case.stream);
+        }
     }
 
     #[test]
