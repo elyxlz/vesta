@@ -146,10 +146,14 @@ export function ChatComposer({
             <Button
               type="button"
               size="icon"
+              variant="secondary"
               disabled={inputDisabled}
               aria-label={isRecording ? "Stop recording" : "Start recording"}
               {...voiceButtonHandlers}
-              className="size-12 touch-none rounded-full bg-red-500 text-white hover:bg-red-600 [&_svg]:size-5"
+              className={cn(
+                "size-12 touch-none rounded-full [&_svg]:size-5",
+                isRecording && "bg-red-500 text-white hover:bg-red-600",
+              )}
             >
               {isRecording ? <Square fill="currentColor" /> : <Mic />}
             </Button>

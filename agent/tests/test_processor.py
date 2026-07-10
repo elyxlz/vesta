@@ -579,7 +579,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "crash: the processor was cancelled unexpectedly"
@@ -601,7 +601,7 @@ async def test_handle_processor_done_exception_triggers_restart(tmp_path):
     with contextlib.suppress(RuntimeError):
         await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason is not None
@@ -623,7 +623,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "crash: the processor exited silently"
@@ -646,7 +646,7 @@ async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.persisted.last_restart_reason == "nightly: dreamer ran, session cleared for fresh context"
 

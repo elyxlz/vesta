@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { stepTransition } from "@/lib/motion";
 import { ChatBubble } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
@@ -183,6 +184,15 @@ export function ChatMessageArea({
     hadRowsRef.current = hasRows;
   }, [count, virtualizer]);
 
+  // Highest row index seen as of the last commit — read during render (holds the prior
+  // value, since this effect hasn't fired yet) to tell a genuine append from a history
+  // page landing or an unrelated re-render, then advanced after commit. Gated on
+  // hadRowsRef so the first page of history never plays the entrance animation.
+  const maxSeenIndexRef = useRef(-1);
+  useLayoutEffect(() => {
+    maxSeenIndexRef.current = count - 1;
+  }, [count]);
+
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -272,6 +282,8 @@ export function ChatMessageArea({
           {items.map((item) => {
             const row = decorated[item.index];
             const isLast = item.index === count - 1;
+            const isNewAppend =
+              hadRowsRef.current && item.index > maxSeenIndexRef.current;
             return (
               <div
                 key={item.key}
@@ -308,12 +320,27 @@ export function ChatMessageArea({
                       </span>
                     </div>
                   )}
-                  <ChatBubble
-                    event={row.event}
-                    className={row.gap}
-                    fullscreen={fullscreen}
-                    isMobile={isMobile}
-                  />
+                  {isNewAppend ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={stepTransition.transition}
+                    >
+                      <ChatBubble
+                        event={row.event}
+                        className={row.gap}
+                        fullscreen={fullscreen}
+                        isMobile={isMobile}
+                      />
+                    </motion.div>
+                  ) : (
+                    <ChatBubble
+                      event={row.event}
+                      className={row.gap}
+                      fullscreen={fullscreen}
+                      isMobile={isMobile}
+                    />
+                  )}
                 </div>
                 {isLast && (
                   <div className="px-4 pb-4">

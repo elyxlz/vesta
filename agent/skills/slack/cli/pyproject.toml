@@ -1,0 +1,28 @@
+[project]
+name = "slack"
+version = "0.1.0"
+description = "Slack channel CLI: Socket Mode daemon writing notifications plus send/read commands"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "slack-sdk>=3.31",
+]
+
+[project.scripts]
+slack = "slack_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slack_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

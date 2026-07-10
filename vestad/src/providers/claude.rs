@@ -1,12 +1,12 @@
 //! Claude OAuth handlers. Standalone PKCE dance: the caller gets credentials
 //! back and sends them to `PUT /agents/{name}/provider` (then restarts the agent to apply).
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 
 use crate::auth;
-use crate::serve::{SharedState, err_response};
+use crate::serve::{err_response, SharedState};
 
 const OAUTH_HTTP_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
@@ -48,7 +48,10 @@ pub async fn oauth_start_handler(
         },
     );
 
-    Ok(Json(OAuthStartResponse { auth_url, session_id }))
+    Ok(Json(OAuthStartResponse {
+        auth_url,
+        session_id,
+    }))
 }
 
 pub async fn oauth_complete_handler(
@@ -64,9 +67,14 @@ pub async fn oauth_complete_handler(
             .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /providers/claude/oauth/start"))?
     };
 
-    let credentials = complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    let credentials = complete_auth_flow(
+        &state.http_client,
+        &body.code,
+        &session.code_verifier,
+        &session.state,
+    )
+    .await
+    .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
 
     Ok(Json(serde_json::json!({ "credentials": credentials })))
 }
@@ -132,7 +140,12 @@ fn start_auth_flow() -> (String, String, String) {
 
 /// Complete the OAuth flow by exchanging the auth code for tokens.
 /// Returns the credentials JSON string.
-async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier: &str, expected_state: &str) -> Result<String, String> {
+async fn complete_auth_flow(
+    client: &reqwest::Client,
+    input: &str,
+    code_verifier: &str,
+    expected_state: &str,
+) -> Result<String, String> {
     let (auth_code, pasted_state) = match input.split_once('#') {
         Some((code, st)) => (code, st),
         None => (input, expected_state),
@@ -151,7 +164,8 @@ async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier
         "code_verifier": code_verifier,
     });
 
-    let response = client.post(OAUTH_TOKEN_URL)
+    let response = client
+        .post(OAUTH_TOKEN_URL)
         .header("User-Agent", "axios/1.13.6")
         .timeout(std::time::Duration::from_secs(OAUTH_HTTP_TIMEOUT_SECS))
         .json(&body)
@@ -165,7 +179,9 @@ async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier
             }
         })?;
 
-    let response_str = response.text().await
+    let response_str = response
+        .text()
+        .await
         .map_err(|e| format!("failed to read token response: {e}"))?;
 
     let token_data: serde_json::Value = serde_json::from_str(&response_str)
@@ -175,9 +191,7 @@ async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier
         return Err(format!(
             "auth failed: {} — {}",
             error,
-            token_data
-                .get("error_description")
-                .unwrap_or(error)
+            token_data.get("error_description").unwrap_or(error)
         ));
     }
 
@@ -185,7 +199,9 @@ async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier
         .as_str()
         .ok_or("no access_token in response")?;
     let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
-    let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
+    let expires_in = token_data["expires_in"]
+        .as_u64()
+        .unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
 
     let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
 
