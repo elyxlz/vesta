@@ -86,7 +86,7 @@ def main():
 
     # serve
     p_serve = sub.add_parser("serve", help="Run background daemon (scheduler + reminder engine)")
-    p_serve.add_argument("--notifications-dir", required=True)
+    p_serve.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     p_serve.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
 
     # add

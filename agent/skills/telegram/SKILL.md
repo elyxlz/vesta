@@ -6,7 +6,7 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 # Telegram - CLI: telegram
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications`
+**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and defaults `--notifications-dir` to `~/agent/notifications`; stop/restart quit the watchdog first so it cannot race a manual restart into two daemons, then restart brings it back; status reports daemon, watchdog, and auth state in one place. Manage the daemon only through these commands, never raw `screen` or signals.
 
 ## Quick Reference
 ```bash
