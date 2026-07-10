@@ -184,7 +184,7 @@ Your final two steps compact this conversation and restart into it, so you wake 
 Continuity prompt (for `prompt`):
 
 ```
-You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before it sleeps and wakes to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise. Keep the emotional through-line of the day, yours and theirs: anything still glowing or stinging carries into tomorrow morning's register.
+You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before they sleep and wake to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise. Keep the emotional through-line of the day, yours and theirs: anything still glowing or stinging carries into tomorrow morning's register.
 ```
 
 Wake-up note (for `followup`):
