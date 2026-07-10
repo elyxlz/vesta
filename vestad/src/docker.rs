@@ -1943,7 +1943,9 @@ pub async fn reconcile_containers(
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
-                start_container(docker, cname).await;
+                if !start_container(docker, cname).await {
+                    tracing::error!(agent = %name, "boot-start failed");
+                }
             } else if agent_code_changed && has_core_mount {
                 // vestad re-extracted the embedded core this boot. A running agent still holds the
                 // old code in memory and its core mount points at the now-replaced dir, so restart
@@ -2206,7 +2208,10 @@ pub async fn rename_agent(
     snapshot_container(docker, &old_cname, &snapshot_tag, &[]).await?;
 
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
-    remove_container_force(docker, &old_cname).await.ok();
+    // Confirm it's actually gone (don't swallow): the snapshot is safely captured and the env
+    // file and constitution are still untouched, so failing here leaves the old agent fully
+    // intact instead of leaving a live container squatting on the WS port under the old name.
+    ensure_container_removed(docker, &old_cname).await?;
     // Carry the constitution across the rename before the new container is created, so its
     // bind mount resolves to the existing content rather than a fresh empty file.
     let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
@@ -2754,6 +2759,21 @@ mod tests {
         assert!(
             !rebuild_body.contains("remove_container_force"),
             "rebuild_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+
+        // rename_agent has the same shape (snapshot, remove, create) and the same failure mode:
+        // a surviving old container keeps the same baked-in WS_PORT while its env file and
+        // constitution are deleted, and the next reconcile boot-starts it alongside the new one.
+        let tests_start = src.find("#[cfg(test)]").expect("test module present");
+        let rename_body = &src[rename_start..tests_start];
+        let rename_remove_pos = rename_body
+            .find("ensure_container_removed")
+            .expect("rename_agent must confirm the old container is gone via ensure_container_removed before recreating");
+        let rename_create_pos = rename_body.find("create_container").expect("create_container must be called in rename_agent");
+        assert!(rename_remove_pos < rename_create_pos, "rename_agent must remove the old container before creating the new one");
+        assert!(
+            !rename_body.contains("remove_container_force"),
+            "rename_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
     }
 

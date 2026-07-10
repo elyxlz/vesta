@@ -43,7 +43,7 @@ export function PersonalityStep({
                 aria-pressed={isSelected}
                 className={`group flex h-full flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all cursor-pointer ${
                   isSelected
-                    ? "border-primary/60 bg-primary/5 ring-2 ring-ring"
+                    ? "border-primary bg-primary/10"
                     : "border-border bg-input/30 hover:bg-input/60 hover:border-border/80"
                 }`}
               >

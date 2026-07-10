@@ -1,0 +1,76 @@
+name: Unrelease
+
+# Pull a broken beta (prerelease) so no new client picks it up: delete the GitHub
+# release, its git tag, and the ghcr image tag. Refuses to touch a stable release,
+# a promoted release must never be unreleased. The version-bump commit on master
+# stays; the version number is burned. Boxes already on the beta stay on it
+# (updates are forward-only), so ship a fixed release right after.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Prerelease tag to pull (e.g. v0.1.156)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: unrelease
+  cancel-in-progress: false
+
+jobs:
+  unrelease:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate tag is an existing prerelease
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::tag must look like vX.Y.Z (got '$TAG')"; exit 1 ;;
+          esac
+          if ! IS_PRERELEASE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease'); then
+            echo "::error::release $TAG does not exist"
+            exit 1
+          fi
+          if [ "$IS_PRERELEASE" != "true" ]; then
+            echo "::error::$TAG is stable; a promoted release must never be unreleased"
+            exit 1
+          fi
+          echo "✓ $TAG is a prerelease, pulling it"
+
+      # Best effort: an orphaned image is harmless, so a failure here only warns.
+      - name: Delete ghcr image tag
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set +e
+          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}"
+          VERSION_ID=$(gh api "users/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions" \
+            --paginate --jq ".[] | select(.metadata.container.tags | index(\"${TAG}\")) | .id" | head -n 1)
+          if [ -z "$VERSION_ID" ]; then
+            echo "::warning::no ghcr image version tagged ${TAG} found, skipping image cleanup"
+            exit 0
+          fi
+          if gh api --method DELETE "users/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"; then
+            echo "✓ deleted ghcr.io/${GITHUB_REPOSITORY}:${TAG} (package version ${VERSION_ID})"
+          else
+            echo "::warning::failed to delete ghcr image version ${VERSION_ID}; an orphaned image is harmless"
+          fi
+          exit 0
+
+      - name: Delete release and git tag
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          echo "✓ deleted release and tag $TAG"

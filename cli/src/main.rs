@@ -4,12 +4,15 @@ use std::path::PathBuf;
 use std::process;
 mod client;
 mod common;
-mod platform;
 
 use common::{fetch_latest_release_tag, version_less_than};
 
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
+// Pads for first-start setup (git fetch, npm install, vite build, etc.).
+const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+// One bad paste (typo, stale code) shouldn't strand a just-created agent unauthenticated.
+const OAUTH_CODE_MAX_ATTEMPTS: u32 = 3;
 
 /// Owns the die-on-error policy for `Result<T, String>` call sites so it is stated once.
 trait OrDie<T> {
@@ -18,11 +21,9 @@ trait OrDie<T> {
 
 impl<T> OrDie<T> for Result<T, String> {
     fn or_die(self) -> T {
-        self.unwrap_or_else(|e| platform::die(&e))
+        self.unwrap_or_else(|e| die(&e))
     }
 }
-// Pads for first-start setup (git fetch, npm install, vite build, etc.).
-const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -34,6 +35,11 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{bytes}B")
     }
+}
+
+fn die(msg: &str) -> ! {
+    eprintln!("error: {msg}");
+    process::exit(1);
 }
 
 fn try_open_browser(url: &str) {
@@ -519,11 +525,11 @@ fn read_file_or_stdin(path: &std::path::Path) -> String {
     if path == std::path::Path::new("-") {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)
-            .unwrap_or_else(|e| platform::die(&format!("failed to read stdin: {e}")));
+            .unwrap_or_else(|e| die(&format!("failed to read stdin: {e}")));
         return buf;
     }
     std::fs::read_to_string(path)
-        .unwrap_or_else(|e| platform::die(&format!("failed to read {}: {e}", path.display())))
+        .unwrap_or_else(|e| die(&format!("failed to read {}: {e}", path.display())))
 }
 
 /// Open `initial` in $EDITOR (falling back to vi) and return the edited contents.
@@ -534,17 +540,17 @@ fn edit_in_editor(initial: &str) -> String {
     let mut tmp = std::env::temp_dir();
     tmp.push(format!("vesta-constitution-{}.md", process::id()));
     std::fs::write(&tmp, initial)
-        .unwrap_or_else(|e| platform::die(&format!("failed to write temp file: {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to write temp file: {e}")));
     let status = process::Command::new(&editor)
         .arg(&tmp)
         .status()
-        .unwrap_or_else(|e| platform::die(&format!("failed to launch editor '{editor}': {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to launch editor '{editor}': {e}")));
     if !status.success() {
         std::fs::remove_file(&tmp).ok();
-        platform::die("editor exited with an error, aborting");
+        die("editor exited with an error, aborting");
     }
     let edited = std::fs::read_to_string(&tmp)
-        .unwrap_or_else(|e| platform::die(&format!("failed to read temp file: {e}")));
+        .unwrap_or_else(|e| die(&format!("failed to read temp file: {e}")));
     std::fs::remove_file(&tmp).ok();
     edited
 }
@@ -555,14 +561,14 @@ fn prompt_raw(label: &str) -> String {
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
-        .unwrap_or_else(|_| platform::die(&format!("failed to read {label}")));
+        .unwrap_or_else(|_| die(&format!("failed to read {label}")));
     input.trim().to_string()
 }
 
 fn prompt(label: &str) -> String {
     let value = prompt_raw(label);
     if value.is_empty() {
-        platform::die(&format!("{label} is required"));
+        die(&format!("{label} is required"));
     }
     value
 }
@@ -573,7 +579,7 @@ fn prompt_name() -> String {
 
 fn build_openrouter_args(flags: OpenRouterFlags) -> Option<client::OpenRouterArgs> {
     let key = flags.openrouter_key?;
-    let model = flags.openrouter_model.unwrap_or_else(|| platform::die("--openrouter-model is required with --openrouter-key"));
+    let model = flags.openrouter_model.unwrap_or_else(|| die("--openrouter-model is required with --openrouter-key"));
     Some(client::OpenRouterArgs { key, model })
 }
 
@@ -603,10 +609,10 @@ enum ProvisionPlan {
 #[allow(clippy::too_many_arguments)]
 fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, claude_model: Option<String>, context_window: Option<u64>, yes: bool) -> ProvisionPlan {
     if flags.openrouter_key.is_some() && claude_token.is_some() {
-        platform::die("--openrouter-key and --claude-token are mutually exclusive");
+        die("--openrouter-key and --claude-token are mutually exclusive");
     }
     if flags.openrouter_key.is_some() {
-        let args = build_openrouter_args(flags).unwrap_or_else(|| platform::die("internal: openrouter key vanished"));
+        let args = build_openrouter_args(flags).unwrap_or_else(|| die("internal: openrouter key vanished"));
         eprintln!("checking OpenRouter key...");
         c.validate_openrouter_key(&args.key).or_die();
         return ProvisionPlan::OpenRouter(args);
@@ -686,8 +692,8 @@ fn prompt_context_window(c: &client::Client) -> Option<u64> {
 /// account (empty input or "1"). Returns true if the user picked OpenRouter.
 fn prompt_use_openrouter() -> bool {
     eprintln!("how should this agent authenticate?");
-    eprintln!("  1) Claude account  — log in with your Claude subscription (default)");
-    eprintln!("  2) OpenRouter      — run on an OpenRouter API key");
+    eprintln!("  1) claude account: log in with your claude subscription (default)");
+    eprintln!("  2) openrouter:     run on an openrouter api key");
     loop {
         match prompt_raw("choice [1]").as_str() {
             "" | "1" => return false,
@@ -754,8 +760,8 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
     eprintln!("top models on OpenRouter this week:");
     for (idx, model) in models.iter().enumerate() {
         match fmt_model_price(model.input_price, model.output_price, model.cache_read_price) {
-            Some(price) => eprintln!("  {:>2}) {} ({}) — {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
-            None => eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug),
+            Some(price) => eprintln!("  {:>2}) {} ({}): {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
+            None => eprintln!("  {:>2}) {} ({}): {}", idx + 1, model.label, model.author, model.slug),
         }
     }
     eprintln!("  or type a custom provider/model slug");
@@ -784,24 +790,47 @@ fn oauth_dance(client: &client::Client) -> String {
     eprintln!("  {}", auth.auth_url);
     try_open_browser(&auth.auth_url);
 
-    let code = prompt("paste the auth code");
-    client
-        .complete_auth_standalone(&auth.session_id, &code)
-        .or_die()
+    for attempt in 1..=OAUTH_CODE_MAX_ATTEMPTS {
+        let code = prompt("after signing in, claude shows a code. paste it here");
+        match client.complete_auth_standalone(&auth.session_id, &code) {
+            Ok(credentials) => return credentials,
+            Err(_) if attempt < OAUTH_CODE_MAX_ATTEMPTS => {
+                eprintln!("that code didn't verify, open the link again for a fresh code and paste it");
+            }
+            Err(e) => die(&e),
+        }
+    }
+    unreachable!("loop always returns or dies")
 }
 
-fn authenticate_agent(client: &client::Client, name: &str) {
-    let credentials = oauth_dance(client);
-    // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
-    client
-        .update_settings(name, Some(client::claude_auth(&credentials)), None, None, None, None)
-        .or_die();
-    eprintln!("authenticated!");
+/// Resolve the server config from flags, env vars, or the config file, in that order.
+fn resolve_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> Option<common::ServerConfig> {
+    let from_host_token = |host: &str, token: &str| common::ServerConfig {
+        url: common::normalize_url(host),
+        api_key: token.to_string(),
+        cert_fingerprint: None,
+        cert_pem: None,
+    };
+
+    // 1. Flags
+    if let (Some(host), Some(token)) = (host_flag, token_flag) {
+        return Some(from_host_token(host, token));
+    }
+
+    // 2. Env vars
+    let env_host = std::env::var("VESTA_HOST").ok();
+    let env_token = std::env::var("VESTA_TOKEN").ok();
+    if let (Some(host), Some(token)) = (env_host.as_deref(), env_token.as_deref()) {
+        return Some(from_host_token(host, token));
+    }
+
+    // 3. config.json
+    common::load_server_config()
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
-    let config = platform::load_server_config(host, token)
-        .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
+    let config = resolve_server_config(host, token)
+        .unwrap_or_else(|| die("no server configured. run: vesta connect <host>"));
     let client = client::Client::new(&config).or_die();
     enforce_version_match(&client);
     client
@@ -853,7 +882,7 @@ fn enforce_version_match(client: &client::Client) {
         VersionGate::GatewayOlder => {
             eprintln!("version mismatch: gateway v{gateway} is older than vesta CLI v{cli}");
             if confirm("update the gateway now?") {
-                client.update_gateway().unwrap_or_else(|e| platform::die(&format!("gateway update failed: {e}")));
+                client.update_gateway().unwrap_or_else(|e| die(&format!("gateway update failed: {e}")));
                 eprintln!("gateway update started; wait for it to restart, then re-run your command.");
             } else {
                 eprintln!("update the gateway, then retry.");
@@ -896,7 +925,7 @@ fn check_latest_version() -> Option<String> {
 
     let latest = fetch_latest_via_gateway(true)
         .or_else(|| fetch_latest_release_tag(None))
-        .unwrap_or_else(|| platform::die("failed to check for updates"));
+        .unwrap_or_else(|| die("failed to check for updates"));
 
     if latest == current {
         eprintln!("already up to date");
@@ -931,10 +960,10 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
     );
 
     let current_exe =
-        std::env::current_exe().unwrap_or_else(|e| platform::die(&format!("cannot determine binary path: {e}")));
+        std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {e}")));
     let exe_dir = current_exe
         .parent()
-        .unwrap_or_else(|| platform::die("cannot determine binary directory"));
+        .unwrap_or_else(|| die("cannot determine binary directory"));
 
     let tmp_dir = {
         let primary = exe_dir.join(".vesta-update-tmp");
@@ -945,7 +974,7 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
             let fallback = std::env::temp_dir().join("vesta-update");
             let _ = std::fs::remove_dir_all(&fallback);
             std::fs::create_dir_all(&fallback)
-                .unwrap_or_else(|e| platform::die(&format!("failed to create temp dir: {e}")));
+                .unwrap_or_else(|e| die(&format!("failed to create temp dir: {e}")));
             fallback
         }
     };
@@ -956,10 +985,10 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
         .arg(&archive)
         .arg(&url)
         .status()
-        .unwrap_or_else(|_| platform::die("curl not found"));
+        .unwrap_or_else(|_| die("curl not found"));
     if !dl.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die("failed to download update");
+        die("failed to download update");
     }
 
     let tar_flag = if is_zip { "-xf" } else { "-xzf" };
@@ -969,16 +998,16 @@ fn cli_self_update(target_version: Option<&str>, rust_target: &str, is_zip: bool
         .arg("-C")
         .arg(&tmp_dir)
         .status()
-        .unwrap_or_else(|_| platform::die("tar not found"));
+        .unwrap_or_else(|_| die("tar not found"));
     if !extract.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die("failed to extract update");
+        die("failed to extract update");
     }
 
     let new_binary = tmp_dir.join(binary_subpath);
     self_replace::self_replace(&new_binary).unwrap_or_else(|e| {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        platform::die(&format!("failed to replace binary: {e}"));
+        die(&format!("failed to replace binary: {e}"));
     });
 
     eprintln!("updated to v{latest}");
@@ -993,7 +1022,7 @@ fn update_target() -> (&'static str, bool, &'static str) {
         let target = match std::env::consts::ARCH {
             "x86_64" => "x86_64-unknown-linux-gnu",
             "aarch64" => "aarch64-unknown-linux-gnu",
-            other => platform::die(&format!("unsupported architecture: {other}")),
+            other => die(&format!("unsupported architecture: {other}")),
         };
         (target, false, "vesta")
     }
@@ -1002,7 +1031,7 @@ fn update_target() -> (&'static str, bool, &'static str) {
         let target = match std::env::consts::ARCH {
             "x86_64" => "x86_64-apple-darwin",
             "aarch64" => "aarch64-apple-darwin",
-            other => platform::die(&format!("unsupported architecture: {other}")),
+            other => die(&format!("unsupported architecture: {other}")),
         };
         (target, false, "vesta")
     }
@@ -1081,11 +1110,11 @@ fn print_update_available(latest: &str) {
 }
 
 fn print_welcome() {
-    println!("vesta — your personal AI assistant");
+    println!("vesta: your personal AI assistant");
     println!();
     println!("quick start:");
-    println!("  vesta setup        create an agent, authenticate, and start");
-    println!("  vesta list         list all agents");
+    println!("  vesta connect <link>   link this machine to your server (from vestad status)");
+    println!("  vesta setup            create an agent, authenticate, and start");
     println!();
     println!("run 'vesta --help' for all commands.");
 }
@@ -1127,9 +1156,9 @@ fn run(cli: Cli) {
                     name.clone()
                 }
                 Err(e) if e.contains("already exists") => {
-                    platform::die(&format!("agent '{name}' already exists. use --yes to continue"));
+                    die(&format!("agent '{name}' already exists. use --yes to continue"));
                 }
-                Err(e) => platform::die(&e),
+                Err(e) => die(&e),
             };
 
             // 2. Wait for the agent's HTTP server to be up so it can receive PUT /config.
@@ -1142,20 +1171,36 @@ fn run(cli: Cli) {
             //    dance first.
             match plan {
                 ProvisionPlan::OpenRouter(or) => {
-                    c.update_settings(&created_name, Some(client::openrouter_auth(&or)), None, None, timezone.as_deref(), None)
-                        .or_die();
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::openrouter_auth(&or)),
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .or_die();
                     eprintln!("running on OpenRouter (no Claude login needed)");
                 }
                 ProvisionPlan::ClaudeCredentials { credentials, opts } => {
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
-                        .or_die();
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::claude_auth(&credentials)),
+                        model: opts.model.as_deref(),
+                        max_context_tokens: opts.max_context_tokens,
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .or_die();
                     eprintln!("authenticated (claude)");
                 }
                 ProvisionPlan::ClaudeOAuth { opts } => {
                     eprintln!("authenticating claude...");
                     let credentials = oauth_dance(&c);
-                    c.update_settings(&created_name, Some(client::claude_auth(&credentials)), opts.model.as_deref(), opts.max_context_tokens, timezone.as_deref(), None)
-                        .or_die();
+                    c.update_settings(&created_name, client::SettingsUpdate {
+                        auth: Some(client::claude_auth(&credentials)),
+                        model: opts.model.as_deref(),
+                        max_context_tokens: opts.max_context_tokens,
+                        timezone: timezone.as_deref(),
+                        ..Default::default()
+                    })
+                    .or_die();
                     eprintln!("authenticated!");
                 }
             }
@@ -1170,7 +1215,7 @@ fn run(cli: Cli) {
                 "starting" => eprintln!("waiting for the agent to boot..."),
                 _ => {}
             })
-            .unwrap_or_else(|e| platform::die(&format!(
+            .unwrap_or_else(|e| die(&format!(
                 "{e}\nfirst-start setup did not complete. check the agent's logs: vesta logs {created_name}"
             )));
             eprintln!("agent '{created_name}' is ready.");
@@ -1201,8 +1246,12 @@ fn run(cli: Cli) {
                 eprintln!("waiting for agent to start...");
                 c.wait_until_running(&name, START_READY_TIMEOUT)
                     .or_die();
-                c.update_settings(&name, Some(client::openrouter_auth(or)), None, None, timezone.as_deref(), None)
-                    .or_die();
+                c.update_settings(&name, client::SettingsUpdate {
+                    auth: Some(client::openrouter_auth(or)),
+                    timezone: timezone.as_deref(),
+                    ..Default::default()
+                })
+                .or_die();
                 eprintln!("created (running on OpenRouter)");
             } else {
                 eprintln!("created (run 'vesta auth {name}' to authenticate)");
@@ -1212,8 +1261,13 @@ fn run(cli: Cli) {
         Command::Settings { name, model, context_window, preempt_mode } => {
             let c = get_client(host_ref, token_ref);
             if model.is_some() || context_window.is_some() || preempt_mode.is_some() {
-                c.update_settings(&name, None, model.as_deref(), context_window, None, preempt_mode.map(PreemptMode::as_str))
-                    .or_die();
+                c.update_settings(&name, client::SettingsUpdate {
+                    model: model.as_deref(),
+                    max_context_tokens: context_window,
+                    preempt_mode: preempt_mode.map(PreemptMode::as_str),
+                    ..Default::default()
+                })
+                .or_die();
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
                 let result = c.get_agent_settings(&name).or_die();
@@ -1279,13 +1333,7 @@ fn run(cli: Cli) {
 
         Command::Notifications { name, action } => {
             let c = get_client(host_ref, token_ref);
-            let fetch_rules = || {
-                c.get_notification_rules(&name)
-                    .or_die()
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-            };
+            let fetch_rules = || c.get_notification_rules(&name).or_die();
             match action {
                 NotificationsAction::Show => {
                     let rules = serde_json::Value::Array(fetch_rules());
@@ -1299,21 +1347,21 @@ fn run(cli: Cli) {
                         let mut rules = fetch_rules();
                         rules.push(build_rule(action, source, r#type, sender, keyword));
                         let count = rules.len();
-                        c.set_notification_rules(&name, &serde_json::Value::Array(rules))
+                        c.set_notification_rules(&name, &rules)
                             .or_die();
                         eprintln!("added rule. now {count} rule(s); applies on the agent's next tick.");
                     }
                     RulesAction::Remove { id } => match remove_rule(&fetch_rules(), &id) {
-                        None => platform::die(&format!("no rule with id {id}")),
+                        None => die(&format!("no rule with id {id}")),
                         Some(kept) => {
                             let count = kept.len();
-                            c.set_notification_rules(&name, &serde_json::Value::Array(kept))
+                            c.set_notification_rules(&name, &kept)
                                 .or_die();
                             eprintln!("removed rule {id}. now {count} rule(s); applies on the agent's next tick.");
                         }
                     },
                     RulesAction::Clear => {
-                        c.set_notification_rules(&name, &serde_json::json!([]))
+                        c.set_notification_rules(&name, &[])
                             .or_die();
                         eprintln!("cleared all rules; applies on the agent's next tick.");
                     }
@@ -1412,13 +1460,11 @@ fn run(cli: Cli) {
 
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);
-            if let Some(token_str) = token {
-                c.update_settings(&name, Some(client::claude_auth(&token_str)), None, None, None, None)
-                    .or_die();
-                eprintln!("{name}: authenticated");
-            } else {
-                authenticate_agent(&c, &name);
-            }
+            let credentials = token.unwrap_or_else(|| oauth_dance(&c));
+            // Reauth only: model, context window, and timezone are preserved server-side (None = keep).
+            c.update_settings(&name, client::SettingsUpdate { auth: Some(client::claude_auth(&credentials)), ..Default::default() })
+                .or_die();
+            eprintln!("{name}: authenticated");
         }
 
         Command::Chat { name } => {
@@ -1445,10 +1491,10 @@ fn run(cli: Cli) {
                     );
                     process::exit(0);
                 }
-                platform::die(&e);
+                die(&e);
             });
             if json {
-                println!("{}", serde_json::to_string(&status).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
+                println!("{}", serde_json::to_string(&status).unwrap_or_else(|e| die(&format!("failed to serialize: {e}"))));
             } else {
                 println!("name:   {}", status.name);
                 println!("status: {}", status.status);
@@ -1463,7 +1509,7 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             let agents = c.list_agents().or_die();
             if json {
-                println!("{}", serde_json::to_string(&agents).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
+                println!("{}", serde_json::to_string(&agents).unwrap_or_else(|e| die(&format!("failed to serialize: {e}"))));
             } else if agents.is_empty() {
                 println!("no agents. run: vesta setup");
             } else {
@@ -1652,14 +1698,14 @@ fn run(cli: Cli) {
 
         Command::Connect { link } => {
             let (url, key) = common::parse_connect_link(&link)
-                .unwrap_or_else(|| platform::die("paste the connect link vestad printed"));
+                .unwrap_or_else(|| die("paste the connect link vestad printed"));
 
             let url = common::normalize_url(&url);
             if key.is_empty() {
-                platform::die("API key is required");
+                die("API key is required");
             }
 
-            let config = platform::ServerConfig {
+            let config = common::ServerConfig {
                 url: url.clone(),
                 api_key: key,
                 cert_fingerprint: None,
@@ -1669,22 +1715,15 @@ fn run(cli: Cli) {
             let client = client::Client::new(&config).or_die();
             client
                 .health()
-                .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {e}")));
+                .unwrap_or_else(|e| die(&format!("cannot reach server: {e}")));
 
-            platform::save_server_config(&config)
+            common::save_server_config(&config)
                 .or_die();
             eprintln!("connected to {url}");
         }
 
         Command::Uninstall => {
-            eprint!("This will remove the vesta CLI binary and its config. Continue? [y/N] ");
-            io::stderr().flush().ok();
-            let mut answer = String::new();
-            if io::stdin().read_line(&mut answer).is_err() {
-                eprintln!("failed to read input");
-                process::exit(1);
-            }
-            if !answer.trim().eq_ignore_ascii_case("y") {
+            if !confirm("This will remove the vesta CLI binary and its config. Continue?") {
                 eprintln!("Aborted.");
                 process::exit(0);
             }

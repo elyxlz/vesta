@@ -160,7 +160,7 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
-            tracing::warn!(url = %url, error = %e, "agent websocket not reachable");
+            tracing::warn!(port = agent_port, error = %e, "agent websocket not reachable");
             let mut client_ws = client_ws;
             let _ = client_ws
                 .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {

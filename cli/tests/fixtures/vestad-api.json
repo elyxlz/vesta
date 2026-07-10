@@ -1,0 +1,125 @@
+{
+  "agent_status_json": {
+    "id": "c0ffee",
+    "name": "sample-agent",
+    "status": "alive",
+    "ws_port": 4200
+  },
+  "agent_statuses": [
+    "alive",
+    "setting_up",
+    "starting",
+    "not_authenticated",
+    "unprovisioned",
+    "stopped",
+    "dead",
+    "not_found"
+  ],
+  "agents": [
+    {
+      "name": "sample-agent",
+      "startedAt": "2026-01-01T00:00:00Z",
+      "status": "alive",
+      "ws_port": 4200
+    },
+    {
+      "name": "stopped-agent",
+      "status": "stopped",
+      "ws_port": 4201
+    }
+  ],
+  "agents_ws_message": {
+    "agents": [
+      {
+        "activityState": "thinking",
+        "name": "sample-agent",
+        "services": {
+          "dashboard": {
+            "port": 8080,
+            "public": true,
+            "rev": 3
+          }
+        },
+        "startedAt": "2026-01-01T00:00:00Z",
+        "status": "alive",
+        "ws_port": 4200
+      },
+      {
+        "activityState": "idle",
+        "name": "stopped-agent",
+        "services": {},
+        "status": "stopped",
+        "ws_port": 4201
+      }
+    ],
+    "type": "agents"
+  },
+  "auth_start": {
+    "auth_url": "https://claude.ai/oauth/authorize?code=true",
+    "session_id": "0123456789abcdef"
+  },
+  "backups": [
+    {
+      "agent_name": "sample-agent",
+      "backup_type": "manual",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "1a2b3c4d",
+      "size": 1234567890
+    },
+    {
+      "agent_name": "sample-agent",
+      "backup_type": "daily",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "1a2b3c4d",
+      "size": 1234567890
+    },
+    {
+      "agent_name": "sample-agent",
+      "backup_type": "weekly",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "1a2b3c4d",
+      "size": 1234567890
+    },
+    {
+      "agent_name": "sample-agent",
+      "backup_type": "monthly",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "1a2b3c4d",
+      "size": 1234567890
+    },
+    {
+      "agent_name": "sample-agent",
+      "backup_type": "pre_restore",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "1a2b3c4d",
+      "size": 1234567890
+    }
+  ],
+  "start_all": {
+    "results": [
+      {
+        "name": "sample-agent",
+        "ok": true
+      },
+      {
+        "error": "failed to start",
+        "name": "broken-agent",
+        "ok": false
+      }
+    ]
+  },
+  "tree_entry": {
+    "is_dir": false,
+    "mode": 420,
+    "path": "notes/todo.md"
+  },
+  "version": {
+    "api_compat": "0.2",
+    "auto_update": true,
+    "channel": "stable",
+    "dev_mode": false,
+    "latest_version": "0.1.1",
+    "update_available": true,
+    "version": "0.1.0"
+  }
+}
