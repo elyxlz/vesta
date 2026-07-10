@@ -1,7 +1,10 @@
 """Tests for EventBus: emit, persist, pagination, search, lifecycle, schema migration."""
 
+import os
 import sqlite3
 import typing as tp
+
+import pytest
 
 from core.events import (
     _EVENTS_SCHEMA,
@@ -326,3 +329,25 @@ def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
     quarantined = list(tmp_path.glob("events.db.corrupt-*"))
     assert len(quarantined) == 1
     assert quarantined[0].read_bytes() == original_bytes
+
+
+def test_transient_open_error_propagates_without_quarantine(tmp_path):
+    """A transient OperationalError at boot (locked, disk full, IO error) is not corruption:
+    it must crash for Docker's on-failure retry, never quarantine the healthy db."""
+    db_path = tmp_path / "events.db"
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(ChatEvent(type="chat", text="precious history"))
+    bus.close()
+    original_bytes = db_path.read_bytes()
+
+    os.chmod(db_path, 0o444)
+    os.chmod(tmp_path, 0o555)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            EventBus(data_dir=tmp_path)
+    finally:
+        os.chmod(tmp_path, 0o755)
+        os.chmod(db_path, 0o644)
+
+    assert db_path.read_bytes() == original_bytes
+    assert list(tmp_path.glob("events.db.corrupt-*")) == []

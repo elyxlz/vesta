@@ -278,6 +278,11 @@ class EventBus:
             try:
                 self._conn = _open(self._db_path)
             except sqlite3.DatabaseError as e:
+                if isinstance(e, sqlite3.OperationalError):
+                    # OperationalError is transient environment trouble (locked, disk full,
+                    # IO error), not corruption: crash and let Docker's on-failure policy
+                    # retry rather than quarantining a healthy db.
+                    raise
                 # A corrupt db must not crash-loop the container: quarantine it and boot with
                 # empty history rather than burning Docker's on-failure restarts.
                 logger.error(f"events.db corrupt ({e}), quarantining and starting fresh")
