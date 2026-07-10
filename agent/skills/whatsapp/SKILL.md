@@ -25,13 +25,13 @@ The `--reply-to` flag quotes the referenced message in WhatsApp's native reply U
 
 ## Voice calls
 
-You can hold a real voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT). It works exactly like app chat, the transport is a phone line instead of the app:
+You can hold a real voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT). It is a live spoken conversation: you hear them, you speak back:
 
 - **Being on a call.** Everything the other person says arrives as a `call_utterance` notification with their transcript and who they are; it interrupts like any WhatsApp message, so you respond live. You reply by **speaking**, with `whatsapp say`, one short spoken line per call (the same short-bubble instinct as texting, not a monologue). `say` replaces whatever is still playing, so your newest line always wins, and the other person talking over you cuts your current line short. When you place a call, `whatsapp call` returns once they answer, that is your cue to greet them with `say`.
 - **Inbound calls** are answered automatically (you get a `call_started`, then their utterances). A call you cannot take (already on another call, or `voice` not set up) becomes a `call_missed` notification instead. `call_ended` closes the loop.
 - **Requires the `voice` skill** configured with both input (STT) and output (TTS). Without it, calls are declined and you are told to set voice up.
 
-**Calling the user when it is urgent.** A call is your loudest, most interrupting reach, so it is rare and reserved for the genuinely time-critical. If something truly needs the user now (a real deadline about to pass, a safety or money issue, something they explicitly asked to be called about) and they have not reacted to a message across app chat and WhatsApp within a window that fits how urgent it is, `whatsapp call` them and say why in one line. Do not call for anything that can wait for a text, and respect anything the constitution says about calling.
+**Calling the user when it is urgent.** A call is your loudest, most interrupting reach, so it is rare and reserved for the genuinely time-critical. If something truly needs the user now (a real deadline about to pass, a safety or money issue, something they explicitly asked to be called about) and they have not responded to your messages within a window that fits how urgent it is, `whatsapp call` them and say why in one line. Do not call for anything that can wait for a text, and respect anything the constitution says about calling.
 
 ## Commands
 
