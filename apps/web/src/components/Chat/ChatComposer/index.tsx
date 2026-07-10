@@ -94,7 +94,7 @@ export function ChatComposer({
             ? "bg-card shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
             : "bg-secondary",
           isRecording &&
-            "ring-2 ring-destructive has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-destructive",
+            "ring-2 ring-red-500 has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500",
         )}
       >
         <InputGroupTextarea
@@ -142,7 +142,7 @@ export function ChatComposer({
               {...voiceButtonHandlers}
               className={cn(
                 "size-12 rounded-full [&_svg]:size-5",
-                isRecording && "bg-destructive text-background",
+                isRecording && "bg-red-500 text-white hover:bg-red-600",
               )}
             >
               {isRecording ? <Square fill="currentColor" /> : <Mic />}
