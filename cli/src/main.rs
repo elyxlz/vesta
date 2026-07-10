@@ -705,8 +705,8 @@ fn prompt_context_window(c: &client::Client) -> Option<u64> {
 /// account (empty input or "1"). Returns true if the user picked OpenRouter.
 fn prompt_use_openrouter() -> bool {
     eprintln!("how should this agent authenticate?");
-    eprintln!("  1) Claude account  — log in with your Claude subscription (default)");
-    eprintln!("  2) OpenRouter      — run on an OpenRouter API key");
+    eprintln!("  1) claude account: log in with your claude subscription (default)");
+    eprintln!("  2) openrouter:     run on an openrouter api key");
     loop {
         match prompt_raw("choice [1]").as_str() {
             "" | "1" => return false,
@@ -773,8 +773,8 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
     eprintln!("top models on OpenRouter this week:");
     for (idx, model) in models.iter().enumerate() {
         match fmt_model_price(model.input_price, model.output_price, model.cache_read_price) {
-            Some(price) => eprintln!("  {:>2}) {} ({}) — {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
-            None => eprintln!("  {:>2}) {} ({}) — {}", idx + 1, model.label, model.author, model.slug),
+            Some(price) => eprintln!("  {:>2}) {} ({}): {}  [{}]", idx + 1, model.label, model.author, model.slug, price),
+            None => eprintln!("  {:>2}) {} ({}): {}", idx + 1, model.label, model.author, model.slug),
         }
     }
     eprintln!("  or type a custom provider/model slug");
@@ -1116,7 +1116,7 @@ fn print_update_available(latest: &str) {
 }
 
 fn print_welcome() {
-    println!("vesta — your personal AI assistant");
+    println!("vesta: your personal AI assistant");
     println!();
     println!("quick start:");
     println!("  vesta setup        create an agent, authenticate, and start");
