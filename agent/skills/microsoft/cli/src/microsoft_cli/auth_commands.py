@@ -65,6 +65,16 @@ TEAMS_TOKEN_SNIPPET = (
 )
 
 
+# AADSTS codes and phrases a locked work/school tenant returns when it blocks the default
+# public client: the device-flow path is walled and the caller must switch to browser capture.
+_CONSENT_WALL_MARKERS = ("aadsts65001", "aadsts90094", "aadsts900", "admin", "consent", "not authorized")
+
+
+def _is_consent_wall(error_msg: str) -> bool:
+    lowered = error_msg.lower()
+    return any(marker in lowered for marker in _CONSENT_WALL_MARKERS)
+
+
 def list_accounts(config: Config) -> list[dict[str, str]]:
     return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file)]
 
@@ -129,6 +139,16 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
             return {
                 "status": "pending",
                 "message": "Authentication is still pending.",
+            }
+        if _is_consent_wall(error_msg):
+            return {
+                "status": "admin_consent_required",
+                "message": (
+                    "This is a locked work/school tenant: it blocks the default app, so device-code sign-in needs an admin. "
+                    "Use the browser-capture fallback instead (no admin consent needed): `microsoft auth owa-login --account <email>` "
+                    "for mail/calendar, and `microsoft auth teams-capture --account <email>` for Teams. Then pass `--backend owa-rest`."
+                ),
+                "detail": error_msg,
             }
         raise Exception(f"Authentication failed: {error_msg}")
 
@@ -343,6 +363,15 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
         if "authorization_pending" in error_msg:
             return {"status": "pending", "message": "Authorization is still pending."}
+        if _is_consent_wall(error_msg):
+            return {
+                "status": "admin_consent_required",
+                "message": (
+                    "This is a locked work/school tenant: device-code Teams sign-in needs an admin. Capture a token from Teams "
+                    "on the web instead (no admin consent needed): `microsoft auth teams-capture --account <email>`, then use `--backend owa-rest`."
+                ),
+                "detail": error_msg,
+            }
         raise Exception(f"Teams authorization failed: {error_msg}")
 
     cache = app.token_cache

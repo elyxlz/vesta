@@ -337,6 +337,55 @@ def test_teams_capture_paste_rejects_garbage(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Locked-tenant device-flow pivot to browser capture
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "error_msg",
+    [
+        "AADSTS65001: The user or administrator has not consented to use the application.",
+        "AADSTS90094: Admin consent is required.",
+        "This app requires admin approval before it can be used.",
+    ],
+)
+def test_consent_wall_detected(error_msg):
+    from microsoft_cli import auth_commands
+
+    assert auth_commands._is_consent_wall(error_msg) is True
+
+
+def test_non_consent_error_not_flagged():
+    from microsoft_cli import auth_commands
+
+    assert auth_commands._is_consent_wall("authorization_pending") is False
+
+
+def test_teams_complete_returns_pivot_on_admin_wall(tmp_path, monkeypatch):
+    from microsoft_cli import auth_commands
+
+    cfg = Config(data_dir=tmp_path)
+    fake_app = MagicMock()
+    fake_app.acquire_token_by_device_flow.return_value = {"error": "access_denied", "error_description": "AADSTS65001: not consented"}
+    monkeypatch.setattr(auth_commands.auth, "get_app", lambda *a, **k: fake_app)
+    result = auth_commands.teams_complete(cfg, flow_cache=json.dumps({"device_code": "x"}))
+    assert result["status"] == "admin_consent_required"
+    assert "teams-capture" in result["message"]
+
+
+def test_complete_authentication_returns_pivot_on_admin_wall(tmp_path, monkeypatch):
+    from microsoft_cli import auth_commands
+
+    cfg = Config(data_dir=tmp_path)
+    fake_app = MagicMock()
+    fake_app.acquire_token_by_device_flow.return_value = {"error": "access_denied", "error_description": "AADSTS90094 admin consent required"}
+    monkeypatch.setattr(auth_commands.auth, "get_app", lambda *a, **k: fake_app)
+    result = auth_commands.complete_authentication(cfg, flow_cache=json.dumps({"device_code": "x"}))
+    assert result["status"] == "admin_consent_required"
+    assert "owa-login" in result["message"]
+
+
+# ---------------------------------------------------------------------------
 # Monitor: new-chat notification emit
 # ---------------------------------------------------------------------------
 

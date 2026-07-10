@@ -30,6 +30,17 @@ Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your
 
 ## Authentication
 
+**First, ask the user: is this a personal account (outlook.com / hotmail / live) or a work/school
+account (a university or company address)?** The answer picks the path, so ask before signing anyone in:
+
+- **Personal account**: device-code flow works. Use `auth login` below.
+- **Work/school account**: many tenants block the default app, so device-code sign-in dead-ends at
+  an admin-approval wall you cannot clear. Prefer the **browser-capture fallback** from the start
+  (`auth owa-login` for mail, `auth teams-capture` for Teams; see the two sections below). It reuses
+  the tenant's own trusted web session and needs **no admin consent**. Device flow is worth trying
+  only if the user says their IT allows third-party app sign-ins; if `auth complete` returns
+  `admin_consent_required`, that tenant is locked, switch to browser capture.
+
 ```bash
 microsoft auth login                         # Start device flow - gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL

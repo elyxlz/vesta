@@ -159,15 +159,18 @@ microsoft email attachment --account user@example.com --email-id '<email_id>' --
 ## Microsoft Teams
 
 Teams runs over the same Graph transport as mail, with its **own** sign-in so a mail-only account is
-never prompted for Teams scopes:
+never prompted for Teams scopes. Pick the path by account type (ask the user first, same rule as the
+mail sign-in): a **personal** account uses device-code, a **work/school** account on a locked tenant
+uses the browser capture below.
 
 ```bash
-microsoft auth teams-login                       # device-code sign-in; returns a URL + code
+microsoft auth teams-login                       # personal accounts: device-code sign-in; returns a URL + code
 microsoft auth teams-complete --flow-cache <cache>  # finish after signing in
 ```
 
-For a locked tenant that blocks the CLI's app registration, capture a token from Teams on the web
-(same browser-capture path as email's `owa-login`, agent-driven and non-blocking):
+If `teams-complete` returns `admin_consent_required`, the tenant is locked (a work/school account),
+switch to the browser capture below. Capture a token from Teams on the web (same browser-capture path
+as email's `owa-login`, agent-driven and non-blocking):
 
 ```bash
 microsoft auth teams-capture --account you@company.com   # captures, or returns sign_in_required
