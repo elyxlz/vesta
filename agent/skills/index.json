@@ -32,6 +32,10 @@
     "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
   },
   {
+    "name": "discord",
+    "description": "\"Discord: send/receive server messages and DMs; reply to source=discord notifications. Requires daemon.\""
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation; used nightly by the dreamer or anytime."
   },
@@ -138,6 +142,10 @@
   {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
+  },
+  {
+    "name": "slack",
+    "description": "\"Slack: send/receive workspace messages, DMs, threads; reply to source=slack notifications. Requires daemon.\""
   },
   {
     "name": "spotify",
