@@ -8,7 +8,7 @@ serve: ~/agent/skills/dashboard/scripts/daemon start
 
 A React app embedded in the Vesta app, the user's **life HQ**: a personal command center for health, finances, productivity, habits, goals, and anything else they track. It uses a sidebar + page layout.
 
-You do not build the dashboard yourself. You understand what the user wants, design the change, capture it as a spec, and dispatch the `dashboard-builder` subagent (a UI/UX specialist primed on this dashboard) to build it. The builder works in an isolated context and returns a summary; you confirm it serves and relay.
+You do not build the dashboard yourself. You understand what the user wants, design the change, capture it as a spec, and dispatch the `dashboard-builder` subagent (a UI/UX specialist primed on this dashboard) to build it. It works in an isolated context, so the token-heavy build churn (shadcn docs, large React files, vite output) stays out of your conversation; it returns a summary, and you confirm it serves and relay.
 
 **The design is yours.** The user is a non-technical owner: they tell you what they want to see or do, not how to build it. You own every technical and design decision (placement, widgets, layout, data source, visual treatment). Ask the user only to resolve genuine intent, one question at a time, and only when the request is actually ambiguous. Never make them review a design or a spec.
 
@@ -67,15 +67,27 @@ YAGNI: build the smallest thing that satisfies the intent. No speculative widget
 
 ## The spec
 
-Write a short, concrete brief for the builder. This is the one thing that crosses to the subagent, so leave nothing open:
+The spec is the one thing that crosses to the subagent, and it cannot ask you anything, so leave nothing open. Name the widgets, the data source, and what "done" looks like, and state what is out of scope so the builder does not overbuild:
 
-    Goal:        <what the user wants to see or do>
-    Placement:   <page name, existing or new, with an icon>
-    Interaction: <view-only | clicks/toggles/inputs: describe each>
-    Data:        <sample | live from skill/API X; persist and sync across apps? y/n>
-    Content:     <the exact metrics, widgets, fields, and layout>
-    Notes:       <anything the user asked for specifically>
-    Done when:   <serves, and shows X>
+    Goal:         <what the user wants to see or do>
+    Placement:    <page name, existing or new, with an icon>
+    Interaction:  <view-only | clicks/toggles/inputs: describe each>
+    Data:         <sample | live from skill/API X; persist and sync across apps? y/n>
+    Content:      <the exact metrics, widgets, fields, and layout>
+    Out of scope: <what NOT to build, so it does not wander>
+    Notes:        <anything the user asked for specifically>
+    Done when:    <serves, and shows X>
+
+Example, for a request like "show me my running this week":
+
+    Goal:         See this week's runs at a glance.
+    Placement:    Health page (exists); new "Running" widget.
+    Interaction:  View-only.
+    Data:         Sample for now (last 7 days: date, distance km, pace).
+    Content:      One col-span-1 card: this-week total km as the big number, a 7-bar mini
+                  chart of daily distance, and last run's pace as a small label.
+    Out of scope: No history beyond 7 days, no goals, no live device sync.
+    Done when:    Health page shows the Running card and the dashboard serves.
 
 ## Dispatch the dashboard-builder
 
