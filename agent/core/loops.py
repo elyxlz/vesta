@@ -259,6 +259,7 @@ async def _run_messages_with_interrupts(
             logger.error("Message processing cancelled unexpectedly, triggering restart")
             state.event_bus.emit({"type": "error", "text": "processing cancelled"})
             state.persisted.last_restart_reason = "error: a turn was cancelled unexpectedly"
+            # Sync save on purpose: no awaits inside a cancellation handler (a second cancel would lose the write).
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
             raise
@@ -273,7 +274,7 @@ async def _run_messages_with_interrupts(
                 except AttributeError:
                     sid = None
                 if sid:
-                    persist_session_id(sid, state=state, config=config)
+                    await persist_session_id(sid, state=state, config=config)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
             if stderr_tail:
@@ -281,7 +282,7 @@ async def _run_messages_with_interrupts(
             logger.error(f"{detail}, triggering restart")
             state.event_bus.emit({"type": "error", "text": error_msg})
             state.persisted.last_restart_reason = f"error: {error_msg}"
-            state_store.save_state(state.persisted, config)
+            await state_store.save_state_async(state.persisted, config)
             state.graceful_shutdown.set()
         finally:
             state.event_bus.set_state("idle")
@@ -406,7 +407,7 @@ async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) 
             # Persist before requesting the restart: vestad SIGTERMs us during request_restart(),
             # so there is no later moment to write it.
             state.persisted.pending_boot_message = turn
-            state_store.save_state(state.persisted, config)
+            await state_store.save_state_async(state.persisted, config)
         # vestad owns the restart and starts us back on the compacted session. If it is unreachable
         # we stay up on this session, so the boot channel is moot: clear it and fall back to the
         # live channel below instead of losing the follow-up.
@@ -414,7 +415,7 @@ async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) 
             logger.warning("vestad unreachable for restart; continuing on the compacted session")
             if turn is not None:
                 state.persisted.pending_boot_message = None
-                state_store.save_state(state.persisted, config)
+                await state_store.save_state_async(state.persisted, config)
             deliver_live = True
     if deliver_live and turn is not None:
         drop_core_notification(type_=TYPE_COMPACTION_FOLLOWUP, body=turn, config=config)

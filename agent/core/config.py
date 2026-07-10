@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import pathlib as pl
+import tempfile
 import typing as tp
 import uuid
 
@@ -100,17 +101,21 @@ def read_config_store() -> dict[str, pyd.JsonValue]:
 
 
 def atomic_write_text(path: pl.Path, text: str) -> None:
-    """Write text to path atomically and durably: write a sibling temp file, fsync it, rename over
-    the target, then fsync the directory so a power loss cannot land the rename ahead of the data
-    blocks and leave a zeroed file. The single owner of the tmp-write + os.replace recipe
-    (config.json here, state.json in state_store)."""
+    """Write text to path atomically and durably: write a uniquely named sibling temp file, fsync it,
+    rename over the target, then fsync the directory so a power loss cannot land the rename ahead of
+    the data blocks and leave a zeroed file. The unique temp name keeps concurrent writers (coroutines
+    dispatch these writes to worker threads) last-write-wins instead of torn. The single owner of the
+    tmp-write + os.replace recipe (config.json here, state.json in state_store)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w") as handle:
-        handle.write(text)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        pl.Path(tmp_name).unlink(missing_ok=True)  # no-op after a successful replace; removes the orphan on failure
     dir_fd = os.open(path.parent, os.O_RDONLY)
     try:
         os.fsync(dir_fd)

@@ -55,7 +55,7 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     )
     async def mark_setup_done(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.first_start_done = True
-        state_store.save_state(state.persisted, config)
+        await state_store.save_state_async(state.persisted, config)
         if state.ws_runner is None:
             state.ws_runner = await start_ws_server(state.event_bus, config, state)
             logger.init(f"WebSocket server started on port {config.ws_port}")
@@ -73,7 +73,7 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
             return {"content": [{"type": "text", "text": "error: name required"}]}
         if name not in state.persisted.applied_migrations:
             state.persisted.applied_migrations.append(name)
-            state_store.save_state(state.persisted, config)
+            await state_store.save_state_async(state.persisted, config)
         logger.startup(f"Migration marked applied by agent: {name}")
         return {"content": [{"type": "text", "text": f"applied: {name}"}]}
 
@@ -87,7 +87,7 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         version = vesta_version(config)
         state.persisted.last_synced_version = version
-        state_store.save_state(state.persisted, config)
+        await state_store.save_state_async(state.persisted, config)
         logger.startup(f"Workspace sync marked complete by agent at v{version}")
         return {"content": [{"type": "text", "text": f"synced: {version}"}]}
 
@@ -101,7 +101,7 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
-        state_store.save_state(state.persisted, config)
+        await state_store.save_state_async(state.persisted, config)
         logger.dreamer("Dreamer run recorded by agent")
         return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 

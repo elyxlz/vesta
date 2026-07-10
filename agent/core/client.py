@@ -153,9 +153,9 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
         return False
 
 
-def persist_session_id(session_id: str, *, state: vm.State, config: cfg.VestaConfig) -> None:
+async def persist_session_id(session_id: str, *, state: vm.State, config: cfg.VestaConfig) -> None:
     state.persisted.session_id = session_id
-    state_store.save_state(state.persisted, config)
+    await state_store.save_state_async(state.persisted, config)
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
@@ -219,7 +219,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
-        persist_session_id(session_id, state=state, config=config)
+        await persist_session_id(session_id, state=state, config=config)
     show = turn.show_output if turn else True
     if show:
         for block in thinking_blocks:
@@ -344,7 +344,7 @@ async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.Asyn
                 f", starting fresh\nRecent stderr:\n{stderr_tail}"
             )
             state.persisted.session_id = None
-            state_store.save_state(state.persisted, config)
+            await state_store.save_state_async(state.persisted, config)
             state.stderr_buffer.clear()
             options = build_client_options(config, state)
             retried = True

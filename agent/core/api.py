@@ -256,7 +256,7 @@ async def _config_put_handler(request: web.Request) -> web.Response:
     if not updates:
         return web.json_response({"error": "no config provided"}, status=400)
     try:
-        update_config_store(updates)
+        await asyncio.to_thread(update_config_store, updates)
     except OSError as e:
         return web.json_response({"error": f"failed to write config: {e}"}, status=500)
     return web.json_response({"ok": True})
@@ -338,9 +338,11 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
     try:
         if isinstance(signin, _ClaudeSignIn):
-            state.provider_status = set_claude(signin.credentials, signin.model, signin.max_context_tokens, config=config)
+            state.provider_status = await asyncio.to_thread(
+                set_claude, signin.credentials, signin.model, signin.max_context_tokens, config=config
+            )
         else:
-            state.provider_status = set_openrouter(signin.key, signin.model, signin.max_context_tokens, config=config)
+            state.provider_status = await asyncio.to_thread(set_openrouter, signin.key, signin.model, signin.max_context_tokens, config=config)
     except (json.JSONDecodeError, TypeError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
@@ -370,7 +372,7 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     try:
-        update_config_store(updates)
+        await asyncio.to_thread(update_config_store, updates)
     except OSError as e:
         return web.json_response({"error": f"failed to write config: {e}"}, status=500)
     return web.json_response({"ok": True})
@@ -382,7 +384,7 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     state: State = request.app["state"]
     config: VestaConfig = request.app["config"]
     try:
-        state.provider_status = clear_provider(config=config)
+        state.provider_status = await asyncio.to_thread(clear_provider, config=config)
     except OSError as e:
         return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})

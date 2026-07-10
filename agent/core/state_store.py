@@ -2,10 +2,12 @@
 
 All boot-time and cross-restart markers live in `~/agent/data/state.json`. Loaded once
 at boot, mutated in place via the `PersistedState` field on `vm.State`, and saved
-immediately via `save_state` after every mutation. Writes are atomic and durable
-(cfg.atomic_write_text: tmp + fsync + rename).
+immediately after every mutation: `save_state` from sync code (boot, done-callbacks,
+cancellation handlers), `save_state_async` from coroutines. Writes are atomic and
+durable (cfg.atomic_write_text: tmp + fsync + rename).
 """
 
+import asyncio
 import datetime as dt
 import pathlib as pl
 
@@ -70,3 +72,10 @@ def load_state(config: cfg.VestaConfig) -> PersistedState:
 
 def save_state(state: PersistedState, config: cfg.VestaConfig) -> None:
     cfg.atomic_write_text(state_path(config), state.model_dump_json())
+
+
+async def save_state_async(state: PersistedState, config: cfg.VestaConfig) -> None:
+    """save_state for coroutines: snapshot the JSON on the event loop (a consistent view of the
+    mutable state), then run the fsync-ing write in a worker thread so it never stalls the loop."""
+    payload = state.model_dump_json()
+    await asyncio.to_thread(cfg.atomic_write_text, state_path(config), payload)
