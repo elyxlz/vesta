@@ -12,6 +12,8 @@ const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
 // Pads for first-start setup (git fetch, npm install, vite build, etc.).
 const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+// One bad paste (typo, stale code) shouldn't strand a just-created agent unauthenticated.
+const OAUTH_CODE_MAX_ATTEMPTS: u32 = 3;
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -803,10 +805,17 @@ fn oauth_dance(client: &client::Client) -> String {
     eprintln!("  {}", auth.auth_url);
     try_open_browser(&auth.auth_url);
 
-    let code = prompt("paste the auth code");
-    client
-        .complete_auth_standalone(&auth.session_id, &code)
-        .unwrap_or_else(|e| die(&e))
+    for attempt in 1..=OAUTH_CODE_MAX_ATTEMPTS {
+        let code = prompt("after signing in, claude shows a code. paste it here");
+        match client.complete_auth_standalone(&auth.session_id, &code) {
+            Ok(credentials) => return credentials,
+            Err(_) if attempt < OAUTH_CODE_MAX_ATTEMPTS => {
+                eprintln!("that code didn't verify, open the link again for a fresh code and paste it");
+            }
+            Err(e) => die(&e),
+        }
+    }
+    unreachable!("loop always returns or dies")
 }
 
 /// Resolve the server config from flags, env vars, or the config file, in that order.
@@ -1119,8 +1128,8 @@ fn print_welcome() {
     println!("vesta: your personal AI assistant");
     println!();
     println!("quick start:");
-    println!("  vesta setup        create an agent, authenticate, and start");
-    println!("  vesta list         list all agents");
+    println!("  vesta connect <link>   link this machine to your server (from vestad status)");
+    println!("  vesta setup            create an agent, authenticate, and start");
     println!();
     println!("run 'vesta --help' for all commands.");
 }
