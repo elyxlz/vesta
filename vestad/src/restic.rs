@@ -191,6 +191,12 @@ impl KillSwitch {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
     }
 
+    /// Forget every registered pid. Called once both children are reaped: the kernel
+    /// may reassign a reaped pid, so a later `kill_all` must never target it.
+    fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     /// Best-effort SIGKILL every registered pid; a pid that already exited is a no-op.
     fn kill_all(&self) {
         for pid in self.0.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
@@ -219,7 +225,8 @@ struct PipeOutput {
 /// `Failed` (nothing usable came out); a nonzero producer exit is reported via
 /// `PipeOutput::producer_failed` instead, since the consumer may already have
 /// committed something from the partial stream. Registers both child pids with
-/// `kill_switch` as soon as they spawn.
+/// `kill_switch` as soon as they spawn and deregisters them once both are reaped,
+/// so a caller-side timeout kills only children this call still owns.
 fn pipe_through(
     mut producer: std::process::Command,
     producer_label: &str,
@@ -248,6 +255,7 @@ fn pipe_through(
 
     let producer_output = producer_child.wait_with_output()
         .map_err(|e| DockerError::Failed(format!("{producer_label} wait failed: {e}")))?;
+    kill_switch.clear();
 
     if !consumer_output.status.success() {
         let stderr = String::from_utf8_lossy(&consumer_output.stderr);
@@ -490,34 +498,38 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
     let backup_id = backup_id.to_string();
     let image_for_task = image_ref.clone();
     let repo_name = name.to_string();
+    let kill_switch = KillSwitch::default();
+    let kill_switch_for_task = kill_switch.clone();
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-            crate::docker::retry_import_pipeline("restic restore", || {
-                // Best-effort removal of a previous restore image for this agent.
-                std::process::Command::new("docker")
-                    .args(["rmi", "-f", &image_for_task])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .ok();
+    let task = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+        crate::docker::retry_import_pipeline("restic restore", || {
+            // Best-effort removal of a previous restore image for this agent.
+            std::process::Command::new("docker")
+                .args(["rmi", "-f", &image_for_task])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
 
-                let mut dump = restic_command(&repo_name)?;
-                dump.args(["dump", &backup_id, &tar_path]);
-                let mut import = std::process::Command::new("docker");
-                import.args(["import", "-", &image_for_task]);
-                let output = pipe_through(dump, "restic dump", import, "docker import", &KillSwitch::default())?;
-                if let Some(stderr) = output.producer_failed {
-                    return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
-                }
-                Ok(())
-            })
-        }),
-    )
-    .await
-    .map_err(|_| DockerError::Failed(format!("restore timed out after {RESTIC_TIMEOUT_SECS}s")))?
-    .map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??;
+            let mut dump = restic_command(&repo_name)?;
+            dump.args(["dump", &backup_id, &tar_path]);
+            let mut import = std::process::Command::new("docker");
+            import.args(["import", "-", &image_for_task]);
+            let output = pipe_through(dump, "restic dump", import, "docker import", &kill_switch_for_task)?;
+            if let Some(stderr) = output.producer_failed {
+                return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
+            }
+            Ok(())
+        })
+    });
+
+    match tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await {
+        Ok(join_result) => join_result.map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??,
+        Err(_) => {
+            kill_switch.kill_all();
+            return Err(DockerError::Failed(format!("restore timed out after {RESTIC_TIMEOUT_SECS}s")));
+        }
+    }
 
     Ok(image_ref)
 }
@@ -601,6 +613,23 @@ mod tests {
 
         let result = pipe_through(producer, "docker export", consumer, "restic backup", &KillSwitch::default());
         assert!(result.is_err(), "a failed consumer never produced anything usable");
+    }
+
+    #[test]
+    fn pipe_through_deregisters_pids_once_children_are_reaped() {
+        // A timeout firing after pipe_through returns (e.g. during the torn path's
+        // slow `restic forget --prune`) must not SIGKILL the reaped children's pids:
+        // the kernel may have reassigned them to unrelated processes.
+        let mut producer = std::process::Command::new("sh");
+        producer.args(["-c", "printf 'ok'; exit 0"]);
+        let mut consumer = std::process::Command::new("sh");
+        consumer.args(["-c", "cat; exit 0"]);
+
+        let kill_switch = KillSwitch::default();
+        pipe_through(producer, "docker export", consumer, "restic backup", &kill_switch).unwrap();
+
+        let registered = kill_switch.0.lock().unwrap_or_else(|e| e.into_inner()).len();
+        assert_eq!(registered, 0, "reaped child pids must not stay registered for a later kill_all");
     }
 
     // ── classify_snapshot_output: a torn export must never look committed ──────

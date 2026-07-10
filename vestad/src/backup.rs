@@ -119,8 +119,14 @@ where
         tracing::info!(agent = %name, "stopping agent for backup");
         // A failed stop can leave the container's events.db WAL mid-checkpoint; running the
         // snapshot against that live, inconsistent state would produce a backup that looks
-        // fine but restores malformed. Bail here so the cycle is retried instead.
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await?;
+        // fine but restores malformed. Bail here so the cycle is retried instead. The stop
+        // error can be client-side after dockerd already stopped the container, so
+        // best-effort resume first: skipping the backup is correct, stranding the agent
+        // down until the next vestad boot is not.
+        if let Err(err) = stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await {
+            start_container(docker, &cname).await;
+            return Err(err);
+        }
     }
 
     let result = op().await;
