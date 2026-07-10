@@ -23,16 +23,15 @@ export function ProviderPicker({
   onDone,
   onBack,
   className,
-  skipTuning = false,
+  defaultsOnly,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
-  // Skip any step whose answer has a manifest default: once auth/key (and, for
-  // a provider with no default model, the model) is settled, finish with the
-  // default model + plan-aware context window. Set by the new-agent wizard;
-  // settings and the switch-provider dialog keep the full model/context steps.
-  skipTuning?: boolean;
+  // Skip ModelStep/ContextStep and finish with the manifest's default model
+  // and context window as soon as credentials/key land. Onboarding uses this;
+  // both values stay editable afterward in AgentSettings' full picker.
+  defaultsOnly?: boolean;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
@@ -93,74 +92,69 @@ export function ProviderPicker({
     setStep(next === "claude" ? "auth" : "key");
   };
 
-  // Claude gates >200K windows on the plan tier, read from the OAuth blob.
-  const defaultContext = (
-    mode: ProviderMode,
-    creds: string | null,
-  ): number | undefined => {
-    const context = manifest.providers[mode]?.context;
-    if (!context) return undefined;
-    const plan =
-      mode === "claude" && creds !== null ? planFromCredentials(creds) : null;
-    return planContextOptions(context, plan).initial;
-  };
-
-  const complete = (
-    creds: string | null,
-    chosenModel: string,
-    maxContextTokens: number | undefined,
-  ) => {
-    if (provider === "claude") {
-      if (creds === null) return;
-      onDone({
-        kind: "claude",
-        credentials: creds,
-        model: chosenModel || undefined,
-        maxContextTokens,
-      });
-      return;
-    }
-    onDone({
-      kind: "openrouter",
-      config: { key, model: chosenModel },
-      maxContextTokens,
-    });
-  };
-
   // Claude auth no longer ends the flow: stash the credentials and continue to
-  // model + context, mirroring the OpenRouter path, unless skipTuning finishes
-  // right here with the manifest default model + plan-aware context window.
+  // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
-    const defaultModel = manifest.providers.claude?.default_model;
-    if (skipTuning && defaultModel) {
-      onDone({
-        kind: "claude",
-        credentials: creds,
-        model: defaultModel,
-        maxContextTokens: defaultContext("claude", creds),
-      });
+    setCredentials(creds);
+    if (defaultsOnly) {
+      finishWithDefaults(creds, key);
       return;
     }
-    setCredentials(creds);
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
+    if (defaultsOnly) {
+      finishWithDefaults(credentials, newKey);
+      return;
+    }
     setStep("model");
   };
 
-  const handleModelSubmit = (chosenModel: string) => {
-    setModel(chosenModel);
-    if (skipTuning && provider) {
-      complete(credentials, chosenModel, defaultContext(provider, credentials));
+  // Onboarding skips ModelStep/ContextStep entirely: finish with the
+  // manifest's default model and context window as soon as the provider is
+  // ready, mirroring handleContextSubmit's result shape.
+  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+    if (provider === null) return;
+    const context = manifest.providers[provider]?.context;
+    const plan =
+      provider === "claude" && creds !== null
+        ? planFromCredentials(creds)
+        : null;
+    const { initial } = context
+      ? planContextOptions(context, plan)
+      : { initial: 0 };
+    const defaultModel = manifest.providers[provider]?.default_model ?? "";
+    if (provider === "claude") {
+      if (creds === null) return;
+      onDone({
+        kind: "claude",
+        credentials: creds,
+        model: defaultModel || undefined,
+        maxContextTokens: initial,
+      });
       return;
     }
-    setStep("context");
+    onDone({
+      kind: "openrouter",
+      config: { key: apiKey, model: defaultModel },
+      maxContextTokens: initial,
+    });
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
-    complete(credentials, model, maxContextTokens);
+    if (provider === "claude") {
+      if (credentials === null) return;
+      onDone({
+        kind: "claude",
+        credentials,
+        model: model || undefined,
+        maxContextTokens,
+      });
+      return;
+    }
+    onDone({ kind: "openrouter", config: { key, model }, maxContextTokens });
   };
 
   const resetAuth = () => {
@@ -236,7 +230,10 @@ export function ProviderPicker({
                 : "")
             }
             onModelChange={setModel}
-            onSubmit={handleModelSubmit}
+            onSubmit={(m) => {
+              setModel(m);
+              setStep("context");
+            }}
             models={provider === "claude" ? claudeModels : undefined}
             allowCustom={provider !== "claude"}
             logo={stepLogo}
