@@ -53,6 +53,7 @@ func TestCommandWriteFlags(t *testing.T) {
 		"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
 		"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
 		"delete-chat": true, "clear-all-chats": true,
+		"call": true, "say": true, "hangup": true,
 	}
 	for _, cmd := range commands {
 		want := writeExpected[cmd.name]
@@ -79,6 +80,8 @@ func TestCommandPositionals(t *testing.T) {
 		"check-delivery":        {"message-id"},
 		"delete-chat":           {"to"},
 		"archive-chat":          {"to"},
+		"call":                  {"to"},
+		"say":                   {"text"},
 	}
 	for _, cmd := range commands {
 		want := positionalExpected[cmd.name]
