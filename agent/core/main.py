@@ -43,22 +43,22 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: vm.VestaConfig) -> None:
+def handle_processor_done(task: asyncio.Task[None], *, name: str, state: vm.State, config: vm.VestaConfig) -> None:
     """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.graceful_shutdown.is_set():
         return
     if task.cancelled():
-        logger.error("message_processor cancelled unexpectedly, restarting")
-        state.persisted.last_restart_reason = "crash: the processor was cancelled unexpectedly"
+        logger.error(f"{name} cancelled unexpectedly, restarting")
+        state.persisted.last_restart_reason = f"crash: the {name} was cancelled unexpectedly"
     else:
         exc = task.exception()
         if exc is not None:
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
-            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
+            logger.error(f"{name} crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
             state.persisted.last_restart_reason = f"crash: {type(exc).__name__}: {exc}"
         else:
-            logger.error("message_processor exited without error, restarting")
-            state.persisted.last_restart_reason = "crash: the processor exited silently"
+            logger.error(f"{name} exited without error, restarting")
+            state.persisted.last_restart_reason = f"crash: the {name} exited silently"
     state_store.save_state(state.persisted, config)
     state.graceful_shutdown.set()
 
@@ -99,12 +99,12 @@ async def run_vesta(
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
-    processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state, config=config))
+    processor_task.add_done_callback(lambda t: handle_processor_done(t, name="message processor", state=state, config=config))
 
-    tasks = [
-        processor_task,
-        asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
-    ]
+    monitor_task = asyncio.create_task(monitor_loop(message_queue, state=state, config=config))
+    monitor_task.add_done_callback(lambda t: handle_processor_done(t, name="notification monitor", state=state, config=config))
+
+    tasks = [processor_task, monitor_task]
 
     try:
         await state.graceful_shutdown.wait()
