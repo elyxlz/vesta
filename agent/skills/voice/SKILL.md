@@ -8,6 +8,8 @@ serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PO
 
 Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
 
+This skill is also your one voice backend: it owns the STT/TTS providers, keys, and chosen voice, and other skills reach it as consumers. The app is one; live WhatsApp calls (the `whatsapp` skill) are another, so a call sounds like the exact same voice as the app. Setting up voice here is what enables calling too.
+
 Once configured, the user can manage voice settings directly from the **agent settings page** in the app, including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
 
 ## When to offer setup

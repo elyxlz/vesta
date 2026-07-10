@@ -53,6 +53,23 @@ type authNotif struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// A live voice call surfaces to the agent as whatsapp notifications, so it reaches the model
+// through the same interrupt-driven flow as a text message. `call_started` wakes the model on an
+// inbound call it should greet; `call_utterance` delivers each thing the caller says (it drives
+// the back-and-forth, and interrupts like any whatsapp message so the model answers live);
+// `call_ended` closes the loop; `call_missed` reports a call that could not be answered.
+type callNotif struct {
+	Source       string `json:"source"`
+	Type         string `json:"type"`
+	Instance     string `json:"instance,omitempty"`
+	Direction    string `json:"direction,omitempty"` // "inbound" | "outbound"
+	ContactName  string `json:"contact_name,omitempty"`
+	ContactPhone string `json:"contact_phone,omitempty"`
+	Transcript   string `json:"transcript,omitempty"` // what the caller said (call_utterance)
+	Reason       string `json:"reason,omitempty"`     // why a call ended or was missed
+	Timestamp    string `json:"timestamp"`
+}
+
 func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -121,6 +138,13 @@ func WriteReactionNotification(
 		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
+}
+
+func writeCallNotification(notifDir, instance string, n callNotif) error {
+	n.Source = "whatsapp"
+	n.Instance = instance
+	n.Timestamp = time.Now().Format(time.RFC3339)
+	return writeNotificationFile(notifDir, n, n.Type)
 }
 
 // WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a

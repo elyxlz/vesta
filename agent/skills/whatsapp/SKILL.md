@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon.
+description: WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon.
 ---
 
 # WhatsApp - CLI: `whatsapp`
@@ -22,6 +22,16 @@ description: WhatsApp messages, contacts, groups (not generic text/message). Req
 whatsapp send --to 'Name' --message 'reply text' --reply-to '<message_id>'
 ```
 The `--reply-to` flag quotes the referenced message in WhatsApp's native reply UI. The message ID can be found in incoming notification payloads (`message_id` field) or `list-messages` output.
+
+## Voice calls
+
+You can hold a real voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT). It works exactly like app chat, the transport is a phone line instead of the app:
+
+- **Being on a call.** Everything the other person says arrives as a `call_utterance` notification with their transcript and who they are; it interrupts like any WhatsApp message, so you respond live. You reply by **speaking**, with `whatsapp say`, one short spoken line per call (the same short-bubble instinct as texting, not a monologue). `say` replaces whatever is still playing, so your newest line always wins, and the other person talking over you cuts your current line short. When you place a call, `whatsapp call` returns once they answer, that is your cue to greet them with `say`.
+- **Inbound calls** are answered automatically (you get a `call_started`, then their utterances). A call you cannot take (already on another call, or `voice` not set up) becomes a `call_missed` notification instead. `call_ended` closes the loop.
+- **Requires the `voice` skill** configured with both input (STT) and output (TTS). Without it, calls are declined and you are told to set voice up.
+
+**Calling the user when it is urgent.** A call is your loudest, most interrupting reach, so it is rare and reserved for the genuinely time-critical. If something truly needs the user now (a real deadline about to pass, a safety or money issue, something they explicitly asked to be called about) and they have not reacted to a message across app chat and WhatsApp within a window that fits how urgent it is, `whatsapp call` them and say why in one line. Do not call for anything that can wait for a text, and respect anything the constitution says about calling.
 
 ## Commands
 
@@ -57,6 +67,12 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `get-group-invite-link` - `--help` for flags
 - `update-group-participants` - add/remove members; `--help` for flags
 
+**Calling** (live voice calls; needs the `voice` skill set up, both STT and TTS)
+- `call` : `<to>` - place a live voice call. Blocks until answered, declined, or times out, then returns the outcome.
+- `say` : `<text>` - speak a line into the active call (prefer `--text-file` / `--text -` for lines with apostrophes or quotes)
+- `hangup` - end the active call
+- `call-status` - report the active call, or idle
+
 **Chat management**
 - `archive-chat` : `<to>`
 - `archive-all-chats`
@@ -84,8 +100,8 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 
 ## Rules
 
-- **Send messages one tool call at a time. Never batch WhatsApp sends in a single parallel tool-call block.**
-  *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees.
+- **Send one tool call at a time. Never batch WhatsApp sends (or `say` lines) in a single parallel tool-call block.**
+  *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees. For `say`, parallel lines also race to play over each other.
 
 - **`whatsapp serve` requires `--notifications-dir`.**
   *Why:* Without it the daemon exits silently (no stderr), and every subsequent command reports "daemon not running."
@@ -126,6 +142,8 @@ The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, lis
 **Common mistake**: editing source and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be restarted to run the new code.
 
 **If the daemon won't start after a change** (screen session dies immediately), run any foreground command, e.g. `whatsapp --help`: the launcher recompiles and the compile error prints to your terminal. A daemon start also pulls the latest whatsmeow first, so an upstream breaking change surfaces the same way; fix the source against the new API rather than pinning back.
+
+**Testing calls end to end** needs a second WhatsApp account to call and a configured `voice` skill, so it is a manual check, not part of the fast suite: with the daemon running and voice set up, `whatsapp call --to '<other number>'`, answer on the other phone, then `whatsapp say --text 'hello'` and confirm you hear it; speak back and confirm a `call_utterance` notification lands. The deterministic pieces (PCM framing, notification shape, the no-active-call guards) are covered by `go test` in `cli/`.
 
 ### Contact Preferences
 [How the user prefers to communicate with different contacts]
