@@ -113,8 +113,11 @@ pub fn config_path() -> PathBuf {
 
 pub fn load_config() -> VestaConfig {
     if let Ok(content) = std::fs::read_to_string(config_path()) {
-        if let Ok(config) = serde_json::from_str(&content) {
-            return config;
+        match serde_json::from_str(&content) {
+            Ok(config) => return config,
+            Err(parse_err) => {
+                eprintln!("warning: {} is corrupt ({parse_err}); ignoring it", config_path().display());
+            }
         }
     }
     VestaConfig::default()
