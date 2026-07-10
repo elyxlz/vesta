@@ -2,9 +2,9 @@ name: Promote
 
 # Promote a beta (prerelease) to stable. Every ./release.sh ships a prerelease that
 # only opted-in beta clients follow; this workflow does the stable half once the beta
-# has soaked: move the agent image :latest tag, flip the GitHub release to latest, and
-# advance the production branch. No rebuild happens here, the exact artifacts that beta
-# users tested become stable.
+# has soaked: flip every older stranded prerelease to stable, move the agent image
+# :latest tag, flip the GitHub release to latest, and advance the production branch.
+# No rebuild happens here, the exact artifacts that beta users tested become stable.
 
 on:
   workflow_dispatch:
@@ -42,6 +42,24 @@ jobs:
             exit 1
           fi
           echo "✓ $TAG is a prerelease, promoting to stable"
+
+      # Stable history has no gaps: every prerelease older than the promoted tag flips
+      # to stable too (ascending, --latest=false so none steals the latest pointer).
+      # :latest and production only ever track the promoted tag itself.
+      - name: Promote older stranded prereleases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' | sort -V |
+            while read -r OLDER_TAG; do
+              NEWEST=$(printf '%s\n%s\n' "$OLDER_TAG" "$TAG" | sort -V | tail -n1)
+              if [ "$OLDER_TAG" != "$TAG" ] && [ "$NEWEST" = "$TAG" ]; then
+                gh release edit "$OLDER_TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest=false
+                echo "✓ $OLDER_TAG flipped to stable"
+              fi
+            done
 
       # Full history: the production push is a force-push of the tag's commit, and a
       # shallow checkout can be rejected with "shallow update not allowed".

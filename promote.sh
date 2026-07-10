@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Promote a beta (prerelease) to stable for everyone. Run after ./release.sh has
-# shipped a beta and it has soaked. Moves the agent image :latest tag, flips the
-# GitHub release to latest, and advances production. No rebuild happens.
+# shipped a beta and it has soaked. Flips every older stranded prerelease to stable,
+# moves the agent image :latest tag, flips the GitHub release to latest, and
+# advances production. No rebuild happens.
 
 TAG="${1:-}"
 
