@@ -27,7 +27,14 @@ const connectEntrance = {
 } as const;
 
 function ConnectHeader() {
-  return <LogoText />;
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <LogoText />
+      <p className="text-sm leading-none text-muted-foreground">
+        your unfair advantage
+      </p>
+    </div>
+  );
 }
 
 export function Connect() {
