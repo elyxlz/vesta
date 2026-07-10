@@ -7,7 +7,7 @@ fn _point_harness_at_built_vestad() {
 }
 
 mod common;
-mod isolation;
 mod containers;
-mod ports;
+mod isolation;
 mod lifecycle;
+mod ports;

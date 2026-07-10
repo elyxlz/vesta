@@ -48,10 +48,7 @@ async fn asset(State(state): State<SharedState>, Path(path): Path<String>) -> Re
     // Treat paths with a file extension as real asset requests: a miss is a 404,
     // not an SPA deep link. Extensionless paths fall through to index.html so
     // React Router can handle them.
-    let looks_like_file = path
-        .rsplit('/')
-        .next()
-        .is_some_and(|seg| seg.contains('.'));
+    let looks_like_file = path.rsplit('/').next().is_some_and(|seg| seg.contains('.'));
     if looks_like_file {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }

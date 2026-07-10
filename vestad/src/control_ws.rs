@@ -25,12 +25,17 @@ pub async fn invalidate_service_handler(
     if !exists {
         return Err(err_response(
             StatusCode::NOT_FOUND,
-            &format!("service '{}' not registered for agent '{}'", service_name, name),
+            &format!(
+                "service '{}' not registered for agent '{}'",
+                service_name, name
+            ),
         ));
     }
     drop(settings);
 
-    state.agent_status_cache.invalidate_service(&name, &service_name);
+    state
+        .agent_status_cache
+        .invalidate_service(&name, &service_name);
     tracing::debug!(agent = %name, service = %service_name, "service invalidated");
     Ok(ok_json())
 }
@@ -56,7 +61,10 @@ pub(crate) fn build_agents_message(
             let mut obj = serde_json::to_value(a).unwrap_or_default();
             if let Some(map) = obj.as_object_mut() {
                 let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
-                map.insert("activityState".into(), serde_json::Value::String(state.into()));
+                map.insert(
+                    "activityState".into(),
+                    serde_json::Value::String(state.into()),
+                );
 
                 let agent_revs = revs.get(&a.name);
                 let svc_obj: serde_json::Map<String, serde_json::Value> = services
@@ -65,7 +73,10 @@ pub(crate) fn build_agents_message(
                         svc_map
                             .iter()
                             .map(|(svc_name, entry)| {
-                                let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
+                                let rev = agent_revs
+                                    .and_then(|m| m.get(svc_name))
+                                    .copied()
+                                    .unwrap_or(0);
                                 let val = serde_json::json!({
                                     "port": entry.port,
                                     "public": entry.public,
@@ -96,7 +107,11 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         "version": env!("CARGO_PKG_VERSION"),
         "port": state.env_config.vestad_port,
     });
-    if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
+    if tx
+        .send(Message::Text(hello.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -111,7 +126,11 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     let services = services_rx.borrow_and_update().clone();
     let revs = state.agent_status_cache.service_revs();
     let msg = build_agents_message(&agents, &activity, &services, &revs);
-    if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+    if tx
+        .send(Message::Text(msg.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -144,7 +163,11 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         let services = services_rx.borrow_and_update().clone();
         let revs = state.agent_status_cache.service_revs();
         let msg = build_agents_message(&agents, &activity, &services, &revs);
-        if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+        if tx
+            .send(Message::Text(msg.to_string().into()))
+            .await
+            .is_err()
+        {
             break;
         }
     }

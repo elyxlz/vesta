@@ -149,7 +149,9 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
-    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
+    pub fn subscribe_services(
+        &self,
+    ) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
         self.services_rx.clone()
     }
 

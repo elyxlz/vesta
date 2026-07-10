@@ -27,7 +27,11 @@ pub async fn auth_middleware(
 
     let path = request.uri().path().to_string();
     tracing::warn!(path = %path, "client auth failed");
-    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"}))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "unauthorized"})),
+    )
+        .into_response()
 }
 
 /// Requires the agent's own token via X-Agent-Token header.
@@ -81,13 +85,19 @@ pub async fn auth_middleware_api_or_agent_token(
     unauthorized()
 }
 
-fn check_agent_token(headers: &HeaderMap, agent_name: &str, state: &SharedState, path: &str) -> bool {
+fn check_agent_token(
+    headers: &HeaderMap,
+    agent_name: &str,
+    state: &SharedState,
+    path: &str,
+) -> bool {
     let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) else {
         tracing::warn!(path = %path, agent = %agent_name, reason = "header-missing", "agent token auth failed");
         return false;
     };
 
-    let (_, expected) = crate::docker::read_agent_port_and_token(agent_name, &state.env_config.agents_dir);
+    let (_, expected) =
+        crate::docker::read_agent_port_and_token(agent_name, &state.env_config.agents_dir);
     let Some(expected) = expected else {
         tracing::warn!(
             path = %path,
@@ -130,7 +140,11 @@ fn token_fingerprint(token: &str) -> String {
     hex::encode(&digest.as_ref()[..3])
 }
 
-pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
+pub(crate) fn has_valid_api_auth(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    api_key: &str,
+) -> bool {
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -152,10 +166,18 @@ fn extract_agent_name(path: &str) -> Option<String> {
     }
 }
 
+/// Constant-time byte comparison so a mismatched raw API key can't be brute-forced
+/// via response-timing (the key never rotates and gates the tunnel-exposed listener).
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
+}
 
 /// Accept raw API key or JWT access token.
 pub(crate) fn verify_token(token: &str, api_key: &str) -> bool {
-    if token == api_key {
+    if constant_time_eq(token.as_bytes(), api_key.as_bytes()) {
         return true;
     }
     if token.contains('.') {
@@ -185,7 +207,9 @@ pub struct RefreshRequest {
 
 /// 16 random bytes as hex — a refresh-token id or family id.
 fn rand_id() -> String {
-    (0..16).map(|_| format!("{:02x}", rand::random::<u8>())).collect()
+    (0..16)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect()
 }
 
 /// Start a new family; returns `(jti, fam)` to mint the first refresh token with.
@@ -195,7 +219,11 @@ fn register_family(map: &mut HashMap<String, RefreshFamily>, now: u64) -> (Strin
     let (jti, fam) = (rand_id(), rand_id());
     map.insert(
         fam.clone(),
-        RefreshFamily { live: jti.clone(), prev: None, exp: now + jwt::REFRESH_TOKEN_TTL },
+        RefreshFamily {
+            live: jti.clone(),
+            prev: None,
+            exp: now + jwt::REFRESH_TOKEN_TTL,
+        },
     );
     (jti, fam)
 }
@@ -432,5 +460,20 @@ mod refresh_rotation_tests {
         // Reuse a two-steps-old A token → revokes family A only.
         assert!(rotate(&mut map, &refresh_claims(&a0, &fam_a), NOW).is_none());
         assert!(rotate(&mut map, &refresh_claims(&b0, &fam_b), NOW).is_some());
+    }
+}
+
+#[cfg(test)]
+mod verify_token_tests {
+    use super::verify_token;
+
+    #[test]
+    fn matching_key_verifies() {
+        assert!(verify_token("the-api-key", "the-api-key"));
+    }
+
+    #[test]
+    fn same_length_non_matching_key_does_not_verify() {
+        assert!(!verify_token("the-api-kex", "the-api-key"));
     }
 }

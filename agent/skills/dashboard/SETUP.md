@@ -1,34 +1,22 @@
 # Dashboard setup
 
-## 1. Install dependencies
-
-`node` and `npm` ship in the base image.
-
+`node` and `npm` ship in the base image. Run the one-shot setup script; it installs
+dependencies, builds, starts the daemon, confirms it answers a 200, and appends the
+guarded startup line to the restart skill, all idempotent (safe to re-run):
 ```bash
-cd ~/agent/skills/dashboard/app && npm install
+~/agent/skills/dashboard/scripts/setup.sh
 ```
 
-## 2. Build the dashboard
+It fails loudly on a real problem instead of leaving a half set-up dashboard: don't
+assume success, check its output.
 
-```bash
-cd ~/agent/skills/dashboard/app && npx vite build
-```
+## Manual steps (only if setup.sh can't be used)
 
-## 3. Start the dashboard server
-
-`scripts/serve` registers the service port (see [service](../service/SKILL.md)) and starts the preview, rebuilding `node_modules`/`dist` first if they are missing. Start it, and fetch the port for the check below:
-```bash
-PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
-screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
-```
-
-## 4. Register the service
-
-Add this guarded startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
-```
-running dashboard || { screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve; sleep 1; }
-```
-
-## 5. Check it's alive
-
-The build and server run in the background, so confirm the dashboard is actually serving before considering it done, e.g. `curl -fsS localhost:$PORT >/dev/null`. Don't assume success; a failed build or server won't tell you.
+1. **Install dependencies**: `cd ~/agent/skills/dashboard/app && npm install`
+2. **Build**: `cd ~/agent/skills/dashboard/app && npx vite build`
+3. **Start the daemon**: `~/agent/skills/dashboard/scripts/daemon start` (idempotent, never stacks a duplicate)
+4. **Register the restart line**: add this guarded startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+   ```
+   running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }
+   ```
+5. **Check it's alive**: `~/agent/skills/dashboard/scripts/daemon status` reports `running`, `port`, and `http_ok` in one JSON blob. Don't assume success; a failed build or server won't tell you otherwise.
