@@ -101,7 +101,15 @@ export function SelectedAgentProvider({
   };
 
   useEffect(() => {
-    void refreshBackups();
+    let ignore = false;
+    listBackups(name)
+      .then((fetched) => {
+        if (!ignore) setBackups(fetched);
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
   }, [name]);
 
   const backup = op(
