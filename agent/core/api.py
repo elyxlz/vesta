@@ -161,14 +161,26 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: Ves
             break
 
 
+# Bound on a single WS send. A half-open socket (peer gone, TCP not yet timed out) blocks
+# send_json indefinitely while the subscriber queue overflows behind it; timing out closes
+# the socket promptly so the client reconnects instead of lingering wedged for minutes.
+_SEND_TIMEOUT_S = 30.0
+
+
 async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) -> None:
-    """Forward all event-bus events to the WS client."""
+    """Forward all event-bus events to the WS client. Exits on the bus's eviction sentinel or a
+    stalled send; the handler then closes the WS so the client reconnects and resyncs."""
     try:
         while True:
             event = await sub.get()
-            await ws.send_json(event)
+            if event["type"] == "evicted":
+                logger.info("subscriber evicted by event bus, closing ws")
+                break
+            await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_S)
     except asyncio.CancelledError:
         pass
+    except TimeoutError:
+        logger.info("ws send stalled for %.0fs, closing", _SEND_TIMEOUT_S)
     except (ConnectionError, RuntimeError, TypeError) as e:
         logger.info(f"ws send_loop exited: {type(e).__name__}: {e}")
 

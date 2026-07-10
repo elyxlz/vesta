@@ -257,6 +257,42 @@ async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch
 
 
 @pytest.mark.anyio
+async def test_send_loop_closes_on_eviction_sentinel(event_bus):
+    """When the bus evicts a stalled subscriber (issue #1160) the send loop exits on the
+    EvictedEvent so the handler closes the WS and the client reconnects for a fresh snapshot."""
+    from core.api import _send_loop
+    from core.events import EvictedEvent
+
+    sent = []
+
+    class _Ws:
+        async def send_json(self, event):
+            sent.append(event)
+
+    sub = event_bus.subscribe()
+    sub.put_nowait(EvictedEvent(type="evicted"))
+    await asyncio.wait_for(_send_loop(typing.cast("web.WebSocketResponse", _Ws()), sub), timeout=1.0)
+    assert sent == []
+
+
+@pytest.mark.anyio
+async def test_send_loop_closes_when_send_stalls(event_bus, monkeypatch):
+    """A half-open socket whose send never completes is closed after the send timeout instead of
+    lingering for minutes while its queue overflows (issue #1160)."""
+    from core import api
+
+    monkeypatch.setattr(api, "_SEND_TIMEOUT_S", 0.05)
+
+    class _StalledWs:
+        async def send_json(self, event):
+            await asyncio.Event().wait()
+
+    sub = event_bus.subscribe()
+    event_bus.emit(ChatEvent(type="chat", text="never delivered"))
+    await asyncio.wait_for(api._send_loop(typing.cast("web.WebSocketResponse", _StalledWs()), sub), timeout=1.0)
+
+
+@pytest.mark.anyio
 async def test_memory_put_writes_atomically(tmp_path):
     """PUT /memory lands the full content through the atomic tmp+rename writer, leaving no partial
     or leftover temp file behind."""

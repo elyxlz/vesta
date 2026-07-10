@@ -9,6 +9,7 @@ import pytest
 from core.events import (
     _EVENTS_SCHEMA,
     _SCHEMA_VERSION,
+    SUBSCRIBER_EVICT_AFTER_DROPS,
     SUBSCRIBER_QUEUE_MAXSIZE,
     ChatEvent,
     EventBus,
@@ -126,6 +127,62 @@ def test_drop_does_not_affect_other_subscribers(event_bus):
 
     assert slow.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
     assert fast.qsize() == 0
+
+
+def _stall_until_evicted(event_bus):
+    """Fill a never-draining subscriber past the eviction threshold, returning its queue."""
+    q = event_bus.subscribe()
+    for i in range(SUBSCRIBER_QUEUE_MAXSIZE + SUBSCRIBER_EVICT_AFTER_DROPS):
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+    return q
+
+
+def test_stalled_subscriber_is_evicted(event_bus):
+    """A subscriber that stays queue-full for SUBSCRIBER_EVICT_AFTER_DROPS consecutive drops is
+    evicted: its stale backlog is cleared, an EvictedEvent tells the send loop to close, and
+    further emits no longer reach it (regression: issue #1160's unbounded drop storm)."""
+    q = _stall_until_evicted(event_bus)
+
+    assert q.qsize() == 1
+    assert q.get_nowait()["type"] == "evicted"
+
+    event_bus.emit(UserEvent(type="user", text="after eviction"))
+    assert q.qsize() == 0
+
+
+def test_eviction_logs_one_warning_not_a_storm(event_bus, caplog):
+    """The overflow storm is coalesced: a stalled subscriber produces exactly one warning (at
+    eviction, with the drop count), not one line per dropped event."""
+    with caplog.at_level("WARNING", logger="vesta.events"):
+        _stall_until_evicted(event_bus)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert str(SUBSCRIBER_EVICT_AFTER_DROPS) in warnings[0].getMessage()
+
+
+def test_draining_subscriber_recovers_and_is_not_evicted(event_bus, caplog):
+    """A slow-but-alive subscriber that resumes draining resets the eviction counter: two
+    sub-threshold overflow bursts with a drain between never evict, and recovery is logged
+    once with the number of events dropped in the burst."""
+    q = event_bus.subscribe()
+    burst = SUBSCRIBER_EVICT_AFTER_DROPS - 1
+    for i in range(SUBSCRIBER_QUEUE_MAXSIZE + burst):
+        event_bus.emit(UserEvent(type="user", text=f"first {i}"))
+
+    q.get_nowait()
+    with caplog.at_level("INFO", logger="vesta.events"):
+        event_bus.emit(UserEvent(type="user", text="recovered"))
+    assert any(str(burst) in r.getMessage() for r in caplog.records)
+
+    for i in range(burst):
+        event_bus.emit(UserEvent(type="user", text=f"second {i}"))
+
+    assert q.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+    drained = [q.get_nowait() for _ in range(q.qsize())]
+    assert all(e["type"] != "evicted" for e in drained)
+    event_bus.emit(UserEvent(type="user", text="still subscribed"))
+    assert tp.cast(tp.Any, q.get_nowait())["text"] == "still subscribed"
 
 
 # --- Pagination ---
