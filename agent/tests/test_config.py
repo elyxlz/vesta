@@ -169,12 +169,17 @@ def _deny_read_text(self, *args, **kwargs):
     raise PermissionError("permission denied")
 
 
-def test_unreadable_store_does_not_crash_read(agentdir, monkeypatch):
-    # An OSError on the read (permission flip, transient IO fault) is ignored like corruption:
-    # read_config_store sits on the boot path and never raises.
-    config_store_path().write_text("{}")
-    monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
-    assert read_config_store() == {}
+def test_unreadable_store_aborts_update(agentdir, monkeypatch):
+    # A transient OSError on the read (permission flip, EIO) over an intact store must abort the
+    # merge-and-write: handing back {} as the merge base would clobber the stored provider, prefs,
+    # and rules with only the incoming keys. Fail loud, leave the file untouched.
+    update_config_store({"agent_personality": "warm"})
+    before = config_store_path().read_text()
+    with monkeypatch.context() as patched:
+        patched.setattr(pl.Path, "read_text", _deny_read_text)
+        with pytest.raises(OSError):
+            update_config_store({"seed_context": "fresh"})
+    assert config_store_path().read_text() == before
 
 
 def test_unreadable_store_does_not_crash_rules_load(agentdir, monkeypatch):

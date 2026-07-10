@@ -94,8 +94,8 @@ def read_config_store() -> dict[str, pyd.JsonValue]:
         return {}
     try:
         data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.error(f"config store {path} is unreadable ({exc}); ignoring it")
+    except json.JSONDecodeError as exc:
+        logger.error(f"config store {path} is corrupt ({exc}); ignoring it")
         return {}
     return data if isinstance(data, dict) else {}
 

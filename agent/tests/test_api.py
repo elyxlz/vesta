@@ -201,6 +201,28 @@ async def test_ws_survives_non_dict_json_frame(event_bus):
 
 
 @pytest.mark.anyio
+async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch):
+    """A snapshot-phase failure (before the recv/send loops exist) still runs the handler's finally
+    cleanup: the bus subscription is dropped instead of a TypeError from gathering the not-yet-created
+    tasks masking the original error and leaking the subscriber."""
+    from core import api
+
+    def _boom(config):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(api, "_pending_notification_ids", _boom)
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
+        await wait_for_condition(lambda: len(event_bus._subscribers) == 0, message="subscriber leaked after snapshot failure")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
 async def test_memory_put_writes_atomically(tmp_path):
     """PUT /memory lands the full content through the atomic tmp+rename writer, leaving no partial
     or leftover temp file behind."""
