@@ -11,10 +11,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{
+    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update,
+    systemd, update_check,
+};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -38,31 +41,35 @@ pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild",
-    "auth", "logs", "tree", "file", "backups", "settings", "services",
+    "start", "stop", "restart", "destroy", "rebuild", "auth", "logs", "tree", "file", "backups",
+    "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
-pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
+pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, String), String> {
     let tls_dir = config_dir.join("tls");
     let cert_path = tls_dir.join("cert.pem");
     let key_path = tls_dir.join("key.pem");
     let fingerprint_path = tls_dir.join("fingerprint");
 
     if cert_path.exists() && key_path.exists() && fingerprint_path.exists() {
-        let cert_pem = std::fs::read_to_string(&cert_path).expect("failed to read cert.pem");
-        let key_pem = std::fs::read_to_string(&key_path).expect("failed to read key.pem");
-        let fingerprint =
-            std::fs::read_to_string(&fingerprint_path).expect("failed to read fingerprint");
-        return (cert_pem, key_pem, fingerprint.trim().to_string());
+        let cert_pem = std::fs::read_to_string(&cert_path)
+            .map_err(|e| format!("failed to read {}: {e}", cert_path.display()))?;
+        let key_pem = std::fs::read_to_string(&key_path)
+            .map_err(|e| format!("failed to read {}: {e}", key_path.display()))?;
+        let fingerprint = std::fs::read_to_string(&fingerprint_path)
+            .map_err(|e| format!("failed to read {}: {e}", fingerprint_path.display()))?;
+        return Ok((cert_pem, key_pem, fingerprint.trim().to_string()));
     }
 
-    std::fs::create_dir_all(&tls_dir).expect("failed to create tls dir");
+    std::fs::create_dir_all(&tls_dir)
+        .map_err(|e| format!("failed to create {}: {e}", tls_dir.display()))?;
 
-    let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".into()])
+        .map_err(|e| format!("failed to build cert params: {e}"))?;
     params
         .subject_alt_names
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
@@ -80,8 +87,11 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
     // 10 year validity
     params.not_after = rcgen::date_time_ymd(2036, 1, 1);
 
-    let key_pair = rcgen::KeyPair::generate().unwrap();
-    let cert = params.self_signed(&key_pair).unwrap();
+    let key_pair =
+        rcgen::KeyPair::generate().map_err(|e| format!("failed to generate tls key: {e}"))?;
+    let cert = params
+        .self_signed(&key_pair)
+        .map_err(|e| format!("failed to self-sign tls cert: {e}"))?;
 
     let cert_pem = cert.pem();
     let key_pem = key_pair.serialize_pem();
@@ -99,9 +109,12 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
             .join(":")
     );
 
-    std::fs::write(&cert_path, &cert_pem).expect("failed to write cert.pem");
-    std::fs::write(&key_path, &key_pem).expect("failed to write key.pem");
-    std::fs::write(&fingerprint_path, &fingerprint).expect("failed to write fingerprint");
+    std::fs::write(&cert_path, &cert_pem)
+        .map_err(|e| format!("failed to write {}: {e}", cert_path.display()))?;
+    std::fs::write(&key_path, &key_pem)
+        .map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
+    std::fs::write(&fingerprint_path, &fingerprint)
+        .map_err(|e| format!("failed to write {}: {e}", fingerprint_path.display()))?;
 
     // chmod 600 on key and fingerprint
     #[cfg(unix)]
@@ -111,37 +124,38 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
         std::fs::set_permissions(&fingerprint_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
 
-    (cert_pem, key_pem, fingerprint)
+    Ok((cert_pem, key_pem, fingerprint))
 }
 
 // --- API key generation ---
 
-pub fn ensure_api_key(config_dir: &std::path::Path) -> String {
+pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
     let key_path = config_dir.join("api-key");
     if let Ok(key) = std::fs::read_to_string(&key_path) {
         let key = key.trim().to_string();
         if !key.is_empty() {
-            return key;
+            return Ok(key);
         }
     }
 
-    std::fs::create_dir_all(config_dir).expect("failed to create config dir");
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
 
     let key: String = (0..API_KEY_BYTES)
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect();
 
-    std::fs::write(&key_path, &key).expect("failed to write api-key");
+    std::fs::write(&key_path, &key)
+        .map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
-    key
+    Ok(key)
 }
 
 // --- App state ---
-
 
 pub struct AppState {
     pub(crate) api_key: String,
@@ -296,16 +310,25 @@ pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_
 /// Spawning runs the op to completion regardless of the client; the request only observes its result
 /// (so a still-connected app caller still gets a truthful response). JSON analogue of the SSE
 /// `spawn_pipeline_sse` used by backup/restore, which fixed this same drop-cancellation class.
-async fn spawn_detached<Fut>(op: Fut) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+async fn spawn_detached<Fut>(
+    op: Fut,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
 where
-    Fut: std::future::Future<Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>> + Send + 'static,
+    Fut: std::future::Future<
+            Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>,
+        > + Send
+        + 'static,
 {
     let (tx, rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = tx.send(op.await);
     });
-    rx.await
-        .unwrap_or_else(|_| Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, "restart task panicked")))
+    rx.await.unwrap_or_else(|_| {
+        Err(err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "restart task panicked",
+        ))
+    })
 }
 
 // --- Handlers ---
@@ -362,8 +385,14 @@ async fn workspace_bundle_handler(State(state): State<SharedState>) -> axum::res
 async fn workspace_bundle_response(config_dir: &std::path::Path) -> axum::response::Response {
     let path = crate::workspace::bundle_path(config_dir);
     match tokio::fs::read(&path).await {
-        Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response(),
-        Err(_) => err_response(StatusCode::NOT_FOUND, "workspace bundle not built yet").into_response(),
+        Ok(bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => {
+            err_response(StatusCode::NOT_FOUND, "workspace bundle not built yet").into_response()
+        }
     }
 }
 
@@ -417,7 +446,10 @@ struct GatewayLogsQuery {
 
 async fn gateway_logs_handler(
     Query(query): Query<GatewayLogsQuery>,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<
+    Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>,
+    (StatusCode, Json<serde_json::Value>),
+> {
     let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
 
     let log_dir = crate::paths::config_dir_or_relative();
@@ -428,7 +460,10 @@ async fn gateway_logs_handler(
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     let stdout = child.stdout.take().ok_or_else(|| {
-        err_response(StatusCode::INTERNAL_SERVER_ERROR, "log tail stdout not captured")
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "log tail stdout not captured",
+        )
     })?;
 
     let stream = async_stream::stream! {
@@ -452,7 +487,8 @@ async fn gateway_logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+async fn restart_gateway_handler(
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !systemd::is_active() {
         return Err(err_response(
             StatusCode::PRECONDITION_FAILED,
@@ -476,16 +512,35 @@ async fn gateway_update_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if state.dev_mode {
-        return Err(err_response(StatusCode::BAD_REQUEST, "self-update disabled in dev mode"));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "self-update disabled in dev mode",
+        ));
     }
-    if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
+    if state
+        .updating
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "update already in progress",
+        ));
     }
     let channel = effective_channel(&state).await;
-    tracing::info!(channel = channel.as_str(), "gateway update requested via API");
+    tracing::info!(
+        channel = channel.as_str(),
+        "gateway update requested via API"
+    );
     let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
-    state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
-    let result = join.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("update task panicked: {e}")))?;
+    state
+        .updating
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let result = join.map_err(|e| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("update task panicked: {e}"),
+        )
+    })?;
     match result {
         Ok(outcome) => Ok(Json(serde_json::json!({
             "ok": true,
@@ -494,14 +549,20 @@ async fn gateway_update_handler(
             "current": outcome.current,
             "latest": outcome.latest,
         }))),
-        Err(e) => Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+        Err(e) => Err(err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &e.to_string(),
+        )),
     }
 }
 
-async fn list_agents_handler(
-    State(state): State<SharedState>,
-) -> impl IntoResponse {
-    let agents = docker::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
+async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoResponse {
+    let agents = docker::list_agents(
+        &state.docker,
+        &state.http_client,
+        &state.env_config.agents_dir,
+    )
+    .await;
     Json(agents)
 }
 
@@ -527,7 +588,11 @@ async fn create_agent_handler(
 
     if !manage_core_code {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().manage_agent_code = false;
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .manage_agent_code = false;
         save_settings(&settings);
     }
 
@@ -557,9 +622,15 @@ async fn create_and_start(
     manage_core_code: bool,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, progress)
-        .await
-        .map_err(map_docker_err)?;
+    let name = docker::create_agent(
+        &state.docker,
+        name,
+        &state.env_config,
+        manage_core_code,
+        progress,
+    )
+    .await
+    .map_err(map_docker_err)?;
 
     progress.set(docker::BuildPhase::Starting);
     docker::start_agent(&state.docker, &name)
@@ -581,9 +652,14 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = docker::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
-        .await
-        .map_err(map_docker_err)?;
+    let status = docker::get_status(
+        &state.docker,
+        &state.http_client,
+        &name,
+        &state.env_config.agents_dir,
+    )
+    .await
+    .map_err(map_docker_err)?;
     Ok(Json(status))
 }
 
@@ -596,7 +672,11 @@ async fn start_agent_handler(
 
     {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
     docker::start_agent(&state.docker, &name)
@@ -605,9 +685,7 @@ async fn start_agent_handler(
     Ok(ok_json())
 }
 
-async fn start_all_handler(
-    State(state): State<SharedState>,
-) -> impl IntoResponse {
+async fn start_all_handler(State(state): State<SharedState>) -> impl IntoResponse {
     let results = docker::start_all_agents(&state.docker).await;
 
     // Starting all agents is an explicit "everything should run" — record it so boot-start agrees
@@ -615,7 +693,11 @@ async fn start_all_handler(
     {
         let mut settings = state.settings.write().await;
         for result in &results {
-            settings.agents.entry(result.name.clone()).or_default().user_desired = UserDesired::Running;
+            settings
+                .agents
+                .entry(result.name.clone())
+                .or_default()
+                .user_desired = UserDesired::Running;
         }
         save_settings(&settings);
     }
@@ -639,7 +721,11 @@ async fn stop_agent_handler(
 
     {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Stopped;
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .user_desired = UserDesired::Stopped;
         settings.services.remove(&name);
         save_settings(&settings);
     }
@@ -675,7 +761,8 @@ async fn restart_agent_handler(
     body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
-    let reason = parse_restart_reason(&body).map_err(|msg| err_response(StatusCode::BAD_REQUEST, &msg))?;
+    let reason =
+        parse_restart_reason(&body).map_err(|msg| err_response(StatusCode::BAD_REQUEST, &msg))?;
     // Detached from this request's connection: a self-restart's client is the agent inside the very
     // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
@@ -685,16 +772,26 @@ async fn restart_agent_handler(
         // A restart implies the agent should be running — record it so boot-start agrees with intent.
         {
             let mut settings = state.settings.write().await;
-            settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+            settings
+                .agents
+                .entry(name.clone())
+                .or_default()
+                .user_desired = UserDesired::Running;
             save_settings(&settings);
         }
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
-        docker::restart_agent(&state.docker, &name, &state.env_config, &user_mounts, reason)
-            .await
-            .map_err(map_docker_err)?;
+        docker::restart_agent(
+            &state.docker,
+            &name,
+            &state.env_config,
+            &user_mounts,
+            reason,
+        )
+        .await
+        .map_err(map_docker_err)?;
         Ok(ok_json())
     })
     .await
@@ -737,7 +834,11 @@ async fn rebuild_agent_handler(
     // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
     {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().user_desired = UserDesired::Running;
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
     docker::start_agent(&state.docker, &name)
@@ -758,15 +859,25 @@ async fn rename_agent_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let new_name = docker::normalize_name(&body.new_name);
     if new_name.is_empty() {
-        return Err(err_response(StatusCode::BAD_REQUEST, "invalid new agent name"));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "invalid new agent name",
+        ));
     }
     if new_name == name {
-        return Err(err_response(StatusCode::BAD_REQUEST, "new name must differ from old name"));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "new name must differ from old name",
+        ));
     }
     tracing::info!(old = %name, new = %new_name, "renaming agent");
 
     // Lock both names in lex order to avoid deadlock between concurrent renames.
-    let (first, second) = if name < new_name { (&name, &new_name) } else { (&new_name, &name) };
+    let (first, second) = if name < new_name {
+        (&name, &new_name)
+    } else {
+        (&new_name, &name)
+    };
     let lock_first = state.agent_lock(first).await;
     let lock_second = state.agent_lock(second).await;
     let _g1 = lock_first.write().await;
@@ -776,9 +887,15 @@ async fn rename_agent_handler(
         let settings = state.settings.read().await;
         settings.agent_mounts(&name)
     };
-    docker::rename_agent(&state.docker, &name, &new_name, &state.env_config, &user_mounts)
-        .await
-        .map_err(map_docker_err)?;
+    docker::rename_agent(
+        &state.docker,
+        &name,
+        &new_name,
+        &state.env_config,
+        &user_mounts,
+    )
+    .await
+    .map_err(map_docker_err)?;
 
     {
         let mut settings = state.settings.write().await;
@@ -807,7 +924,11 @@ async fn rename_agent_handler(
 
 /// Build the rename notification payload. Pure (no IO) so its shape can be
 /// asserted without spinning up a container.
-fn rename_notification_payload(old_name: &str, new_name: &str, epoch_secs: u64) -> Result<serde_json::Value, String> {
+fn rename_notification_payload(
+    old_name: &str,
+    new_name: &str,
+    epoch_secs: u64,
+) -> Result<serde_json::Value, String> {
     let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
         .map_err(|e| format!("epoch out of range: {e}"))?
         .format(&time::format_description::well_known::Rfc3339)
@@ -841,9 +962,15 @@ pub(crate) async fn drop_rename_notification(
     let payload = rename_notification_payload(old_name, new_name, epoch)?;
     let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
     let file_name = format!("rename-{epoch}.json");
-    docker::upload_to_container(docker, &cname, "/root/agent/notifications", &file_name, &bytes)
-        .await
-        .map_err(|e| e.to_string())?;
+    docker::upload_to_container(
+        docker,
+        &cname,
+        "/root/agent/notifications",
+        &file_name,
+        &bytes,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(file_name)
 }
 
@@ -872,16 +999,21 @@ async fn write_to_agent(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(name).map_err(map_docker_err)?;
     let cname = docker::container_name(name);
-    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
+    docker::ensure_exists(&state.docker, &cname)
+        .await
+        .map_err(map_docker_err)?;
 
     let _guard = agent_write_guard(state, name).await;
 
     // Agent must be running to receive the proxy call; auto-start stopped agents.
     if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, name).await.map_err(map_docker_err)?;
+        docker::start_agent(&state.docker, name)
+            .await
+            .map_err(map_docker_err)?;
     }
 
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
+    let provider =
+        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Provider(body) => provider.put_provider(&body).await,
@@ -889,7 +1021,9 @@ async fn write_to_agent(
         AgentWrite::ClearProvider => provider.delete_provider().await,
     };
     forwarded.map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(serde_json::json!({"ok": true, "restart_required": true})))
+    Ok(Json(
+        serde_json::json!({"ok": true, "restart_required": true}),
+    ))
 }
 
 /// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
@@ -898,7 +1032,8 @@ async fn get_config_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let provider =
+        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
     provider
         .get_config()
         .await
@@ -921,7 +1056,8 @@ async fn get_provider_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider = agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let provider =
+        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
     provider
         .get_provider()
         .await
@@ -966,13 +1102,18 @@ async fn logs_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
     Query(query): Query<LogsQuery>,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)>
-{
+) -> Result<
+    Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>,
+    (StatusCode, Json<serde_json::Value>),
+> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     let status = docker::container_status(&state.docker, &cname).await;
     if status == docker::ContainerStatus::NotFound {
-        return Err(err_response(StatusCode::BAD_REQUEST, &format!("agent '{}' not found", name)));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            &format!("agent '{}' not found", name),
+        ));
     }
 
     let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
@@ -1049,7 +1190,6 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-
 // --- File tree ---
 
 #[derive(Serialize)]
@@ -1065,16 +1205,27 @@ async fn tree_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_running(&state.docker, &cname).await
+    docker::ensure_running(&state.docker, &cname)
+        .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let find = vec![
-        "find".into(), "/root".into(),
-        "-not".into(), "-path".into(), "*/.venv/*".into(),
-        "-not".into(), "-path".into(), "*/__pycache__/*".into(),
-        "-not".into(), "-path".into(), "*/.cache/*".into(),
-        "-not".into(), "-path".into(), "*/node_modules/*".into(),
-        "-printf".into(), "%y\t%m\t%p\n".into(),
+        "find".into(),
+        "/root".into(),
+        "-not".into(),
+        "-path".into(),
+        "*/.venv/*".into(),
+        "-not".into(),
+        "-path".into(),
+        "*/__pycache__/*".into(),
+        "-not".into(),
+        "-path".into(),
+        "*/.cache/*".into(),
+        "-not".into(),
+        "-path".into(),
+        "*/node_modules/*".into(),
+        "-printf".into(),
+        "%y\t%m\t%p\n".into(),
     ];
     let result = docker_exec_capture(&state.docker, &cname, find, None)
         .await
@@ -1084,17 +1235,27 @@ async fn tree_handler(
     let mut entries: Vec<TreeEntry> = Vec::new();
     for line in buffer.lines() {
         let line = line.trim_end();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
-        if parts.len() != 3 { continue; }
+        if parts.len() != 3 {
+            continue;
+        }
         let is_dir = parts[0] == "d";
         let mode = u32::from_str_radix(parts[1], 8).unwrap_or(0o644);
-        entries.push(TreeEntry { path: parts[2].to_string(), is_dir, mode });
+        entries.push(TreeEntry {
+            path: parts[2].to_string(),
+            is_dir,
+            mode,
+        });
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-    Ok(Json(serde_json::json!({ "tree": paths, "entries": entries })))
+    Ok(Json(
+        serde_json::json!({ "tree": paths, "entries": entries }),
+    ))
 }
 
 // --- File read / write ---
@@ -1146,20 +1307,33 @@ async fn docker_exec_capture(
     stdin: Option<Vec<u8>>,
 ) -> Result<ExecResult, String> {
     let attach_stdin = stdin.is_some();
-    let exec = docker.create_exec(cname, bollard::exec::CreateExecOptions {
-        cmd: Some(cmd),
-        attach_stdout: Some(true),
-        attach_stderr: Some(true),
-        attach_stdin: Some(attach_stdin),
-        ..Default::default()
-    }).await.map_err(|e| e.to_string())?;
+    let exec = docker
+        .create_exec(
+            cname,
+            bollard::exec::CreateExecOptions {
+                cmd: Some(cmd),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                attach_stdin: Some(attach_stdin),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-    let result = docker.start_exec(&exec.id, None).await.map_err(|e| e.to_string())?;
+    let result = docker
+        .start_exec(&exec.id, None)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr = String::new();
 
-    if let bollard::exec::StartExecResults::Attached { mut output, mut input } = result {
+    if let bollard::exec::StartExecResults::Attached {
+        mut output,
+        mut input,
+    } = result
+    {
         if let Some(data) = stdin {
             use tokio::io::AsyncWriteExt;
             input.write_all(&data).await.map_err(|e| e.to_string())?;
@@ -1170,20 +1344,33 @@ async fn docker_exec_capture(
         use futures_util::StreamExt;
         while let Some(chunk) = output.next().await {
             match chunk.map_err(|e| e.to_string())? {
-                bollard::container::LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
-                bollard::container::LogOutput::StdErr { message } => stderr.push_str(&String::from_utf8_lossy(&message)),
+                bollard::container::LogOutput::StdOut { message } => {
+                    stdout.extend_from_slice(&message)
+                }
+                bollard::container::LogOutput::StdErr { message } => {
+                    stderr.push_str(&String::from_utf8_lossy(&message))
+                }
                 _ => {}
             }
         }
     }
 
-    let inspect = docker.inspect_exec(&exec.id).await.map_err(|e| e.to_string())?;
+    let inspect = docker
+        .inspect_exec(&exec.id)
+        .await
+        .map_err(|e| e.to_string())?;
     let exit_code = inspect.exit_code.unwrap_or(-1);
-    Ok(ExecResult { stdout, stderr, exit_code })
+    Ok(ExecResult {
+        stdout,
+        stderr,
+        exit_code,
+    })
 }
 
 #[derive(Deserialize)]
-struct ReadFileQuery { path: String }
+struct ReadFileQuery {
+    path: String,
+}
 
 async fn read_file_handler(
     State(state): State<SharedState>,
@@ -1198,7 +1385,8 @@ async fn read_file_handler(
     }
 
     let cname = docker::container_name(&name);
-    docker::ensure_running(&state.docker, &cname).await
+    docker::ensure_running(&state.docker, &cname)
+        .await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
 
     // The constitution is bind-mounted read-only inside the container (the agent reads but
@@ -1227,16 +1415,26 @@ async fn read_file_handler(
         p = shell_escape(&q.path)
     );
     let stat = docker_exec_capture(
-        &state.docker, &cname,
-        vec!["sh".into(), "-c".into(), stat_cmd], None,
-    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        &state.docker,
+        &cname,
+        vec!["sh".into(), "-c".into(), stat_cmd],
+        None,
+    )
+    .await
+    .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     if stat.exit_code != 0 {
         let detail = stat.stderr.trim();
         if detail.is_empty() {
-            return Err(err_response(StatusCode::NOT_FOUND, "file not found or resolves through a symlink"));
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                "file not found or resolves through a symlink",
+            ));
         }
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("stat failed: {detail}")));
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("stat failed: {detail}"),
+        ));
     }
 
     let stat_line = String::from_utf8_lossy(&stat.stdout);
@@ -1253,21 +1451,31 @@ async fn read_file_handler(
         return Err(err_response(StatusCode::BAD_REQUEST, "path is a directory"));
     }
     if size > FILE_SIZE_LIMIT {
-        return Err((StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({
-            "error": "file too large",
-            "size": size,
-            "limit": FILE_SIZE_LIMIT,
-        }))));
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({
+                "error": "file too large",
+                "size": size,
+                "limit": FILE_SIZE_LIMIT,
+            })),
+        ));
     }
 
     let cat_cmd = format!("cat {}", shell_escape(&q.path));
     let cat = docker_exec_capture(
-        &state.docker, &cname,
-        vec!["sh".into(), "-c".into(), cat_cmd], None,
-    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        &state.docker,
+        &cname,
+        vec!["sh".into(), "-c".into(), cat_cmd],
+        None,
+    )
+    .await
+    .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     if cat.exit_code != 0 {
-        return Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("read failed: {}", cat.stderr.trim())));
+        return Err(err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("read failed: {}", cat.stderr.trim()),
+        ));
     }
 
     let readonly = is_readonly_path(&q.path) || (mode & 0o200) == 0;
@@ -1275,7 +1483,10 @@ async fn read_file_handler(
         Ok(s) => (s.to_string(), "utf-8"),
         Err(_) => {
             use base64::Engine;
-            (base64::engine::general_purpose::STANDARD.encode(&cat.stdout), "base64")
+            (
+                base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
+                "base64",
+            )
         }
     };
 
@@ -1291,7 +1502,10 @@ async fn read_file_handler(
 }
 
 #[derive(Deserialize)]
-struct WriteFileBody { path: String, content: String }
+struct WriteFileBody {
+    path: String,
+    content: String,
+}
 
 async fn write_file_handler(
     State(state): State<SharedState>,
@@ -1302,7 +1516,8 @@ async fn write_file_handler(
     validate_file_path(&body.path)?;
 
     let cname = docker::container_name(&name);
-    docker::ensure_running(&state.docker, &cname).await
+    docker::ensure_running(&state.docker, &cname)
+        .await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
 
     // The constitution is bind-mounted read-only (the agent cannot edit it), so a user edit
@@ -1330,17 +1545,26 @@ async fn write_file_handler(
     );
 
     let result = docker_exec_capture(
-        &state.docker, &cname,
+        &state.docker,
+        &cname,
         vec!["sh".into(), "-c".into(), write_cmd],
         Some(body.content.into_bytes()),
-    ).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    )
+    .await
+    .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     if result.exit_code != 0 {
         let err = result.stderr.trim();
         if err.contains("Read-only file system") {
-            return Err(err_response(StatusCode::FORBIDDEN, "file is on a read-only filesystem"));
+            return Err(err_response(
+                StatusCode::FORBIDDEN,
+                "file is on a read-only filesystem",
+            ));
         }
-        return Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("write failed: {err}")));
+        return Err(err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("write failed: {err}"),
+        ));
     }
 
     Ok(ok_json())
@@ -1408,10 +1632,17 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
         #[serde(untagged)]
         enum Raw {
             Legacy(u16),
-            Full { port: u16, #[serde(default)] public: bool },
+            Full {
+                port: u16,
+                #[serde(default)]
+                public: bool,
+            },
         }
         match Raw::deserialize(deserializer)? {
-            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false }),
+            Raw::Legacy(port) => Ok(ServiceEntry {
+                port,
+                public: false,
+            }),
             Raw::Full { port, public } => Ok(ServiceEntry { port, public }),
         }
     }
@@ -1483,7 +1714,11 @@ struct AgentSettings {
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { manage_agent_code: true, user_desired: UserDesired::Running, mounts: Vec::new() }
+        Self {
+            manage_agent_code: true,
+            user_desired: UserDesired::Running,
+            mounts: Vec::new(),
+        }
     }
 }
 
@@ -1496,7 +1731,10 @@ impl Settings {
     /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
     /// reconcile) sees grants the same way.
     fn agent_mounts(&self, name: &str) -> Vec<crate::mounts::HostMount> {
-        self.agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default()
+        self.agents
+            .get(name)
+            .map(|s| s.mounts.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -1530,15 +1768,23 @@ impl BackupGlobalSettings {
     fn effective_for(&self, agent: &str) -> (bool, crate::types::RetentionPolicy) {
         let agent_override = self.agents.get(agent);
         (
-            agent_override.and_then(|o| o.enabled).unwrap_or(self.enabled),
-            agent_override.and_then(|o| o.retention).unwrap_or(self.retention),
+            agent_override
+                .and_then(|o| o.enabled)
+                .unwrap_or(self.enabled),
+            agent_override
+                .and_then(|o| o.retention)
+                .unwrap_or(self.retention),
         )
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
-fn default_backup_hour() -> u8 { DEFAULT_AUTO_BACKUP_HOUR }
+fn default_backup_hour() -> u8 {
+    DEFAULT_AUTO_BACKUP_HOUR
+}
 
 fn default_retention() -> crate::types::RetentionPolicy {
     crate::types::RetentionPolicy {
@@ -1639,7 +1885,10 @@ struct RegisterServiceBody {
 
 /// Collect all ports in use across all agents in the service registry.
 fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Vec<u16> {
-    registry.values().flat_map(|services| services.values().map(|e| e.port)).collect()
+    registry
+        .values()
+        .flat_map(|services| services.values().map(|e| e.port))
+        .collect()
 }
 
 /// Upper bound of the kernel's ephemeral source-port range
@@ -1649,7 +1898,11 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 fn ephemeral_port_high() -> u16 {
     std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
-        .and_then(|s| s.split_whitespace().nth(1).and_then(|h| h.parse::<u16>().ok()))
+        .and_then(|s| {
+            s.split_whitespace()
+                .nth(1)
+                .and_then(|h| h.parse::<u16>().ok())
+        })
         .unwrap_or(60999)
 }
 
@@ -1678,7 +1931,9 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     };
     // Preferred: above the ephemeral range, where the port can't be reused as a
     // transient outbound source port between allocation and the caller binding it.
-    let safe_min = ephemeral_port_high().saturating_add(1).max(SERVICE_PORT_MIN);
+    let safe_min = ephemeral_port_high()
+        .saturating_add(1)
+        .max(SERVICE_PORT_MIN);
     // Fallback: the full service range (may still race, but better than failing
     // to allocate when the safe band is exhausted).
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
@@ -1688,7 +1943,9 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
 /// callers always bind the returned port themselves, so a squatter would
 /// trap them in a crash loop. See #371 and #433.
 async fn is_cached_port_reusable(port: u16) -> bool {
-    tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
+    tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .is_ok()
 }
 
 async fn register_service_handler(
@@ -1709,14 +1966,19 @@ async fn register_service_handler(
     }
 
     let docker_name = docker::container_name(&name);
-    let exists = docker::container_status(&state.docker, &docker_name).await != docker::ContainerStatus::NotFound;
+    let exists = docker::container_status(&state.docker, &docker_name).await
+        != docker::ContainerStatus::NotFound;
     if !exists {
         return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found — is the container running? check with: docker ps | grep vesta", name)));
     }
 
     let mut settings = state.settings.write().await;
 
-    let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
+    let cached_port = settings
+        .services
+        .get(&name)
+        .and_then(|s| s.get(&service_name))
+        .map(|e| e.port);
     let port = match cached_port {
         Some(p) if is_cached_port_reusable(p).await => p,
         Some(p) => {
@@ -1726,12 +1988,21 @@ async fn register_service_handler(
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
 
-    let entry = ServiceEntry { port, public: body.public };
-    settings.services.entry(name.clone()).or_default().insert(service_name.clone(), entry);
+    let entry = ServiceEntry {
+        port,
+        public: body.public,
+    };
+    settings
+        .services
+        .entry(name.clone())
+        .or_default()
+        .insert(service_name.clone(), entry);
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
     tracing::info!(agent = %name, service = %service_name, port, public = body.public, "service registered");
-    Ok(Json(serde_json::json!({"ok": true, "port": port, "public": body.public})))
+    Ok(Json(
+        serde_json::json!({"ok": true, "port": port, "public": body.public}),
+    ))
 }
 
 async fn unregister_service_handler(
@@ -1776,7 +2047,9 @@ fn sse_error_event(e: docker::DockerError) -> Event {
 /// disconnects mid-pipeline, hyper drops the stream future, but the spawned task keeps
 /// running to completion so a half-applied destructive step can't strand the agent. On
 /// success the pipeline returns the `done` event's data payload.
-fn spawn_pipeline_sse<Fut>(pipeline: Fut) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>
+fn spawn_pipeline_sse<Fut>(
+    pipeline: Fut,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>
 where
     Fut: std::future::Future<Output = Result<String, docker::DockerError>> + Send + 'static,
 {
@@ -1806,7 +2079,8 @@ async fn create_backup_handler(
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
-        let info = backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
+        let info =
+            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
         Ok(serde_json::to_string(&info).unwrap_or_default())
     })
@@ -1855,7 +2129,15 @@ async fn restore_backup_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)
         };
-        backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code, &user_mounts).await?;
+        backup::restore_backup(
+            &state.docker,
+            &path.name,
+            &path.backup_id,
+            &state.env_config,
+            manage_core_code,
+            &user_mounts,
+        )
+        .await?;
         tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
         Ok(r#"{"ok":true}"#.to_string())
     })
@@ -1908,15 +2190,27 @@ fn apply_backup_update(backup: &mut BackupGlobalSettings, body: &SetBackupSettin
         backup.hour = hour;
     }
     if let Some(ref ret) = body.retention {
-        if let Some(d) = ret.daily { backup.retention.daily = d; }
-        if let Some(w) = ret.weekly { backup.retention.weekly = w; }
-        if let Some(m) = ret.monthly { backup.retention.monthly = m; }
+        if let Some(d) = ret.daily {
+            backup.retention.daily = d;
+        }
+        if let Some(w) = ret.weekly {
+            backup.retention.weekly = w;
+        }
+        if let Some(m) = ret.monthly {
+            backup.retention.monthly = m;
+        }
     }
 }
 
 /// The `{enabled, retention, has_override}` body the per-agent backup GET/PUT/DELETE all return.
-fn agent_backup_json(enabled: bool, retention: crate::types::RetentionPolicy, has_override: bool) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "enabled": enabled, "retention": retention, "has_override": has_override }))
+fn agent_backup_json(
+    enabled: bool,
+    retention: crate::types::RetentionPolicy,
+    has_override: bool,
+) -> Json<serde_json::Value> {
+    Json(
+        serde_json::json!({ "enabled": enabled, "retention": retention, "has_override": has_override }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1935,11 +2229,20 @@ struct RetentionUpdate {
 
 const MIN_RETENTION: usize = 1;
 
-fn validate_retention(update: &RetentionUpdate) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    for (name, val) in [("daily", update.daily), ("weekly", update.weekly), ("monthly", update.monthly)] {
+fn validate_retention(
+    update: &RetentionUpdate,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    for (name, val) in [
+        ("daily", update.daily),
+        ("weekly", update.weekly),
+        ("monthly", update.monthly),
+    ] {
         if let Some(v) = val {
             if v < MIN_RETENTION {
-                return Err(err_response(StatusCode::BAD_REQUEST, &format!("retention.{} must be at least {}", name, MIN_RETENTION)));
+                return Err(err_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("retention.{} must be at least {}", name, MIN_RETENTION),
+                ));
             }
         }
     }
@@ -1976,10 +2279,12 @@ async fn put_gateway_settings_handler(
         }
     }
     let parsed_channel = match body.channel {
-        Some(ref c) => Some(
-            crate::channel::Channel::parse(c)
-                .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "channel must be 'stable' or 'beta'"))?,
-        ),
+        Some(ref c) => Some(crate::channel::Channel::parse(c).ok_or_else(|| {
+            err_response(
+                StatusCode::BAD_REQUEST,
+                "channel must be 'stable' or 'beta'",
+            )
+        })?),
         None => None,
     };
 
@@ -2019,7 +2324,12 @@ async fn put_gateway_settings_handler(
 
 /// Read-only daemon reachability facts surfaced by GET /gateway/info. Pure so the
 /// wire shape is unit-testable without constructing AppState.
-fn gateway_info_json(expose_lan: bool, lan_url: &Option<String>, tunnel_url: &Option<String>, port: u16) -> serde_json::Value {
+fn gateway_info_json(
+    expose_lan: bool,
+    lan_url: &Option<String>,
+    tunnel_url: &Option<String>,
+    port: u16,
+) -> serde_json::Value {
     serde_json::json!({
         "lan": { "exposed": expose_lan, "url": lan_url },
         "tunnel_url": tunnel_url,
@@ -2029,7 +2339,12 @@ fn gateway_info_json(expose_lan: bool, lan_url: &Option<String>, tunnel_url: &Op
 
 async fn gateway_info_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let tunnel_url = state.tunnel_url.lock().await.clone();
-    Json(gateway_info_json(state.expose_lan, &state.lan_url, &tunnel_url, state.https_port))
+    Json(gateway_info_json(
+        state.expose_lan,
+        &state.lan_url,
+        &tunnel_url,
+        state.https_port,
+    ))
 }
 
 // --- Per-agent settings ---
@@ -2068,19 +2383,29 @@ async fn set_agent_backup_settings_handler(
     let global_retention = settings.backup.retention;
     let global_enabled = settings.backup.enabled;
 
-    let entry = settings.backup.agents.entry(name.clone()).or_insert(AgentBackupOverride {
-        enabled: None,
-        retention: None,
-    });
+    let entry = settings
+        .backup
+        .agents
+        .entry(name.clone())
+        .or_insert(AgentBackupOverride {
+            enabled: None,
+            retention: None,
+        });
 
     if let Some(enabled) = body.enabled {
         entry.enabled = Some(enabled);
     }
     if let Some(ret) = body.retention {
         let mut r = entry.retention.unwrap_or(global_retention);
-        if let Some(d) = ret.daily { r.daily = d; }
-        if let Some(w) = ret.weekly { r.weekly = w; }
-        if let Some(m) = ret.monthly { r.monthly = m; }
+        if let Some(d) = ret.daily {
+            r.daily = d;
+        }
+        if let Some(w) = ret.weekly {
+            r.weekly = w;
+        }
+        if let Some(m) = ret.monthly {
+            r.monthly = m;
+        }
         entry.retention = Some(r);
     }
 
@@ -2090,7 +2415,11 @@ async fn set_agent_backup_settings_handler(
     save_settings(&settings);
     tracing::info!(agent = %name, "agent backup settings updated");
 
-    Ok(agent_backup_json(effective_enabled, effective_retention, true))
+    Ok(agent_backup_json(
+        effective_enabled,
+        effective_retention,
+        true,
+    ))
 }
 
 async fn delete_agent_backup_settings_handler(
@@ -2138,34 +2467,56 @@ async fn set_mounts_handler(
     Path(name): Path<String>,
     Json(body): Json<SetMountsBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let inputs: Vec<(String, Option<String>, bool)> =
-        body.mounts.into_iter().map(|m| (m.host_path, m.container_path, m.writable)).collect();
+    let inputs: Vec<(String, Option<String>, bool)> = body
+        .mounts
+        .into_iter()
+        .map(|m| (m.host_path, m.container_path, m.writable))
+        .collect();
     // The agent's already-accepted grant paths grandfather a temporarily-offline existing grant so
     // one missing drive can't reject the whole edit (see mounts::validate_mount).
     let known_host_paths: std::collections::HashSet<String> = {
         let settings = state.settings.read().await;
-        settings.agent_mounts(&name).into_iter().map(|m| m.host_path).collect()
+        settings
+            .agent_mounts(&name)
+            .into_iter()
+            .map(|m| m.host_path)
+            .collect()
     };
     // validate_mounts canonicalizes each host path (blocking std::fs, and a hung network mount can
     // stall for a long time), so run it off the async worker.
-    let validated = tokio::task::spawn_blocking(move || crate::mounts::validate_mounts(&inputs, &known_host_paths))
-        .await
-        .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "mount validation task failed"))?
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))))?;
+    let validated = tokio::task::spawn_blocking(move || {
+        crate::mounts::validate_mounts(&inputs, &known_host_paths)
+    })
+    .await
+    .map_err(|_| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "mount validation task failed",
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+    })?;
     {
         let mut settings = state.settings.write().await;
         settings.agents.entry(name.clone()).or_default().mounts = validated.clone();
         save_settings(&settings);
     }
     tracing::info!(agent = %name, "agent mounts updated");
-    Ok(Json(serde_json::json!({ "mounts": validated, "restart_required": true })))
+    Ok(Json(
+        serde_json::json!({ "mounts": validated, "restart_required": true }),
+    ))
 }
 
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
 /// agent token; an agent must not enumerate the host. The scan is blocking std::fs (and a hung
 /// network mount under one of the roots can stall it), so it runs off the async worker.
-async fn host_folder_suggestions_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+async fn host_folder_suggestions_handler(
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let folders = tokio::task::spawn_blocking(crate::mounts::suggest_host_folders)
         .await
         .map_err(|_| err_response(StatusCode::INTERNAL_SERVER_ERROR, "folder scan task failed"))?;
@@ -2249,7 +2600,6 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
     Ok(file)
 }
 
-
 // --- Router ---
 
 // The request-timeout layer applied to the control/JSON sub-router only. Returns 408 Request
@@ -2268,7 +2618,6 @@ fn longrun_timeout_layer() -> tower_http::timeout::TimeoutLayer {
 }
 
 pub fn build_router(state: SharedState) -> Router {
-
     let vestad_public = Router::new()
         .route("/health", get(health))
         .route("/info", get(info))
@@ -2293,19 +2642,36 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
-        .route("/providers/claude/oauth/start", post(crate::providers::claude::oauth_start_handler))
-        .route("/providers/claude/oauth/complete", post(crate::providers::claude::oauth_complete_handler))
-        .route("/providers/openrouter/models/top", get(crate::providers::openrouter::list_top_models_handler))
-        .route("/providers/openrouter/validate-key", post(crate::providers::openrouter::validate_key_handler))
+        .route(
+            "/providers/claude/oauth/start",
+            post(crate::providers::claude::oauth_start_handler),
+        )
+        .route(
+            "/providers/claude/oauth/complete",
+            post(crate::providers::claude::oauth_complete_handler),
+        )
+        .route(
+            "/providers/openrouter/models/top",
+            get(crate::providers::openrouter::list_top_models_handler),
+        )
+        .route(
+            "/providers/openrouter/validate-key",
+            post(crate::providers::openrouter::validate_key_handler),
+        )
         .route("/agents", get(list_agents_handler))
         .route("/agents/start", post(start_all_handler))
         .route(
             "/agents/{name}",
-            get(agent_status_handler).delete(destroy_agent_handler).patch(rename_agent_handler),
+            get(agent_status_handler)
+                .delete(destroy_agent_handler)
+                .patch(rename_agent_handler),
         )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
-        .route("/agents/{name}/config", put(set_config_handler).get(get_config_handler))
+        .route(
+            "/agents/{name}/config",
+            put(set_config_handler).get(get_config_handler),
+        )
         .route(
             "/agents/{name}/provider",
             get(get_provider_handler)
@@ -2315,19 +2681,40 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/tree", get(tree_handler))
         .route("/agents/{name}/file", get(read_file_handler))
-        .route("/agents/{name}/file", axum::routing::put(write_file_handler))
+        .route(
+            "/agents/{name}/file",
+            axum::routing::put(write_file_handler),
+        )
         .route("/backups", get(list_all_backups_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
-        .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route(
+            "/agents/{name}/backups/{backup_id}",
+            axum::routing::delete(delete_backup_handler),
+        )
         .route("/agents/{name}/constitution", get(get_constitution_handler))
-        .route("/agents/{name}/constitution", axum::routing::put(set_constitution_handler))
+        .route(
+            "/agents/{name}/constitution",
+            axum::routing::put(set_constitution_handler),
+        )
         .route("/agents/{name}/settings", get(get_agent_settings_handler))
-        .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
-        .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
-        .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
+        .route(
+            "/agents/{name}/settings/backup",
+            get(get_agent_backup_settings_handler),
+        )
+        .route(
+            "/agents/{name}/settings/backup",
+            axum::routing::put(set_agent_backup_settings_handler),
+        )
+        .route(
+            "/agents/{name}/settings/backup",
+            axum::routing::delete(delete_agent_backup_settings_handler),
+        )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
-        .route("/gateway/settings", get(get_gateway_settings_handler).put(put_gateway_settings_handler))
+        .route(
+            "/gateway/settings",
+            get(get_gateway_settings_handler).put(put_gateway_settings_handler),
+        )
         .layer(control_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2339,7 +2726,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents", post(create_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .layer(longrun_timeout_layer())
-        .layer(middleware::from_fn_with_state(state.clone(), auth::auth_middleware));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ));
 
     // Streaming and WS routes: long-lived connections (logs `tail -f`, backup create/restore
     // progress SSE, control WS upgrade). These are deliberately EXEMPT from the request timeout
@@ -2347,7 +2737,10 @@ pub fn build_router(state: SharedState) -> Router {
     let vestad_protected_streaming = Router::new()
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
-        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
+        .route(
+            "/agents/{name}/backups/{backup_id}/restore",
+            post(restore_backup_handler),
+        )
         .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2357,7 +2750,10 @@ pub fn build_router(state: SharedState) -> Router {
     // Agent proxy: auth is checked inside the handler — service requests
     // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
     let agents_proxy = Router::new()
-        .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
+        .route(
+            "/agents/{name}/{*path}",
+            any(agent_proxy::agent_proxy_handler),
+        )
         .with_state(state.clone());
 
     // Service registry: mutating endpoints require agent token. The
@@ -2365,10 +2761,19 @@ pub fn build_router(state: SharedState) -> Router {
     // proves itself, vestad signs a server-identity token locally and returns it.
     let agents_services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
-        .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
-        .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
+        .route(
+            "/agents/{name}/services/{service}",
+            axum::routing::delete(unregister_service_handler),
+        )
+        .route(
+            "/agents/{name}/services/{service}/invalidate",
+            post(control_ws::invalidate_service_handler),
+        )
         .route("/agents/{name}/account-token", post(account_token_handler))
-        .route("/agents/{name}/workspace.bundle", get(workspace_bundle_handler))
+        .route(
+            "/agents/{name}/workspace.bundle",
+            get(workspace_bundle_handler),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_agent_token,
@@ -2481,13 +2886,21 @@ fn local_hour() -> u8 {
 /// otherwise double or skip a daily near midnight.
 fn local_date_of_epoch(epoch_secs: u64) -> String {
     let tm = local_tm(epoch_secs);
-    format!("{:04}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday)
+    format!(
+        "{:04}{:02}{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday
+    )
 }
 
 fn spawn_auto_backup_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(AUTO_BACKUP_CHECK_INTERVAL_SECS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(
+                AUTO_BACKUP_CHECK_INTERVAL_SECS,
+            ))
+            .await;
 
             let backup_settings = {
                 let settings = state.settings.read().await;
@@ -2506,7 +2919,11 @@ fn spawn_auto_backup_task(state: SharedState) {
             let target_hour = backup_settings.hour;
             let current_hour = local_hour();
             if current_hour < target_hour {
-                tracing::debug!(current_hour, target_hour, "auto-backup: before daily window, skipping");
+                tracing::debug!(
+                    current_hour,
+                    target_hour,
+                    "auto-backup: before daily window, skipping"
+                );
                 continue;
             }
 
@@ -2541,7 +2958,9 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 }
 
-                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
+                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name)
+                    .await
+                {
                     Ok(b) => b,
                     Err(e) => {
                         tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
@@ -2553,21 +2972,26 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && backup::parse_compact_utc_epoch(&b.created_at).map(local_date_of_epoch).as_deref() == Some(today_local.as_str())
+                        && backup::parse_compact_utc_epoch(&b.created_at)
+                            .map(local_date_of_epoch)
+                            .as_deref()
+                            == Some(today_local.as_str())
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
                 }
 
                 let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= seven_days_ago
+                    b.backup_type == crate::types::BackupType::Weekly
+                        && b.created_at >= seven_days_ago
                 });
                 if !has_recent_weekly {
                     needed.push(crate::types::BackupType::Weekly);
                 }
 
                 let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= thirty_days_ago
+                    b.backup_type == crate::types::BackupType::Monthly
+                        && b.created_at >= thirty_days_ago
                 });
                 if !has_recent_monthly {
                     needed.push(crate::types::BackupType::Monthly);
@@ -2582,7 +3006,9 @@ fn spawn_auto_backup_task(state: SharedState) {
                         }
                     };
                     tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
-                    for (bt, result) in backup::create_backups_batch(&state.docker, name, needed).await {
+                    for (bt, result) in
+                        backup::create_backups_batch(&state.docker, name, needed).await
+                    {
                         match result {
                             Ok(info) => {
                                 tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
@@ -2618,8 +3044,15 @@ fn spawn_update_check_task(state: SharedState) {
                     // and restarts the systemd service on success — replacing this
                     // process — so control may never return past this call.
                     if update_available && state.settings.read().await.auto_update {
-                        tracing::info!(channel = channel.as_str(), "auto-update: newer release available, applying");
-                        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+                        tracing::info!(
+                            channel = channel.as_str(),
+                            "auto-update: newer release available, applying"
+                        );
+                        match tokio::task::spawn_blocking(move || {
+                            self_update::perform_update(channel)
+                        })
+                        .await
+                        {
                             Ok(Ok(outcome)) => tracing::info!(
                                 updated = outcome.updated,
                                 restarted = outcome.restarted,
@@ -2635,7 +3068,10 @@ fn spawn_update_check_task(state: SharedState) {
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(
+                update_check::CHECK_INTERVAL_SECS,
+            ))
+            .await;
         }
     });
 }
@@ -2685,7 +3121,11 @@ pub async fn run_server(cfg: ServerConfig) {
     }
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
-        mode = if cfg!(debug_assertions) { "dev" } else { "prod" },
+        mode = if cfg!(debug_assertions) {
+            "dev"
+        } else {
+            "prod"
+        },
         "agent code embedded in binary",
     );
     // Capture whether this boot will deliver new agent code BEFORE extracting it: a re-extract
@@ -2708,7 +3148,16 @@ pub async fn run_server(cfg: ServerConfig) {
         std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
-    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port, expose_lan, lan_url));
+    let state = Arc::new(AppState::new(
+        api_key,
+        env_config,
+        docker.clone(),
+        tunnel_url,
+        dev_mode,
+        port,
+        expose_lan,
+        lan_url,
+    ));
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -2721,7 +3170,12 @@ pub async fn run_server(cfg: ServerConfig) {
             &move |name| agent_settings.get(name).is_none_or(|s| s.manage_agent_code),
             // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
             // during the slow reconcile window would otherwise be reverted by the start/stop step.
-            &|name| load_settings().agents.get(name).is_none_or(|s| s.user_desired == UserDesired::Running),
+            &|name| {
+                load_settings()
+                    .agents
+                    .get(name)
+                    .is_none_or(|s| s.user_desired == UserDesired::Running)
+            },
             // Mount grants are also read LIVE so a grant added/removed during the reconcile window
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
@@ -2776,9 +3230,12 @@ pub async fn run_server(cfg: ServerConfig) {
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {
-        axum::serve(http_listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-            .await
-            .expect("http server failed");
+        axum::serve(
+            http_listener,
+            http_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .expect("http server failed");
     });
 
     let https_handle = tokio::spawn(async move {
@@ -2877,7 +3334,8 @@ mod tests {
     #[test]
     fn settings_missing_auto_update_field_deserializes_true() {
         // A settings.json written before auto_update existed has no such key.
-        let s: super::Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
+        let s: super::Settings =
+            serde_json::from_str("{}").expect("empty object is valid Settings");
         assert!(s.auto_update);
     }
 
@@ -2898,7 +3356,8 @@ mod tests {
 
     #[test]
     fn settings_missing_expose_lan_field_deserializes_false() {
-        let s: super::Settings = serde_json::from_str("{}").expect("empty object is valid Settings");
+        let s: super::Settings =
+            serde_json::from_str("{}").expect("empty object is valid Settings");
         assert!(!s.expose_lan);
     }
 
@@ -2914,7 +3373,10 @@ mod tests {
 
     #[test]
     fn agent_settings_default_user_desired_running() {
-        assert_eq!(super::AgentSettings::default().user_desired, super::UserDesired::Running);
+        assert_eq!(
+            super::AgentSettings::default().user_desired,
+            super::UserDesired::Running
+        );
     }
 
     #[test]
@@ -2933,7 +3395,10 @@ mod tests {
             mounts: Vec::new(),
         };
         let json = serde_json::to_string(&s).expect("serialize");
-        assert!(json.contains(r#""user_desired":"stopped""#), "serialized as: {json}");
+        assert!(
+            json.contains(r#""user_desired":"stopped""#),
+            "serialized as: {json}"
+        );
         let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.user_desired, super::UserDesired::Stopped);
     }
@@ -2969,7 +3434,8 @@ mod tests {
     #[test]
     fn rename_notification_payload_carries_both_names_and_rfc3339_timestamp() {
         // Fixed epoch -> deterministic RFC3339 timestamp, no wall clock.
-        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000).expect("payload");
+        let payload = super::rename_notification_payload("old-bot", "new-bot", 1_700_000_000)
+            .expect("payload");
         assert_eq!(payload["source"], "vestad");
         assert_eq!(payload["type"], "rename");
         assert_eq!(payload["interrupt"], true);
@@ -2977,8 +3443,14 @@ mod tests {
         assert_eq!(payload["new_name"], "new-bot");
         assert_eq!(payload["timestamp"], "2023-11-14T22:13:20Z");
         let message = payload["message"].as_str().expect("message is a string");
-        assert!(message.contains("old-bot"), "message missing old name: {message}");
-        assert!(message.contains("new-bot"), "message missing new name: {message}");
+        assert!(
+            message.contains("old-bot"),
+            "message missing old name: {message}"
+        );
+        assert!(
+            message.contains("new-bot"),
+            "message missing new name: {message}"
+        );
     }
 
     // --- Workspace bundle: 404 before first build, bytes after ---
@@ -2995,7 +3467,9 @@ mod tests {
         std::fs::write(&bundle, b"BUNDLEBYTES").expect("write bundle");
         let served = super::workspace_bundle_response(tmp.path()).await;
         assert_eq!(served.status(), super::StatusCode::OK);
-        let body = axum::body::to_bytes(served.into_body(), usize::MAX).await.expect("body");
+        let body = axum::body::to_bytes(served.into_body(), usize::MAX)
+            .await
+            .expect("body");
         assert_eq!(&body[..], b"BUNDLEBYTES");
     }
 
@@ -3005,7 +3479,9 @@ mod tests {
     // no timeout on the streaming/WS class. A short deadline keeps the test fast while exercising
     // the real tower-http TimeoutLayer (the production 408-producing mechanism).
     async fn serve_router(router: axum::Router) -> (u16, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         let handle = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -3062,7 +3538,9 @@ mod tests {
         let fast = || async { "ok" };
         let timed = axum::Router::new()
             .route("/control", axum::routing::get(fast))
-            .layer(super::request_timeout_layer(std::time::Duration::from_secs(5)));
+            .layer(super::request_timeout_layer(
+                std::time::Duration::from_secs(5),
+            ));
         let (port, handle) = serve_router(timed).await;
 
         let response = reqwest::Client::new()
@@ -3096,9 +3574,17 @@ mod tests {
         let (port, handle) = serve_router(router).await;
         let client = reqwest::Client::new();
 
-        let timed = client.post(format!("http://127.0.0.1:{}/control", port)).send().await.unwrap();
+        let timed = client
+            .post(format!("http://127.0.0.1:{}/control", port))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(timed.status(), reqwest::StatusCode::REQUEST_TIMEOUT);
-        let long = client.post(format!("http://127.0.0.1:{}/longrun", port)).send().await.unwrap();
+        let long = client
+            .post(format!("http://127.0.0.1:{}/longrun", port))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(long.status(), reqwest::StatusCode::OK);
 
         const { assert!(super::LONGRUN_REQUEST_TIMEOUT_SECS > super::CONTROL_REQUEST_TIMEOUT_SECS) };
@@ -3110,7 +3596,10 @@ mod tests {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        assert!(is_cached_port_reusable(port).await, "a free port must be reusable");
+        assert!(
+            is_cached_port_reusable(port).await,
+            "a free port must be reusable"
+        );
     }
 
     // Regression for #433.
@@ -3133,8 +3622,8 @@ mod tests {
     // either side fails CI instead of breaking clients at runtime.
 
     use super::{ServiceEntry, TreeEntry};
-    use crate::providers::claude::OAuthStartResponse;
     use crate::docker::{AgentStatus, ListEntry, StartAllResult, StatusJson};
+    use crate::providers::claude::OAuthStartResponse;
     use crate::types::{BackupInfo, BackupType};
     use std::collections::HashMap;
 
@@ -3156,21 +3645,38 @@ mod tests {
         // Feeds both the plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`)
         // and, further below, the control WS "agents" message built by the production code path.
         let agents = vec![
-            ListEntry { name: "sample-agent".into(), status: AgentStatus::Alive, ws_port: 4200, started_at: Some("2026-01-01T00:00:00Z".into()) },
-            ListEntry { name: "stopped-agent".into(), status: AgentStatus::Stopped, ws_port: 4201, started_at: None },
+            ListEntry {
+                name: "sample-agent".into(),
+                status: AgentStatus::Alive,
+                ws_port: 4200,
+                started_at: Some("2026-01-01T00:00:00Z".into()),
+            },
+            ListEntry {
+                name: "stopped-agent".into(),
+                status: AgentStatus::Stopped,
+                ws_port: 4201,
+                started_at: None,
+            },
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
         let mut activity = HashMap::new();
         activity.insert("sample-agent".to_string(), "thinking".to_string());
         let mut agent_services = HashMap::new();
-        agent_services.insert("dashboard".to_string(), ServiceEntry { port: 8080, public: true });
+        agent_services.insert(
+            "dashboard".to_string(),
+            ServiceEntry {
+                port: 8080,
+                public: true,
+            },
+        );
         let mut services = HashMap::new();
         services.insert("sample-agent".to_string(), agent_services);
         let mut agent_revs = HashMap::new();
         agent_revs.insert("dashboard".to_string(), 3u64);
         let mut revs = HashMap::new();
         revs.insert("sample-agent".to_string(), agent_revs);
-        let agents_ws_message = crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
+        let agents_ws_message =
+            crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
@@ -3280,13 +3786,15 @@ mod tests {
              // Checked by apps/web/src/lib/api-contract.test.ts against the web's TypeScript types.\n\
              export const vestadApiFixtures = {json} as const;\n"
         );
-        let ts_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/web/src/lib/vestad-api-fixtures.ts");
+        let ts_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/web/src/lib/vestad-api-fixtures.ts");
         sync_fixture_file(&ts_path, &ts_content, regen);
 
         // Same fixtures, plain JSON: cli/src/client.rs deserializes it into the CLI's own
         // response types so a wire rename breaks CI there too, not just for the web app.
         let cli_content = format!("{json}\n");
-        let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/vestad-api.json");
+        let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../cli/tests/fixtures/vestad-api.json");
         sync_fixture_file(&cli_path, &cli_content, regen);
     }
 }
@@ -3302,8 +3810,14 @@ mod gateway_settings_tests {
         assert_eq!(value["auto_update"], serde_json::json!(true));
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
-        assert_eq!(value["auto_backup"]["hour"], serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR));
-        assert_eq!(value["auto_backup"]["retention"]["daily"], serde_json::json!(backup::DEFAULT_RETENTION_DAILY));
+        assert_eq!(
+            value["auto_backup"]["hour"],
+            serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR)
+        );
+        assert_eq!(
+            value["auto_backup"]["retention"]["daily"],
+            serde_json::json!(backup::DEFAULT_RETENTION_DAILY)
+        );
     }
 
     #[test]
@@ -3313,13 +3827,24 @@ mod gateway_settings_tests {
         let body = SetBackupSettingsBody {
             enabled: Some(false),
             hour: None,
-            retention: Some(RetentionUpdate { daily: Some(9), weekly: None, monthly: None }),
+            retention: Some(RetentionUpdate {
+                daily: Some(9),
+                weekly: None,
+                monthly: None,
+            }),
         };
         apply_backup_update(&mut backup, &body);
         assert!(!backup.enabled, "enabled should be updated");
-        assert_eq!(backup.hour, original_hour, "hour absent in body must be unchanged");
+        assert_eq!(
+            backup.hour, original_hour,
+            "hour absent in body must be unchanged"
+        );
         assert_eq!(backup.retention.daily, 9, "daily should be updated");
-        assert_eq!(backup.retention.weekly, default_retention().weekly, "weekly absent must be unchanged");
+        assert_eq!(
+            backup.retention.weekly,
+            default_retention().weekly,
+            "weekly absent must be unchanged"
+        );
     }
 
     #[test]
@@ -3331,8 +3856,14 @@ mod gateway_settings_tests {
             7777,
         );
         assert_eq!(exposed["lan"]["exposed"], serde_json::json!(true));
-        assert_eq!(exposed["lan"]["url"], serde_json::json!("https://192.168.1.4:7777"));
-        assert_eq!(exposed["tunnel_url"], serde_json::json!("https://x.trycloudflare.com"));
+        assert_eq!(
+            exposed["lan"]["url"],
+            serde_json::json!("https://192.168.1.4:7777")
+        );
+        assert_eq!(
+            exposed["tunnel_url"],
+            serde_json::json!("https://x.trycloudflare.com")
+        );
         assert_eq!(exposed["port"], serde_json::json!(7777));
 
         let off = gateway_info_json(false, &None, &None, 7777);
@@ -3395,7 +3926,10 @@ mod restart_detach_tests {
 
         // Once the op is running, drop the request future — as hyper does when the loopback client dies.
         op_started.notified().await;
-        assert!(!completed.load(Ordering::SeqCst), "op should still be in flight");
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "op should still be in flight"
+        );
         request.abort();
 
         // The detached op must still finish despite the dropped request.
@@ -3406,6 +3940,9 @@ mod restart_detach_tests {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(completed.load(Ordering::SeqCst), "detached op must run to completion after request dropped");
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "detached op must run to completion after request dropped"
+        );
     }
 }

@@ -112,8 +112,8 @@ pub fn uninstall() -> Result<(), String> {
 }
 
 pub fn wait_for_start() -> Result<(), String> {
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_millis(SERVICE_STARTUP_WAIT_MS);
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(SERVICE_STARTUP_WAIT_MS);
 
     while std::time::Instant::now() < deadline {
         if is_active() {
@@ -167,12 +167,22 @@ pub fn exec_journal(lines: usize, follow: bool) -> ! {
 
 pub fn main_pid() -> Option<u32> {
     let output = Command::new("systemctl")
-        .args(["--user", "show", SERVICE_NAME, "--property=MainPID", "--value"])
+        .args([
+            "--user",
+            "show",
+            SERVICE_NAME,
+            "--property=MainPID",
+            "--value",
+        ])
         .output()
         .ok()?;
     let pid_str = String::from_utf8_lossy(&output.stdout);
     let pid: u32 = pid_str.trim().parse().ok()?;
-    if pid == 0 { None } else { Some(pid) }
+    if pid == 0 {
+        None
+    } else {
+        Some(pid)
+    }
 }
 
 fn run_systemctl(args: &[&str]) -> Result<(), String> {
@@ -197,11 +207,7 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
                 output.status.code().unwrap_or(-1)
             ))
         } else {
-            Err(format!(
-                "systemctl {} failed: {}",
-                args.join(" "),
-                detail
-            ))
+            Err(format!("systemctl {} failed: {}", args.join(" "), detail))
         }
     }
 }
@@ -213,13 +219,22 @@ mod tests {
     #[test]
     fn journal_args_scope_the_vestad_unit_and_forward_follow() {
         let args = journal_args(500, true);
-        assert!(args.iter().any(|arg| arg == SERVICE_NAME), "must scope to the vestad unit");
-        assert!(args.iter().any(|arg| arg == "-f"), "follow flag must be forwarded");
+        assert!(
+            args.iter().any(|arg| arg == SERVICE_NAME),
+            "must scope to the vestad unit"
+        );
+        assert!(
+            args.iter().any(|arg| arg == "-f"),
+            "follow flag must be forwarded"
+        );
     }
 
     #[test]
     fn journal_args_omit_follow_when_not_following() {
         let args = journal_args(100, false);
-        assert!(!args.iter().any(|arg| arg == "-f"), "no follow flag without follow");
+        assert!(
+            !args.iter().any(|arg| arg == "-f"),
+            "no follow flag without follow"
+        );
     }
 }

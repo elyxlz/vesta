@@ -3,9 +3,10 @@ use std::fs::File;
 use bollard::Docker;
 
 use crate::docker::{
-    container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    ensure_container_removed, env_file_names, read_env_value, start_container, stop_container_with_timeout, validate_name,
-    write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
+    container_created, container_name, container_size_root_fs, container_size_rw, container_status,
+    create_container, ensure_container_removed, env_file_names, guard_alive, read_env_value,
+    start_container, stop_container_with_timeout, validate_name, write_pending_restart_reason,
+    AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -49,7 +50,10 @@ async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<()
     } else {
         container_size_root_fs(docker, cname).await.unwrap_or(0)
     };
-    let required = std::cmp::max(container_size + DISK_SPACE_MARGIN_BYTES, MIN_DISK_SPACE_BYTES);
+    let required = std::cmp::max(
+        container_size + DISK_SPACE_MARGIN_BYTES,
+        MIN_DISK_SPACE_BYTES,
+    );
 
     if available < required {
         let avail_mb = available / 1_000_000;
@@ -91,11 +95,8 @@ pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
 
 /// Parse an RFC3339 timestamp (e.g. "2026-04-07T13:11:12.123Z") to unix epoch seconds.
 fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
-    let dt = time::OffsetDateTime::parse(
-        ts.trim(),
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()?;
+    let dt = time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339)
+        .ok()?;
     Some(dt.unix_timestamp() as u64)
 }
 
@@ -123,7 +124,9 @@ where
         // error can be client-side after dockerd already stopped the container, so
         // best-effort resume first: skipping the backup is correct, stranding the agent
         // down until the next vestad boot is not.
-        if let Err(err) = stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await {
+        if let Err(err) =
+            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await
+        {
             start_container(docker, &cname).await;
             return Err(err);
         }
@@ -150,7 +153,9 @@ fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
     match backup_type {
         BackupType::Manual => "backup: you were paused for a manual backup",
         BackupType::PreRestore => "backup: you were paused for a safety backup before a restore",
-        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => SCHEDULED_BACKUP_RESUME_REASON,
+        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => {
+            SCHEDULED_BACKUP_RESUME_REASON
+        }
     }
 }
 
@@ -159,19 +164,7 @@ fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
 async fn backup_preflight(docker: &Docker, name: &str) -> Result<ContainerStatus, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => {
-            return Err(DockerError::NotFound(format!("agent '{}' not found", name)))
-        }
-        ContainerStatus::Dead => {
-            return Err(DockerError::BrokenState(format!(
-                "agent '{}' is in a broken state",
-                name
-            )))
-        }
-        _ => {}
-    }
+    let cs = guard_alive(container_status(docker, &cname).await, name)?;
     check_disk_space(docker, name, &cname).await?;
     Ok(cs)
 }
@@ -184,10 +177,16 @@ pub async fn create_backup(
 ) -> Result<BackupInfo, DockerError> {
     let cs = backup_preflight(docker, name).await?;
 
-    let result = with_container_paused(docker, name, cs, backup_resume_reason(&backup_type), || async {
-        tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
-        crate::restic::snapshot(name, &backup_type).await
-    })
+    let result = with_container_paused(
+        docker,
+        name,
+        cs,
+        backup_resume_reason(&backup_type),
+        || async {
+            tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
+            crate::restic::snapshot(name, &backup_type).await
+        },
+    )
     .await
     .and_then(std::convert::identity);
 
@@ -208,12 +207,11 @@ pub async fn create_backups_batch(
     name: &str,
     types: Vec<BackupType>,
 ) -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-    let fail_all =
-        |types: Vec<BackupType>,
-         e: DockerError|
-         -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-            types.into_iter().map(|bt| (bt, Err(e.clone()))).collect()
-        };
+    let fail_all = |types: Vec<BackupType>,
+                    e: DockerError|
+     -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
+        types.into_iter().map(|bt| (bt, Err(e.clone()))).collect()
+    };
 
     if types.is_empty() {
         return Vec::new();
@@ -250,7 +248,10 @@ pub async fn create_backups_batch(
 /// is the env file vestad writes at creation (the durable record), not the
 /// container: an agent whose container is currently absent, e.g. mid recovery from
 /// a failed restore, still lists.
-pub async fn list_backups(agents_dir: &std::path::Path, name: &str) -> Result<Vec<BackupInfo>, DockerError> {
+pub async fn list_backups(
+    agents_dir: &std::path::Path,
+    name: &str,
+) -> Result<Vec<BackupInfo>, DockerError> {
     validate_name(name)?;
     if !env_file_names(agents_dir).iter().any(|owned| owned == name) {
         return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
@@ -291,7 +292,10 @@ pub async fn restore_backup(
     // still restore instead of being locked out by the failure it's recovering from.
     let backups = list_backups(&env_config.agents_dir, name).await?;
     if !backups.iter().any(|b| b.id == backup_id) {
-        return Err(DockerError::NotFound(format!("backup '{}' not found", backup_id)));
+        return Err(DockerError::NotFound(format!(
+            "backup '{}' not found",
+            backup_id
+        )));
     }
 
     let status = container_status(docker, &cname).await;
@@ -300,14 +304,18 @@ pub async fn restore_backup(
     if container_present {
         // Stop once, take safety backup, then remove — avoids a redundant stop/start cycle.
         if status == ContainerStatus::Running {
-            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
+            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS)
+                .await
+                .ok();
         }
         tracing::info!(agent = %name, "creating pre-restore safety backup");
         if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore).await {
             if status == ContainerStatus::Running {
                 start_container(docker, &cname).await;
             }
-            return Err(DockerError::Failed(format!("pre-restore safety backup failed: {e}")));
+            return Err(DockerError::Failed(format!(
+                "pre-restore safety backup failed: {e}"
+            )));
         }
         // Confirm it's actually gone (don't swallow): docker rm can return before the name frees,
         // and a create colliding on the name would delete the env file while the old container
@@ -327,7 +335,17 @@ pub async fn restore_backup(
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "restoring snapshot into image");
     let image = crate::restic::restore_to_image(name, backup_id).await?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, user_mounts).await?;
+    create_container(
+        docker,
+        &cname,
+        &image,
+        port,
+        name,
+        env_config,
+        manage_core_code,
+        user_mounts,
+    )
+    .await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed("failed to start restored agent".into()));
@@ -385,11 +403,7 @@ pub fn compute_backups_to_delete(
 
 /// Run retention cleanup for an agent's auto-backups.
 /// Pass existing backups list to avoid a redundant snapshot listing.
-pub async fn cleanup_backups(
-    name: &str,
-    backups: &[BackupInfo],
-    retention: &RetentionPolicy,
-) {
+pub async fn cleanup_backups(name: &str, backups: &[BackupInfo], retention: &RetentionPolicy) {
     let to_delete = compute_backups_to_delete(backups, retention);
     if to_delete.is_empty() {
         return;
@@ -420,16 +434,28 @@ mod tests {
         // the create collide on the name after the env file was already rewritten (docker rm can
         // return before the name frees, or fail transiently), same failure mode as rebuild_agent.
         let src = include_str!("backup.rs");
-        let restore_start = src.find("pub async fn restore_backup").expect("restore_backup present");
-        let delete_start = src.find("pub async fn delete_backup").expect("delete_backup present");
-        assert!(restore_start < delete_start, "restore_backup must appear before delete_backup for this test to slice correctly");
+        let restore_start = src
+            .find("pub async fn restore_backup")
+            .expect("restore_backup present");
+        let delete_start = src
+            .find("pub async fn delete_backup")
+            .expect("delete_backup present");
+        assert!(
+            restore_start < delete_start,
+            "restore_backup must appear before delete_backup for this test to slice correctly"
+        );
         let restore_body = &src[restore_start..delete_start];
 
         let remove_pos = restore_body
             .find("ensure_container_removed")
             .expect("restore_backup must confirm the old container is gone via ensure_container_removed before recreating");
-        let create_pos = restore_body.find("create_container").expect("create_container must be called in restore_backup");
-        assert!(remove_pos < create_pos, "restore_backup must remove the old container before creating the new one");
+        let create_pos = restore_body
+            .find("create_container")
+            .expect("create_container must be called in restore_backup");
+        assert!(
+            remove_pos < create_pos,
+            "restore_backup must remove the old container before creating the new one"
+        );
         assert!(
             !restore_body.contains("remove_container_force"),
             "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"

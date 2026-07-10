@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
-use vesta_tests::{agent_container_name, exec_in_container, TestAgent, SERVER, SHARED_RO_AGENT, is_up, unique_agent};
 use vesta_tests::types::BackupType;
+use vesta_tests::{
+    agent_container_name, exec_in_container, is_up, unique_agent, TestAgent, SERVER,
+    SHARED_RO_AGENT,
+};
 
 const EVENTS_DB_POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const EVENTS_DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -15,7 +18,10 @@ fn wait_for_events_db(cname: &str) {
             return;
         }
         if Instant::now() >= deadline {
-            panic!("events.db did not appear in {cname} within {}s", EVENTS_DB_POLL_TIMEOUT.as_secs());
+            panic!(
+                "events.db did not appear in {cname} within {}s",
+                EVENTS_DB_POLL_TIMEOUT.as_secs()
+            );
         }
         std::thread::sleep(EVENTS_DB_POLL_INTERVAL);
     }
@@ -67,7 +73,11 @@ fn backup_restore() {
     c.restore_backup(&agent.name, &backup.id).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert!(is_up(&st.status), "expected up after restore, got {}", st.status);
+    assert!(
+        is_up(&st.status),
+        "expected up after restore, got {}",
+        st.status
+    );
 
     let backups = c.list_backups(&agent.name).unwrap();
     for b in &backups {
@@ -84,7 +94,8 @@ fn backup_restore_round_trips_data() {
     let cname = agent_container_name(&agent.name);
     wait_for_events_db(&cname);
 
-    exec_in_container(&cname, "echo roundtrip-marker-abc123 > /root/marker.txt").expect("write marker");
+    exec_in_container(&cname, "echo roundtrip-marker-abc123 > /root/marker.txt")
+        .expect("write marker");
     exec_in_container(
         &cname,
         "cat > /root/roundtrip_insert.py <<'EOF'\n\
@@ -106,10 +117,19 @@ EOF\n\
     c.restore_backup(&agent.name, &backup.id).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert!(is_up(&st.status), "expected up after restore, got {}", st.status);
+    assert!(
+        is_up(&st.status),
+        "expected up after restore, got {}",
+        st.status
+    );
 
-    let marker = exec_in_container(&cname, "cat /root/marker.txt").expect("read marker after restore");
-    assert_eq!(marker.trim(), "roundtrip-marker-abc123", "marker file must round-trip through backup/restore");
+    let marker =
+        exec_in_container(&cname, "cat /root/marker.txt").expect("read marker after restore");
+    assert_eq!(
+        marker.trim(),
+        "roundtrip-marker-abc123",
+        "marker file must round-trip through backup/restore"
+    );
 
     let check = exec_in_container(
         &cname,
@@ -147,7 +167,10 @@ fn backup_restore_creates_safety_snapshot() {
     let pre_restore = backups
         .iter()
         .find(|b| b.backup_type == BackupType::PreRestore);
-    assert!(pre_restore.is_some(), "expected a pre-restore safety backup");
+    assert!(
+        pre_restore.is_some(),
+        "expected a pre-restore safety backup"
+    );
 
     for b in &backups {
         c.delete_backup(&agent.name, &b.id).ok();

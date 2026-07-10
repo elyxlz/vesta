@@ -13,7 +13,10 @@ use tokio::time::Instant;
 
 use crate::auth;
 use crate::docker;
-use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES, WS_KEEPALIVE_INTERVAL_SECS};
+use crate::serve::{
+    err_response, map_docker_err, ServiceEntry, SharedState, PROXY_MAX_BODY_BYTES,
+    WS_KEEPALIVE_INTERVAL_SECS,
+};
 
 // When a freshly-registered service is still binding its port (e.g. `vite preview`
 // takes a couple of seconds), wait briefly for the upstream to start accepting
@@ -27,7 +30,10 @@ async fn wait_for_upstream(port: u16, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     let mut delay = UPSTREAM_READY_POLL_INITIAL;
     loop {
-        if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await.is_ok() {
+        if TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
+        {
             return;
         }
         let now = Instant::now();
@@ -46,7 +52,11 @@ async fn resolve_service(
     service_name: &str,
 ) -> Option<ServiceEntry> {
     let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).copied()
+    settings
+        .services
+        .get(agent_name)?
+        .get(service_name)
+        .copied()
 }
 
 /// Split the axum-captured `{*path}` tail into `(first_segment, forwarded_subpath)`.
@@ -62,7 +72,11 @@ fn split_service_subpath(path: &str) -> (&str, &str) {
         return ("", "/");
     }
     let rest = &path[first.len()..];
-    if rest.is_empty() { (first, "/") } else { (first, rest) }
+    if rest.is_empty() {
+        (first, "/")
+    } else {
+        (first, rest)
+    }
 }
 
 pub async fn agent_proxy_handler(
@@ -78,10 +92,17 @@ pub async fn agent_proxy_handler(
     let lock = state.agent_lock(&name).await;
     let guard = lock.read_owned().await;
 
-    docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
-    let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
-    let agent_port = agent_port
-        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
+    docker::ensure_running(&state.docker, &cname)
+        .await
+        .map_err(map_docker_err)?;
+    let (agent_port, agent_token) =
+        docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
+    let agent_port = agent_port.ok_or_else(|| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/",
+        )
+    })?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
     let resolved = if first_segment.is_empty() {
@@ -97,7 +118,10 @@ pub async fn agent_proxy_handler(
     // Public services are fully open; everything else requires auth.
     let is_public = service.as_ref().is_some_and(|s| s.public);
     if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
-        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
+        return Err(err_response(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized — pass a valid Bearer token or ?token= query parameter",
+        ));
     }
 
     let mut target_path = stripped_path;
@@ -137,23 +161,41 @@ pub async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let token = if is_public { None } else { agent_token.as_deref() };
+        let token = if is_public {
+            None
+        } else {
+            agent_token.as_deref()
+        };
         if is_registered_service {
             wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
         }
-        forward_http_to_container(&state.http_client, target_port, &target_path, request, token)
-            .await
+        forward_http_to_container(
+            &state.http_client,
+            target_port,
+            &target_path,
+            request,
+            token,
+        )
+        .await
     }
 }
 
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str, agent_token: Option<&str>) {
+async fn ws_proxy(
+    client_ws: axum::extract::ws::WebSocket,
+    agent_port: u16,
+    path: &str,
+    agent_token: Option<&str>,
+) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     let url = if let Some(token) = agent_token {
         let sep = if path.contains('?') { "&" } else { "?" };
-        format!("ws://localhost:{}{}{}agent_token={}", agent_port, path, sep, token)
+        format!(
+            "ws://localhost:{}{}{}agent_token={}",
+            agent_port, path, sep, token
+        )
     } else {
         format!("ws://localhost:{}{}", agent_port, path)
     };
@@ -212,8 +254,8 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
     keepalive: Duration,
 ) where
     ClientSink: futures_util::Sink<axum::extract::ws::Message> + Unpin,
-    AgentStream:
-        futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, AgentErr>> + Unpin,
+    AgentStream: futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, AgentErr>>
+        + Unpin,
 {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
@@ -267,7 +309,10 @@ async fn forward_http_to_container(
     let mut req_builder = client.request(method, &url);
     for (name, value) in parts.headers.iter() {
         let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
+        if matches!(
+            n.as_str(),
+            "host" | "connection" | "transfer-encoding" | "content-length"
+        ) {
             continue;
         }
         req_builder = req_builder.header(name.as_str(), value.as_bytes());
@@ -282,16 +327,22 @@ async fn forward_http_to_container(
     let upstream = req_builder.send().await.map_err(|e| {
         err_response(
             StatusCode::BAD_GATEWAY,
-            &format!("container unreachable on port {} ({}): {} — is the service running?", port, target_path, e),
+            &format!(
+                "container unreachable on port {} ({}): {} — is the service running?",
+                port, target_path, e
+            ),
         )
     })?;
 
-    let status = StatusCode::from_u16(upstream.status().as_u16())
-        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
     for (name, value) in upstream.headers().iter() {
         let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
+        if matches!(
+            n.as_str(),
+            "transfer-encoding" | "connection" | "content-length"
+        ) {
             continue;
         }
         builder = builder.header(name.as_str(), value.as_bytes());
@@ -299,9 +350,12 @@ async fn forward_http_to_container(
 
     let stream = upstream.bytes_stream();
     let body = Body::from_stream(stream);
-    builder
-        .body(body)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
+    builder.body(body).map_err(|e| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("build response: {}", e),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -342,11 +396,20 @@ mod tests {
         let start = Instant::now();
         let first = rx.recv().await.expect("first keepalive ping");
         let second = rx.recv().await.expect("second keepalive ping");
-        assert!(matches!(first, AxumMsg::Ping(_)), "expected a ping, got {first:?}");
-        assert!(matches!(second, AxumMsg::Ping(_)), "expected a ping, got {second:?}");
+        assert!(
+            matches!(first, AxumMsg::Ping(_)),
+            "expected a ping, got {first:?}"
+        );
+        assert!(
+            matches!(second, AxumMsg::Ping(_)),
+            "expected a ping, got {second:?}"
+        );
         // First ping waits a full interval (the immediate tick is dropped), two pings ~= 2 intervals.
         let elapsed = start.elapsed();
-        assert!(elapsed >= keepalive, "first ping fired too early: {elapsed:?}");
+        assert!(
+            elapsed >= keepalive,
+            "first ping fired too early: {elapsed:?}"
+        );
         assert!(elapsed < keepalive * 6, "pings too slow: {elapsed:?}");
 
         pump.abort();
@@ -361,7 +424,10 @@ mod tests {
         pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
 
         // The Close is consumed (not forwarded) and the pump has returned, so the channel is empty/closed.
-        assert!(rx.try_recv().is_err(), "Close frame should not be forwarded to the client");
+        assert!(
+            rx.try_recv().is_err(),
+            "Close frame should not be forwarded to the client"
+        );
     }
 
     #[tokio::test]
@@ -372,21 +438,31 @@ mod tests {
         pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
 
         let forwarded = rx.try_recv().expect("text frame forwarded");
-        assert!(matches!(forwarded, AxumMsg::Text(ref t) if t.as_str() == "hello"), "got {forwarded:?}");
+        assert!(
+            matches!(forwarded, AxumMsg::Text(ref t) if t.as_str() == "hello"),
+            "got {forwarded:?}"
+        );
     }
 
     #[test]
     fn splits_service_name_from_forwarded_subpath() {
         // (path, expected service, expected subpath)
         let cases = [
-            ("dashboard/assets/index-abc.js", ("dashboard", "/assets/index-abc.js")),
+            (
+                "dashboard/assets/index-abc.js",
+                ("dashboard", "/assets/index-abc.js"),
+            ),
             ("dashboard/a/b/c/d.png", ("dashboard", "/a/b/c/d.png")),
             ("dashboard/", ("dashboard", "/")),
             ("dashboard", ("dashboard", "/")),
             ("", ("", "/")),
         ];
         for (path, expected) in cases {
-            assert_eq!(split_service_subpath(path), expected, "split_service_subpath({path:?})");
+            assert_eq!(
+                split_service_subpath(path),
+                expected,
+                "split_service_subpath({path:?})"
+            );
         }
     }
 
@@ -424,7 +500,9 @@ mod tests {
 
         let binder = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
-            TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.unwrap()
+            TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap()
         });
 
         let start = Instant::now();
