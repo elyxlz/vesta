@@ -5,7 +5,7 @@ description: WhatsApp messages, contacts, groups (not generic text/message). Req
 
 # WhatsApp - CLI: `whatsapp`
 
-**Setup / linking**: run `~/agent/skills/whatsapp/setup.sh`, then `whatsapp link`, see [SETUP.md](SETUP.md).
+**Setup / linking**: run `~/agent/skills/whatsapp/setup.sh`, then `whatsapp link`, and once linked message the user first so they have the new number; see [SETUP.md](SETUP.md).
 **Daemon**: `whatsapp daemon start|stop|restart|status` (start is idempotent and safe to re-run; status is the one diagnostic).
 
 ## Calling the CLI

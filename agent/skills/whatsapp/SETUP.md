@@ -40,6 +40,18 @@ retry only with the user's explicit go-ahead.
 for 5 minutes. Log lines like `can't send presence without PushName set` or a
 brief websocket EOF in this window are NORMAL; touch nothing.
 
+**Once linked, message the user first.** Send a short hello from the new line
+so the thread lands on the user's phone and they can save the number. If their
+number is already known (memory, contacts), do it without asking; otherwise ask
+for it, then send:
+
+```bash
+whatsapp add-contact 'User Name' '+12025551234'
+whatsapp send 'User Name' 'hey, Vesta here. this is my WhatsApp line, save me!'
+```
+
+Sending is fine during the sync window; only stop/restart is locked.
+
 ## Troubleshooting
 
 - `whatsapp daemon status` is the one diagnostic: auth state, connection,
