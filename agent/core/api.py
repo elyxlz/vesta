@@ -25,7 +25,7 @@ import json
 import logging
 import typing as tp
 import sqlite3
-import uuid
+import time
 import weakref
 
 import aiohttp as _aiohttp
@@ -38,6 +38,7 @@ from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_c
 from .helpers import get_memory_path
 from .models import Notification, State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
+from .state_store import atomic_write_text
 
 
 logger = logging.getLogger("vesta.api")
@@ -114,8 +115,8 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
     notif = Notification.model_validate(
         {"timestamp": dt.datetime.now(), "source": "app-chat", "type": "message", "message": text, "interrupt": True}
     )
-    path = directory / f"{uuid.uuid4()}-app-chat-message.json"
-    path.write_text(notif.model_dump_json(), encoding="utf-8")
+    path = directory / f"{time.time_ns()}-app-chat-message.json"
+    atomic_write_text(path, notif.model_dump_json())
 
 
 async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig) -> None:
@@ -186,7 +187,7 @@ async def _history_handler(request: web.Request) -> web.Response:
     query = request.query.get("q", "").strip()
     if query:
         try:
-            events = event_bus.search(query, limit=limit if limit is not None else 20)
+            events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
         except sqlite3.OperationalError as e:
             # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
             logger.warning(f"search query rejected: {e}")

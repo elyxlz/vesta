@@ -13,6 +13,7 @@ import pydantic as pyd
 
 from . import logger
 from . import config as cfg
+from .events import EVENTS_DB_FILENAME
 
 STATE_FILENAME = "state.json"
 
@@ -70,10 +71,16 @@ def load_state(config: cfg.VestaConfig) -> PersistedState:
         try:
             return PersistedState.model_validate_json(path.read_text())
         except (pyd.ValidationError, ValueError, OSError) as e:
-            # Don't crash-loop the container on a corrupt or schema-incompatible
-            # state.json — log and start fresh; first-start will re-run.
-            logger.error(f"state.json unparseable ({type(e).__name__}: {e}) — starting fresh")
-            return PersistedState()
+            # Don't crash-loop the container on a corrupt or schema-incompatible state.json —
+            # log and start fresh. A veteran agent (events.db already exists) must not
+            # re-onboard or pre-mark migrations on top of months of memory: corroborate against
+            # the data dir and mark it a fresh boot only if there is truly no prior history.
+            veteran = (config.data_dir / EVENTS_DB_FILENAME).exists()
+            logger.error(
+                f"state.json unparseable ({type(e).__name__}: {e}) — starting fresh"
+                + (" (events.db present: session_id lost, migrations will re-run)" if veteran else "")
+            )
+            return PersistedState(first_start_done=veteran)
     state = PersistedState()
     save_state(state, config)
     return state
