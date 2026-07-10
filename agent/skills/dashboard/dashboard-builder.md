@@ -69,13 +69,12 @@ Subagent (general-purpose):
 
     ## Make it good, not generic
 
-    Read `~/agent/skills/dashboard/frontend-design/SKILL.md` for design judgment: intentional,
-    non-templated choices, structure that encodes meaning, restraint, self-critique, and clear UI
-    copy. Apply that judgment WITHIN this dashboard's fixed system: the fonts, base theme, and
-    tokens are synced (`index.css`, shadcn), so you do NOT pick fonts or invent palettes. Express
-    taste through composition, hierarchy, semantic color (`text-green-500`, `bg-amber-100`), lucide
-    icons, and copy, inside the density rules. Aim past a basic implementation: it should feel
-    crafted, never generic AI-slop.
+    Read `~/agent/skills/dashboard/craft/SKILL.md` for design judgment: hierarchy (one thing per
+    widget), color as signal, structure that encodes meaning, quiet charts, consistency with
+    neighboring widgets, designed empty and loading states, restraint, self-critique, and clear UI
+    copy. It is written for this dashboard's fixed system (synced fonts and theme, shadcn tokens),
+    so express taste through composition and semantic color, not new fonts or palettes. Aim past a
+    basic implementation: it should feel crafted, never generic AI-slop.
 
     ## Your job
 
