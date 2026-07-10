@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const CLOUDFLARED_DOWNLOAD_BASE: &str = "https://github.com/cloudflare/cloudflared/releases/latest/download";
+const CLOUDFLARED_DOWNLOAD_BASE: &str =
+    "https://github.com/cloudflare/cloudflared/releases/latest/download";
 const CF_API_BASE: &str = "https://api.cloudflare.com/client/v4";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -37,6 +38,17 @@ pub fn has_cf_creds(config_dir: &Path) -> bool {
             && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
 }
 
+fn no_tunnel_marker_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("no_tunnel")
+}
+
+/// True once the user has explicitly skipped domain setup (empty input at the
+/// first-run prompt), so `run_server_systemd` doesn't re-prompt on every
+/// subsequent `vestad start`.
+pub fn has_declined_tunnel(config_dir: &Path) -> bool {
+    no_tunnel_marker_path(config_dir).exists()
+}
+
 /// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
 /// "persist a secret config file" pattern; `what` names the file in write errors.
 fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), String> {
@@ -53,7 +65,11 @@ fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), Stri
 }
 
 fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
-    write_secret_file(&cf_creds_path(config_dir), &serde_json::to_string_pretty(creds).unwrap(), "cloudflare creds")
+    write_secret_file(
+        &cf_creds_path(config_dir),
+        &serde_json::to_string_pretty(creds).unwrap(),
+        "cloudflare creds",
+    )
 }
 
 /// Resolve Cloudflare credentials for self-hosted tunnel management.
@@ -70,11 +86,15 @@ fn cf_env(config_dir: &Path) -> Result<CloudflareCreds, String> {
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
         "no Cloudflare credentials — run `vestad connect` to connect your domain".to_string()
     })?;
-    let account_id =
-        std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
-    let zone_id =
-        std::env::var("CLOUDFLARE_ZONE_ID").map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
-    Ok(CloudflareCreds { api_token, account_id, zone_id })
+    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+        .map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
+    let zone_id = std::env::var("CLOUDFLARE_ZONE_ID")
+        .map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
+    Ok(CloudflareCreds {
+        api_token,
+        account_id,
+        zone_id,
+    })
 }
 
 fn prompt(label: &str) -> Result<String, String> {
@@ -123,9 +143,21 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
     );
     eprintln!();
 
-    let domain = prompt("  Your domain (e.g. example.com): ")?.to_lowercase();
+    let domain =
+        prompt("  your domain (press enter to skip, local network only): ")?.to_lowercase();
     if domain.is_empty() {
-        return Err("no domain entered".into());
+        write_secret_file(
+            &no_tunnel_marker_path(config_dir),
+            "",
+            "no-tunnel preference",
+        )?;
+        eprintln!();
+        eprintln!(
+            "  no public URL yet. your agent works on this machine and your LAN. \
+             run `vestad connect` anytime to add one."
+        );
+        eprintln!();
+        return Ok(());
     }
     let api_token = prompt("  Cloudflare API token: ")?;
     if api_token.is_empty() {
@@ -157,7 +189,11 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
 
     save_cf_creds(
         config_dir,
-        &CloudflareCreds { api_token, account_id, zone_id },
+        &CloudflareCreds {
+            api_token,
+            account_id,
+            zone_id,
+        },
     )?;
     eprintln!("  \x1b[32m✓\x1b[0m connected to {}", domain);
     eprintln!();
@@ -172,8 +208,10 @@ fn cf_request(
 ) -> Result<serde_json::Value, String> {
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
-        .arg("-H").arg(format!("Authorization: Bearer {}", api_token))
-        .arg("-H").arg("Content-Type: application/json");
+        .arg("-H")
+        .arg(format!("Authorization: Bearer {}", api_token))
+        .arg("-H")
+        .arg("Content-Type: application/json");
 
     if let Some(b) = body {
         cmd.arg("-d").arg(b.to_string());
@@ -219,7 +257,10 @@ fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
         for tunnel in tunnels {
             if tunnel["deleted_at"].is_null() {
                 if let Some(id) = tunnel["id"].as_str() {
-                    let del_url = format!("{}/accounts/{}/cfd_tunnel/{}", CF_API_BASE, env.account_id, id);
+                    let del_url = format!(
+                        "{}/accounts/{}/cfd_tunnel/{}",
+                        CF_API_BASE, env.account_id, id
+                    );
                     tracing::info!(tunnel_id = %id, "deleting stale tunnel");
                     cf_request("DELETE", &del_url, &env.api_token, None).ok();
                 }
@@ -272,21 +313,122 @@ pub fn forget_tunnel(config_dir: &Path) {
 }
 
 const ANIMALS: &[&str] = &[
-    "alpaca", "badger", "beaver", "bison", "bobcat", "camel", "capybara", "cardinal",
-    "caribou", "chameleon", "cheetah", "chinchilla", "chipmunk", "cobra", "condor",
-    "cougar", "coyote", "crane", "cricket", "crow", "dingo", "dolphin", "donkey",
-    "eagle", "egret", "elk", "falcon", "ferret", "finch", "flamingo", "fox",
-    "gazelle", "gecko", "gopher", "grizzly", "grouse", "gull", "hamster", "hawk",
-    "hedgehog", "heron", "hornet", "hyena", "ibex", "iguana", "impala", "jackal",
-    "jaguar", "jay", "kestrel", "kingfisher", "kiwi", "koala", "komodo", "lark",
-    "lemur", "leopard", "lion", "llama", "lobster", "lynx", "macaw", "mamba",
-    "manatee", "mantis", "marmot", "marten", "merlin", "mink", "mongoose", "moose",
-    "narwhal", "newt", "ocelot", "okapi", "opossum", "osprey", "otter", "owl",
-    "panda", "panther", "parrot", "pelican", "penguin", "phoenix", "pika", "piranha",
-    "puma", "python", "quail", "raven", "robin", "salmon", "scorpion", "shark",
-    "shrike", "sparrow", "squid", "stork", "swift", "tapir", "tern", "tiger",
-    "toucan", "turtle", "viper", "vulture", "walrus", "weasel", "whale", "wolf",
-    "wolverine", "wombat", "wren", "yak", "zebra",
+    "alpaca",
+    "badger",
+    "beaver",
+    "bison",
+    "bobcat",
+    "camel",
+    "capybara",
+    "cardinal",
+    "caribou",
+    "chameleon",
+    "cheetah",
+    "chinchilla",
+    "chipmunk",
+    "cobra",
+    "condor",
+    "cougar",
+    "coyote",
+    "crane",
+    "cricket",
+    "crow",
+    "dingo",
+    "dolphin",
+    "donkey",
+    "eagle",
+    "egret",
+    "elk",
+    "falcon",
+    "ferret",
+    "finch",
+    "flamingo",
+    "fox",
+    "gazelle",
+    "gecko",
+    "gopher",
+    "grizzly",
+    "grouse",
+    "gull",
+    "hamster",
+    "hawk",
+    "hedgehog",
+    "heron",
+    "hornet",
+    "hyena",
+    "ibex",
+    "iguana",
+    "impala",
+    "jackal",
+    "jaguar",
+    "jay",
+    "kestrel",
+    "kingfisher",
+    "kiwi",
+    "koala",
+    "komodo",
+    "lark",
+    "lemur",
+    "leopard",
+    "lion",
+    "llama",
+    "lobster",
+    "lynx",
+    "macaw",
+    "mamba",
+    "manatee",
+    "mantis",
+    "marmot",
+    "marten",
+    "merlin",
+    "mink",
+    "mongoose",
+    "moose",
+    "narwhal",
+    "newt",
+    "ocelot",
+    "okapi",
+    "opossum",
+    "osprey",
+    "otter",
+    "owl",
+    "panda",
+    "panther",
+    "parrot",
+    "pelican",
+    "penguin",
+    "phoenix",
+    "pika",
+    "piranha",
+    "puma",
+    "python",
+    "quail",
+    "raven",
+    "robin",
+    "salmon",
+    "scorpion",
+    "shark",
+    "shrike",
+    "sparrow",
+    "squid",
+    "stork",
+    "swift",
+    "tapir",
+    "tern",
+    "tiger",
+    "toucan",
+    "turtle",
+    "viper",
+    "vulture",
+    "walrus",
+    "weasel",
+    "whale",
+    "wolf",
+    "wolverine",
+    "wombat",
+    "wren",
+    "yak",
+    "zebra",
 ];
 
 fn animal_for_user(username: &str, offset: usize) -> &'static str {
@@ -305,14 +447,20 @@ fn current_user() -> String {
 
 /// Sanitize a string to only contain lowercase alphanumeric characters and hyphens.
 fn sanitize(s: &str) -> String {
-    let cleaned: String = s.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "-");
+    let cleaned: String = s
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric(), "-");
     cleaned.trim_matches('-').to_string()
 }
 
 fn generate_subdomain(offset: usize) -> String {
     let animal = animal_for_user(&current_user(), offset);
     let hostname = sanitize(&gethostname());
-    let short = if hostname.len() > 20 { &hostname[..20] } else { &hostname };
+    let short = if hostname.len() > 20 {
+        &hostname[..20]
+    } else {
+        &hostname
+    };
     format!("{}-{}", animal, short.trim_end_matches('-'))
 }
 
@@ -321,7 +469,11 @@ fn gethostname() -> String {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    if output.is_empty() { "vesta".to_string() } else { output }
+    if output.is_empty() {
+        "vesta".to_string()
+    } else {
+        output
+    }
 }
 
 /// Full self-host connect flow (`vestad connect`): collect the user's own
@@ -343,9 +495,8 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // fleet-wide token: a managed box can run its one tunnel but cannot touch the
     // zone or any other tunnel.
     if crate::is_cloud_managed() {
-        return get_tunnel_config(config_dir).ok_or_else(|| {
-            "managed mode: no tunnel.json seeded by the control plane".to_string()
-        });
+        return get_tunnel_config(config_dir)
+            .ok_or_else(|| "managed mode: no tunnel.json seeded by the control plane".to_string());
     }
 
     // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
@@ -377,7 +528,6 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     setup_tunnel(config_dir, &preferred)
 }
 
-
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
@@ -389,24 +539,34 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
     delete_tunnel_if_exists(&env, &tunnel_name);
 
     let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
-    let tunnel_secret: String = (0..32).map(|_| format!("{:02x}", rand::random::<u8>())).collect();
+    let tunnel_secret: String = (0..32)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect();
     let secret_b64 = {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(tunnel_secret.as_bytes())
     };
 
-    let resp = cf_request("POST", &create_url, &env.api_token, Some(serde_json::json!({
-        "name": tunnel_name,
-        "tunnel_secret": secret_b64,
-        "config_src": "local",
-    })))?;
+    let resp = cf_request(
+        "POST",
+        &create_url,
+        &env.api_token,
+        Some(serde_json::json!({
+            "name": tunnel_name,
+            "tunnel_secret": secret_b64,
+            "config_src": "local",
+        })),
+    )?;
 
     let tunnel_id = resp["result"]["id"]
         .as_str()
         .ok_or("missing tunnel id in response")?
         .to_string();
 
-    let token_url = format!("{}/accounts/{}/cfd_tunnel/{}/token", CF_API_BASE, env.account_id, tunnel_id);
+    let token_url = format!(
+        "{}/accounts/{}/cfd_tunnel/{}/token",
+        CF_API_BASE, env.account_id, tunnel_id
+    );
     let token_resp = cf_request("GET", &token_url, &env.api_token, None)?;
     let tunnel_token = token_resp["result"]
         .as_str()
@@ -418,16 +578,19 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
     delete_dns_record_if_exists(&env, subdomain);
 
     let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
-    let dns_resp = cf_request("POST", &dns_url, &env.api_token, Some(serde_json::json!({
-        "type": "CNAME",
-        "name": subdomain,
-        "content": format!("{}.cfargotunnel.com", tunnel_id),
-        "proxied": true,
-    })))?;
+    let dns_resp = cf_request(
+        "POST",
+        &dns_url,
+        &env.api_token,
+        Some(serde_json::json!({
+            "type": "CNAME",
+            "name": subdomain,
+            "content": format!("{}.cfargotunnel.com", tunnel_id),
+            "proxied": true,
+        })),
+    )?;
 
-    let dns_record_id = dns_resp["result"]["id"]
-        .as_str()
-        .map(|s| s.to_string());
+    let dns_record_id = dns_resp["result"]["id"].as_str().map(|s| s.to_string());
 
     let config = TunnelConfig {
         tunnel_id,
@@ -436,21 +599,27 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         dns_record_id,
     };
 
-    write_secret_file(&tunnel_config_path(config_dir), &serde_json::to_string_pretty(&config).unwrap(), "tunnel config")?;
+    write_secret_file(
+        &tunnel_config_path(config_dir),
+        &serde_json::to_string_pretty(&config).unwrap(),
+        "tunnel config",
+    )?;
 
     tracing::info!(hostname = %hostname, "tunnel ready");
     Ok(config)
 }
 
 pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
-    let config = get_tunnel_config(config_dir)
-        .ok_or("no tunnel configured")?;
+    let config = get_tunnel_config(config_dir).ok_or("no tunnel configured")?;
 
     let env = cf_env(config_dir)?;
 
     if let Some(record_id) = &config.dns_record_id {
         tracing::info!("deleting DNS record");
-        let dns_url = format!("{}/zones/{}/dns_records/{}", CF_API_BASE, env.zone_id, record_id);
+        let dns_url = format!(
+            "{}/zones/{}/dns_records/{}",
+            CF_API_BASE, env.zone_id, record_id
+        );
         cf_request("DELETE", &dns_url, &env.api_token, None).ok();
     }
 
@@ -485,7 +654,12 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
-        other => return Err(format!("unsupported architecture for cloudflared: {}", other)),
+        other => {
+            return Err(format!(
+                "unsupported architecture for cloudflared: {}",
+                other
+            ))
+        }
     };
 
     let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
@@ -520,9 +694,7 @@ fn extract_embedded_cloudflared(
 ) -> Result<PathBuf, String> {
     let local_bin = config_dir.join("cloudflared");
     let marker = config_dir.join(CLOUDFLARED_FINGERPRINT_MARKER);
-    if local_bin.exists()
-        && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
-    {
+    if local_bin.exists() && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint) {
         return Ok(local_bin);
     }
 
@@ -583,7 +755,14 @@ async fn start_tunnel(
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
     let mut child = tokio::process::Command::new(cloudflared)
-        .args(["tunnel", "--protocol", "http2", "--metrics", &metrics_addr, "--config"])
+        .args([
+            "tunnel",
+            "--protocol",
+            "http2",
+            "--metrics",
+            &metrics_addr,
+            "--config",
+        ])
         .arg(&cf_config_path)
         .args(["run", "--token", &tc.tunnel_token])
         .stdout(std::process::Stdio::null())
@@ -791,7 +970,10 @@ pub fn supervise_tunnel(
                     };
                     child.kill().await.ok();
                     respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
-                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel unhealthy ({reason}), restarting cloudflared");
+                    tracing::warn!(
+                        delay_secs = respawn_delay_secs,
+                        "tunnel unhealthy ({reason}), restarting cloudflared"
+                    );
                 }
                 Err(e) => {
                     // start_tunnel never reached the edge, so this counts as a run
@@ -806,7 +988,10 @@ pub fn supervise_tunnel(
             }
         }
     });
-    TunnelSupervisor { shutdown: shutdown_tx, task }
+    TunnelSupervisor {
+        shutdown: shutdown_tx,
+        task,
+    }
 }
 
 /// Watch one cloudflared run; returns `(reason it must be replaced, whether this
@@ -937,7 +1122,10 @@ mod tests {
     fn animal_is_from_list() {
         for name in ["alice", "bob", "root", "deploy", "test-user", "x"] {
             let animal = animal_for_user(name, 0);
-            assert!(ANIMALS.contains(&animal), "{name} mapped to '{animal}' which is not in ANIMALS");
+            assert!(
+                ANIMALS.contains(&animal),
+                "{name} mapped to '{animal}' which is not in ANIMALS"
+            );
         }
     }
 
@@ -946,7 +1134,10 @@ mod tests {
         let sub = generate_subdomain(0);
         assert!(sub.contains('-'), "subdomain should contain a dash: {sub}");
         let animal_part = sub.split('-').next().unwrap();
-        assert!(ANIMALS.contains(&animal_part), "first part should be an animal: {sub}");
+        assert!(
+            ANIMALS.contains(&animal_part),
+            "first part should be an animal: {sub}"
+        );
     }
 
     #[test]
@@ -988,11 +1179,20 @@ mod tests {
         assert_eq!(seen[0], TUNNEL_RESPAWN_BASE_DELAY_SECS);
         assert_eq!(seen[1], TUNNEL_RESPAWN_BASE_DELAY_SECS * 2);
         assert_eq!(*seen.last().unwrap(), TUNNEL_RESPAWN_MAX_DELAY_SECS);
-        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "delay is monotonic while failing");
-        assert!(seen.iter().all(|&d| d <= TUNNEL_RESPAWN_MAX_DELAY_SECS), "never exceeds the cap");
+        assert!(
+            seen.windows(2).all(|w| w[1] >= w[0]),
+            "delay is monotonic while failing"
+        );
+        assert!(
+            seen.iter().all(|&d| d <= TUNNEL_RESPAWN_MAX_DELAY_SECS),
+            "never exceeds the cap"
+        );
 
         // A run that reconnected resets straight to base, however large the delay had grown.
-        assert_eq!(next_respawn_delay_secs(TUNNEL_RESPAWN_MAX_DELAY_SECS, true), TUNNEL_RESPAWN_BASE_DELAY_SECS);
+        assert_eq!(
+            next_respawn_delay_secs(TUNNEL_RESPAWN_MAX_DELAY_SECS, true),
+            TUNNEL_RESPAWN_BASE_DELAY_SECS
+        );
     }
 
     #[test]
@@ -1001,4 +1201,3 @@ mod tests {
         assert_ne!(port, 0);
     }
 }
-

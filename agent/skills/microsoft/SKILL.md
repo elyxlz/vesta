@@ -59,7 +59,10 @@ microsoft email reply --account user@example.com --id <email_id> --body "Thanks!
 microsoft email reply --account user@example.com --id <email_id> --body "Thanks all!" --reply-all
 microsoft email forward --account user@example.com --id <email_id> --to bob@example.com --body "fyi, see below"
 microsoft email search --account user@example.com --query "project update"
+microsoft email list --account user@example.com --search "project update"   # alias for the line above
 ```
+
+Both `email search --query "..."` and `email list --search "..."` run the same search (search defaults to all folders; add `--folder` to narrow). Before making any negative claim ("not in the inbox") off empty output, confirm the command actually exited 0: an empty result with a non-zero exit means the query failed, not that nothing matched.
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 

@@ -3,9 +3,10 @@ use std::fs::File;
 use bollard::Docker;
 
 use crate::docker::{
-    container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    guard_alive, inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
-    write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
+    container_created, container_name, container_size_root_fs, container_size_rw, container_status,
+    create_container, ensure_container_removed, env_file_names, guard_alive, read_env_value,
+    start_container, stop_container_with_timeout, validate_name, write_pending_restart_reason,
+    AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -49,7 +50,10 @@ async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<()
     } else {
         container_size_root_fs(docker, cname).await.unwrap_or(0)
     };
-    let required = std::cmp::max(container_size + DISK_SPACE_MARGIN_BYTES, MIN_DISK_SPACE_BYTES);
+    let required = std::cmp::max(
+        container_size + DISK_SPACE_MARGIN_BYTES,
+        MIN_DISK_SPACE_BYTES,
+    );
 
     if available < required {
         let avail_mb = available / 1_000_000;
@@ -91,11 +95,8 @@ pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
 
 /// Parse an RFC3339 timestamp (e.g. "2026-04-07T13:11:12.123Z") to unix epoch seconds.
 fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
-    let dt = time::OffsetDateTime::parse(
-        ts.trim(),
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()?;
+    let dt = time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339)
+        .ok()?;
     Some(dt.unix_timestamp() as u64)
 }
 
@@ -108,7 +109,7 @@ async fn with_container_paused<F, Fut, T>(
     cs: ContainerStatus,
     resume_reason: &str,
     op: F,
-) -> T
+) -> Result<T, DockerError>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = T>,
@@ -117,7 +118,18 @@ where
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         tracing::info!(agent = %name, "stopping agent for backup");
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
+        // A failed stop can leave the container's events.db WAL mid-checkpoint; running the
+        // snapshot against that live, inconsistent state would produce a backup that looks
+        // fine but restores malformed. Bail here so the cycle is retried instead. The stop
+        // error can be client-side after dockerd already stopped the container, so
+        // best-effort resume first: skipping the backup is correct, stranding the agent
+        // down until the next vestad boot is not.
+        if let Err(err) =
+            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await
+        {
+            start_container(docker, &cname).await;
+            return Err(err);
+        }
     }
 
     let result = op().await;
@@ -127,9 +139,11 @@ where
         if let Err(err) = write_pending_restart_reason(docker, &cname, resume_reason).await {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
-        start_container(docker, &cname).await;
+        if !start_container(docker, &cname).await {
+            tracing::error!(agent = %name, "failed to restart agent after backup");
+        }
     }
-    result
+    Ok(result)
 }
 
 const SCHEDULED_BACKUP_RESUME_REASON: &str = "backup: you were paused for a scheduled backup";
@@ -139,7 +153,9 @@ fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
     match backup_type {
         BackupType::Manual => "backup: you were paused for a manual backup",
         BackupType::PreRestore => "backup: you were paused for a safety backup before a restore",
-        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => SCHEDULED_BACKUP_RESUME_REASON,
+        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => {
+            SCHEDULED_BACKUP_RESUME_REASON
+        }
     }
 }
 
@@ -161,11 +177,18 @@ pub async fn create_backup(
 ) -> Result<BackupInfo, DockerError> {
     let cs = backup_preflight(docker, name).await?;
 
-    let result = with_container_paused(docker, name, cs, backup_resume_reason(&backup_type), || async {
-        tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
-        crate::restic::snapshot(name, &backup_type).await
-    })
-    .await;
+    let result = with_container_paused(
+        docker,
+        name,
+        cs,
+        backup_resume_reason(&backup_type),
+        || async {
+            tracing::info!(agent = %name, backup_type = %backup_type, "snapshotting backup");
+            crate::restic::snapshot(name, &backup_type).await
+        },
+    )
+    .await
+    .and_then(std::convert::identity);
 
     match &result {
         Ok(info) => {
@@ -184,12 +207,11 @@ pub async fn create_backups_batch(
     name: &str,
     types: Vec<BackupType>,
 ) -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-    let fail_all =
-        |types: Vec<BackupType>,
-         e: DockerError|
-         -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
-            types.into_iter().map(|bt| (bt, Err(e.clone()))).collect()
-        };
+    let fail_all = |types: Vec<BackupType>,
+                    e: DockerError|
+     -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
+        types.into_iter().map(|bt| (bt, Err(e.clone()))).collect()
+    };
 
     if types.is_empty() {
         return Vec::new();
@@ -199,9 +221,10 @@ pub async fn create_backups_batch(
         Ok(cs) => cs,
         Err(e) => return fail_all(types, e),
     };
+    let types_for_stop_failure = types.clone();
 
     // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
-    with_container_paused(docker, name, cs, SCHEDULED_BACKUP_RESUME_REASON, || async {
+    let paused_result = with_container_paused(docker, name, cs, SCHEDULED_BACKUP_RESUME_REASON, || async {
         let mut results = Vec::new();
         for bt in types {
             let result = crate::restic::snapshot(name, &bt).await;
@@ -213,18 +236,24 @@ pub async fn create_backups_batch(
         }
         results
     })
-    .await
+    .await;
+
+    match paused_result {
+        Ok(results) => results,
+        Err(e) => fail_all(types_for_stop_failure, e),
+    }
 }
 
-/// List all backups for the given agent, sorted by date descending.
-pub async fn list_backups(docker: &Docker, name: &str) -> Result<Vec<BackupInfo>, DockerError> {
+/// List all backups for the given agent, sorted by date descending. Agent identity
+/// is the env file vestad writes at creation (the durable record), not the
+/// container: an agent whose container is currently absent, e.g. mid recovery from
+/// a failed restore, still lists.
+pub async fn list_backups(
+    agents_dir: &std::path::Path,
+    name: &str,
+) -> Result<Vec<BackupInfo>, DockerError> {
     validate_name(name)?;
-    let cname = container_name(name);
-    if container_status(docker, &cname).await == ContainerStatus::NotFound {
-        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
-    }
-    let owned_agents = list_agent_names(docker).await;
-    if !owned_agents.iter().any(|owned| owned == name) {
+    if !env_file_names(agents_dir).iter().any(|owned| owned == name) {
         return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
     }
     crate::restic::list(name).await
@@ -258,35 +287,65 @@ pub async fn restore_backup(
     let cname = container_name(name);
 
     // Verify the backup exists and belongs to this agent before doing anything destructive.
-    let backups = list_backups(docker, name).await?;
+    // This is the durable env-file check (not container status), so an agent whose
+    // container is already gone, e.g. a prior restore that died after removal, can
+    // still restore instead of being locked out by the failure it's recovering from.
+    let backups = list_backups(&env_config.agents_dir, name).await?;
     if !backups.iter().any(|b| b.id == backup_id) {
-        return Err(DockerError::NotFound(format!("backup '{}' not found", backup_id)));
+        return Err(DockerError::NotFound(format!(
+            "backup '{}' not found",
+            backup_id
+        )));
     }
 
-    let info = inspect_container(docker, &cname, Some(&env_config.agents_dir)).await;
-    if info.status == ContainerStatus::NotFound {
-        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
-    }
+    let status = container_status(docker, &cname).await;
+    let container_present = status != ContainerStatus::NotFound;
 
-    // Stop once, take safety backup, then remove — avoids a redundant stop/start cycle.
-    if info.status == ContainerStatus::Running {
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
-    }
-    tracing::info!(agent = %name, "creating pre-restore safety backup");
-    if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore).await {
-        if info.status == ContainerStatus::Running {
-            start_container(docker, &cname).await;
+    if container_present {
+        // Stop once, take safety backup, then remove — avoids a redundant stop/start cycle.
+        if status == ContainerStatus::Running {
+            stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS)
+                .await
+                .ok();
         }
-        return Err(DockerError::Failed(format!("pre-restore safety backup failed: {e}")));
+        tracing::info!(agent = %name, "creating pre-restore safety backup");
+        if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore).await {
+            if status == ContainerStatus::Running {
+                start_container(docker, &cname).await;
+            }
+            return Err(DockerError::Failed(format!(
+                "pre-restore safety backup failed: {e}"
+            )));
+        }
+        // Confirm it's actually gone (don't swallow): docker rm can return before the name frees,
+        // and a create colliding on the name would delete the env file while the old container
+        // still exists. The pre-restore safety backup is already taken, so restart and bail.
+        if let Err(e) = ensure_container_removed(docker, &cname).await {
+            if status == ContainerStatus::Running {
+                start_container(docker, &cname).await;
+            }
+            return Err(e);
+        }
+    } else {
+        tracing::warn!(agent = %name, "container already absent before restore; skipping safety backup");
     }
-    remove_container_force(docker, &cname).await.ok();
 
-    let port = info
-        .port
+    let port = read_env_value(&env_config.agents_dir, name, "WS_PORT")
+        .and_then(|v| v.parse().ok())
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "restoring snapshot into image");
     let image = crate::restic::restore_to_image(name, backup_id).await?;
-    create_container(docker, &cname, &image, port, name, env_config, manage_core_code, user_mounts).await?;
+    create_container(
+        docker,
+        &cname,
+        &image,
+        port,
+        name,
+        env_config,
+        manage_core_code,
+        user_mounts,
+    )
+    .await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed("failed to start restored agent".into()));
@@ -344,11 +403,7 @@ pub fn compute_backups_to_delete(
 
 /// Run retention cleanup for an agent's auto-backups.
 /// Pass existing backups list to avoid a redundant snapshot listing.
-pub async fn cleanup_backups(
-    name: &str,
-    backups: &[BackupInfo],
-    retention: &RetentionPolicy,
-) {
+pub async fn cleanup_backups(name: &str, backups: &[BackupInfo], retention: &RetentionPolicy) {
     let to_delete = compute_backups_to_delete(backups, retention);
     if to_delete.is_empty() {
         return;
@@ -372,78 +427,38 @@ pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
 mod tests {
     use super::*;
 
-    // ── SSE cancellation safety ───────────────────────────────────
-
-    /// Asserts that the backup/restore pipeline (stop container, snapshot/restore, start
-    /// container) runs to completion even when the SSE client disconnects mid-operation.
-    ///
-    /// The fix spawns the pipeline with tokio::spawn so it is detached from the SSE
-    /// response body lifetime. When the SSE consumer task is aborted (client disconnect),
-    /// the spawned pipeline continues uninterrupted and start_container is always called.
-    #[tokio::test]
-    async fn sse_stream_drop_cancels_container_restart() {
-        use std::sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        };
-        use tokio::sync::Notify;
-
-        let stopped = Arc::new(AtomicBool::new(false));
-        let started = Arc::new(AtomicBool::new(false));
-        let op_reached = Arc::new(Notify::new());
-        let op_gate = Arc::new(Notify::new());
-
-        let stopped_c = stopped.clone();
-        let started_c = started.clone();
-        let op_reached_c = op_reached.clone();
-        let op_gate_c = op_gate.clone();
-
-        // Fixed pattern: the pipeline is spawned separately from the SSE response body.
-        // Dropping the JoinHandle does not abort the task — it runs to completion.
-        // This mirrors the tokio::spawn in the fixed create_backup_handler /
-        // restore_backup_handler.
-        let _pipeline = tokio::spawn(async move {
-            // Mirrors stop_container_with_timeout
-            stopped_c.store(true, Ordering::SeqCst);
-            op_reached_c.notify_one();
-            // Mirrors restic::snapshot — the expensive async op
-            op_gate_c.notified().await;
-            // Mirrors start_container — must always run
-            started_c.store(true, Ordering::SeqCst);
-        });
-
-        // SSE consumer task — represents the axum response body polled by hyper.
-        // When the client disconnects, hyper drops the body and this task is aborted.
-        let stream_handle = tokio::spawn(async move {
-            let stream = async_stream::stream! {
-                // In the fixed handler, this side only awaits the result channel.
-                // Here we suspend indefinitely to simulate an in-flight SSE response.
-                std::future::pending::<()>().await;
-                yield ();
-            };
-            use futures_util::StreamExt;
-            futures_util::pin_mut!(stream);
-            stream.next().await;
-        });
-
-        // Wait until the container has been stopped and the op is in progress.
-        op_reached.notified().await;
-        assert!(stopped.load(Ordering::SeqCst), "container should be stopped");
-        assert!(!started.load(Ordering::SeqCst), "container not yet restarted");
-
-        // Simulate SSE client disconnecting: abort the SSE consumer task.
-        // The spawned pipeline must not be affected.
-        stream_handle.abort();
-        let _ = stream_handle.await;
-
-        // Release the gate (restic snapshot / restore image stream completes).
-        op_gate.notify_one();
-        // Give the spawned pipeline a scheduling slot to finish.
-        tokio::task::yield_now().await;
-
+    #[test]
+    fn restore_backup_confirms_removal_before_create() {
+        // restore_backup recreates under the SAME name, so the old container must be confirmed
+        // gone before create. A best-effort `remove_container_force(...).await.ok()` could let
+        // the create collide on the name after the env file was already rewritten (docker rm can
+        // return before the name frees, or fail transiently), same failure mode as rebuild_agent.
+        let src = include_str!("backup.rs");
+        let restore_start = src
+            .find("pub async fn restore_backup")
+            .expect("restore_backup present");
+        let delete_start = src
+            .find("pub async fn delete_backup")
+            .expect("delete_backup present");
         assert!(
-            started.load(Ordering::SeqCst),
-            "start_container must run to completion regardless of SSE client disconnect"
+            restore_start < delete_start,
+            "restore_backup must appear before delete_backup for this test to slice correctly"
+        );
+        let restore_body = &src[restore_start..delete_start];
+
+        let remove_pos = restore_body
+            .find("ensure_container_removed")
+            .expect("restore_backup must confirm the old container is gone via ensure_container_removed before recreating");
+        let create_pos = restore_body
+            .find("create_container")
+            .expect("create_container must be called in restore_backup");
+        assert!(
+            remove_pos < create_pos,
+            "restore_backup must remove the old container before creating the new one"
+        );
+        assert!(
+            !restore_body.contains("remove_container_force"),
+            "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
     }
 

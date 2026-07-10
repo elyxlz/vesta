@@ -105,3 +105,9 @@ export interface GatewayVersionInfo {
   channel?: ReleaseChannel;
   auto_update?: boolean;
 }
+
+// The gateway control WS's own frames (distinct from the per-agent VestaEvent stream): a version
+// handshake on connect, then agent-list snapshots on every roster change.
+export type ControlWsMessage =
+  | { type: "hello"; version?: string; port?: number }
+  | { type: "agents"; agents?: AgentInfo[] };

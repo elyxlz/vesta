@@ -52,7 +52,7 @@ export function KeybindsCard() {
   return (
     <Card size="sm">
       <CardContent>
-        <MenuSection title="Keybinds">
+        <MenuSection title="keybinds">
           <div className="flex flex-col gap-1.5">
             {keybinds.map((bind) => (
               <div key={bind.label}>

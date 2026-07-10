@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::common::start_pair;
-use vesta_tests::{TestAgent, unique_agent};
+use vesta_tests::{unique_agent, TestAgent};
 
 #[test]
 fn agent_ports_dont_collide() {

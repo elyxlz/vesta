@@ -22,7 +22,7 @@ def _fake_provider():
     provider = MagicMock()
     provider.premade_voices.return_value = [{"id": "v1"}]
 
-    async def fake_speak(text, voice_id, creds, request):
+    async def fake_speak(text, voice_id, creds, request, audio_format):
         return web.Response(body=text.encode(), headers={"Content-Type": "audio/mpeg"})
 
     provider.speak = fake_speak

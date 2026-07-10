@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-// ── Constants ───────────────────────────────────────────────────
-
 // ── Types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,20 +63,6 @@ impl std::fmt::Display for BackupType {
             Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
             Self::PreRestore => write!(f, "pre-restore"),
-        }
-    }
-}
-
-impl std::str::FromStr for BackupType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "manual" => Ok(Self::Manual),
-            "daily" => Ok(Self::Daily),
-            "weekly" => Ok(Self::Weekly),
-            "monthly" => Ok(Self::Monthly),
-            "pre-restore" => Ok(Self::PreRestore),
-            other => Err(format!("unknown backup type: {other}")),
         }
     }
 }

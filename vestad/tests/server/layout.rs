@@ -1,8 +1,10 @@
-use vesta_tests::{SERVER, SHARED_RO_AGENT, exec_in_container};
+use vesta_tests::{exec_in_container, SERVER, SHARED_RO_AGENT};
 
 fn container_id(agent_name: &str) -> String {
     let status = SERVER.client().agent_status(agent_name).unwrap();
-    status.id.unwrap_or_else(|| panic!("agent {agent_name} has no container id"))
+    status
+        .id
+        .unwrap_or_else(|| panic!("agent {agent_name} has no container id"))
 }
 
 const ENTRYPOINT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -75,7 +77,17 @@ fn fresh_agent_has_expected_directory_structure() {
     let root_entries = exec_in_container(&cid, "ls -1 /root").unwrap();
     for entry in root_entries.lines() {
         assert!(
-            matches!(entry, "agent" | ".claude" | ".git" | ".gitignore" | ".bashrc" | ".local" | ".cache" | ".config"),
+            matches!(
+                entry,
+                "agent"
+                    | ".claude"
+                    | ".git"
+                    | ".gitignore"
+                    | ".bashrc"
+                    | ".local"
+                    | ".cache"
+                    | ".config"
+            ),
             "unexpected entry at /root: {entry}"
         );
     }

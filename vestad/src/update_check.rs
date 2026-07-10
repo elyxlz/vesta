@@ -32,9 +32,7 @@ pub fn check_once(channel: Channel) -> Result<UpdateInfo, String> {
 }
 
 pub(crate) fn version_less_than(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> {
-        v.split('.').filter_map(|s| s.parse().ok()).collect()
-    };
+    let parse = |v: &str| -> Vec<u64> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
     parse(a) < parse(b)
 }
 
@@ -68,7 +66,9 @@ fn read_cache(channel: Channel) -> Option<CacheEntry> {
 }
 
 fn write_cache(channel: Channel, etag: &str, tag: &str) {
-    let Some(path) = cache_path(channel) else { return };
+    let Some(path) = cache_path(channel) else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
             return;
@@ -165,10 +165,7 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>, channel: Channel) -> Resu
     }
 
     if !(200..300).contains(&status_code) {
-        return Err(format!(
-            "HTTP {status_code}: {}",
-            snippet(body.trim())
-        ));
+        return Err(format!("HTTP {status_code}: {}", snippet(body.trim())));
     }
 
     let tag = extract_tag(body, channel)?;
@@ -267,8 +264,7 @@ mod tests {
 
     #[test]
     fn parse_etag_takes_last_block_on_redirect() {
-        let headers =
-            "HTTP/2 301\r\netag: \"old\"\r\n\r\nHTTP/2 200\r\netag: \"new\"\r\n\r\n";
+        let headers = "HTTP/2 301\r\netag: \"old\"\r\n\r\nHTTP/2 200\r\netag: \"new\"\r\n\r\n";
         assert_eq!(parse_etag(headers), Some("\"new\"".into()));
     }
 

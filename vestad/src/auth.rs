@@ -42,7 +42,11 @@ pub async fn auth_middleware(
 
     let path = request.uri().path().to_string();
     tracing::warn!(path = %path, "client auth failed");
-    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"}))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "unauthorized"})),
+    )
+        .into_response()
 }
 
 /// Requires the agent's own token via X-Agent-Token header.
@@ -96,13 +100,19 @@ pub async fn auth_middleware_api_or_agent_token(
     unauthorized()
 }
 
-fn check_agent_token(headers: &HeaderMap, agent_name: &str, state: &SharedState, path: &str) -> bool {
+fn check_agent_token(
+    headers: &HeaderMap,
+    agent_name: &str,
+    state: &SharedState,
+    path: &str,
+) -> bool {
     let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) else {
         tracing::warn!(path = %path, agent = %agent_name, reason = "header-missing", "agent token auth failed");
         return false;
     };
 
-    let (_, expected) = crate::docker::read_agent_port_and_token(agent_name, &state.env_config.agents_dir);
+    let (_, expected) =
+        crate::docker::read_agent_port_and_token(agent_name, &state.env_config.agents_dir);
     let Some(expected) = expected else {
         tracing::warn!(
             path = %path,
@@ -145,7 +155,11 @@ fn token_fingerprint(token: &str) -> String {
     hex::encode(&digest.as_ref()[..3])
 }
 
-pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
+pub(crate) fn has_valid_api_auth(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    api_key: &str,
+) -> bool {
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -166,7 +180,6 @@ fn extract_agent_name(path: &str) -> Option<String> {
         None
     }
 }
-
 
 /// Constant-time byte comparison so a mismatched raw API key can't be brute-forced
 /// via response-timing (the key never rotates and gates the tunnel-exposed listener).
@@ -209,7 +222,9 @@ pub struct RefreshRequest {
 
 /// 16 random bytes as hex — a refresh-token id or family id.
 fn rand_id() -> String {
-    (0..16).map(|_| format!("{:02x}", rand::random::<u8>())).collect()
+    (0..16)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect()
 }
 
 /// One refresh-token family (one login). `live` is the only currently-valid jti;
@@ -237,7 +252,11 @@ fn register_family(map: &mut HashMap<String, RefreshFamily>, now: u64) -> (Strin
     let (jti, fam) = (rand_id(), rand_id());
     map.insert(
         fam.clone(),
-        RefreshFamily { live: jti.clone(), prev: None, exp: now + jwt::REFRESH_TOKEN_TTL },
+        RefreshFamily {
+            live: jti.clone(),
+            prev: None,
+            exp: now + jwt::REFRESH_TOKEN_TTL,
+        },
     );
     (jti, fam)
 }
@@ -296,7 +315,9 @@ pub(crate) fn load_refresh_live(config_dir: &Path) -> HashMap<String, RefreshFam
 /// Persist the registry atomically (temp + rename). Best-effort: a write failure
 /// only means a restart re-auths, never a request failure.
 async fn persist_refresh_live(config_dir: &Path, map: &HashMap<String, RefreshFamily>) {
-    let Ok(json) = serde_json::to_vec(map) else { return };
+    let Ok(json) = serde_json::to_vec(map) else {
+        return;
+    };
     let path = refresh_store_path(config_dir);
     let tmp = path.with_extension("json.tmp");
     if tokio::fs::write(&tmp, json).await.is_ok() {
@@ -338,7 +359,10 @@ pub async fn create_session_handler(
 ) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     if body.api_key != state.api_key {
         tracing::warn!("client session auth failed: invalid API key");
-        return Err(crate::serve::err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
+        return Err(crate::serve::err_response(
+            StatusCode::UNAUTHORIZED,
+            "invalid API key",
+        ));
     }
 
     tracing::info!("client connected (new session)");

@@ -1,9 +1,8 @@
-use crate::serve::{SharedState, err_response};
-use axum::{Json, extract::State, http::StatusCode};
+use crate::serve::{err_response, SharedState};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 
-const TOP_MODELS_URL: &str =
-    "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
+const TOP_MODELS_URL: &str = "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
 const TOP_MODELS_LIMIT: usize = 20;
 const KEY_INFO_URL: &str = "https://openrouter.ai/api/v1/key";
 // OpenRouter quotes pricing per token; the picker shows it per million tokens.
@@ -56,7 +55,10 @@ struct FrontendPricing {
 
 // OpenRouter reports per-token prices as decimal strings; convert to USD per million.
 fn price_per_million(raw: &Option<String>) -> Option<f64> {
-    raw.as_ref()?.parse::<f64>().ok().map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
+    raw.as_ref()?
+        .parse::<f64>()
+        .ok()
+        .map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
 }
 
 pub async fn list_top_models_handler(
@@ -67,7 +69,12 @@ pub async fn list_top_models_handler(
         .get(TOP_MODELS_URL)
         .send()
         .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("openrouter request failed: {e}")))?;
+        .map_err(|e| {
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                &format!("openrouter request failed: {e}"),
+            )
+        })?;
     if !resp.status().is_success() {
         return Err(err_response(
             StatusCode::BAD_GATEWAY,
@@ -75,7 +82,10 @@ pub async fn list_top_models_handler(
         ));
     }
     let body: FrontendResponse = resp.json().await.map_err(|e| {
-        err_response(StatusCode::BAD_GATEWAY, &format!("openrouter response parse failed: {e}"))
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("openrouter response parse failed: {e}"),
+        )
     })?;
     let models = body
         .data
@@ -123,7 +133,12 @@ pub async fn validate_key_handler(
         .bearer_auth(&body.key)
         .send()
         .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("openrouter request failed: {e}")))?;
+        .map_err(|e| {
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                &format!("openrouter request failed: {e}"),
+            )
+        })?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid API key"));
     }

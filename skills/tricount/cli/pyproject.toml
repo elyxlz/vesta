@@ -1,0 +1,15 @@
+[project]
+name = "tricount-cli"
+version = "0.1.0"
+description = "Tricount CLI for vesta — list expenses, balances, add expenses"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "cryptography>=42.0.0",
+]
+
+[project.scripts]
+tricount = "tricount_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tricount_cli"]
