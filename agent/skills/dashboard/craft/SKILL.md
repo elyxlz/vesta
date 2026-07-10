@@ -14,6 +14,10 @@ The craft of building dashboard widgets that feel considered. You work inside a 
 
 Each card leads with a single primary value, its reason to exist, set large; everything else is secondary and muted. If a widget has two equally loud numbers, split it into two or demote one. The eye should land in one place, then travel to the supporting detail.
 
+## Layout
+
+Compose for the scan, not just the grid. A page has a reading order: the most important widget sits where the eye lands first (top left), and related widgets sit together so the page reads as groups rather than a scatter. Align edges and baselines so cards feel set on a shared grid, not floating. Hold one rhythm: consistent gaps and card heights within a group read as calm; ragged sizes read as noise. Density is not clutter, give the important thing room and keep the rest compact. Go wider than one column only when the content genuinely needs the width (a chart, a table); most widgets are a single column. The exact spans and spacing are set by the density rules in your build brief; this is how to compose within them.
+
 ## Color carries meaning, not decoration
 
 Structure follows the design system. Buttons, cards, inputs, borders, and surfaces use the semantic Tailwind tokens that are automatically synced from the main app into `index.css` (`primary`, `secondary`, `muted`, `accent`, `destructive`, `warning`, `border`, and the `card`/`background`/`foreground` families), so the dashboard matches the wider app and stays in step with its theme. You never edit `index.css`; those tokens are always current, build against them.
