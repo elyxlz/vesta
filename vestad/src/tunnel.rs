@@ -37,6 +37,17 @@ pub fn has_cf_creds(config_dir: &Path) -> bool {
             && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
 }
 
+fn no_tunnel_marker_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("no_tunnel")
+}
+
+/// True once the user has explicitly skipped domain setup (empty input at the
+/// first-run prompt), so `run_server_systemd` doesn't re-prompt on every
+/// subsequent `vestad start`.
+pub fn has_declined_tunnel(config_dir: &Path) -> bool {
+    no_tunnel_marker_path(config_dir).exists()
+}
+
 /// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
 /// "persist a secret config file" pattern; `what` names the file in write errors.
 fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), String> {
@@ -123,9 +134,16 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
     );
     eprintln!();
 
-    let domain = prompt("  Your domain (e.g. example.com): ")?.to_lowercase();
+    let domain = prompt("  your domain (press enter to skip, local network only): ")?.to_lowercase();
     if domain.is_empty() {
-        return Err("no domain entered".into());
+        write_secret_file(&no_tunnel_marker_path(config_dir), "", "no-tunnel preference")?;
+        eprintln!();
+        eprintln!(
+            "  no public URL yet. your agent works on this machine and your LAN. \
+             run `vestad connect` anytime to add one."
+        );
+        eprintln!();
+        return Ok(());
     }
     let api_token = prompt("  Cloudflare API token: ")?;
     if api_token.is_empty() {
