@@ -201,7 +201,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon."
+    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon."
   },
   {
     "name": "whisper",
