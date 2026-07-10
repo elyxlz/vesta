@@ -133,7 +133,7 @@ export function AgentNavbar({
                     className={restarting ? "animate-spin" : undefined}
                   />
                   {!isMobile &&
-                    (restarting ? "restarting…" : "restart to apply")}
+                    (restarting ? "restarting..." : "restart to apply")}
                 </Button>
               )}
               {!isMobile && needsAuth && (
