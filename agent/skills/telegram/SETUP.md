@@ -23,7 +23,7 @@
    ```bash
    screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
    ```
-5. **Important**: The user must `/start` the bot from their Telegram account before Vesta can send them messages. After that first interaction, Vesta can message them anytime (including autonomously, e.g., morning reports).
+5. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
 6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
    ```
    screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
