@@ -160,6 +160,45 @@ def test_daemon_start_is_idempotent_and_never_shells_out_when_already_running(tm
     assert result == {"status": "already_running", "pid": os.getpid(), "session": dl.SESSION_NAME}
 
 
+def test_daemon_start_refuses_to_stack_on_a_live_legacy_screen_session(tmp_path: pathlib.Path, monkeypatch):
+    monkeypatch.setattr(dl, "screen_session_live", lambda: True)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called when a legacy screen session is live")
+
+    monkeypatch.setattr(subprocess, "run", fail_if_called)
+    result = dl.daemon_start(
+        state_dir=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        poll_daemon_path=tmp_path / "poll_daemon.py",
+        log_path=tmp_path / "poll_daemon.log",
+        interval=15,
+    )
+    assert "error" in result
+    assert dl.SESSION_NAME in result["error"]
+
+
+def test_daemon_start_clears_a_leaked_stop_marker_before_launching(tmp_path: pathlib.Path, monkeypatch):
+    dl.mark_stop_requested(tmp_path)
+    monkeypatch.setattr(dl, "screen_session_live", lambda: False)
+
+    def fake_screen(*args, **kwargs):
+        dl.pid_path(tmp_path).write_text(str(os.getpid()))
+
+    monkeypatch.setattr(subprocess, "run", fake_screen)
+    result = dl.daemon_start(
+        state_dir=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        poll_daemon_path=tmp_path / "poll_daemon.py",
+        log_path=tmp_path / "poll_daemon.log",
+        interval=15,
+    )
+    assert result["status"] == "started"
+    # The fresh daemon never inherits the leaked marker, so an unintentional
+    # death still fires the daemon_died notification.
+    assert dl.consume_stop_requested(tmp_path) is False
+
+
 def test_daemon_stop_is_idempotent_when_already_stopped(tmp_path: pathlib.Path):
     result = dl.daemon_stop(state_dir=tmp_path)
     assert result == {"status": "already_stopped", "session": dl.SESSION_NAME}
@@ -192,6 +231,17 @@ def test_daemon_stop_marks_stop_requested_and_sends_sigterm_to_a_live_pid(tmp_pa
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_daemon_stop_clears_the_marker_when_the_process_died_before_sigterm(tmp_path: pathlib.Path, monkeypatch):
+    # The liveness poll says running but the process is gone by the SIGTERM,
+    # so os.kill raises ProcessLookupError; the stop marker must not leak.
+    dl.pid_path(tmp_path).write_text(str(2**30))
+    monkeypatch.setattr(dl, "process_alive", lambda pid: True)
+    result = dl.daemon_stop(state_dir=tmp_path)
+    assert result == {"status": "already_stopped", "session": dl.SESSION_NAME}
+    assert dl.consume_stop_requested(tmp_path) is False
+    assert dl.read_pid(tmp_path) is None
 
 
 def test_daemon_restart_reuses_the_last_interval_when_not_overridden(tmp_path: pathlib.Path, monkeypatch):

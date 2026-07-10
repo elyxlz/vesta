@@ -155,6 +155,11 @@ def daemon_start(
     running, pid = daemon_running(state_dir)
     if running:
         return {"status": "already_running", "pid": pid, "session": SESSION_NAME}
+    if screen_session_live():
+        # A pidfile-less daemon (launched by a raw screen line before this CLI existed)
+        # is still running; `screen -dmS` would stack a second poller next to it.
+        return {"error": f"a live '{SESSION_NAME}' screen session has no pidfile; quit it with `screen -S {SESSION_NAME} -X quit`, then retry"}
+    stop_requested_path(state_dir).unlink(missing_ok=True)
     command = f"cd {runtime_dir} && PYTHONUNBUFFERED=1 uv run python3 {poll_daemon_path} --interval {interval} > {log_path} 2>&1"
     subprocess.run(["screen", "-dmS", SESSION_NAME, "bash", "-c", command], check=True)
     deadline = time.monotonic() + START_TIMEOUT_SECS
@@ -177,6 +182,7 @@ def daemon_stop(*, state_dir: pathlib.Path) -> dict:
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
+        stop_requested_path(state_dir).unlink(missing_ok=True)
         remove_pid(state_dir)
         return {"status": "already_stopped", "session": SESSION_NAME}
     deadline = time.monotonic() + STOP_TIMEOUT_SECS
