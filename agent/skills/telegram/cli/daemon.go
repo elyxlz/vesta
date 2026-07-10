@@ -117,6 +117,21 @@ func runDaemon() {
 	}
 }
 
+// ensureNotificationsDirArg prepends the default --notifications-dir when
+// serveArgs lacks one, so the default daemon's cmdline always starts with the
+// flag the watchdog's liveness pgrep pattern matches on. Instance daemons are
+// left as-is: the watchdog only guards the default instance, and their cmdline
+// must not match its pattern (that would hide a dead default daemon).
+func ensureNotificationsDirArg(serveArgs []string) []string {
+	for _, arg := range serveArgs {
+		if arg == "--notifications-dir" || arg == "--instance" ||
+			strings.HasPrefix(arg, "--notifications-dir=") || strings.HasPrefix(arg, "--instance=") {
+			return serveArgs
+		}
+	}
+	return append([]string{"--notifications-dir", defaultNotificationsDir()}, serveArgs...)
+}
+
 // startDaemonProcess launches `telegram serve` under screen and waits for the
 // socket. Idempotent: an already-answering daemon is a no-op.
 func startDaemonProcess(serveArgs []string) error {
@@ -128,7 +143,7 @@ func startDaemonProcess(serveArgs []string) error {
 	if err != nil {
 		return fmt.Errorf("telegram binary not on PATH; build it per SETUP.md first")
 	}
-	screenArgs := append([]string{"-dmS", sessionName(), binary, "serve"}, serveArgs...)
+	screenArgs := append([]string{"-dmS", sessionName(), binary, "serve"}, ensureNotificationsDirArg(serveArgs)...)
 	if err := exec.Command("screen", screenArgs...).Run(); err != nil {
 		return fmt.Errorf("failed to launch screen session: %v", err)
 	}
@@ -159,8 +174,13 @@ func daemonStart(serveArgs []string) {
 
 // stopWatchdogIfLive quits the watchdog screen session first so it cannot race
 // the stop and respawn a second daemon (the documented two-daemons footgun).
-// Returns whether the watchdog was running, so restart can bring it back.
+// The watchdog only guards the default instance, so instance-scoped commands
+// leave it alone. Returns whether the watchdog was running, so restart can
+// bring it back.
 func stopWatchdogIfLive() bool {
+	if extractInstance() != "" {
+		return false
+	}
 	if !screenSessionLive(watchdogSession) {
 		return false
 	}
@@ -171,6 +191,9 @@ func stopWatchdogIfLive() bool {
 }
 
 func startWatchdog() {
+	if extractInstance() != "" {
+		return
+	}
 	script := filepath.Join(os.Getenv("HOME"), "agent", "skills", "telegram", "telegram-watchdog.sh")
 	if _, err := os.Stat(script); err != nil {
 		return
@@ -190,7 +213,10 @@ func stopDaemonProcess() error {
 	if err := os.WriteFile(stopRequestedPath(dataDir), []byte{}, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not mark stop as intentional: %v\n", err)
 	}
+	// A failed stop leaves the daemon running; clear the marker so a later
+	// genuine death still writes the daemon_died notification.
 	if err := exec.Command("screen", "-S", sessionName(), "-X", "quit").Run(); err != nil {
+		os.Remove(stopRequestedPath(dataDir))
 		return fmt.Errorf("screen quit failed: %v", err)
 	}
 	deadline := time.Now().Add(DaemonStopTimeout)
@@ -200,6 +226,7 @@ func stopDaemonProcess() error {
 		}
 		time.Sleep(DaemonPollInterval)
 	}
+	os.Remove(stopRequestedPath(dataDir))
 	return fmt.Errorf("daemon still answering after screen quit; inspect with 'screen -r %s'", sessionName())
 }
 

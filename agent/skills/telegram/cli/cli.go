@@ -195,10 +195,10 @@ func runServe() {
 	// Start polling in background
 	go tc.StartPolling()
 
-	signal.Ignore(syscall.SIGHUP)
-
+	// SIGHUP is how `screen -X quit` (daemon stop/restart) kills the daemon,
+	// so it must reach the graceful shutdown path, matching whatsapp's serve.
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)

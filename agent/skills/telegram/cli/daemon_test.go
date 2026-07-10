@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -72,5 +73,52 @@ func TestDefaultNotificationsDir(t *testing.T) {
 	want := filepath.Join(os.Getenv("HOME"), "agent", "notifications")
 	if got := defaultNotificationsDir(); got != want {
 		t.Errorf("defaultNotificationsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureNotificationsDirArg(t *testing.T) {
+	defaultDir := defaultNotificationsDir()
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"empty args get the default prepended", nil, []string{"--notifications-dir", defaultDir}},
+		{"other flags keep the dir first on the cmdline", []string{"--read-only"}, []string{"--notifications-dir", defaultDir, "--read-only"}},
+		{"explicit dir is untouched", []string{"--notifications-dir", "/tmp/n"}, []string{"--notifications-dir", "/tmp/n"}},
+		{"explicit dir= is untouched", []string{"--notifications-dir=/tmp/n"}, []string{"--notifications-dir=/tmp/n"}},
+		{"instance daemons are untouched", []string{"--instance", "foo"}, []string{"--instance", "foo"}},
+		{"instance= daemons are untouched", []string{"--instance=foo"}, []string{"--instance=foo"}},
+	}
+	for _, testCase := range cases {
+		if got := ensureNotificationsDirArg(testCase.in); !reflect.DeepEqual(got, testCase.want) {
+			t.Errorf("%s: ensureNotificationsDirArg(%v) = %v, want %v", testCase.name, testCase.in, got, testCase.want)
+		}
+	}
+}
+
+func TestStopWatchdogSkipsInstanceScopedCommands(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"telegram", "--instance", "foo"}
+	if stopWatchdogIfLive() {
+		t.Error("stopWatchdogIfLive() must be a no-op for instance-scoped commands")
+	}
+}
+
+func TestFailedStopClearsStopMarker(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"telegram", "--instance", "stoptest"}
+	dataDir, _ := parseStateDir()
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDaemonProcess(); err == nil {
+		t.Fatal("expected stopDaemonProcess to fail with no daemon running")
+	}
+	if _, err := os.Stat(stopRequestedPath(dataDir)); !os.IsNotExist(err) {
+		t.Error("stop-requested marker not cleared after a failed stop")
 	}
 }
