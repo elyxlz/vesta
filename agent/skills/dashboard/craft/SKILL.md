@@ -18,6 +18,18 @@ Each card leads with a single primary value, its reason to exist, set large; eve
 
 The dashboard renders inside an iframe, in a card that sits in the main app's layout, on both desktop and mobile. It never owns the viewport: the frame is wide on desktop and narrow on a phone. Design every widget and page for both from the start, not desktop first with mobile bolted on afterward. The grid reflows to a single column on a narrow frame, text and controls stay legible and tappable, and nothing overflows the card. Do not assume full-screen chrome or fixed viewport heights, you live inside a card.
 
+Prefer a single responsive layout, but when making one layout serve both gets contorted, it is fine to branch: render a distinct arrangement per viewport with `useIsMobile()` from `@/hooks/use-mobile` (the parent app also passes `isMobile` through `parent-bridge`). A clean desktop view and a clean mobile view beat one tangled layout that half works on each.
+
+## Progressive disclosure
+
+Progressive disclosure is a priority, not a nice-to-have, on a surface this dense, embedded, and mobile-friendly: show the essential at a glance and reveal detail on demand. It is what keeps every widget calm and what makes the narrow frame work. Examples:
+
+- A metric card shows the headline number; its breakdown, history, or full chart opens in a dialog or sheet on tap.
+- A list shows the top few rows with a "Show all" that expands the rest, rather than a long scroll inside the card.
+- Secondary actions sit behind an overflow menu (the `...` button), not crowded onto the face of the card.
+- Long text truncates with the full value on hover or an expand, rather than wrapping to three lines.
+- Detail most users do not need up front goes in a collapsible section or a drawer, more aggressively on mobile than on desktop.
+
 ## Color carries meaning, not decoration
 
 Structure follows the design system. Buttons, cards, inputs, borders, and surfaces use the semantic Tailwind tokens that are automatically synced from the main app into `index.css` (`primary`, `secondary`, `muted`, `accent`, `destructive`, `warning`, `border`, and the `card`/`background`/`foreground` families), so the dashboard matches the wider app and stays in step with its theme. You never edit `index.css`; those tokens are always current, build against them.
