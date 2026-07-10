@@ -8,6 +8,7 @@ import pytest
 from claude_agent_sdk import ClaudeSDKError
 
 import core.models as vm
+import core.config as cfg
 from conftest import idle_message_stream
 from core.diagnostics import format_crash_detail
 from wait_util import wait_for_condition
@@ -54,7 +55,7 @@ def _mock_client(enter):
 def _processor_config_state(tmp_path, session_id=None):
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     # These tests exercise the client-session/resume path, which message_processor runs only for an
@@ -91,8 +92,8 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
         state.shutdown_event.set()
 
     with (
-        patch("core.loops.ClaudeSDKClient", mock_client),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.ClaudeSDKClient", mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
@@ -122,8 +123,8 @@ async def test_resume_fallback_raises_when_enter_always_fails(tmp_path, session_
         raise ClaudeSDKError(error)
 
     with (
-        patch("core.loops.ClaudeSDKClient", _mock_client(mock_enter)),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.ClaudeSDKClient", _mock_client(mock_enter)),
+        patch("core.client.build_client_options", return_value=MagicMock()),
     ):
         with pytest.raises(ClaudeSDKError, match=error):
             await message_processor(queue, state=state, config=config)
@@ -137,7 +138,7 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
     """When message_processor crashes, _on_processor_done should set graceful_shutdown."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     for path in [config.data_dir, config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -172,7 +173,7 @@ async def test_monitor_crash_triggers_graceful_shutdown(tmp_path):
     notification/app-chat intake restarts the agent instead of silently wedging behind a live WS."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     for path in [config.data_dir, config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 

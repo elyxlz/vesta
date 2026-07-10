@@ -2,7 +2,7 @@ import copy
 import json
 import os
 import pathlib as pl
-import time
+import tempfile
 import typing as tp
 import uuid
 
@@ -100,12 +100,31 @@ def read_config_store() -> dict[str, pyd.JsonValue]:
     return data if isinstance(data, dict) else {}
 
 
-def _write_config_store(data: dict[str, pyd.JsonValue]) -> None:
-    path = config_store_path()
+def atomic_write_text(path: pl.Path, text: str) -> None:
+    """Write text to path atomically and durably: write a uniquely named sibling temp file, fsync it,
+    rename over the target, then fsync the directory so a power loss cannot land the rename ahead of
+    the data blocks and leave a zeroed file. The unique temp name keeps concurrent writers (coroutines
+    dispatch these writes to worker threads) last-write-wins instead of torn. The single owner of the
+    tmp-write + os.replace recipe (config.json here, state.json in state_store)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(path)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        pl.Path(tmp_name).unlink(missing_ok=True)  # no-op after a successful replace; removes the orphan on failure
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _write_config_store(data: dict[str, pyd.JsonValue]) -> None:
+    atomic_write_text(config_store_path(), json.dumps(data, indent=2))
 
 
 def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
@@ -125,20 +144,18 @@ def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
     _write_config_store(current)
 
 
-def load_notification_rules(config: "VestaConfig") -> list[NotificationInterruptRule]:
-    """The current ruleset, read live from the store on disk (not the boot-time config) so monitor_loop
-    and edits stay in step without a restart. Reads config.data_dir/config.json — the same file the
-    config API writes. One malformed rule (e.g. an invalid regex from a newer skill) is dropped and the
-    rest kept; never raises."""
-    path = config.data_dir / "config.json"
-    if not path.is_file():
-        return []
+def load_notification_rules() -> list[NotificationInterruptRule]:
+    """The current ruleset, read live from the store on disk (not the boot-time config) via
+    read_config_store, so monitor_loop and edits stay in step without a restart. It runs on the
+    per-tick notification hot path, so a transient unreadable store (OSError) yields no rules rather
+    than raising; one malformed rule (e.g. an invalid regex from a newer skill) is dropped and the
+    rest kept."""
     try:
-        store = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.error(f"config store {path} is unreadable ({exc}); ignoring it")
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); ignoring it")
         return []
-    section = store["notification_rules"] if isinstance(store, dict) and "notification_rules" in store else []
+    section = store["notification_rules"] if "notification_rules" in store else []
     if not isinstance(section, list):
         logger.error("config store notification_rules is not a list; ignoring")
         return []
@@ -165,7 +182,7 @@ class ClaudeOAuth(pyd.BaseModel):
     subscriptionType: str | None = None  # noqa: N815
 
 
-def _read_claude_oauth() -> "ClaudeOAuth | None":
+def read_claude_oauth() -> "ClaudeOAuth | None":
     """The `claudeAiOauth` blob from the SDK credentials file, or None when absent/unreadable. The
     file is the source of truth (the CLI refreshes it in place); we load it into the model at boot but
     never write it back through the config store."""
@@ -190,7 +207,8 @@ class ClaudeConfig(pyd.BaseModel):
     model: str = _DEFAULT_CLAUDE_MODEL
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_CLAUDE_CTX_MAX)
     thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ADAPTIVE_THINKING
-    # Loaded from CREDENTIALS_PATH at construction (see VestaConfig._hydrate_claude_oauth); never persisted.
+    # Loaded from CREDENTIALS_PATH on the boot path only (load_config; provider.py reads the file
+    # itself when deriving status); never persisted, and never read during config validation.
     oauth: ClaudeOAuth | None = None
 
     @pyd.field_validator("thinking", mode="before")
@@ -282,19 +300,11 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_token: pyd.SecretStr | None = None
     agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
     agent_name: str = "vesta"
-    # IANA timezone, owned here (not env): clients deliver it via PUT /config. The TZ alias lets a
-    # legacy agent seed the field so _apply_timezone re-exports its real value.
+    # IANA timezone, owned here (not env): clients deliver it via PUT /config and main.py applies it
+    # to the process once at boot (tzset). The TZ alias lets a legacy agent seed the field.
     timezone: str = pyd.Field(default="UTC", validation_alias=pyd.AliasChoices("timezone", "TZ"))
     # One-shot freeform setup notes; materialized to data/seed-context.md on boot, read once at first wake.
     seed_context: str = pyd.Field(default="")
-
-    @pyd.model_validator(mode="after")
-    def _hydrate_claude_oauth(self) -> "VestaConfig":
-        # The store never persists the Claude OAuth blob (the SDK CLI owns/refreshes that file), so a
-        # claude provider arrives with oauth=None; load it from disk here. The one non-store injection.
-        if isinstance(self.provider, ClaudeConfig) and self.provider.oauth is None:
-            self.provider = self.provider.model_copy(update={"oauth": _read_claude_oauth()})
-        return self
 
     @pyd.field_validator("agent_dir", mode="before")
     @classmethod
@@ -333,14 +343,6 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def dreamer_dir(self) -> pl.Path:
         return self.agent_dir / "dreamer"
-
-    @pyd.model_validator(mode="after")
-    def _apply_timezone(self) -> "VestaConfig":
-        # The config object owns timezone, so applying it to the process env on construction means
-        # every consumer (shell `date`, calendar/reminders skills, tasks' tzlocal) inherits it.
-        os.environ["TZ"] = self.timezone
-        time.tzset()
-        return self
 
     @classmethod
     def settings_customise_sources(
@@ -426,6 +428,15 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
     return updates
 
 
+def _hydrate_claude_oauth(config: VestaConfig) -> VestaConfig:
+    """The store never persists the Claude OAuth blob (the SDK CLI owns/refreshes that file), so a
+    claude provider arrives with oauth=None; boot loads it from disk here. Only load_config hydrates:
+    validating a config (PUT /config, PATCH /provider) is inert and never touches disk."""
+    if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is None:
+        config.provider = config.provider.model_copy(update={"oauth": read_claude_oauth()})
+    return config
+
+
 def load_config() -> tuple[VestaConfig, list[str]]:
     """Build VestaConfig without ever raising.
 
@@ -443,7 +454,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     dropped: set[str] = set()
     while True:
         try:
-            return VestaConfig(), issues
+            return _hydrate_claude_oauth(VestaConfig()), issues
         except pyd.ValidationError as exc:
             progressed = False
             for error in exc.errors():
@@ -466,7 +477,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"] else None
                 return (
                     VestaConfig.model_construct(
-                        provider=ClaudeConfig(oauth=_read_claude_oauth()),
+                        provider=ClaudeConfig(oauth=read_claude_oauth()),
                         agent_token=pyd.SecretStr(token) if token is not None else None,
                     ),
                     issues,

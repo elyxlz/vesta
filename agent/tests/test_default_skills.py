@@ -5,7 +5,7 @@ import pathlib
 
 import pytest
 
-import core.models as vm
+import core.config as cfg
 from core.default_skills import default_skill_sync_turn, missing_default_skills
 from core.events import ChatEvent, EventBus, UserEvent
 
@@ -13,7 +13,7 @@ from core.events import ChatEvent, EventBus, UserEvent
 @pytest.fixture
 def skills_config(tmp_path):
     """A config whose agent_dir has core/ (the default-skills list) and skills/ (materialized skills)."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     (config.agent_dir / "skills").mkdir(parents=True)
     (config.agent_dir / "core").mkdir(parents=True)
     config.notifications_dir.mkdir(parents=True, exist_ok=True)

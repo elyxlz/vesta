@@ -4,7 +4,7 @@ into the system prompt on every boot so the voice is as unskippable as MEMORY.md
 preset is selected by the agent_personality preference (config store / AGENT_PERSONALITY env,
 shipped default "dry"). These tests cover the prompt-assembly side."""
 
-import core.models as vm
+import core.config as cfg
 from core.client import build_client_options
 
 
@@ -16,7 +16,7 @@ def _config(tmp_path, monkeypatch):
     from core.config import update_config_store
 
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("my memory body")
     return config
@@ -63,7 +63,7 @@ def test_active_preset_is_selected_from_the_config_store(tmp_path, state, monkey
     from core.config import update_config_store
 
     update_config_store({"agent_personality": "extra"})
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     assert config.agent_personality == "extra"
     _write_voice(config, shared="shared voice rules", presets={"dry": "dry preset voice", "extra": "extra preset voice"})
     prompt = _system_prompt(config, state)

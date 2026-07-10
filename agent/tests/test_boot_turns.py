@@ -1,12 +1,13 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
 import core.models as vm
+import core.config as cfg
 from core.main import collect_boot_turns
 from core.provider import ProviderAuthState, ProviderStatus
 
 
 def _boot_config(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     for sub in ["core/migrations", "core/prompts", "skills", "data", "dreamer"]:
         (config.agent_dir / sub).mkdir(parents=True, exist_ok=True)
     return config
