@@ -4,7 +4,7 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
+    guard_alive, inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
     write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
@@ -148,19 +148,7 @@ fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
 async fn backup_preflight(docker: &Docker, name: &str) -> Result<ContainerStatus, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
-    match cs {
-        ContainerStatus::NotFound => {
-            return Err(DockerError::NotFound(format!("agent '{}' not found", name)))
-        }
-        ContainerStatus::Dead => {
-            return Err(DockerError::BrokenState(format!(
-                "agent '{}' is in a broken state",
-                name
-            )))
-        }
-        _ => {}
-    }
+    let cs = guard_alive(container_status(docker, &cname).await, name)?;
     check_disk_space(docker, name, &cname).await?;
     Ok(cs)
 }

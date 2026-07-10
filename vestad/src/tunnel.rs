@@ -495,7 +495,9 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("failed to create config dir: {}", e))?;
 
     let status = std::process::Command::new("curl")
-        .args(["-fsSL", "-o", local_bin.to_str().unwrap(), &url])
+        .args(["-fsSL", "-o"])
+        .arg(&local_bin)
+        .arg(&url)
         .status()
         .map_err(|e| format!("curl failed: {}", e))?;
 
@@ -581,11 +583,9 @@ async fn start_tunnel(
     // tunnel and yields error 1033 on the next request (e.g. the first file
     // share after an idle period). TCP keeps the connection alive far longer.
     let mut child = tokio::process::Command::new(cloudflared)
-        .args([
-            "tunnel", "--protocol", "http2", "--metrics", &metrics_addr,
-            "--config", cf_config_path.to_str().unwrap(),
-            "run", "--token", &tc.tunnel_token,
-        ])
+        .args(["tunnel", "--protocol", "http2", "--metrics", &metrics_addr, "--config"])
+        .arg(&cf_config_path)
+        .args(["run", "--token", &tc.tunnel_token])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         // SIGKILL the child if its handle is dropped without an explicit kill

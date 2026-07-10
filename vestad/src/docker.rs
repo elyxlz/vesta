@@ -158,10 +158,7 @@ const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 // Override bollard's 120s default to absorb slow image builds under CI contention.
 const DOCKER_TIMEOUT_SECS: u64 = 600;
-#[cfg(unix)]
 const DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
-#[cfg(windows)]
-const DOCKER_NAMED_PIPE: &str = "npipe:////./pipe/docker_engine";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -229,19 +226,8 @@ pub struct ListEntry {
 // --- Docker connection ---
 
 pub fn connect() -> Result<Docker, DockerError> {
-    #[cfg(unix)]
-    let result = Docker::connect_with_socket(
-        DOCKER_SOCKET,
-        DOCKER_TIMEOUT_SECS,
-        bollard::API_DEFAULT_VERSION,
-    );
-    #[cfg(windows)]
-    let result = Docker::connect_with_named_pipe(
-        DOCKER_NAMED_PIPE,
-        DOCKER_TIMEOUT_SECS,
-        bollard::API_DEFAULT_VERSION,
-    );
-    result.map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
+    Docker::connect_with_socket(DOCKER_SOCKET, DOCKER_TIMEOUT_SECS, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
 }
 
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
@@ -542,7 +528,7 @@ pub fn is_agent_ready(port: u16) -> bool {
 /// errors, passing a live (`Running`/`Stopped`) status through. The single owner of the
 /// "agent not found / broken state" wording and the shared precondition guard every
 /// name-addressed lifecycle op repeats; `name` is the agent name used in the error text.
-fn guard_alive(status: ContainerStatus, name: &str) -> Result<ContainerStatus, DockerError> {
+pub(crate) fn guard_alive(status: ContainerStatus, name: &str) -> Result<ContainerStatus, DockerError> {
     match status {
         ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
@@ -1712,7 +1698,7 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
         return Ok(());
     }
-    docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await?;
+    stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
     Ok(())
 }
 
@@ -1725,7 +1711,7 @@ pub async fn stop_all_agents(docker: &Docker) {
     for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
         if container_status(docker, &cname).await == ContainerStatus::Running {
             tracing::info!(agent = %agent_name, "stopping for vestad shutdown");
-            docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+            stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await.ok();
         }
     }
 }
@@ -1954,7 +1940,7 @@ pub async fn reconcile_containers(
             }
         } else if running {
             tracing::info!(agent = %name, "stopping (user-stopped)");
-            docker.stop_container(cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+            stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS).await.ok();
         }
     }
 
@@ -1980,7 +1966,7 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
     validate_name(name)?;
     let cname = container_name(name);
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
-        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+        stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await.ok();
     }
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
@@ -2129,7 +2115,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
     if info.status == ContainerStatus::Running {
         tracing::info!(agent = %name, "[1/4] stopping container...");
-        docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+        stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await.ok();
     }
 
     tracing::info!(agent = %name, "[2/4] snapshotting container filesystem...");
@@ -2196,7 +2182,7 @@ pub async fn rename_agent(
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
     if info.status == ContainerStatus::Running {
         tracing::info!(agent = %old_name, "[1/4] stopping container...");
-        docker.stop_container(&old_cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok();
+        stop_container_with_timeout(docker, &old_cname, CONTAINER_STOP_TIMEOUT_SECS).await.ok();
     }
 
     let ts = crate::time_utils::now_epoch_secs();

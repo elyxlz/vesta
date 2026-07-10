@@ -168,9 +168,18 @@ fn extract_agent_name(path: &str) -> Option<String> {
 }
 
 
+/// Constant-time byte comparison so a mismatched raw API key can't be brute-forced
+/// via response-timing (the key never rotates and gates the tunnel-exposed listener).
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
+}
+
 /// Accept raw API key or JWT access token.
 pub(crate) fn verify_token(token: &str, api_key: &str) -> bool {
-    if token == api_key {
+    if constant_time_eq(token.as_bytes(), api_key.as_bytes()) {
         return true;
     }
     if token.contains('.') {
@@ -493,5 +502,20 @@ mod refresh_rotation_tests {
         // Reuse a two-steps-old A token → revokes family A only.
         assert!(rotate(&mut map, &refresh_claims(&a0, &fam_a), NOW).is_none());
         assert!(rotate(&mut map, &refresh_claims(&b0, &fam_b), NOW).is_some());
+    }
+}
+
+#[cfg(test)]
+mod verify_token_tests {
+    use super::verify_token;
+
+    #[test]
+    fn matching_key_verifies() {
+        assert!(verify_token("the-api-key", "the-api-key"));
+    }
+
+    #[test]
+    fn same_length_non_matching_key_does_not_verify() {
+        assert!(!verify_token("the-api-kex", "the-api-key"));
     }
 }

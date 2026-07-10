@@ -46,23 +46,26 @@ const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
-pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
+pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, String), String> {
     let tls_dir = config_dir.join("tls");
     let cert_path = tls_dir.join("cert.pem");
     let key_path = tls_dir.join("key.pem");
     let fingerprint_path = tls_dir.join("fingerprint");
 
     if cert_path.exists() && key_path.exists() && fingerprint_path.exists() {
-        let cert_pem = std::fs::read_to_string(&cert_path).expect("failed to read cert.pem");
-        let key_pem = std::fs::read_to_string(&key_path).expect("failed to read key.pem");
-        let fingerprint =
-            std::fs::read_to_string(&fingerprint_path).expect("failed to read fingerprint");
-        return (cert_pem, key_pem, fingerprint.trim().to_string());
+        let cert_pem = std::fs::read_to_string(&cert_path)
+            .map_err(|e| format!("failed to read {}: {e}", cert_path.display()))?;
+        let key_pem = std::fs::read_to_string(&key_path)
+            .map_err(|e| format!("failed to read {}: {e}", key_path.display()))?;
+        let fingerprint = std::fs::read_to_string(&fingerprint_path)
+            .map_err(|e| format!("failed to read {}: {e}", fingerprint_path.display()))?;
+        return Ok((cert_pem, key_pem, fingerprint.trim().to_string()));
     }
 
-    std::fs::create_dir_all(&tls_dir).expect("failed to create tls dir");
+    std::fs::create_dir_all(&tls_dir).map_err(|e| format!("failed to create {}: {e}", tls_dir.display()))?;
 
-    let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".into()])
+        .map_err(|e| format!("failed to build cert params: {e}"))?;
     params
         .subject_alt_names
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
@@ -80,8 +83,10 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
     // 10 year validity
     params.not_after = rcgen::date_time_ymd(2036, 1, 1);
 
-    let key_pair = rcgen::KeyPair::generate().unwrap();
-    let cert = params.self_signed(&key_pair).unwrap();
+    let key_pair = rcgen::KeyPair::generate().map_err(|e| format!("failed to generate tls key: {e}"))?;
+    let cert = params
+        .self_signed(&key_pair)
+        .map_err(|e| format!("failed to self-sign tls cert: {e}"))?;
 
     let cert_pem = cert.pem();
     let key_pem = key_pair.serialize_pem();
@@ -99,9 +104,10 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
             .join(":")
     );
 
-    std::fs::write(&cert_path, &cert_pem).expect("failed to write cert.pem");
-    std::fs::write(&key_path, &key_pem).expect("failed to write key.pem");
-    std::fs::write(&fingerprint_path, &fingerprint).expect("failed to write fingerprint");
+    std::fs::write(&cert_path, &cert_pem).map_err(|e| format!("failed to write {}: {e}", cert_path.display()))?;
+    std::fs::write(&key_path, &key_pem).map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
+    std::fs::write(&fingerprint_path, &fingerprint)
+        .map_err(|e| format!("failed to write {}: {e}", fingerprint_path.display()))?;
 
     // chmod 600 on key and fingerprint
     #[cfg(unix)]
@@ -111,33 +117,33 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
         std::fs::set_permissions(&fingerprint_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
 
-    (cert_pem, key_pem, fingerprint)
+    Ok((cert_pem, key_pem, fingerprint))
 }
 
 // --- API key generation ---
 
-pub fn ensure_api_key(config_dir: &std::path::Path) -> String {
+pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
     let key_path = config_dir.join("api-key");
     if let Ok(key) = std::fs::read_to_string(&key_path) {
         let key = key.trim().to_string();
         if !key.is_empty() {
-            return key;
+            return Ok(key);
         }
     }
 
-    std::fs::create_dir_all(config_dir).expect("failed to create config dir");
+    std::fs::create_dir_all(config_dir).map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
 
     let key: String = (0..API_KEY_BYTES)
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect();
 
-    std::fs::write(&key_path, &key).expect("failed to write api-key");
+    std::fs::write(&key_path, &key).map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
-    key
+    Ok(key)
 }
 
 // --- App state ---

@@ -533,8 +533,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             .output().ok();
     }
 
-    let api_key = serve::ensure_api_key(&config);
-    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
+    let api_key = serve::ensure_api_key(&config).unwrap_or_else(|e| die(&e));
+    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config).unwrap_or_else(|e| die(&e));
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
