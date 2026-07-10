@@ -16,7 +16,7 @@ Each card leads with a single primary value, its reason to exist, set large; eve
 
 ## Color carries meaning, not decoration
 
-Reserve color for signal. Green reads as good or up, red as bad or down, amber as attention; everything at rest stays muted. A widget washed in one accent has no signal left to give. Let color spike only where it means something, and use it the same way across every widget so the user learns it once.
+The palette is not yours to invent: use the semantic Tailwind tokens synced from the main app in `index.css` (`primary`, `secondary`, `muted`, `accent`, `destructive`, `warning`, `border`, and the `card`/`background`/`foreground` families), never raw scales like `bg-blue-500`. Reserve color for signal: `destructive` for bad or failed, `warning` for attention, `primary` for the one thing to highlight, with everything at rest `muted`. A widget washed in one accent has no signal left to give. Use each token the same way across every widget so the user learns it once.
 
 ## Structure is information
 
