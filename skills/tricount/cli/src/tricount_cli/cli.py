@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import NoReturn
 
 from .client import TricountClient
@@ -379,6 +380,13 @@ def cmd_edit_expense(args: argparse.Namespace, client: TricountClient) -> dict:
     return out
 
 
+def cmd_serve(args: argparse.Namespace, client: TricountClient) -> None:
+    """Run the watcher daemon: poll all joined tricounts and emit notifications."""
+    from . import watcher
+
+    watcher.serve(Path(args.notifications_dir).expanduser(), interval=args.interval)
+
+
 def cmd_delete_expense(args: argparse.Namespace, client: TricountClient) -> dict:
     """Delete an expense from a tricount."""
     t = client.find_tricount(args.tricount)
@@ -606,6 +614,24 @@ def main() -> None:
     )
     del_p.set_defaults(func=cmd_delete_expense)
 
+    # --- serve (watcher daemon) ---
+    serve_p = subparsers.add_parser(
+        "serve",
+        help="Run the watcher daemon: poll all joined tricounts and emit notifications on changes",
+    )
+    serve_p.add_argument(
+        "--notifications-dir",
+        required=True,
+        help="Directory to write notification JSON files into (e.g. ~/agent/notifications)",
+    )
+    serve_p.add_argument(
+        "--interval",
+        type=int,
+        default=120,
+        help="Seconds between polls (default: 120; be gentle on the API)",
+    )
+    serve_p.set_defaults(func=cmd_serve)
+
     args = parser.parse_args()
 
     client = TricountClient()
@@ -613,7 +639,10 @@ def main() -> None:
     # auth register doesn't need existing creds
     try:
         result = args.func(args, client)
-        _out(result)
+        if result is not None:
+            _out(result)
+    except KeyboardInterrupt:
+        sys.exit(0)
     except RuntimeError as e:
         _err(str(e))
     except Exception as e:
