@@ -352,12 +352,12 @@ impl Status {
         let local_url = format!("http://localhost:{}", self.port + 1);
         let tunnel_url = self.tunnel.url();
 
-        // enabled = tunnel up; disabled = --no-tunnel; error — <reason> = a tunnel
+        // enabled = tunnel up; disabled = --no-tunnel; error: <reason> = a tunnel
         // was wanted but couldn't be established (no creds, dead tunnel, API error).
         let tunnel_desc = match &self.tunnel {
             TunnelStatus::Active(_) => "enabled".to_string(),
             TunnelStatus::Disabled => "disabled".to_string(),
-            TunnelStatus::Failed(reason) => format!("error — {}", first_line_truncated(reason, 100)),
+            TunnelStatus::Failed(reason) => format!("error: {}", first_line_truncated(reason, 100)),
         };
         let lan_desc = if self.expose_lan { "enabled" } else { "disabled" }.to_string();
         let lan_url = self.lan_url.as_deref();

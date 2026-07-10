@@ -266,7 +266,7 @@ fn report_restart_readiness(config: &std::path::Path) {
             None => false,
         };
         if !local_ready {
-            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            eprintln!("vestad restarted, but its local API did not come up in time. check 'vestad logs'.");
             return;
         }
 

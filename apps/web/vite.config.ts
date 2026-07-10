@@ -74,11 +74,7 @@ export default defineConfig({
     __PLATFORM__: JSON.stringify(process.env.TAURI_ENV_PLATFORM || ""),
   },
   plugins: [
-    react({
-      babel: {
-        plugins: [["babel-plugin-react-compiler"]],
-      },
-    }),
+    react(),
     tailwindcss(),
     ...(useHttps ? [basicSsl()] : []),
     installScriptsPlugin(),
