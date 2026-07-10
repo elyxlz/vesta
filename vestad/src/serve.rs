@@ -2438,14 +2438,17 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                // Custom span: DefaultMakeSpan records the full URI, and ?token= carries the live
+                // API key on browser WS connects; the span prefix lands in persisted logs.
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    tracing::info_span!("request", method = %request.method(), path = %request.uri().path())
+                })
                 .on_request(
                     |request: &axum::http::Request<_>, _span: &tracing::Span| {
-                        let path = request.uri().path();
                         let is_noisy = request.method() == axum::http::Method::OPTIONS
-                            || path.ends_with("/logs");
+                            || request.uri().path().ends_with("/logs");
                         if !is_noisy {
-                            tracing::info!(method = %request.method(), path = %path, "request");
+                            tracing::info!("request");
                         }
                     },
                 )

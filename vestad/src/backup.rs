@@ -469,6 +469,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn restore_backup_confirms_removal_before_create() {
+        // restore_backup recreates under the SAME name, so the old container must be confirmed
+        // gone before create. A best-effort `remove_container_force(...).await.ok()` could let
+        // the create collide on the name after the env file was already rewritten (docker rm can
+        // return before the name frees, or fail transiently), same failure mode as rebuild_agent.
+        let src = include_str!("backup.rs");
+        let restore_start = src.find("pub async fn restore_backup").expect("restore_backup present");
+        let delete_start = src.find("pub async fn delete_backup").expect("delete_backup present");
+        assert!(restore_start < delete_start, "restore_backup must appear before delete_backup for this test to slice correctly");
+        let restore_body = &src[restore_start..delete_start];
+
+        let remove_pos = restore_body
+            .find("ensure_container_removed")
+            .expect("restore_backup must confirm the old container is gone via ensure_container_removed before recreating");
+        let create_pos = restore_body.find("create_container").expect("create_container must be called in restore_backup");
+        assert!(remove_pos < create_pos, "restore_backup must remove the old container before creating the new one");
+        assert!(
+            !restore_body.contains("remove_container_force"),
+            "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+    }
+
     // ── Retention policy tests ────────────────────────────────────
 
     const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
