@@ -1,6 +1,6 @@
 ---
 name: microsoft
-description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, and new-mail paging. Requires daemon.
+description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon.
 ---
 
 # Microsoft - CLI: microsoft
@@ -156,6 +156,70 @@ microsoft email attachment --account user@example.com --email-id '<email_id>' --
 microsoft email attachment --account user@example.com --email-id '<email_id>' --attachment-id '<attachment_id>' --save-path /tmp/file.pdf  # one
 ```
 
+## Microsoft Teams
+
+Teams runs over the same Graph transport as mail, with its **own** sign-in so a mail-only account is
+never prompted for Teams scopes:
+
+```bash
+microsoft auth teams-login                       # device-code sign-in; returns a URL + code
+microsoft auth teams-complete --flow-cache <cache>  # finish after signing in
+```
+
+For a locked tenant that blocks the CLI's app registration, capture a token from Teams on the web
+(same browser-capture path as email's `owa-login`, agent-driven and non-blocking):
+
+```bash
+microsoft auth teams-capture --account you@company.com   # captures, or returns sign_in_required
+```
+
+If the browser is not signed in, drive the sign-in with the `browser` skill, then run it again. When
+the agent cannot reach the browser, let the user run `auth_commands.TEAMS_TOKEN_SNIPPET` in their own
+Teams DevTools console and paste the token: `microsoft auth teams-capture --account you@company.com --token <TOKEN>`.
+
+Every command below takes `--backend {auto,graph,owa-rest}` (default `auto`): `graph` uses the
+device-flow token, `owa-rest` uses the browser-captured token, `auto` tries Graph then falls back.
+
+### Chats
+
+```bash
+microsoft teams chats --account you@company.com                          # recent chats, newest message first
+microsoft teams messages --account you@company.com --chat <chat_id>       # messages in a chat
+microsoft teams send --account you@company.com --chat <chat_id> --body "on my way"
+microsoft teams start --account you@company.com --with bob@company.com --body "hi"      # new 1:1
+microsoft teams start --account you@company.com --with a@co.com b@co.com --topic "Launch" --body "kickoff"  # group
+```
+
+`chats` and `messages` print `id` in the last column (needed for `--chat`). `start` makes a one-on-one
+when `--with` names one person, a group (with an optional `--topic`) for two or more.
+
+### Teams and channels
+
+```bash
+microsoft teams teams --account you@company.com                          # joined teams (with ids)
+microsoft teams channels --account you@company.com --team <team_id>
+microsoft teams post --account you@company.com --team <team_id> --channel <channel_id> --body "ship it"
+microsoft teams reply --account you@company.com --team <team_id> --channel <channel_id> --message <msg_id> --body "agreed"
+microsoft teams channel-messages --account you@company.com --team <team_id> --channel <channel_id>
+```
+
+Posting and replying to channels work out of the box. **Reading** channel messages
+(`channel-messages`) needs the admin-only `ChannelMessage.Read.All` scope, so it fails on the default
+client unless a tenant admin has granted it (or you use your own app registration); chats need no
+admin consent.
+
+### Presence
+
+```bash
+microsoft teams presence --account you@company.com                       # your availability + activity
+microsoft teams set-presence --account you@company.com --availability Busy --expires PT1H
+microsoft teams clear-presence --account you@company.com
+```
+
+`--availability`: Available / Busy / DoNotDisturb / BeRightBack / Away / Offline. `--expires` is an
+ISO 8601 duration (e.g. `PT1H`, `PT30M`); omit it for Graph's own default. Preferred presence only
+shows while you have a live Teams session signed in.
+
 ## Notifications
 
 The `serve` daemon watches each account's inbox by default and writes one notification per new email (source `microsoft`, type `email`, with a `folder` field). To watch more folders (e.g. a folder an inbox rule routes newsletters into), set the per-account watch list; the daemon re-reads it every cycle, no restart:
@@ -168,6 +232,8 @@ microsoft notify remove --account user@example.com --folder inbox     # stop not
 ```
 
 `notify add --folder` validates the folder exists first. Removing every folder mutes the account. The watch list lives in `~/.microsoft/notify.json`. Watching is time-based: it fires on **new arrivals** (including rule-routed mail), not on messages you manually move into a folder.
+
+Once an account has authorized Teams (`auth teams-login` or `auth teams-capture`), the daemon also watches its Teams chats and writes one notification per incoming chat message (source `microsoft`, type `teams`, with `sender`, `topic`, `chat_id`; your own outgoing messages are skipped). Teams chat notifications interrupt by default, like a direct message. Reply with `microsoft teams send --chat <chat_id>`.
 
 ### Contact Communication Styles
 [How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]

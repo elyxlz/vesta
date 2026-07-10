@@ -63,6 +63,34 @@ does a device-code sign-in instead (enter a code at a URL, no browser), finished
 `microsoft auth owa-complete --account you@company.com --flow-cache <cache>`. MSAL then
 auto-refreshes that token.
 
+## Microsoft Teams
+
+Teams uses the same client and daemon as mail, but has its **own** sign-in so a mail-only account is
+never prompted for Teams scopes. The Teams scopes (`Chat.ReadWrite`, `ChannelMessage.Send`,
+`Team.ReadBasic.All`, `Channel.ReadBasic.All`, `Presence.ReadWrite`) are all user-consentable, so no
+admin approval is needed for chats, channel posting, or presence:
+
+```bash
+microsoft auth teams-login                           # device flow: gives a URL and code
+microsoft auth teams-complete --flow-cache <cache>   # complete after signing in
+microsoft teams chats --account you@company.com
+```
+
+Locked tenant (blocks the CLI's app registration)? Capture a token from Teams on the web, the same
+mechanism as `owa-login`:
+
+```bash
+microsoft auth teams-capture --account you@company.com     # browser capture, or sign_in_required
+microsoft teams chats --account you@company.com --backend owa-rest
+```
+
+**Reading channel messages** (`microsoft teams channel-messages`) is the one Teams operation that
+needs the admin-only `ChannelMessage.Read.All` scope. Add it to your own app registration (below) and
+have a tenant admin grant consent; everything else (chats, channel posting, presence) works without
+it. For an own app registration, add these **Delegated** Graph permissions alongside the mail ones:
+`Chat.ReadWrite`, `ChannelMessage.Send`, `ChannelMessage.Read.All`, `Team.ReadBasic.All`,
+`Channel.ReadBasic.All`, `Presence.ReadWrite`.
+
 ## Troubleshooting: Adding New Azure Permissions
 
 When adding new API permissions (e.g. MailboxSettings.ReadWrite) to an existing app registration:

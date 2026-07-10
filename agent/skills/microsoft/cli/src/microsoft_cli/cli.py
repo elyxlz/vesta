@@ -11,7 +11,7 @@ import httpx
 
 from .config import Config
 from . import auth_commands, email, calendar, monitor, notifications, block, folders, notify, format as fmt
-from . import backend, owa_rest, owa_rest_commands
+from . import backend, owa_rest, owa_rest_commands, teams
 from .context import MicrosoftContext
 
 
@@ -77,6 +77,17 @@ def main():
     p_owa_complete = auth_sub.add_parser("owa-complete", help="Finish an OWA REST --device sign-in started with owa-login.")
     p_owa_complete.add_argument("--account", required=True)
     p_owa_complete.add_argument("--flow-cache", required=True)
+
+    auth_sub.add_parser("teams-login", help="Authorize Microsoft Teams via device code (separate from the mail login).")
+    p_teams_complete = auth_sub.add_parser("teams-complete", help="Finish a Teams sign-in started with teams-login.")
+    p_teams_complete.add_argument("--flow-cache", required=True)
+    p_teams_capture = auth_sub.add_parser(
+        "teams-capture", help="Capture a Teams token for a locked tenant (default: from the agent's browser session)."
+    )
+    p_teams_capture.add_argument("--account", required=True, help="Email address to authorize.")
+    p_teams_capture.add_argument(
+        "--token", default=None, help="Save a token the user extracted from their own signed-in Teams (creds never reach the agent)."
+    )
 
     # email
     email_parser = group.add_parser("email")
@@ -291,11 +302,83 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
     p_respond.add_argument("--message", default=None)
 
+    # teams
+    teams_parser = group.add_parser("teams")
+    teams_sub = teams_parser.add_subparsers(dest="command", required=True)
+
+    p_chats = teams_sub.add_parser("chats", help="List recent chats (most recent message first).")
+    p_chats.add_argument("--account", required=True)
+    p_chats.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chats)
+
+    p_chat_msgs = teams_sub.add_parser("messages", help="List messages in a chat.")
+    p_chat_msgs.add_argument("--account", required=True)
+    p_chat_msgs.add_argument("--chat", required=True, dest="chat_id")
+    p_chat_msgs.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chat_msgs)
+
+    p_chat_send = teams_sub.add_parser("send", help="Send a message to a chat.")
+    p_chat_send.add_argument("--account", required=True)
+    p_chat_send.add_argument("--chat", required=True, dest="chat_id")
+    p_chat_send.add_argument("--body", required=True)
+    p_chat_send.add_argument("--html", action="store_true")
+
+    p_chat_start = teams_sub.add_parser("start", help="Start a new one-on-one or group chat.")
+    p_chat_start.add_argument("--account", required=True)
+    p_chat_start.add_argument("--with", nargs="+", required=True, dest="members", help="Email addresses of the other participants.")
+    p_chat_start.add_argument("--body", default=None, help="Optional first message.")
+    p_chat_start.add_argument("--topic", default=None, help="Group chat topic (ignored for one-on-one).")
+    p_chat_start.add_argument("--html", action="store_true")
+
+    p_teams_list = teams_sub.add_parser("teams", help="List the teams you have joined.")
+    p_teams_list.add_argument("--account", required=True)
+    _add_format_flags(p_teams_list)
+
+    p_channels = teams_sub.add_parser("channels", help="List channels in a team.")
+    p_channels.add_argument("--account", required=True)
+    p_channels.add_argument("--team", required=True, dest="team_id")
+    _add_format_flags(p_channels)
+
+    p_chan_msgs = teams_sub.add_parser("channel-messages", help="List messages in a channel (needs admin-granted ChannelMessage.Read.All).")
+    p_chan_msgs.add_argument("--account", required=True)
+    p_chan_msgs.add_argument("--team", required=True, dest="team_id")
+    p_chan_msgs.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_msgs.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chan_msgs)
+
+    p_chan_post = teams_sub.add_parser("post", help="Post a new message to a channel.")
+    p_chan_post.add_argument("--account", required=True)
+    p_chan_post.add_argument("--team", required=True, dest="team_id")
+    p_chan_post.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_post.add_argument("--body", required=True)
+    p_chan_post.add_argument("--html", action="store_true")
+
+    p_chan_reply = teams_sub.add_parser("reply", help="Reply to a channel message.")
+    p_chan_reply.add_argument("--account", required=True)
+    p_chan_reply.add_argument("--team", required=True, dest="team_id")
+    p_chan_reply.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_reply.add_argument("--message", required=True, dest="message_id")
+    p_chan_reply.add_argument("--body", required=True)
+    p_chan_reply.add_argument("--html", action="store_true")
+
+    p_presence = teams_sub.add_parser("presence", help="Show your presence (availability + activity).")
+    p_presence.add_argument("--account", required=True)
+
+    p_set_presence = teams_sub.add_parser("set-presence", help="Set your preferred presence.")
+    p_set_presence.add_argument("--account", required=True)
+    p_set_presence.add_argument(
+        "--availability", required=True, choices=["Available", "Busy", "DoNotDisturb", "BeRightBack", "Away", "Offline"]
+    )
+    p_set_presence.add_argument("--expires", default=None, help="ISO 8601 duration to hold it, e.g. PT1H (default: Graph's own expiry).")
+
+    p_clear_presence = teams_sub.add_parser("clear-presence", help="Clear your preferred presence.")
+    p_clear_presence.add_argument("--account", required=True)
+
     # Backend selector on every email/calendar/folder subcommand.
     # auto     - Graph first; on a permission failure fall back to OWA REST (if a captured token exists).
     # graph    - force the official Graph API.
     # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
-    for sub in (email_sub, cal_sub, folder_sub):
+    for sub in (email_sub, cal_sub, folder_sub, teams_sub):
         for sp in sub.choices.values():
             sp.add_argument(
                 "--backend",
@@ -321,13 +404,14 @@ def main():
         if args.group == "auth":
             result = _dispatch_auth(args, config)
             print(json.dumps(fmt.strip_odata(result), indent=2))
-        elif args.group in ("email", "calendar", "folder", "notify"):
+        elif args.group in ("email", "calendar", "folder", "notify", "teams"):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 dispatchers = {
                     "email": _dispatch_email,
                     "calendar": _dispatch_calendar,
                     "folder": _dispatch_folder,
                     "notify": _dispatch_notify,
+                    "teams": _dispatch_teams,
                 }
                 result = dispatchers[args.group](args, config, client)
                 _print_result(args, result)
@@ -342,6 +426,11 @@ _COMPACT_FORMATTERS = {
     ("calendar", "list"): fmt.format_calendar_event_list,
     ("calendar", "calendars"): fmt.format_calendar_name_list,
     ("folder", "list"): fmt.format_folder_list,
+    ("teams", "chats"): fmt.format_teams_chat_list,
+    ("teams", "messages"): fmt.format_teams_message_list,
+    ("teams", "channel-messages"): fmt.format_teams_message_list,
+    ("teams", "teams"): fmt.format_teams_team_list,
+    ("teams", "channels"): fmt.format_teams_channel_list,
 }
 
 
@@ -379,6 +468,12 @@ def _dispatch_auth(args, config):
         return auth_commands.owa_login(config, account_email=args.account, use_device=args.device, token=args.token)
     elif args.command == "owa-complete":
         return auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache)
+    elif args.command == "teams-login":
+        return auth_commands.teams_login(config)
+    elif args.command == "teams-complete":
+        return auth_commands.teams_complete(config, flow_cache=args.flow_cache)
+    elif args.command == "teams-capture":
+        return auth_commands.teams_capture(config, account_email=args.account, token=args.token)
 
 
 def _graph_has_account(config, account_email: str) -> bool:
@@ -625,6 +720,49 @@ def _dispatch_calendar(args, config, client):
     elif args.command == "respond":
         kw = dict(account_email=acct, event_id=args.event_id, response=args.response, message=args.message)
         return route(lambda: calendar.respond_event(config, client, **kw), lambda: owa_rest_commands.respond_event(config, client, **kw))
+
+
+def _dispatch_teams(args, config, client):
+    """Teams runs one Graph transport with two token sources: a device-flow token (graph) or a
+    browser-captured token (owa-rest). backend.run picks per --backend, falling back on a
+    permission failure exactly like the mail dispatcher."""
+    acct = args.account
+
+    def call(fn):
+        graph_fn = lambda: fn(client, teams.graph_token(config, acct))  # noqa: E731
+        rest_fn = lambda: fn(client, teams.captured_token(config, acct))  # noqa: E731
+        return backend.run(args.backend, graph_fn, rest_fn)
+
+    if args.command == "chats":
+        return call(lambda c, t: teams.list_chats(c, t, limit=args.limit))
+    elif args.command == "messages":
+        return call(lambda c, t: teams.list_chat_messages(c, t, chat_id=args.chat_id, limit=args.limit))
+    elif args.command == "send":
+        return call(lambda c, t: teams.send_chat_message(c, t, chat_id=args.chat_id, body=args.body, html=args.html))
+    elif args.command == "start":
+        return call(lambda c, t: teams.start_chat(c, t, members=args.members, body=args.body, topic=args.topic, html=args.html))
+    elif args.command == "teams":
+        return call(lambda c, t: teams.list_teams(c, t))
+    elif args.command == "channels":
+        return call(lambda c, t: teams.list_channels(c, t, team_id=args.team_id))
+    elif args.command == "channel-messages":
+        return call(lambda c, t: teams.list_channel_messages(c, t, team_id=args.team_id, channel_id=args.channel_id, limit=args.limit))
+    elif args.command == "post":
+        return call(
+            lambda c, t: teams.post_channel_message(c, t, team_id=args.team_id, channel_id=args.channel_id, body=args.body, html=args.html)
+        )
+    elif args.command == "reply":
+        return call(
+            lambda c, t: teams.reply_channel_message(
+                c, t, team_id=args.team_id, channel_id=args.channel_id, message_id=args.message_id, body=args.body, html=args.html
+            )
+        )
+    elif args.command == "presence":
+        return call(lambda c, t: teams.get_presence(c, t))
+    elif args.command == "set-presence":
+        return call(lambda c, t: teams.set_presence(c, t, availability=args.availability, expires=args.expires))
+    elif args.command == "clear-presence":
+        return call(lambda c, t: teams.clear_presence(c, t))
 
 
 def _run_serve(config: Config, notif_dir: Path):
