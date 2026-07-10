@@ -5,12 +5,19 @@ usage() {
   cat <<'EOF'
 Usage: ./release.sh [patch|minor|major] "<message>"
 
-The message is required: user-facing marketing copy for the changelog
-("What's new"), shown to users in the app and on the changelog.
+The message is required: user-facing "What's new" copy shown in the app and on
+the changelog. Style:
+
+  * Two or three short sentences in plain user language.
+  * Name the headline features with a little texture; drop minor items.
+  * Describe only what actually changed: a fix or backend improvement reads as
+    "more reliable" or "now works with X", never as a brand-new capability.
+  * Refer to the agent as Vesta or they/them, never it. No dashes as separators.
+  * Internal-only release: an honest one-liner like "Small fixes under the hood."
 
 Examples:
-  ./release.sh "Faster startup and smoother chat scrolling."
-  ./release.sh minor "Vesta can now manage your calendar."
+  ./release.sh "Vesta can now shop online, and hand you their browser when a site needs your login."
+  ./release.sh minor "Any email account now works: full IMAP support with instant new-mail push."
 EOF
   exit 1
 }
