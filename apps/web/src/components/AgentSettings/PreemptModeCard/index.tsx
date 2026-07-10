@@ -78,8 +78,8 @@ export function PreemptModeCard() {
           interrupt handling
         </CardTitle>
         <CardDescription>
-          What happens when an urgent message arrives while {displayName} is
-          busy. Applies after a restart.
+          what happens when an urgent message arrives while {displayName} is
+          busy. applies after a restart.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -96,10 +96,10 @@ export function PreemptModeCard() {
             spacing={2}
           >
             <ToggleGroupItem value="message">
-              <MessageSquareDot /> Graceful
+              <MessageSquareDot /> graceful
             </ToggleGroupItem>
             <ToggleGroupItem value="interrupt">
-              <Zap /> Immediate
+              <Zap /> immediate
             </ToggleGroupItem>
           </ToggleGroup>
         )}
