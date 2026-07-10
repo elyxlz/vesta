@@ -13,9 +13,9 @@ use tokio::time::Instant;
 
 use crate::auth;
 use crate::docker;
-use crate::serve::{
-    err_response, map_docker_err, ServiceEntry, SharedState, PROXY_MAX_BODY_BYTES,
-    WS_KEEPALIVE_INTERVAL_SECS,
+use crate::settings::ServiceEntry;
+use crate::state::{
+    err_response, map_docker_err, SharedState, PROXY_MAX_BODY_BYTES, WS_KEEPALIVE_INTERVAL_SECS,
 };
 
 // When a freshly-registered service is still binding its port (e.g. `vite preview`
@@ -47,7 +47,7 @@ async fn wait_for_upstream(port: u16, timeout: Duration) {
 }
 
 async fn resolve_service(
-    state: &crate::serve::AppState,
+    state: &crate::state::AppState,
     agent_name: &str,
     service_name: &str,
 ) -> Option<ServiceEntry> {

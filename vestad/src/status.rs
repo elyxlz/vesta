@@ -5,12 +5,28 @@
 //! format, and the banner rendering ("one owner per decision").
 
 use crate::docker::AgentStatus;
-use crate::paint;
 use qrcode::{render::unicode, EcLevel, QrCode};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 // --- Banner rendering ---
+
+/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
+/// is unset. Without this, `vestad status > file` / piping captures raw escape
+/// codes.
+fn color_on() -> bool {
+    use std::io::IsTerminal;
+    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+}
+
+/// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
+pub(crate) fn paint(code: &str, s: &str) -> String {
+    if color_on() {
+        format!("\x1b[{code}m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
 
 const BANNER_ACCENT: &str = "38;2;231;186;140"; // light orange #e7ba8c (24-bit truecolor)
 const BANNER_DIM: &str = "2";

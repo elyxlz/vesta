@@ -439,12 +439,6 @@ fn animal_for_user(username: &str, offset: usize) -> &'static str {
     ANIMALS[(hash as usize + offset) % ANIMALS.len()]
 }
 
-fn current_user() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".into())
-}
-
 /// Sanitize a string to only contain lowercase alphanumeric characters and hyphens.
 fn sanitize(s: &str) -> String {
     let cleaned: String = s
@@ -454,7 +448,7 @@ fn sanitize(s: &str) -> String {
 }
 
 fn generate_subdomain(offset: usize) -> String {
-    let animal = animal_for_user(&current_user(), offset);
+    let animal = animal_for_user(&crate::paths::current_user(), offset);
     let hostname = sanitize(&gethostname());
     let short = if hostname.len() > 20 {
         &hostname[..20]
@@ -637,16 +631,16 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
 }
 
 pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
-    if let Ok(path) = which("cloudflared") {
+    if let Some(path) = crate::vendored_bin::which("cloudflared") {
         return Ok(path);
     }
 
-    let local_bin = config_dir.join("cloudflared");
-
-    if let Some((bytes, fingerprint)) = crate::cloudflared_embed::vendored_cloudflared() {
-        return extract_embedded_cloudflared(config_dir, bytes, fingerprint);
+    if let Some((bytes, fingerprint)) = crate::vendored_bin::vendored_cloudflared() {
+        return crate::vendored_bin::extract_embedded(config_dir, "cloudflared", bytes, fingerprint)
+            .map_err(|e| e.to_string());
     }
 
+    let local_bin = config_dir.join("cloudflared");
     if local_bin.exists() {
         return Ok(local_bin);
     }
@@ -679,41 +673,10 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
         return Err("failed to download cloudflared".to_string());
     }
 
-    set_executable(&local_bin)?;
+    crate::vendored_bin::set_executable(&local_bin).map_err(|e| e.to_string())?;
 
     tracing::info!(path = %local_bin.display(), "cloudflared downloaded");
     Ok(local_bin)
-}
-
-const CLOUDFLARED_FINGERPRINT_MARKER: &str = ".cloudflared-fingerprint";
-
-fn extract_embedded_cloudflared(
-    config_dir: &Path,
-    bytes: &[u8],
-    fingerprint: &str,
-) -> Result<PathBuf, String> {
-    let local_bin = config_dir.join("cloudflared");
-    let marker = config_dir.join(CLOUDFLARED_FINGERPRINT_MARKER);
-    if local_bin.exists() && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint) {
-        return Ok(local_bin);
-    }
-
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    std::fs::write(&local_bin, bytes)
-        .map_err(|e| format!("failed to write embedded cloudflared: {}", e))?;
-    set_executable(&local_bin)?;
-    std::fs::write(&marker, fingerprint)
-        .map_err(|e| format!("failed to write cloudflared fingerprint: {}", e))?;
-
-    tracing::info!(path = %local_bin.display(), "cloudflared extracted from embed");
-    Ok(local_bin)
-}
-
-fn set_executable(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("chmod failed: {}", e))
 }
 
 /// Spawn one cloudflared run for the configured tunnel. Returns the child and
@@ -1084,20 +1047,6 @@ fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     }
     let failures = consecutive_failures + 1;
     (failures, failures >= READY_PROBE_MAX_FAILURES)
-}
-
-fn which(name: &str) -> Result<PathBuf, ()> {
-    let output = std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .map_err(|_| ())?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-    Err(())
 }
 
 #[cfg(test)]

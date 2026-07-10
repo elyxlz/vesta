@@ -11,13 +11,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicBool, Arc};
-use tokio::sync::{Mutex, RwLock};
+use std::sync::Arc;
 
-use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update,
-    systemd, update_check,
-};
+use crate::settings::{load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry, Settings, UserDesired};
+use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
+use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -32,13 +30,6 @@ const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
-pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
-
-// Server-originated WebSocket ping cadence for the control (`/ws`) and agent-proxy
-// (`/agents/{name}/ws`) sockets. Idle connections through the Cloudflare tunnel are reaped
-// by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
-// survives an idle client. Must stay comfortably under that window.
-pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "rebuild", "auth", "logs", "tree", "file", "backups",
@@ -155,152 +146,12 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
     Ok(key)
 }
 
-// --- App state ---
-
-pub struct AppState {
-    pub(crate) api_key: String,
-    pub(crate) env_config: docker::AgentEnvConfig,
-    pub(crate) docker: bollard::Docker,
-    pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
-    /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
-    /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
-    /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
-    pub(crate) refresh_live: Mutex<HashMap<String, crate::auth::RefreshFamily>>,
-    agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
-    tunnel_url: Mutex<Option<String>>,
-    update_info: Mutex<Option<update_check::UpdateInfo>>,
-    updating: AtomicBool,
-    pub(crate) http_client: reqwest::Client,
-    pub(crate) settings: RwLock<Settings>,
-    dev_mode: bool,
-    pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
-    pub(crate) https_port: u16,
-    /// LAN exposure facts captured at startup (read-only; surfaced by /gateway/info).
-    /// `expose_lan` mirrors the `--expose-lan` flag; `lan_url` is the advertised
-    /// `https://<lan-ip>:<port>` (only set when exposed and an IP was resolvable).
-    expose_lan: bool,
-    lan_url: Option<String>,
-    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
-    /// by the create handler as `create_agent` progresses and read by the
-    /// build-phase endpoint so onboarding shows honest status. Entries exist only
-    /// for the duration of a create and are removed when it settles.
-    build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
-}
-
-impl AppState {
-    // Private, single-call startup constructor: its params mirror the fields of
-    // ServerConfig (the caller), so grouping them into a param struct would just
-    // duplicate that type. Allow the arg count rather than add a redundant struct.
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        api_key: String,
-        env_config: docker::AgentEnvConfig,
-        docker: bollard::Docker,
-        tunnel_url: Option<String>,
-        dev_mode: bool,
-        https_port: u16,
-        expose_lan: bool,
-        lan_url: Option<String>,
-    ) -> Self {
-        let settings = load_settings();
-        // Restore the refresh-token registry from disk (dropping expired families)
-        // so a restart/self-update doesn't log everyone out. Read before `env_config`
-        // is moved into the struct below.
-        let refresh_live = crate::auth::load_refresh_live(&env_config.config_dir);
-        Self {
-            api_key,
-            env_config,
-            docker,
-            auth_sessions: Mutex::new(HashMap::new()),
-            refresh_live: Mutex::new(refresh_live),
-            agent_locks: Mutex::new(HashMap::new()),
-            tunnel_url: Mutex::new(tunnel_url),
-            update_info: Mutex::new(None),
-            updating: AtomicBool::new(false),
-            http_client: reqwest::Client::new(),
-            settings: RwLock::new(settings),
-            dev_mode,
-            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
-            https_port,
-            expose_lan,
-            lan_url,
-            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Record the current build phase for `name` (normalized). Lock poisoning is
-    /// recovered in place: a panic mid-build must not wedge later creates.
-    fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(name.to_string(), phase);
-    }
-
-    /// Drop the build-phase entry for `name` once a create settles (success or error).
-    fn clear_build_phase(&self, name: &str) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(name);
-    }
-
-    fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(name)
-            .copied()
-    }
-
-    pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
-        let mut locks = self.agent_locks.lock().await;
-        locks
-            .entry(name.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
-            .clone()
-    }
-
-    pub(crate) async fn clean_expired_sessions(&self) {
-        let mut sessions = self.auth_sessions.lock().await;
-        sessions.retain(|_, s| !s.is_expired());
-    }
-}
-
-pub type SharedState = Arc<AppState>;
-
 /// Acquire the per-agent serialization lock as an owned write guard — the single
 /// owner of the `agent_lock(name).write_owned()` idiom every mutating agent
 /// handler repeats. Owned so it can be held across the rest of an `async move`
 /// (e.g. the spawned backup/restore pipelines) without borrowing `state`.
 async fn agent_write_guard(state: &AppState, name: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
     state.agent_lock(name).await.write_owned().await
-}
-
-// --- Response helpers ---
-
-pub fn ok_json() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"ok": true}))
-}
-
-pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    if status.is_server_error() {
-        tracing::error!(status = status.as_u16(), error = msg, "server error");
-    }
-    (status, Json(serde_json::json!({"error": msg})))
-}
-
-pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
-    use docker::DockerError::*;
-    let status = match &e {
-        NotFound(_) => StatusCode::NOT_FOUND,
-        AlreadyExists(_) => StatusCode::CONFLICT,
-        NotRunning(_) => StatusCode::SERVICE_UNAVAILABLE,
-        BrokenState(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        InvalidName(_) | BuildRequired(_) => StatusCode::BAD_REQUEST,
-        Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    err_response(status, &e.to_string())
 }
 
 /// Run a container-mutating operation on a detached task and await its single result over a oneshot
@@ -556,13 +407,10 @@ async fn gateway_update_handler(
     }
 }
 
-async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoResponse {
-    let agents = docker::list_agents(
-        &state.docker,
-        &state.http_client,
-        &state.env_config.agents_dir,
-    )
-    .await;
+async fn list_agents_handler(
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
     Json(agents)
 }
 
@@ -652,14 +500,9 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = docker::get_status(
-        &state.docker,
-        &state.http_client,
-        &name,
-        &state.env_config.agents_dir,
-    )
-    .await
-    .map_err(map_docker_err)?;
+    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
+        .await
+        .map_err(map_docker_err)?;
     Ok(Json(status))
 }
 
@@ -807,6 +650,7 @@ async fn destroy_agent_handler(
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
         .await
         .map_err(map_docker_err)?;
+    crate::restic::remove_repo(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -896,6 +740,9 @@ async fn rename_agent_handler(
     )
     .await
     .map_err(map_docker_err)?;
+
+    // Repos are keyed by agent name, so carry the backup history across the rename.
+    crate::restic::rename_repo(&name, &new_name).map_err(map_docker_err)?;
 
     {
         let mut settings = state.settings.write().await;
@@ -1613,264 +1460,6 @@ mod file_path_tests {
             assert_eq!(is_readonly_path(path), readonly, "path: {path:?}");
         }
     }
-}
-
-// --- Unified settings ---
-
-const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
-
-#[derive(Serialize, Copy, Clone, PartialEq)]
-pub(crate) struct ServiceEntry {
-    pub(crate) port: u16,
-    #[serde(default)]
-    pub(crate) public: bool,
-}
-
-impl<'de> serde::Deserialize<'de> for ServiceEntry {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Raw {
-            Legacy(u16),
-            Full {
-                port: u16,
-                #[serde(default)]
-                public: bool,
-            },
-        }
-        match Raw::deserialize(deserializer)? {
-            Raw::Legacy(port) => Ok(ServiceEntry {
-                port,
-                public: false,
-            }),
-            Raw::Full { port, public } => Ok(ServiceEntry { port, public }),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Settings {
-    #[serde(default)]
-    pub(crate) services: HashMap<String, HashMap<String, ServiceEntry>>,
-    #[serde(default)]
-    backup: BackupGlobalSettings,
-    #[serde(default)]
-    agents: HashMap<String, AgentSettings>,
-    /// Release channel: "stable" or "beta". Empty/unknown is treated as stable.
-    #[serde(default = "default_channel")]
-    pub(crate) channel: String,
-    /// Apply updates automatically when the periodic check finds a newer release on
-    /// the active channel. On by default; opt out at runtime via PUT /settings/auto-update.
-    #[serde(default = "default_true")]
-    pub(crate) auto_update: bool,
-    /// Bind the HTTPS API to the LAN (0.0.0.0) instead of loopback only. A binding
-    /// preference like the port file — it lives here, not in the static systemd
-    /// unit, and the daemon reads it at startup. Set via `vestad serve --expose-lan`.
-    #[serde(default)]
-    pub(crate) expose_lan: bool,
-}
-
-// Manual `Default` (not derived) so a fresh install with no settings.json gets
-// `auto_update: true` — `#[derive(Default)]` would zero the bool to `false`,
-// silently shipping every new VM with auto-update off.
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            services: HashMap::new(),
-            backup: BackupGlobalSettings::default(),
-            agents: HashMap::new(),
-            channel: default_channel(),
-            auto_update: true,
-            expose_lan: false,
-        }
-    }
-}
-
-fn default_channel() -> String {
-    crate::channel::Channel::Stable.as_str().to_string()
-}
-
-/// Per-agent desired run state, persisted in settings.json. vestad owns boot-start, so it needs an
-/// explicit record of which agents the user wants running: after a reboot every container is
-/// `exited`, so container state alone can't distinguish "user stopped this" from "everything's
-/// down, start it". Defaults to Running so existing/fresh agents come up.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-enum UserDesired {
-    #[default]
-    Running,
-    Stopped,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct AgentSettings {
-    #[serde(default = "default_true")]
-    manage_agent_code: bool,
-    #[serde(default)]
-    user_desired: UserDesired,
-    #[serde(default)]
-    mounts: Vec<crate::mounts::HostMount>,
-}
-
-impl Default for AgentSettings {
-    fn default() -> Self {
-        Self {
-            manage_agent_code: true,
-            user_desired: UserDesired::Running,
-            mounts: Vec::new(),
-        }
-    }
-}
-
-impl Settings {
-    fn manages_core_code(&self, name: &str) -> bool {
-        self.agents.get(name).is_none_or(|s| s.manage_agent_code)
-    }
-
-    /// The agent's host-folder grants, or an empty list if the agent has none recorded.
-    /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
-    /// reconcile) sees grants the same way.
-    fn agent_mounts(&self, name: &str) -> Vec<crate::mounts::HostMount> {
-        self.agents
-            .get(name)
-            .map(|s| s.mounts.clone())
-            .unwrap_or_default()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct BackupGlobalSettings {
-    #[serde(default = "default_true")]
-    enabled: bool,
-    #[serde(default = "default_backup_hour")]
-    hour: u8,
-    #[serde(default = "default_retention")]
-    retention: crate::types::RetentionPolicy,
-    #[serde(default)]
-    agents: HashMap<String, AgentBackupOverride>,
-}
-
-impl Default for BackupGlobalSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            hour: DEFAULT_AUTO_BACKUP_HOUR,
-            retention: default_retention(),
-            agents: HashMap::new(),
-        }
-    }
-}
-
-impl BackupGlobalSettings {
-    /// Effective (enabled, retention) for `agent`, layering its override over the globals.
-    /// Single owner of the override-resolution rule the settings handler and the
-    /// auto-backup task both depend on.
-    fn effective_for(&self, agent: &str) -> (bool, crate::types::RetentionPolicy) {
-        let agent_override = self.agents.get(agent);
-        (
-            agent_override
-                .and_then(|o| o.enabled)
-                .unwrap_or(self.enabled),
-            agent_override
-                .and_then(|o| o.retention)
-                .unwrap_or(self.retention),
-        )
-    }
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_backup_hour() -> u8 {
-    DEFAULT_AUTO_BACKUP_HOUR
-}
-
-fn default_retention() -> crate::types::RetentionPolicy {
-    crate::types::RetentionPolicy {
-        daily: backup::DEFAULT_RETENTION_DAILY,
-        weekly: backup::DEFAULT_RETENTION_WEEKLY,
-        monthly: backup::DEFAULT_RETENTION_MONTHLY,
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct AgentBackupOverride {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    retention: Option<crate::types::RetentionPolicy>,
-}
-
-fn settings_file() -> std::path::PathBuf {
-    crate::paths::config_dir_or_relative().join("settings.json")
-}
-
-fn load_settings() -> Settings {
-    let path = settings_file();
-
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        match serde_json::from_str(&data) {
-            Ok(settings) => {
-                // Re-write to persist any new fields added with defaults
-                save_settings(&settings);
-                return settings;
-            }
-            Err(err) => {
-                tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults");
-            }
-        }
-    }
-
-    let settings = Settings::default();
-
-    // Always write settings to disk so users can edit the file
-    save_settings(&settings);
-
-    settings
-}
-
-fn save_settings(settings: &Settings) {
-    let path = settings_file();
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            tracing::warn!(error = %err, "failed to create settings dir");
-            return;
-        }
-    }
-    let data = match serde_json::to_string_pretty(settings) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to serialize settings");
-            return;
-        }
-    };
-    let tmp = path.with_extension("json.tmp");
-    if let Err(err) = std::fs::write(&tmp, &data) {
-        tracing::warn!(error = %err, "failed to write settings.json.tmp");
-        return;
-    }
-    if let Err(err) = std::fs::rename(&tmp, &path) {
-        tracing::warn!(error = %err, "failed to rename settings.json.tmp");
-    }
-}
-
-/// The persisted LAN-exposure preference (default: loopback only). The daemon
-/// reads this at startup to decide the HTTPS bind address.
-pub(crate) fn expose_lan_setting() -> bool {
-    load_settings().expose_lan
-}
-
-/// Persist the LAN-exposure preference. Returns `true` when the stored value
-/// changed, so the caller can restart the daemon to apply the new bind address.
-pub(crate) fn set_expose_lan(expose: bool) -> bool {
-    let mut settings = load_settings();
-    if settings.expose_lan == expose {
-        return false;
-    }
-    settings.expose_lan = expose;
-    save_settings(&settings);
-    true
 }
 
 const SERVICE_PORT_MIN: u16 = 49152;
@@ -2867,33 +2456,6 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Auto-backup background task ---
 
-fn local_tm(epoch_secs: u64) -> libc::tm {
-    let epoch = epoch_secs as libc::time_t;
-    // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
-    // duration of the call.
-    unsafe { libc::localtime_r(&epoch, &mut tm) };
-    tm
-}
-
-fn local_hour() -> u8 {
-    local_tm(crate::time_utils::now_epoch_secs()).tm_hour as u8
-}
-
-/// Host-local calendar date (YYYYMMDD) for an epoch. Keying the once-per-day backup dedup to this
-/// same wall clock as the firing window avoids the UTC-vs-local day-boundary mismatch that could
-/// otherwise double or skip a daily near midnight.
-fn local_date_of_epoch(epoch_secs: u64) -> String {
-    let tm = local_tm(epoch_secs);
-    format!(
-        "{:04}{:02}{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday
-    )
-}
-
 fn spawn_auto_backup_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
@@ -2917,7 +2479,7 @@ fn spawn_auto_backup_task(state: SharedState) {
             // etc.). This way a spring-forward DST jump that skips the target hour still triggers a
             // backup on the next cycle, and a daemon that was down through the hour catches up.
             let target_hour = backup_settings.hour;
-            let current_hour = local_hour();
+            let current_hour = crate::time_utils::local_hour();
             if current_hour < target_hour {
                 tracing::debug!(
                     current_hour,
@@ -2937,9 +2499,9 @@ fn spawn_auto_backup_task(state: SharedState) {
             tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = local_date_of_epoch(now_epoch);
-            let seven_days_ago = backup::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago = backup::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
+            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
+            let thirty_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2972,10 +2534,7 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && backup::parse_compact_utc_epoch(&b.created_at)
-                            .map(local_date_of_epoch)
-                            .as_deref()
-                            == Some(today_local.as_str())
+                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at).map(crate::time_utils::local_date_of_epoch).as_deref() == Some(today_local.as_str())
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
@@ -3321,112 +2880,6 @@ mod tests {
             started.load(Ordering::SeqCst),
             "the pipeline spawned by spawn_pipeline_sse must run to completion regardless of SSE client disconnect"
         );
-    }
-
-    // --- auto_update defaults on (a fresh install and a settings.json predating the
-    // field must both end up with auto-update enabled, not the bool's `false`) ---
-
-    #[test]
-    fn settings_default_enables_auto_update() {
-        assert!(super::Settings::default().auto_update);
-    }
-
-    #[test]
-    fn settings_missing_auto_update_field_deserializes_true() {
-        // A settings.json written before auto_update existed has no such key.
-        let s: super::Settings =
-            serde_json::from_str("{}").expect("empty object is valid Settings");
-        assert!(s.auto_update);
-    }
-
-    #[test]
-    fn settings_auto_update_false_is_honored() {
-        let s: super::Settings =
-            serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
-        assert!(!s.auto_update);
-    }
-
-    // --- expose_lan defaults off: a settings.json predating the field must keep the
-    // HTTPS API on loopback, never silently bind a fleet of agents to the LAN ---
-
-    #[test]
-    fn settings_default_keeps_lan_unexposed() {
-        assert!(!super::Settings::default().expose_lan);
-    }
-
-    #[test]
-    fn settings_missing_expose_lan_field_deserializes_false() {
-        let s: super::Settings =
-            serde_json::from_str("{}").expect("empty object is valid Settings");
-        assert!(!s.expose_lan);
-    }
-
-    #[test]
-    fn settings_expose_lan_true_is_honored() {
-        let s: super::Settings =
-            serde_json::from_str(r#"{"expose_lan": true}"#).expect("valid Settings");
-        assert!(s.expose_lan);
-    }
-
-    // --- user_desired drives vestad's boot-start; a wrong default would silently keep every
-    // agent down (Stopped) or start a user-stopped one (if it didn't persist) ---
-
-    #[test]
-    fn agent_settings_default_user_desired_running() {
-        assert_eq!(
-            super::AgentSettings::default().user_desired,
-            super::UserDesired::Running
-        );
-    }
-
-    #[test]
-    fn agent_settings_missing_user_desired_deserializes_running() {
-        // An agent entry written before the field existed (only manage_agent_code) must come up.
-        let s: super::AgentSettings =
-            serde_json::from_str(r#"{"manage_agent_code": true}"#).expect("valid AgentSettings");
-        assert_eq!(s.user_desired, super::UserDesired::Running);
-    }
-
-    #[test]
-    fn agent_settings_user_desired_stopped_round_trips() {
-        let s = super::AgentSettings {
-            manage_agent_code: true,
-            user_desired: super::UserDesired::Stopped,
-            mounts: Vec::new(),
-        };
-        let json = serde_json::to_string(&s).expect("serialize");
-        assert!(
-            json.contains(r#""user_desired":"stopped""#),
-            "serialized as: {json}"
-        );
-        let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.user_desired, super::UserDesired::Stopped);
-    }
-
-    // --- mounts persists user-granted host filesystem access; a settings.json predating the
-    // field must still deserialize (to no grants), and a granted mount must round-trip ---
-
-    #[test]
-    fn agent_settings_defaults_mounts_to_empty() {
-        let json = r#"{"manage_agent_code": true, "user_desired": "running"}"#;
-        let s: super::AgentSettings = serde_json::from_str(json).expect("valid AgentSettings");
-        assert!(s.mounts.is_empty());
-    }
-
-    #[test]
-    fn agent_settings_roundtrips_mounts() {
-        let s = super::AgentSettings {
-            manage_agent_code: true,
-            user_desired: super::UserDesired::Running,
-            mounts: vec![crate::mounts::HostMount {
-                host_path: "/mnt/media".into(),
-                container_path: "/mnt/media".into(),
-                writable: false,
-            }],
-        };
-        let json = serde_json::to_string(&s).expect("serialize");
-        let back: super::AgentSettings = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.mounts, s.mounts);
     }
 
     // --- Rename notification payload (the content contract the agent self-heals on) ---
@@ -3802,6 +3255,7 @@ mod tests {
 #[cfg(test)]
 mod gateway_settings_tests {
     use super::*;
+    use crate::settings::{default_retention, DEFAULT_AUTO_BACKUP_HOUR};
 
     #[test]
     fn settings_json_has_unified_shape() {

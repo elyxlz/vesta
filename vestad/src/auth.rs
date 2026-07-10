@@ -7,24 +7,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::jwt;
-use crate::serve::SharedState;
-
-const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
-
-pub(crate) struct AuthSession {
-    pub code_verifier: String,
-    pub state: String,
-    pub created: std::time::Instant,
-}
-
-impl AuthSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
-    }
-}
+use crate::state::{persist_refresh_live, prune_expired, RefreshFamily, SharedState};
 
 pub async fn auth_middleware(
     State(state): State<SharedState>,
@@ -227,24 +212,6 @@ fn rand_id() -> String {
         .collect()
 }
 
-/// One refresh-token family (one login). `live` is the only currently-valid jti;
-/// `prev` is the jti it was just rotated from, honored ONCE as a retry-grace so a
-/// client whose refresh response was lost can re-present it without self-revoking.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct RefreshFamily {
-    live: String,
-    prev: Option<String>,
-    /// Idle expiry (unix secs) for pruning: set to now + REFRESH_TOKEN_TTL at
-    /// registration and slid forward on every successful rotation, so an active
-    /// client never expires and an idle one re-auths after the TTL.
-    exp: u64,
-}
-
-/// Drop expired families (lazy GC on every access; n = active logins, tiny).
-fn prune_expired(map: &mut HashMap<String, RefreshFamily>, now: u64) {
-    map.retain(|_, f| f.exp > now);
-}
-
 /// Start a new family; returns `(jti, fam)` to mint the first refresh token with.
 /// Pure (no I/O/lock) so it's unit-testable; the async wrapper locks + persists.
 fn register_family(map: &mut HashMap<String, RefreshFamily>, now: u64) -> (String, String) {
@@ -295,36 +262,6 @@ fn rotate(
     }
 }
 
-/// Path of the persisted registry (small JSON in the config dir).
-fn refresh_store_path(config_dir: &Path) -> std::path::PathBuf {
-    config_dir.join("refresh-tokens.json")
-}
-
-/// Load the persisted registry, dropping already-expired families. Best-effort: a
-/// missing/corrupt file just starts empty (clients re-auth).
-pub(crate) fn load_refresh_live(config_dir: &Path) -> HashMap<String, RefreshFamily> {
-    let now = crate::time_utils::now_epoch_secs();
-    let mut map: HashMap<String, RefreshFamily> = std::fs::read(refresh_store_path(config_dir))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
-    prune_expired(&mut map, now);
-    map
-}
-
-/// Persist the registry atomically (temp + rename). Best-effort: a write failure
-/// only means a restart re-auths, never a request failure.
-async fn persist_refresh_live(config_dir: &Path, map: &HashMap<String, RefreshFamily>) {
-    let Ok(json) = serde_json::to_vec(map) else {
-        return;
-    };
-    let path = refresh_store_path(config_dir);
-    let tmp = path.with_extension("json.tmp");
-    if tokio::fs::write(&tmp, json).await.is_ok() {
-        let _ = tokio::fs::rename(&tmp, &path).await;
-    }
-}
-
 /// Lock + register a new family, then persist. Returns `(jti, fam)`.
 async fn register_refresh_family(state: &SharedState) -> (String, String) {
     let now = crate::time_utils::now_epoch_secs();
@@ -359,10 +296,7 @@ pub async fn create_session_handler(
 ) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     if body.api_key != state.api_key {
         tracing::warn!("client session auth failed: invalid API key");
-        return Err(crate::serve::err_response(
-            StatusCode::UNAUTHORIZED,
-            "invalid API key",
-        ));
+        return Err(crate::state::err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
     }
 
     tracing::info!("client connected (new session)");
@@ -389,11 +323,11 @@ pub async fn refresh_session_handler(
     Json(body): Json<RefreshRequest>,
 ) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     let claims = jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
-        .map_err(|e| crate::serve::err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
+        .map_err(|e| crate::state::err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
 
     match rotate_refresh(&state, &claims).await {
         Some((jti, fam)) => Ok(Json(session_response(&state.api_key, &jti, &fam))),
-        None => Err(crate::serve::err_response(
+        None => Err(crate::state::err_response(
             StatusCode::UNAUTHORIZED,
             "refresh token revoked or reused",
         )),

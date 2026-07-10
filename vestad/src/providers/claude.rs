@@ -5,8 +5,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::auth;
-use crate::serve::{err_response, SharedState};
+use crate::state::{err_response, AuthSession, SharedState};
 
 const OAUTH_HTTP_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
@@ -41,7 +40,7 @@ pub async fn oauth_start_handler(
     let mut sessions = state.auth_sessions.lock().await;
     sessions.insert(
         session_id.clone(),
-        auth::AuthSession {
+        AuthSession {
             code_verifier,
             state: auth_state,
             created: std::time::Instant::now(),

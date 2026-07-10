@@ -76,7 +76,6 @@ const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
-const AGENT_READY_TIMEOUT_MS: u64 = 200;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
@@ -285,14 +284,14 @@ pub fn ensure_docker_sync(docker: &Docker) -> Result<(), DockerError> {
 // --- Pure / sync helpers ---
 
 pub fn container_name(name: &str) -> String {
-    format!("vesta-{}-{}", current_user(), name)
+    format!("vesta-{}-{}", crate::paths::current_user(), name)
 }
 
 /// Strip the `vesta-{user}-` prefix from a container name, falling back to the
 /// raw name if it does not match. Modern containers carry the `vesta.agent_name`
 /// label and prefer that; this is only used as a fallback in error paths.
 pub fn name_from_cname(cname: &str) -> String {
-    let user = current_user();
+    let user = crate::paths::current_user();
     let user_prefix = format!("vesta-{user}-");
     cname
         .strip_prefix(&user_prefix)
@@ -354,12 +353,6 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
         ));
     }
     Ok(())
-}
-
-fn current_user() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".into())
 }
 
 // --- Tar helpers ---
@@ -454,51 +447,6 @@ pub struct ContainerInfo {
 // The Go zero time Docker reports for a container that has never started; not a real boot.
 const NEVER_STARTED_AT: &str = "0001-01-01T00:00:00Z";
 
-pub async fn combined_status(
-    http_client: &reqwest::Client,
-    agents_dir: &std::path::Path,
-    cname: &str,
-    info: &ContainerInfo,
-) -> AgentStatus {
-    match info.status {
-        ContainerStatus::Running => {
-            // WS port not yet bound → agent still booting.
-            if !info.port.is_some_and(is_agent_ready) {
-                return AgentStatus::Starting;
-            }
-            // Agent's own GET /config is the source of truth for provider auth.
-            // If the WS server is up but /config isn't responding yet (transient
-            // mid-boot state), treat as Starting; the next ~3s poll will resolve.
-            let agent_name = name_from_cname(cname);
-            let provider =
-                crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
-            match provider.status().await {
-                Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
-                Err(_) => AgentStatus::Starting,
-            }
-        }
-        ContainerStatus::Dead => AgentStatus::Dead,
-        ContainerStatus::Stopped => AgentStatus::Stopped,
-        ContainerStatus::NotFound => AgentStatus::NotFound,
-    }
-}
-
-/// Map the agent's `GET /status` readiness slice to its `AgentStatus`. An authenticated agent is
-/// `SettingUp` until first-start finishes, then `Alive`; a not-authenticated agent is `Unprovisioned`
-/// when it has no provider chosen at all, else `NotAuthenticated` (a chosen credential is invalid).
-fn status_from_readiness(
-    authed: bool,
-    setup_complete: bool,
-    provider_configured: bool,
-) -> AgentStatus {
-    match (authed, setup_complete, provider_configured) {
-        (true, true, _) => AgentStatus::Alive,
-        (true, false, _) => AgentStatus::SettingUp,
-        (false, _, true) => AgentStatus::NotAuthenticated,
-        (false, _, false) => AgentStatus::Unprovisioned,
-    }
-}
-
 /// Read a value from a per-agent env file by key (e.g. "WS_PORT").
 pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
     let env_path = agents_dir.join(format!("{}.env", agent_name));
@@ -574,15 +522,6 @@ pub(crate) async fn inspect_container(
 
 pub async fn container_status(docker: &Docker, cname: &str) -> ContainerStatus {
     inspect_container(docker, cname, None).await.status
-}
-
-/// Readiness check: the agent binds its WS port only once it's ready to serve requests.
-pub fn is_agent_ready(port: u16) -> bool {
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
-    )
-    .is_ok()
 }
 
 /// Reject the two terminal container states (`NotFound`, `Dead`) with their standard
@@ -1174,7 +1113,7 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
         Err(_) => return Vec::new(),
     };
 
-    let user = current_user();
+    let user = crate::paths::current_user();
     containers
         .into_iter()
         .filter_map(|c| {
@@ -1651,7 +1590,7 @@ pub async fn create_container(
 
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "true".to_string());
-    labels.insert(LABEL_USER.to_string(), current_user());
+    labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
     let core_mount_opt = if manage_core_code {
@@ -1750,45 +1689,6 @@ pub(crate) async fn docker_cp_content(
     let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("/");
     let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("file");
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
-}
-
-// --- High-level operations (used by serve.rs handlers) ---
-
-pub async fn get_status(
-    docker: &Docker,
-    http_client: &reqwest::Client,
-    name: &str,
-    agents_dir: &std::path::Path,
-) -> Result<StatusJson, DockerError> {
-    validate_name(name)?;
-    let cname = container_name(name);
-    let info = inspect_container(docker, &cname, Some(agents_dir)).await;
-
-    Ok(StatusJson {
-        name: name.to_string(),
-        status: combined_status(http_client, agents_dir, &cname, &info).await,
-        id: info.id,
-        ws_port: info.port.unwrap_or(0),
-    })
-}
-
-pub async fn list_agents(
-    docker: &Docker,
-    http_client: &reqwest::Client,
-    agents_dir: &std::path::Path,
-) -> Vec<ListEntry> {
-    let agents = list_managed_agents(docker).await;
-    let mut entries = Vec::new();
-    for ManagedAgent { cname, agent_name } in &agents {
-        let info = inspect_container(docker, cname, Some(agents_dir)).await;
-        entries.push(ListEntry {
-            name: agent_name.clone(),
-            status: combined_status(http_client, agents_dir, cname, &info).await,
-            ws_port: info.port.unwrap_or(0),
-            started_at: info.started_at.clone(),
-        });
-    }
-    entries
 }
 
 /// Coarse, user-facing stage of first-time agent creation, emitted in order so the
@@ -2250,7 +2150,6 @@ pub async fn destroy_agent(
     remove_container_force(docker, &cname).await?;
     delete_agent_env_file(agents_dir, name);
     delete_constitution_file(agents_dir, name);
-    crate::restic::remove_repo(name);
     Ok(())
 }
 
@@ -2566,9 +2465,6 @@ pub async fn rename_agent(
     )
     .await?;
 
-    // Repos are keyed by agent name, so carry the backup history across the rename.
-    crate::restic::rename_repo(old_name, new_name)?;
-
     // Drop the snapshot the old container ran on; the renamed container runs on `snapshot_tag`.
     remove_replaced_snapshot(docker, prev_image.as_deref(), &snapshot_tag).await;
 
@@ -2628,16 +2524,6 @@ mod tests {
         );
         assert_eq!(binds.len(), 3);
         assert_eq!(binds[2], "/mnt/media:/mnt/media:ro");
-    }
-
-    #[test]
-    fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
-        use AgentStatus::*;
-        // (authed, setup_complete, provider_configured) -> AgentStatus
-        assert_eq!(status_from_readiness(true, true, true), Alive);
-        assert_eq!(status_from_readiness(true, false, true), SettingUp);
-        assert_eq!(status_from_readiness(false, false, true), NotAuthenticated);
-        assert_eq!(status_from_readiness(false, false, false), Unprovisioned);
     }
 
     #[test]

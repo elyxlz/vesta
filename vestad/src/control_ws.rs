@@ -10,7 +10,8 @@ use axum::{
 use std::time::Duration;
 
 use crate::docker;
-use crate::serve::{err_response, ok_json, ServiceEntry, SharedState, WS_KEEPALIVE_INTERVAL_SECS};
+use crate::settings::ServiceEntry;
+use crate::state::{err_response, ok_json, SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
 pub async fn invalidate_service_handler(
     State(state): State<SharedState>,

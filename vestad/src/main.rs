@@ -12,7 +12,6 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
-mod cloudflared_embed;
 mod control_ws;
 mod docker;
 mod jwt;
@@ -21,19 +20,21 @@ mod mounts;
 mod paths;
 mod providers;
 mod restic;
-mod restic_embed;
 mod self_log;
 mod self_update;
 mod serve;
+mod settings;
+mod state;
 mod status;
 mod systemd;
 mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod vendored_bin;
 mod workspace;
 
-use status::{AgentEntry, Status, TunnelStatus};
+use status::{paint, AgentEntry, Status, TunnelStatus};
 
 #[derive(Parser)]
 #[command(name = "vestad", version, about = "Vesta API server daemon")]
@@ -149,23 +150,6 @@ fn docker_exec_inherit(args: &[&str]) {
         .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
-    }
-}
-
-/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
-/// is unset. Without this, `vestad status > file` / piping captures raw escape
-/// codes.
-pub(crate) fn color_on() -> bool {
-    use std::io::IsTerminal;
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
-pub(crate) fn paint(code: &str, s: &str) -> String {
-    if color_on() {
-        format!("\x1b[{code}m{s}\x1b[0m")
-    } else {
-        s.to_string()
     }
 }
 
@@ -565,7 +549,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     // The systemd unit launches `serve --standalone` with no flag, so the
     // persisted preference is the source of truth; an explicit --standalone
     // --expose-lan (CI/dev) still wins.
-    let expose_lan = expose_lan || serve::expose_lan_setting();
+    let expose_lan = expose_lan || settings::expose_lan_setting();
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
@@ -731,7 +715,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     // --expose-lan is a persisted binding preference (like the port file), not part
     // of the static unit. Write it before the daemon (re)starts so it reads the new
     // value; a running daemon only re-binds on restart.
-    let lan_changed = serve::set_expose_lan(expose_lan);
+    let lan_changed = settings::set_expose_lan(expose_lan);
 
     if systemd::is_active() {
         if lan_changed {
