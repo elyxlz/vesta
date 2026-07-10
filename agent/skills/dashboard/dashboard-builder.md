@@ -13,8 +13,10 @@ Subagent (general-purpose):
     finished spec: compact, dense, and genuinely well designed. You work one shot and cannot
     reach the user, so the spec below is final. Build it, verify it serves, and report back.
 
-    Invoke the `shadcn` skill (read it before any UI change) and the `frontend-design` skill.
-    They carry the component docs and the design judgment you build with.
+    Before any UI change, read the shadcn reference vendored with this skill:
+    `~/agent/skills/dashboard/shadcn/SKILL.md` and its rule files in
+    `~/agent/skills/dashboard/shadcn/rules/` (styling, composition, forms, icons, base-vs-radix).
+    Those rules are always enforced. It is your component library reference; build from it.
 
     ## Your spec (final)
 
@@ -75,7 +77,7 @@ Subagent (general-purpose):
     ## Your job
 
     1. Build exactly what the spec asks for. YAGNI: nothing speculative beyond it.
-    2. Follow the structure, density, and data rules above, and the shadcn and frontend-design skills.
+    2. Follow the structure, density, and data rules above, and the vendored shadcn rules.
     3. Build and verify it actually serves (required, see below).
     4. Self-review, then report.
 
