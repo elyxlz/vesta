@@ -275,22 +275,22 @@ EOF
   esac
 
   echo ""
-  echo "Installed!"
+  echo "installed."
   echo ""
   if [ "$OS" = "linux" ]; then
-    echo "Start your server — this one command does the rest:"
+    echo "start your gateway, one command does the rest:"
     echo ""
     echo "    vestad"
     echo ""
-    echo "It walks you through connecting a domain, then prints your agent's URL."
-    echo "Open that URL in a browser to create your first agent."
+    echo "it walks you through connecting a domain, then prints your agent's URL."
+    echo "open that URL in a browser to create your first agent."
   else
-    echo "Connect to a vestad server:"
+    echo "connect to a vestad server:"
     echo "    vesta connect <connect-link>"
   fi
   if has_gui; then
     echo ""
-    echo "Prefer an app? Open the Vesta app and paste your connect link."
+    echo "prefer an app? open the Vesta app and paste your connect link."
   fi
   if [ -n "$PATH_UPDATED" ]; then
     echo ""

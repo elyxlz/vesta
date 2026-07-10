@@ -12,6 +12,10 @@ on:
           - patch
           - minor
           - major
+      message:
+        description: 'User-facing "What''s new" summary shown in the app and on the changelog'
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -98,12 +102,19 @@ jobs:
           git commit -m "Bump version to ${NEW}"
           git push origin master
 
+      # With both --notes and --generate-notes, gh prepends the provided notes above
+      # the auto-generated ones, so the marked whats-new block stays extractable at
+      # the top of the release body (the app and landing page parse it).
       - name: Create GitHub prerelease
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           TAG: ${{ steps.bump.outputs.tag }}
+          MESSAGE: ${{ inputs.message }}
         run: |
-          gh release create "$TAG" --title "$TAG" --generate-notes --target master --prerelease
+          BODY="<!-- whats-new -->
+          ${MESSAGE}
+          <!-- /whats-new -->"
+          gh release create "$TAG" --title "$TAG" --notes "$BODY" --generate-notes --target master --prerelease
           echo "Created prerelease $TAG"
 
       - name: Cleanup on failure

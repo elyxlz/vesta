@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useAgentSocketState } from "./use-agent-socket";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
 import { useVoice } from "@/stores/use-voice";
+import { useShowToolCalls } from "@/stores/use-show-tool-calls";
 import { AgentSocketContext, type AgentSocketValue } from "./context";
 
 export { useAgentSocket } from "./context";
@@ -11,7 +12,8 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const { name, agent, setAgentState } = useSelectedAgent();
   const { speak, prefetch } = useVoice();
   const { notifyAssistant, setChattingAgent } = useNotifications();
-  const [showToolCalls, setShowToolCalls] = useState(false);
+  const showToolCalls = useShowToolCalls((s) => s.showToolCalls);
+  const setShowToolCalls = useShowToolCalls((s) => s.setShowToolCalls);
 
   useEffect(() => {
     setChattingAgent(name);

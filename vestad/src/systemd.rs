@@ -76,7 +76,7 @@ WantedBy=default.target
         .status()
         .map_err(|e| format!("failed to run loginctl: {}", e))?;
     if !status.success() {
-        eprintln!("warning: loginctl enable-linger failed — vestad may stop on logout");
+        eprintln!("warning: loginctl enable-linger failed, vestad may stop on logout");
     }
 
     Ok(())
