@@ -121,8 +121,11 @@ export function NewAgent() {
       return (
         <div className="flex flex-col items-center gap-3">
           <ProviderPicker
-            skipTuning
+            defaultsOnly
             onDone={(result) => {
+              // The picker handles OAuth/key + defaults internally and hands
+              // back a complete result; forward it verbatim to setProvider.
+              // Model/context stay editable later in AgentSettings.
               setProviderResult(result);
               setCreateError(null);
               setStep(nextStep(result, personality));
