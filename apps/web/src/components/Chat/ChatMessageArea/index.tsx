@@ -123,6 +123,13 @@ export function ChatMessageArea({
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
+  const lastAgentText = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const event = chatMessages[i];
+      if (event.type === "chat") return event.text;
+    }
+    return "";
+  }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
   // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
   // the user scrolls up. Recomputed on scroll and on content resize (see below).
@@ -214,6 +221,10 @@ export function ChatMessageArea({
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+      {/* persistent live region so screen readers hear agent replies as they arrive */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {lastAgentText}
+      </span>
       {count === 0 &&
         (connected && !historyLoaded ? (
           <ChatSkeleton />
@@ -309,9 +320,10 @@ export function ChatMessageArea({
                     {isTyping && (
                       <div className="flex justify-start mt-2">
                         <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+                          <span className="sr-only">typing...</span>
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
                         </div>
                       </div>
                     )}
