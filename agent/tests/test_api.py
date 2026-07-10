@@ -437,3 +437,18 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
         assert "paris is lovely" in texts and "london is grey" not in texts
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    runner = await start_ws_server(event_bus, config, host="127.0.0.1")
+    base = f"http://127.0.0.1:{config.ws_port}"
+    auth = {"X-Agent-Token": "test-token"}
+
+    try:
+        async with ClientSession() as session:
+            async with session.put(f"{base}/memory", json=42, headers=auth) as resp:
+                assert resp.status == 400
+    finally:
+        await runner.cleanup()

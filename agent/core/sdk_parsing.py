@@ -253,7 +253,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         return tp.cast(HookJSONOutput, {})
 
     async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        trigger = input_data["trigger"]
+        trigger = input_data["trigger"] if "trigger" in input_data else "unknown"
         state.compacting = True
         logger.client(f"Context compaction starting (trigger={trigger})")
         return tp.cast(HookJSONOutput, {})
