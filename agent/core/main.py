@@ -20,7 +20,9 @@ from .loops import (
     monitor_loop,
 )
 from .default_skills import default_skill_sync_turn
+from .events import EventBus
 from .migrations import pending_migration_turns
+from .provider import derive_status
 from .workspace_sync import workspace_sync_turn, vesta_version
 
 
@@ -196,9 +198,6 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     persisted = state_store.load_state(config)
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
-    from .events import EventBus
-    from .provider import derive_status
-
     event_bus = EventBus(data_dir=config.data_dir)
     provider_status = derive_status(config)
     logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")

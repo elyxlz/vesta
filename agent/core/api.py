@@ -403,7 +403,7 @@ async def _memory_put_handler(request: web.Request) -> web.Response:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if "content" not in data or not isinstance(data["content"], str):
+    if not isinstance(data, dict) or "content" not in data or not isinstance(data["content"], str):
         return web.json_response({"error": "body must be {content: string}"}, status=400)
     path = get_memory_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
