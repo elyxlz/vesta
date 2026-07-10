@@ -56,13 +56,17 @@ check_agent() {
     done
     uv run --project core ty check
     uv run --project core pytest tests/ -v
-    # Each skill CLI is its own standalone uv project (own venv, own lockfile), so
-    # its suite runs against that project, not the shared core venv above.
-    for tool in skills/*/cli core/skills/*/cli; do
-      if [ -d "$tool/tests" ]; then
-        uv run --project "$tool" pytest "$tool/tests" -q
-      fi
-    done
+    # Each skill CLI is its own standalone uv project (own venv, own lockfile).
+    # uv honors UV_PROJECT_ENVIRONMENT (exported above for core) over --project,
+    # so unset it here or every suite would run in the shared core venv.
+    (
+      unset UV_PROJECT_ENVIRONMENT
+      for tool in skills/*/cli core/skills/*/cli; do
+        if [ -d "$tool/tests" ]; then
+          uv run --project "$tool" pytest "$tool/tests" -q
+        fi
+      done
+    )
   )
 }
 
