@@ -14,9 +14,9 @@ The craft of building dashboard widgets that feel considered. You work inside a 
 
 Each card leads with a single primary value, its reason to exist, set large; everything else is secondary and muted. If a widget has two equally loud numbers, split it into two or demote one. The eye should land in one place, then travel to the supporting detail.
 
-## Layout
+## Desktop and mobile are both first class
 
-Compose for the scan, not just the grid. A page has a reading order: the most important widget sits where the eye lands first (top left), and related widgets sit together so the page reads as groups rather than a scatter. Align edges and baselines so cards feel set on a shared grid, not floating. Hold one rhythm: consistent gaps and card heights within a group read as calm; ragged sizes read as noise. Density is not clutter, give the important thing room and keep the rest compact. Go wider than one column only when the content genuinely needs the width (a chart, a table); most widgets are a single column. The exact spans and spacing are set by the density rules in your build brief; this is how to compose within them.
+The dashboard renders inside an iframe, in a card that sits in the main app's layout, on both desktop and mobile. It never owns the viewport: the frame is wide on desktop and narrow on a phone. Design every widget and page for both from the start, not desktop first with mobile bolted on afterward. The grid reflows to a single column on a narrow frame, text and controls stay legible and tappable, and nothing overflows the card. Do not assume full-screen chrome or fixed viewport heights, you live inside a card.
 
 ## Color carries meaning, not decoration
 

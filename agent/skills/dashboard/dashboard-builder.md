@@ -25,7 +25,9 @@ Subagent (general-purpose):
     ## Context
 
     The dashboard is a React app embedded in the Vesta app: the user's life HQ, a personal
-    command center. A sidebar + page layout controlled by `config.tsx`. Each `pages` entry is a
+    command center. It renders as an iframe inside a card that sits in the main app's layout, on
+    both desktop and mobile, so it never owns the viewport and must work in a wide frame and a
+    narrow one alike. A sidebar + page layout controlled by `config.tsx`. Each `pages` entry is a
     sidebar nav item that renders its component; pages can have `children` for sub-pages.
 
     ## Where you work
