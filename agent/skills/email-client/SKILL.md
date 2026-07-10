@@ -184,7 +184,9 @@ The first added account becomes the default. To change it, edit `default` in `$E
 
 ## Notifications
 
-Start the poll daemon (see SETUP.md). It runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source.
+Start the poll daemon with `email-client daemon start` (see SETUP.md); manage it only through `email-client daemon start|stop|restart|status`, never raw `screen` or signals. Start is idempotent (never stacks a duplicate daemon); `daemon status` reports process state and per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand.
+
+The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
 
 ### Choosing which folders notify
 

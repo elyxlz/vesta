@@ -110,6 +110,18 @@ def _free_port(start: int) -> int:
     raise RuntimeError(f"no free port in range {start}-{start + 200}")
 
 
+def _free_display(start: int = 99) -> str:
+    """A display number with no X server yet, so handover always provisions its OWN Xvfb.
+
+    Reusing the ambient DISPLAY breaks on a real desktop seat: x11vnc cannot X_GetImage a live
+    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
+    grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
+    for n in range(start, start + 100):
+        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+            return f":{n}"
+    raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
+
+
 def _alive(pid: int | None) -> bool:
     if pid is None:
         return False
@@ -202,12 +214,13 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     for lock in ("lock", ".parentlock"):
         (profile / lock).unlink(missing_ok=True)
 
-    # Pin the display so x11vnc mirrors the exact screen Camoufox renders on. On a Wayland host,
-    # x11vnc and Firefox both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc
-    # 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto X11 with
-    # MOZ_ENABLE_WAYLAND=0: handover owns a dedicated X11 display. Harmless where WAYLAND_DISPLAY
-    # is unset (e.g. the container).
-    display = os.environ["DISPLAY"] if "DISPLAY" in os.environ else ":99"
+    # Handover owns a dedicated Xvfb display, never the ambient one: x11vnc can grab a fresh Xvfb
+    # but not a live desktop seat (a real :0 fails X_GetImage BadMatch, hanging noVNC), and a
+    # desktop's DISPLAY=:0 would also render the headed browser onto the user's own monitor. On a
+    # Wayland host x11vnc and Firefox both prefer the ambient Wayland session over our X11 display
+    # (x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto
+    # X11 with MOZ_ENABLE_WAYLAND=0. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
+    display = _free_display()
     os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"

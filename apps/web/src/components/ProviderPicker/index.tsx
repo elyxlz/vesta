@@ -23,10 +23,15 @@ export function ProviderPicker({
   onDone,
   onBack,
   className,
+  defaultsOnly,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
+  // Skip ModelStep/ContextStep and finish with the manifest's default model
+  // and context window as soon as credentials/key land. Onboarding uses this;
+  // both values stay editable afterward in AgentSettings' full picker.
+  defaultsOnly?: boolean;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
@@ -91,12 +96,51 @@ export function ProviderPicker({
   // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
+    if (defaultsOnly) {
+      finishWithDefaults(creds, key);
+      return;
+    }
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
+    if (defaultsOnly) {
+      finishWithDefaults(credentials, newKey);
+      return;
+    }
     setStep("model");
+  };
+
+  // Onboarding skips ModelStep/ContextStep entirely: finish with the
+  // manifest's default model and context window as soon as the provider is
+  // ready, mirroring handleContextSubmit's result shape.
+  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+    if (provider === null) return;
+    const context = manifest.providers[provider]?.context;
+    const plan =
+      provider === "claude" && creds !== null
+        ? planFromCredentials(creds)
+        : null;
+    const { initial } = context
+      ? planContextOptions(context, plan)
+      : { initial: 0 };
+    const defaultModel = manifest.providers[provider]?.default_model ?? "";
+    if (provider === "claude") {
+      if (creds === null) return;
+      onDone({
+        kind: "claude",
+        credentials: creds,
+        model: defaultModel || undefined,
+        maxContextTokens: initial,
+      });
+      return;
+    }
+    onDone({
+      kind: "openrouter",
+      config: { key: apiKey, model: defaultModel },
+      maxContextTokens: initial,
+    });
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {

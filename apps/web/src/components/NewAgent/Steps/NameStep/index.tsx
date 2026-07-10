@@ -22,15 +22,17 @@ function normalizeName(input: string): string {
 }
 
 export function NameStep({
+  initialName,
   initialError,
   onNamed,
 }: {
+  initialName?: string;
   initialError?: string | null;
   onNamed: (name: string) => void;
 }) {
   const navigate = useNavigate();
   const { agents } = useGateway();
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName ?? "");
   const trimmed = name.trim();
   const normalized = normalizeName(name);
 

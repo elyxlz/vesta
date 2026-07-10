@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-// ── Constants ───────────────────────────────────────────────────
-
 // ── Types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +28,16 @@ pub struct ListEntry {
     pub name: String,
     pub status: String,
     pub ws_port: u16,
+}
+
+/// A single host filesystem grant, as returned by / sent to GET|PUT /agents/{name}/mounts.
+/// The server validates and canonicalizes host_path/container_path on PUT.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MountEntry {
+    pub host_path: String,
+    pub container_path: String,
+    #[serde(default)]
+    pub writable: bool,
 }
 
 #[derive(Deserialize)]
@@ -65,20 +73,6 @@ impl std::fmt::Display for BackupType {
             Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
             Self::PreRestore => write!(f, "pre-restore"),
-        }
-    }
-}
-
-impl std::str::FromStr for BackupType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "manual" => Ok(Self::Manual),
-            "daily" => Ok(Self::Daily),
-            "weekly" => Ok(Self::Weekly),
-            "monthly" => Ok(Self::Monthly),
-            "pre-restore" => Ok(Self::PreRestore),
-            other => Err(format!("unknown backup type: {other}")),
         }
     }
 }

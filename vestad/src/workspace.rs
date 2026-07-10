@@ -39,7 +39,10 @@ pub fn bundle_path(config_dir: &Path) -> PathBuf {
 /// Build/refresh this host's workspace repo + bundle from the extracted agent content.
 /// No-op (fast) when the content hasn't changed; the script owns that decision.
 pub fn ensure_workspace(config_dir: &Path, content_dir: &Path) -> Result<(), WorkspaceError> {
-    let git_ok = Command::new("git").arg("--version").output().map(|out| out.status.success());
+    let git_ok = Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|out| out.status.success());
     if !matches!(git_ok, Ok(true)) {
         return Err(WorkspaceError::GitMissing);
     }
@@ -57,7 +60,9 @@ pub fn ensure_workspace(config_dir: &Path, content_dir: &Path) -> Result<(), Wor
         .output()
         .map_err(|e| WorkspaceError::Io(e.to_string()))?;
     if !output.status.success() {
-        return Err(WorkspaceError::BuildFailed(String::from_utf8_lossy(&output.stderr).trim().to_string()));
+        return Err(WorkspaceError::BuildFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
     }
     tracing::info!("{}", String::from_utf8_lossy(&output.stdout).trim());
     Ok(())
@@ -72,7 +77,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let content = tmp.path().join("agent-code");
         std::fs::create_dir_all(content.join("core")).expect("mkdir");
-        std::fs::write(content.join("core/pyproject.toml"), "[project]\nname = \"vesta\"\nversion = \"0.0.0\"\n").expect("write");
+        std::fs::write(
+            content.join("core/pyproject.toml"),
+            "[project]\nname = \"vesta\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
         std::fs::write(content.join("MEMORY.md"), "# m\n").expect("write");
 
         ensure_workspace(tmp.path(), &content).expect("first build");

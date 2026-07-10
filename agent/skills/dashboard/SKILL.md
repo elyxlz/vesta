@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Build or modify the user's dashboard: widgets, pages, layouts, or custom UI.
-serve: screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
+serve: ~/agent/skills/dashboard/scripts/daemon start
 ---
 
 # Dashboard
@@ -124,18 +124,19 @@ import { StarIcon } from "lucide-react"
 
 ## After every change
 
-Rebuild, re-register with vestad, restart the preview server, and notify the Vesta app:
+Rebuild, restart the daemon, confirm it is actually serving, and notify the Vesta app:
 
 ```bash
 # First build only: node_modules is not baked into the image, so install deps once.
 cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
-screen -S dashboard -X quit 2>/dev/null
-screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
-# Wait for the server to be ready
-for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
+~/agent/skills/dashboard/scripts/daemon stop
+~/agent/skills/dashboard/scripts/daemon start
+# Status carries a port + HTTP 200 probe: don't assume success, check it.
+STATUS=$(~/agent/skills/dashboard/scripts/daemon status)
+echo "$STATUS"
+PORT=$(echo "$STATUS" | python3 -c 'import sys, json; print(json.load(sys.stdin)["port"])')
 # Smoke test: fetch the page and check for runtime errors
-SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
+SMOKE=$(curl -s "http://localhost:$PORT/" | head -50)
 if ! echo "$SMOKE" | grep -q '<div id="root"'; then
   echo "ERROR: Dashboard failed to load. Check the build output."
 fi
@@ -149,12 +150,10 @@ curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dash
 - **Cloudflare caches 404 responses for ~4 hours via the public tunnel.** If you accidentally serve a broken build that 404s on assets, even after fixing the build, the tunnel will keep serving the cached 404 until either (a) the URL changes, (b) the cache expires, or (c) you bust with a `?v=...` query. Vite's content hashes change automatically when source changes, so normally this isn't an issue. If you ever get a stuck 404 with no source change, temporarily add `Date.now()` to `entryFileNames` in `vite.config.ts`, rebuild, then revert.
 
 ## Troubleshooting
-*   **Dashboard not showing?** `screen -ls | grep dashboard`
-*   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
+*   **Dashboard not showing?** `~/agent/skills/dashboard/scripts/daemon status`, it reports `running`, `port`, and `http_ok` in one JSON blob.
 *   **Restart server:** Run the rebuild/restart block above.
 *   **Build failed or blank after deploy?** Run `cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview. `UNRESOLVED_IMPORT` / "Cannot find package" means deps were never installed, run `npm install` first.
-*   **Iframe stuck on an old build?** After a successful build and preview restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
-*   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
-*   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
+*   **Iframe stuck on an old build?** After a successful build and daemon restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
+*   **Preview errors or `http_ok: false`?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `~/agent/skills/dashboard/scripts/daemon stop` and rerun the restart line from the block above.
 *   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
 *   **Wrong or missing shadcn styles?** Shared UI components are updated via workspace sync. Check that the latest release tag has been merged.

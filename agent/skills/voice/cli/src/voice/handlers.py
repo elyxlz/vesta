@@ -291,14 +291,16 @@ async def set_setting(request: web.Request) -> web.Response:
     return await tts_status(request)
 
 
-async def _synthesize(entry: dict, provider: tp.Any, creds: dict[str, str], text: str, request: web.Request) -> web.StreamResponse:
+async def _synthesize(
+    entry: dict, provider: tp.Any, creds: dict[str, str], text: str, request: web.Request, audio_format: str = "mp3"
+) -> web.StreamResponse:
     voice_id = entry.get("selected_voice_id")
     if not voice_id:
         voices = provider.premade_voices()
         voice_id = voices[0]["id"] if voices else None
     if not voice_id:
         return web.json_response({"error": "no voice selected"}, status=500)
-    return await provider.speak(text, voice_id, creds, request)
+    return await provider.speak(text, voice_id, creds, request, audio_format)
 
 
 async def tts_speak(request: web.Request) -> web.StreamResponse:
@@ -314,7 +316,11 @@ async def tts_speak(request: web.Request) -> web.StreamResponse:
     if not text:
         return web.json_response({"error": "text required"}, status=400)
 
-    return await _synthesize(entry, provider, creds, text, request)
+    # "format" selects the audio encoding: "mp3" (default, the app's <audio> element) or "pcm"
+    # (raw 16 kHz PCM a phone-call consumer plays into a live call). See providers.base.speak.
+    audio_format = body.get("format", "mp3")
+
+    return await _synthesize(entry, provider, creds, text, request, audio_format)
 
 
 async def tts_prepare(request: web.Request) -> web.Response:

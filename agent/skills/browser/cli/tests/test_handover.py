@@ -146,6 +146,19 @@ def test_free_port_returns_a_bindable_port():
         s.close()
 
 
+def test_free_display_skips_existing_seats(monkeypatch):
+    # A real desktop seat (:0/:1) already has an X socket; handover must never pick it, else x11vnc
+    # grabs the live seat and noVNC hangs. Pretend :99 and :100 are taken; it must land on :101.
+    taken = {"/tmp/.X11-unix/X99", "/tmp/.X11-unix/X100"}
+    monkeypatch.setattr(handover.Path, "exists", lambda self: str(self) in taken)
+    assert handover._free_display() == ":101"
+
+
+def test_free_display_returns_base_when_free(monkeypatch):
+    monkeypatch.setattr(handover.Path, "exists", lambda self: False)
+    assert handover._free_display() == ":99"
+
+
 def test_alive_false_for_none_and_dead_pid():
     assert handover._alive(None) is False
     # PID 2**31-1 is not a running process on any sane system.

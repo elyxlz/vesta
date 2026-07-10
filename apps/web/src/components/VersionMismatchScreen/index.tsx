@@ -106,7 +106,7 @@ export function VersionMismatchScreen({
         <div className="mt-4 flex w-full max-w-sm flex-col gap-3">
           <Button variant="destructive" onClick={() => disconnect()}>
             <LogOut data-icon="inline-start" />
-            Disconnect
+            disconnect
           </Button>
           <ConnectionControls />
         </div>

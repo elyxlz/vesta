@@ -56,9 +56,9 @@ export function RouteErrorBoundary() {
     return (
       <ErrorFallback
         error={
-          new Error(`${error.status} — ${error.statusText || "Page not found"}`)
+          new Error(`${error.status}: ${error.statusText || "page not found"}`)
         }
-        title={error.status === 404 ? "Page not found" : "Something went wrong"}
+        title={error.status === 404 ? "page not found" : "something went wrong"}
         description={
           error.status === 404
             ? "The page you're looking for doesn't exist or has been moved."
@@ -85,8 +85,8 @@ interface ErrorFallbackProps {
 
 function ErrorFallback({
   error,
-  title = "Something went wrong",
-  description = "An unexpected error occurred. You can try again or go back home.",
+  title = "something went wrong",
+  description = "this shouldn't have happened. try again, or head back home.",
   onReset,
 }: ErrorFallbackProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -152,14 +152,14 @@ function ErrorFallback({
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97]"
           >
             <RotateCcw className="h-4 w-4" />
-            Try again
+            try again
           </button>
           <button
             onClick={handleGoHome}
             className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground shadow-sm transition-all hover:bg-accent active:scale-[0.97]"
           >
             <Home className="h-4 w-4" />
-            Go home
+            go home
           </button>
         </div>
 
@@ -174,7 +174,7 @@ function ErrorFallback({
             >
               <ChevronDown className="h-3.5 w-3.5" />
             </motion.div>
-            Error details
+            error details
           </button>
 
           <AnimatePresence>

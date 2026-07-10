@@ -57,8 +57,10 @@ class TtsProvider(tp.Protocol):
         voice_id: str,
         creds: dict[str, str],
         request: web.Request,
+        audio_format: str,
     ) -> web.StreamResponse:
-        """Stream synthesized audio bytes back as audio/mpeg."""
+        """Stream synthesized audio bytes back. audio_format is "mp3" (browser <audio>) or
+        "pcm" (raw signed 16-bit LE mono at 16 kHz, for a non-browser consumer like a phone call)."""
         ...
 
     def premade_voices(self) -> list[dict]:

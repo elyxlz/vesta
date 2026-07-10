@@ -3,9 +3,9 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
-mod agent_provider;
 mod agent_code;
 mod agent_embed;
+mod agent_provider;
 mod agent_proxy;
 mod agent_status;
 mod app_static;
@@ -15,26 +15,25 @@ mod channel;
 mod cloudflared_embed;
 mod control_ws;
 mod docker;
+mod jwt;
 mod manifest;
 mod mounts;
-mod jwt;
 mod paths;
 mod providers;
 mod restic;
-mod workspace;
 mod restic_embed;
 mod self_log;
-mod time_utils;
 mod self_update;
 mod serve;
 mod status;
 mod systemd;
+mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod workspace;
 
 use status::{AgentEntry, Status, TunnelStatus};
-
 
 #[derive(Parser)]
 #[command(name = "vestad", version, about = "Vesta API server daemon")]
@@ -178,7 +177,9 @@ fn find_available_port() -> Option<u16> {
             .ok()
             .and_then(|l| l.local_addr().ok())
             .map(|addr| addr.port())?;
-        let Some(http_port) = port.checked_add(1) else { continue };
+        let Some(http_port) = port.checked_add(1) else {
+            continue;
+        };
         if std::net::TcpListener::bind(("127.0.0.1", http_port)).is_ok() {
             return Some(port);
         }
@@ -188,7 +189,9 @@ fn find_available_port() -> Option<u16> {
 
 /// Read the stored HTTPS port from `<config>/port`, if present and parseable.
 fn read_port_file(config: &std::path::Path) -> Option<u16> {
-    std::fs::read_to_string(config.join("port")).ok().and_then(|s| s.trim().parse::<u16>().ok())
+    std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
 }
 
 fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
@@ -202,16 +205,21 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
         {
             return stored;
         }
-        tracing::warn!(stored_port = stored, "stored port unavailable, allocating new one");
+        tracing::warn!(
+            stored_port = stored,
+            "stored port unavailable, allocating new one"
+        );
     }
 
-    find_available_port()
-        .unwrap_or_else(|| die("no free port found — another service may be using the range; try `vestad restart`"))
+    find_available_port().unwrap_or_else(|| {
+        die("no free port found — another service may be using the range; try `vestad restart`")
+    })
 }
 
 fn config_dir() -> std::path::PathBuf {
-    paths::config_dir()
-        .unwrap_or_else(|| die("couldn't find your home directory ($HOME) — vestad stores its config there"))
+    paths::config_dir().unwrap_or_else(|| {
+        die("couldn't find your home directory ($HOME) — vestad stores its config there")
+    })
 }
 
 /// Read the stored API key from `<config>/api-key`, if present and non-empty.
@@ -245,7 +253,10 @@ fn report_restart_readiness(config: &std::path::Path) {
     // The probe below can take tens of seconds (local API + tunnel reconnect), so
     // say what we're doing rather than appearing to hang.
     eprintln!("waiting for vestad to come back up…");
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(e) => {
             eprintln!("vestad restarted (could not probe readiness: {e}).");
@@ -253,7 +264,10 @@ fn report_restart_readiness(config: &std::path::Path) {
         }
     };
     runtime.block_on(async {
-        let client = match reqwest::Client::builder().timeout(HEALTH_PROBE_TIMEOUT).build() {
+        let client = match reqwest::Client::builder()
+            .timeout(HEALTH_PROBE_TIMEOUT)
+            .build()
+        {
             Ok(client) => client,
             Err(e) => {
                 eprintln!("vestad restarted (could not probe readiness: {e}).");
@@ -266,7 +280,9 @@ fn report_restart_readiness(config: &std::path::Path) {
             None => false,
         };
         if !local_ready {
-            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            eprintln!(
+                "vestad restarted, but its local API did not come up in time. check 'vestad logs'."
+            );
             return;
         }
 
@@ -298,7 +314,11 @@ fn local_health_url(config: &std::path::Path) -> Option<String> {
 
 /// Poll `url` until it answers 2xx or `timeout` elapses. A connection refused / 5xx
 /// just means "not ready yet", so keep retrying until the deadline.
-async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time::Duration) -> bool {
+async fn wait_for_health(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: std::time::Duration,
+) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if let Ok(resp) = client.get(url).send().await {
@@ -321,9 +341,16 @@ async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time
 /// way the result is covered by the TLS cert SANs. `None` if undeterminable.
 fn local_lan_ip() -> Option<String> {
     // `ip -4 route get <external ip>` prints "<dst> via <gw> dev <if> src <LAN_IP> …".
-    if let Ok(output) = std::process::Command::new("ip").args(["-4", "route", "get", "1.1.1.1"]).output() {
+    if let Ok(output) = std::process::Command::new("ip")
+        .args(["-4", "route", "get", "1.1.1.1"])
+        .output()
+    {
         let text = String::from_utf8_lossy(&output.stdout);
-        if let Some(src) = text.split_whitespace().skip_while(|token| *token != "src").nth(1) {
+        if let Some(src) = text
+            .split_whitespace()
+            .skip_while(|token| *token != "src")
+            .nth(1)
+        {
             if let Ok(ip) = src.parse::<std::net::Ipv4Addr>() {
                 if !ip.is_loopback() {
                     return Some(ip.to_string());
@@ -333,7 +360,10 @@ fn local_lan_ip() -> Option<String> {
     }
     // Fallback: first non-loopback IPv4 from `hostname -I`, skipping Docker's
     // default bridge range (172.17.0.0/16).
-    let output = std::process::Command::new("hostname").arg("-I").output().ok()?;
+    let output = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .ok()?;
     let ips = String::from_utf8_lossy(&output.stdout);
     ips.split_whitespace()
         .filter_map(|token| token.parse::<std::net::Ipv4Addr>().ok())
@@ -363,7 +393,10 @@ async fn bind_http_atomically(
             Ok(listener) => return (port, listener),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 if attempt + 1 == MAX_BIND_ATTEMPTS {
-                    die(format!("http bind retries exhausted on port {}: {}", http_port, e));
+                    die(format!(
+                        "http bind retries exhausted on port {}: {}",
+                        http_port, e
+                    ));
                 }
                 tracing::warn!(port, http_port, "http port raced, reselecting");
                 port = find_available_port().unwrap_or_else(|| die("no available port found"));
@@ -396,7 +429,8 @@ const DNS_READY_POLL_SECS: u64 = 2;
 /// as a lookup succeeds, or after DNS_READY_MAX_WAIT_SECS regardless (the tunnel
 /// attempt and its supervisor handle a still-down resolver from there).
 async fn wait_for_dns_ready() {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(DNS_READY_MAX_WAIT_SECS);
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(DNS_READY_MAX_WAIT_SECS);
     loop {
         if let Ok(mut addrs) = tokio::net::lookup_host(DNS_READY_HOST).await {
             if addrs.next().is_some() {
@@ -442,7 +476,11 @@ async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelS
         |attempt| async move {
             let result = try_establish_tunnel(config, port).await;
             if let Err(reason) = &result {
-                tracing::warn!(attempt, attempts = TUNNEL_STARTUP_ATTEMPTS, "tunnel not up: {reason}");
+                tracing::warn!(
+                    attempt,
+                    attempts = TUNNEL_STARTUP_ATTEMPTS,
+                    "tunnel not up: {reason}"
+                );
             }
             result
         },
@@ -456,7 +494,11 @@ async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelS
     // tunnel.json existing. Keeping the config lets the supervisor respawn
     // cloudflared and self-heal once DNS is up; a genuinely revoked tunnel just
     // loops with its reason in `vestad logs` (recovery is `vestad connect`).
-    if should_forget_failed_tunnel(matches!(status, TunnelStatus::Failed(_)), is_cloud_managed(), tunnel::has_cf_creds(config)) {
+    if should_forget_failed_tunnel(
+        matches!(status, TunnelStatus::Failed(_)),
+        is_cloud_managed(),
+        tunnel::has_cf_creds(config),
+    ) {
         tunnel::forget_tunnel(config);
     }
     status
@@ -465,7 +507,11 @@ async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelS
 /// Retry an async tunnel attempt up to `attempts` times, sleeping `delay` between
 /// tries. Returns `Active` with the first URL that comes up, or `Failed` carrying
 /// the last error once every attempt has failed.
-async fn retry_tunnel<F, Fut>(attempts: u32, delay: std::time::Duration, mut attempt: F) -> TunnelStatus
+async fn retry_tunnel<F, Fut>(
+    attempts: u32,
+    delay: std::time::Duration,
+    mut attempt: F,
+) -> TunnelStatus
 where
     F: FnMut(u32) -> Fut,
     Fut: std::future::Future<Output = Result<String, String>>,
@@ -530,11 +576,12 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     if cf_config.exists() {
         std::process::Command::new("pkill")
             .args(["-f", &format!("cloudflared.*{}", cf_config.display())])
-            .output().ok();
+            .output()
+            .ok();
     }
 
-    let api_key = serve::ensure_api_key(&config);
-    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
+    let api_key = serve::ensure_api_key(&config).unwrap_or_else(|e| die(&e));
+    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config).unwrap_or_else(|e| die(&e));
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -558,7 +605,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 .then(local_lan_ip)
                 .flatten()
                 .map(|ip| format!("https://{}:{}", ip, port));
-            let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
+            let user = std::env::var("USER")
+                .or_else(|_| std::env::var("LOGNAME"))
+                .unwrap_or_else(|_| "unknown".into());
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
 
             // Build the status snapshot, persist it before the API opens (so any
@@ -603,7 +652,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 std::sync::Arc::new(move |up: bool| {
                     let next = if up {
                         match tunnel_url.clone().or_else(|| {
-                            tunnel::get_tunnel_config(&config).map(|tc| format!("https://{}", tc.hostname))
+                            tunnel::get_tunnel_config(&config)
+                                .map(|tc| format!("https://{}", tc.hostname))
                         }) {
                             Some(url) => TunnelStatus::Active(url),
                             None => return, // can't name the URL; leave the field as-is
@@ -614,7 +664,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                         // connector). A revoked/deleted tunnel exits too fast to
                         // reach this path and keeps its boot-time failure reason,
                         // so this is a general recovery hint, not revoked-specific.
-                        TunnelStatus::Failed("tunnel down 2+ min — if it persists, run vestad connect".to_string())
+                        TunnelStatus::Failed(
+                            "tunnel down 2+ min — if it persists, run vestad connect".to_string(),
+                        )
                     };
                     if let Ok(mut s) = status.lock() {
                         s.set_tunnel(next);
@@ -633,7 +685,10 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 std::sync::Arc::new(move |entries: &[docker::ListEntry]| {
                     let agents = entries
                         .iter()
-                        .map(|entry| AgentEntry { name: entry.name.clone(), status: Some(entry.status) })
+                        .map(|entry| AgentEntry {
+                            name: entry.name.clone(),
+                            status: Some(entry.status),
+                        })
                         .collect();
                     if let Ok(mut s) = status.lock() {
                         s.set_agents(agents);
@@ -655,7 +710,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 expose_lan,
                 lan_url,
                 on_agents_changed,
-            }).await;
+            })
+            .await;
 
             if let Some(supervisor) = tunnel_supervisor {
                 supervisor.shutdown().await;
@@ -701,25 +757,26 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     if !is_cloud_managed()
         && tunnel::get_tunnel_config(&config).is_none()
         && !tunnel::has_cf_creds(&config)
+        && !tunnel::has_declined_tunnel(&config)
     {
         tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
     }
 
+    let start_time = std::time::SystemTime::now();
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
+    // The unit is not Type=notify, so being "active" only means the process
+    // launched, not that async startup (tunnel dial, etc.) finished and wrote a
+    // fresh status.json; wait for that so the banner below isn't stale/empty.
+    Status::wait_for_fresh(&config, start_time);
 
     eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
-    eprintln!("  run {} to see your connection info.", paint("1", "vestad status"));
-    eprintln!();
-
-    eprintln!("manage with:");
-    eprintln!("  vestad status     show status + your URL");
-    eprintln!("  vestad connect    connect a domain for a public URL");
-    eprintln!("  vestad logs       show service logs");
-    eprintln!("  vestad restart    restart the service");
-    eprintln!("  vestad update     update to the latest version");
-    eprintln!("  vestad stop       stop the service");
+    eprintln!(
+        "  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.",
+        env!("CARGO_PKG_VERSION")
+    );
+    status::print_status_banner(&config, read_api_key(&config).as_deref());
+    eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
 }
 
 /// Log to stdout (captured by journald under systemd, shown in the terminal under
@@ -751,7 +808,11 @@ fn init_tracing() {
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().with_target(false).with_ansi(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_ansi(false),
+        )
         .with(file_layer)
         .init();
 }
@@ -767,8 +828,18 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false, standalone: false, expose_lan: false }) {
-        Command::Serve { port, no_tunnel, standalone, expose_lan } => {
+    match cli.command.unwrap_or(Command::Serve {
+        port: None,
+        no_tunnel: false,
+        standalone: false,
+        expose_lan: false,
+    }) {
+        Command::Serve {
+            port,
+            no_tunnel,
+            standalone,
+            expose_lan,
+        } => {
             if standalone {
                 run_server_foreground(port, no_tunnel, expose_lan);
             } else {
@@ -782,9 +853,11 @@ fn main() {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "<unknown>".into());
             let agent_count = std::fs::read_dir(config.join("agents"))
-                .map(|rd| rd.filter_map(Result::ok)
-                    .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
-                    .count())
+                .map(|rd| {
+                    rd.filter_map(Result::ok)
+                        .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
+                        .count()
+                })
                 .unwrap_or(0);
 
             eprintln!();
@@ -819,8 +892,12 @@ fn main() {
             docker::validate_name(&name).unwrap_or_else(|e| die(&e));
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let cname = docker::container_name(&name);
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(docker::ensure_running(&docker, &cname))
+                .unwrap_or_else(|e| die(&e));
 
             eprintln!("entering {name} (exit with `exit`, or detach with Ctrl-Q)…");
             docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
@@ -828,7 +905,10 @@ fn main() {
 
         Command::Backup { action } => {
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
 
             match action {
                 BackupAction::Export { name, output } => {
@@ -845,13 +925,20 @@ fn main() {
                         let was_running = cs == docker::ContainerStatus::Running;
                         if was_running {
                             eprintln!("stopping agent...");
-                            docker::stop_container_with_timeout(&docker, &cname, backup::BACKUP_STOP_TIMEOUT_SECS).await
-                                .unwrap_or_else(|e| die(format!("failed to stop container: {}", e)));
+                            docker::stop_container_with_timeout(
+                                &docker,
+                                &cname,
+                                backup::BACKUP_STOP_TIMEOUT_SECS,
+                            )
+                            .await
+                            .unwrap_or_else(|e| die(format!("failed to stop container: {}", e)));
                         }
 
                         eprintln!("snapshotting container...");
                         let temp_tag = format!("vesta-export:{}-temp", name);
-                        if let Err(e) = docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await {
+                        if let Err(e) =
+                            docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
+                        {
                             if was_running {
                                 docker::start_container(&docker, &cname).await;
                             }
@@ -863,10 +950,12 @@ fn main() {
                         }
 
                         eprintln!("exporting to {}...", output.display());
-                        docker::export_image_gzip(&docker, &temp_tag, &output).await
+                        docker::export_image_gzip(&docker, &temp_tag, &output)
+                            .await
                             .unwrap_or_else(|e| die(format!("export failed: {}", e)));
 
-                        docker::remove_image(&docker, &temp_tag).await
+                        docker::remove_image(&docker, &temp_tag)
+                            .await
                             .unwrap_or_else(|e| die(format!("failed to remove temp image: {}", e)));
 
                         eprintln!("exported: {}", output.display());
@@ -916,7 +1005,7 @@ fn main() {
                     });
                 }
             }
-        },
+        }
 
         Command::Connect => {
             let config = config_dir();
@@ -939,14 +1028,16 @@ fn main() {
             let config = config_dir();
             match action {
                 TunnelAction::Setup { subdomain, json } => {
-                    let tc = tunnel::setup_tunnel(&config, &subdomain)
-                        .unwrap_or_else(|e| die(e));
+                    let tc = tunnel::setup_tunnel(&config, &subdomain).unwrap_or_else(|e| die(e));
                     if json {
-                        println!("{}", serde_json::json!({
-                            "tunnel_id": tc.tunnel_id,
-                            "dns_record_id": tc.dns_record_id,
-                            "hostname": tc.hostname,
-                        }));
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "tunnel_id": tc.tunnel_id,
+                                "dns_record_id": tc.dns_record_id,
+                                "hostname": tc.hostname,
+                            })
+                        );
                     } else {
                         eprintln!("✓ tunnel ready at https://{}", tc.hostname);
                     }
@@ -959,10 +1050,13 @@ fn main() {
         }
 
         Command::Update => {
-            let outcome =
-                self_update::perform_update(channel::Channel::effective()).unwrap_or_else(|e| die(e.to_string()));
+            let outcome = self_update::perform_update(channel::Channel::effective())
+                .unwrap_or_else(|e| die(e.to_string()));
             if !outcome.updated {
-                println!("vestad already at the latest version (v{})", outcome.current);
+                println!(
+                    "vestad already at the latest version (v{})",
+                    outcome.current
+                );
             } else {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);
                 println!(
@@ -1021,7 +1115,11 @@ fn main() {
 
             if let Ok(exe) = std::env::current_exe() {
                 if let Err(err) = std::fs::remove_file(&exe) {
-                    eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
+                    eprintln!(
+                        "warning: could not remove binary {}: {}",
+                        exe.display(),
+                        err
+                    );
                     eprintln!("  remove it manually: rm {}", exe.display());
                 } else {
                     eprintln!("  removed {}", exe.display());
@@ -1030,7 +1128,9 @@ fn main() {
 
             eprintln!("\nvestad has been uninstalled.");
             eprintln!("Note: Docker containers and images for agents are still intact.");
-            eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
+            eprintln!(
+                "To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)"
+            );
         }
     }
 }
@@ -1092,7 +1192,11 @@ mod tests {
         })
         .await;
         assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
-        assert_eq!(calls.get(), 3, "should try exactly `attempts` times before giving up");
+        assert_eq!(
+            calls.get(),
+            3,
+            "should try exactly `attempts` times before giving up"
+        );
     }
 
     #[test]

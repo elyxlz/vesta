@@ -65,20 +65,12 @@ export async function setProvider(
             ? { max_context_tokens: result.maxContextTokens }
             : {}),
         };
-  await apiFetch(`/agents/${enc}/provider`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  await apiFetch(`/agents/${enc}/provider`, jsonInit("PUT", body));
   const prefs: Record<string, string> = {};
   if (personality) prefs.agent_personality = personality;
   if (timezone) prefs.timezone = timezone;
   if (Object.keys(prefs).length > 0) {
-    await apiFetch(`/agents/${enc}/config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(prefs),
-    });
+    await apiFetch(`/agents/${enc}/config`, jsonInit("PUT", prefs));
   }
   await restartAgent(name);
 }
@@ -129,11 +121,10 @@ async function patchProvider(
   name: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
+  await apiFetch(
+    `/agents/${encodeURIComponent(name)}/provider`,
+    jsonInit("PATCH", patch),
+  );
   await restartAgent(name);
 }
 
@@ -153,11 +144,7 @@ export async function setContextWindow(
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
 /// context, timezone) are sent once it's up, via `setProvider`.
 export async function createAgent(name: string): Promise<void> {
-  await apiJson("/agents", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
+  await apiJson("/agents", jsonInit("POST", { name }));
 }
 
 /// Coarse, ordered stages of first-time agent creation reported by vestad while
@@ -190,6 +177,30 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
+/// Poll /agents/{name} until its status settles into one of `ready` (resolve) or `failed` (throw);
+/// anything else (still starting up) keeps polling until `timeoutMs` elapses.
+async function waitForStatus(
+  name: string,
+  timeoutMs: number,
+  pollIntervalMs: number,
+  ready: readonly string[],
+  failed: readonly string[],
+  timeoutLabel: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const resp = await apiJson<{ status: string }>(
+      `/agents/${encodeURIComponent(name)}`,
+    );
+    if (ready.includes(resp.status)) return;
+    if (failed.includes(resp.status)) {
+      throw new Error(`${name}: ${resp.status}`);
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`${name}: ${timeoutLabel}`);
+}
+
 /// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
 /// "unprovisioned" (no provider chosen) until provisioned; a re-auth case reports "not_authenticated".
 export async function waitUntilRunning(
@@ -197,27 +208,14 @@ export async function waitUntilRunning(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: string }>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (
-      resp.status === "alive" ||
-      resp.status === "not_authenticated" ||
-      resp.status === "unprovisioned"
-    )
-      return;
-    if (
-      resp.status === "dead" ||
-      resp.status === "stopped" ||
-      resp.status === "not_found"
-    ) {
-      throw new Error(`${name}: ${resp.status}`);
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new Error(`${name}: timed out waiting for HTTP server`);
+  await waitForStatus(
+    name,
+    timeoutMs,
+    pollIntervalMs,
+    ["alive", "not_authenticated", "unprovisioned"],
+    ["dead", "stopped", "not_found"],
+    "timed out waiting for HTTP server",
+  );
 }
 
 export async function waitUntilAlive(
@@ -225,24 +223,14 @@ export async function waitUntilAlive(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: string }>(
-      `/agents/${encodeURIComponent(name)}`,
-    );
-    if (resp.status === "alive") return;
-    if (
-      resp.status === "dead" ||
-      resp.status === "stopped" ||
-      resp.status === "not_found" ||
-      resp.status === "not_authenticated" ||
-      resp.status === "unprovisioned"
-    ) {
-      throw new Error(`${name}: ${resp.status}`);
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new Error(`${name}: timed out waiting to become alive`);
+  await waitForStatus(
+    name,
+    timeoutMs,
+    pollIntervalMs,
+    ["alive"],
+    ["dead", "stopped", "not_found", "not_authenticated", "unprovisioned"],
+    "timed out waiting to become alive",
+  );
 }
 
 export async function startAgent(name: string): Promise<void> {
@@ -373,11 +361,10 @@ export async function setNotificationInterruptRules(
   name: string,
   rules: NotificationInterruptRule[],
 ): Promise<NotificationInterruptRule[]> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ notification_rules: rules }),
-  });
+  await apiFetch(
+    `/agents/${encodeURIComponent(name)}/config`,
+    jsonInit("PUT", { notification_rules: rules }),
+  );
   return rules;
 }
 
@@ -397,11 +384,10 @@ export async function setPreemptMode(
   name: string,
   mode: PreemptMode,
 ): Promise<void> {
-  await apiFetch(`/agents/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preempt_mode: mode }),
-  });
+  await apiFetch(
+    `/agents/${encodeURIComponent(name)}/config`,
+    jsonInit("PUT", { preempt_mode: mode }),
+  );
 }
 
 /// One page of received notifications, newest first (GET /history?channel=notifications). Pass the

@@ -1,10 +1,10 @@
 use std::fs;
 use std::process::Command;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::{LazyLock, Mutex, MutexGuard};
 
-use vesta_tests::{SERVER, TestAgent, docker_cmd, dump_agent_diagnostics, exec_in_container};
+use vesta_tests::{docker_cmd, dump_agent_diagnostics, exec_in_container, TestAgent, SERVER};
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
@@ -21,10 +21,14 @@ type SharedAgent = Option<(TestAgent<'static>, String)>;
 ///
 /// Like SHARED_RO_AGENT in the server suite, the statics never drop; containers are cleaned up
 /// on the next run (TestAgent::create destroys leftovers by name).
-static LIVE_AGENT_A: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-a")));
-static LIVE_AGENT_B: LazyLock<Mutex<SharedAgent>> = LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-b")));
+static LIVE_AGENT_A: LazyLock<Mutex<SharedAgent>> =
+    LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-a")));
+static LIVE_AGENT_B: LazyLock<Mutex<SharedAgent>> =
+    LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-b")));
 
-fn lock_pool(pool: &'static LazyLock<Mutex<SharedAgent>>) -> Option<(MutexGuard<'static, SharedAgent>, String)> {
+fn lock_pool(
+    pool: &'static LazyLock<Mutex<SharedAgent>>,
+) -> Option<(MutexGuard<'static, SharedAgent>, String)> {
     let guard = pool.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let container = guard.as_ref()?.1.clone();
     Some((guard, container))
@@ -106,10 +110,17 @@ pub fn write_notification(container: &str, message: &str, interrupt: bool) -> Re
         "metadata": {},
     });
     let tmp = tempfile::NamedTempFile::new().map_err(|e| format!("tmp notif: {e}"))?;
-    fs::write(tmp.path(), serde_json::to_vec(&notification).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("write notif: {e}"))?;
+    fs::write(
+        tmp.path(),
+        serde_json::to_vec(&notification).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write notif: {e}"))?;
     let container_path = format!("{NOTIFICATIONS_DIR}/{micros}.json");
-    docker_cmd(&["cp", tmp.path().to_str().unwrap_or_default(), &format!("{container}:{container_path}")])?;
+    docker_cmd(&[
+        "cp",
+        tmp.path().to_str().unwrap_or_default(),
+        &format!("{container}:{container_path}"),
+    ])?;
     Ok(())
 }
 
@@ -120,7 +131,12 @@ pub fn create_file_request(path: &str, content: &str) -> String {
     format!("Create the file at this exact path: \"{path}\" containing only the word: {content}")
 }
 
-pub fn wait_for_file_contains(container: &str, path: &str, needle: &str, timeout: Duration) -> Result<String, String> {
+pub fn wait_for_file_contains(
+    container: &str,
+    path: &str,
+    needle: &str,
+    timeout: Duration,
+) -> Result<String, String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if exec_ok(container, &format!("test -f {path}")) {
@@ -158,7 +174,8 @@ const FIRST_START_ALIVE_POLL: Duration = Duration::from_secs(2);
 /// When this happens the agent idles in `setting_up` until the full timeout, so first-start setup
 /// bails fast and prints the agent's own diagnostics on sight of one rather than hanging for ten
 /// minutes on a generic timeout.
-const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] = &["Provider auth lost (terminal upstream 401/402)"];
+const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] =
+    &["Provider auth lost (terminal upstream 401/402)"];
 
 /// Block until the agent has fully finished first-start and is idle, using the product's own
 /// idle signal rather than a timer.
@@ -190,11 +207,23 @@ pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str,
             dump_agent_diagnostics(name);
             panic!("timeout waiting for agent to go alive");
         }
-        if client.agent_status(name).map(|s| s.status).unwrap_or_default() == "alive" {
+        if client
+            .agent_status(name)
+            .map(|s| s.status)
+            .unwrap_or_default()
+            == "alive"
+        {
             return;
         }
-        let agent_log = exec_in_container(container, "cat /root/agent/logs/vesta.log 2>/dev/null || true").unwrap_or_default();
-        if FIRST_START_AUTH_FAILURE_MARKERS.iter().any(|marker| agent_log.contains(marker)) {
+        let agent_log = exec_in_container(
+            container,
+            "cat /root/agent/logs/vesta.log 2>/dev/null || true",
+        )
+        .unwrap_or_default();
+        if FIRST_START_AUTH_FAILURE_MARKERS
+            .iter()
+            .any(|marker| agent_log.contains(marker))
+        {
             dump_agent_diagnostics(name);
             panic!("agent hit an auth error — CLAUDE_CREDENTIALS is invalid or expired; re-seed the secret (agent diagnostics above)");
         }
@@ -208,20 +237,29 @@ pub fn wait_until_alive_or_die(client: &vesta_tests::client::Client, name: &str,
 /// diagnostics on failure, matching the pool's fail-fast behavior. Callers must have already
 /// confirmed the credentials exist (via `host_credentials_path`).
 pub fn provision_and_settle(client: &vesta_tests::client::Client, name: &str, container: &str) {
-    let credentials_path = host_credentials_path().expect("CLAUDE_CREDENTIALS present (caller checked)");
-    let credentials = fs::read_to_string(&credentials_path).unwrap_or_else(|e| panic!("read {}: {e}", credentials_path.display()));
+    let credentials_path =
+        host_credentials_path().expect("CLAUDE_CREDENTIALS present (caller checked)");
+    let credentials = fs::read_to_string(&credentials_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", credentials_path.display()));
     let model = live_model();
 
     wait_for_container_running(container, Duration::from_secs(60)).expect("container running");
 
     exec_in_container(container, &format!("mkdir -p {E2E_FILES_DIR}")).expect("create e2e dir");
-    exec_in_container(container, &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"))
-        .expect("write test memory");
+    exec_in_container(
+        container,
+        &format!("cat > {MEMORY_PATH} <<'EOF'\n{TEST_MEMORY}\nEOF"),
+    )
+    .expect("write test memory");
 
-    client.sign_in_claude(name, &credentials, &model).expect("sign in with Claude");
+    client
+        .sign_in_claude(name, &credentials, &model)
+        .expect("sign in with Claude");
     // Restart after sign-in so the agent boots with the Claude provider applied: vestad applies a
     // provider write only on the next boot, so first-start runs on the chosen model.
-    client.restart_agent(name).expect("restart agent to apply provider");
+    client
+        .restart_agent(name)
+        .expect("restart agent to apply provider");
 
     wait_until_alive_or_die(client, name, container);
 
@@ -260,7 +298,9 @@ fn setup_live_agent(name: &str) -> Option<(TestAgent<'static>, String)> {
     };
 
     let status = client.agent_status(&agent.name).unwrap();
-    let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
+    let container = status
+        .id
+        .unwrap_or_else(|| panic!("agent {} has no container id", agent.name));
 
     provision_and_settle(client, &agent.name, &container);
     Some((agent, container))
