@@ -27,14 +27,7 @@ const connectEntrance = {
 } as const;
 
 function ConnectHeader() {
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <LogoText />
-      <p className="text-sm leading-none text-muted-foreground">
-        your unfair advantage
-      </p>
-    </div>
-  );
+  return <LogoText />;
 }
 
 export function Connect() {
@@ -85,6 +78,9 @@ export function Connect() {
     if (busy) return;
     const link = parseConnectLink(value);
     if (!link) {
+      setError(
+        "that doesn't look like a connect link. paste the whole link vestad printed.",
+      );
       inputRef.current?.focus();
       return;
     }
@@ -218,11 +214,14 @@ export function Connect() {
               ref={inputRef}
               id="connect-link"
               type="text"
-              placeholder="paste your gateway connect link"
+              placeholder="paste your connect link"
               autoComplete="off"
               autoFocus
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                setValue(e.target.value);
+                setError("");
+              }}
               className="text-center"
             />
           </Field>
