@@ -17,6 +17,8 @@ Suites:
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest
+  whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
+                 (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -96,6 +98,26 @@ check_web() {
   )
 }
 
+check_whatsapp() {
+  (
+    cd agent/skills/whatsapp/cli
+    if [ ! -f "${WHISPER_CPP_DIR:-/opt/whisper.cpp}/build-static/src/libwhisper.a" ]; then
+      export WHISPER_CPP_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/vesta-whisper"
+      ./build-whisper.sh "$WHISPER_CPP_DIR"
+    fi
+    . ./cgo-env.sh
+    UNFORMATTED=$(gofmt -l .)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "error: unformatted Go files:" >&2
+      echo "$UNFORMATTED" >&2
+      exit 1
+    fi
+    go vet -tags fts5 ./...
+    go build -tags fts5 -o /tmp/whatsapp-check-build .
+    go test -tags fts5 ./...
+  )
+}
+
 check_integration() {
   (
     cd vestad
@@ -151,6 +173,7 @@ for suite in "$@"; do
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
+    whatsapp) check_whatsapp ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_agent && check_cli && check_vestad && check_web ;;
