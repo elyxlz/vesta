@@ -168,20 +168,29 @@ func daemonRestart() {
 		// LEGACY(remove-when: fleet daemons have all restarted once under the lifecycle commands): pre-lifecycle daemons have no daemon-info.json, so a faithful restart is impossible.
 		failJSON("running daemon has no daemon-info.json (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]")
 	}
-	if !running {
-		serveArgs := linkServeArgs()
-		if err := startDaemonProcess(serveArgs); err != nil {
-			failJSON("%s", err.Error())
-		}
-		printJSON(map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs, "note": "daemon was not running; started fresh with instance args only"})
-		return
+	serveArgs, note := restartServeArgs(info, err)
+	if running {
+		daemonStop()
 	}
-	serveArgs := info.Args
-	daemonStop()
 	if err := startDaemonProcess(serveArgs); err != nil {
 		failJSON("%s", err.Error())
 	}
-	printJSON(map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs})
+	result := map[string]any{"status": "restarted", "session": sessionName(), "serve_args": serveArgs}
+	if note != "" {
+		result["note"] = note
+	}
+	printJSON(result)
+}
+
+// restartServeArgs picks the flags a restart brings the daemon back with: the
+// last run's flags recorded in daemon-info.json (which survives stops and
+// crashes, so e.g. --read-only is never silently dropped), falling back to
+// the instance flag alone when no info was ever recorded.
+func restartServeArgs(info daemonInfo, infoReadErr error) (serveArgs []string, note string) {
+	if infoReadErr != nil {
+		return linkServeArgs(), "daemon was not running and left no daemon-info.json; started fresh with instance args only"
+	}
+	return info.Args, ""
 }
 
 func daemonStatus() {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,5 +40,26 @@ func TestStopRefusalDuringSyncWindow(t *testing.T) {
 	}
 	if msg := stopRefusal(0, false); msg != "" {
 		t.Errorf("no window means no refusal, got %q", msg)
+	}
+}
+
+func TestRestartReusesRecordedServeFlags(t *testing.T) {
+	recorded := daemonInfo{Args: []string{"--instance", "personal", "--read-only", "--no-notifications"}}
+	serveArgs, note := restartServeArgs(recorded, nil)
+	if !reflect.DeepEqual(serveArgs, recorded.Args) {
+		t.Errorf("restart must reuse the recorded serve flags, got %v", serveArgs)
+	}
+	if note != "" {
+		t.Errorf("faithful restart needs no note, got %q", note)
+	}
+}
+
+func TestRestartWithoutDaemonInfoFallsBackToInstanceArgs(t *testing.T) {
+	serveArgs, note := restartServeArgs(daemonInfo{}, errors.New("no daemon-info.json"))
+	if len(serveArgs) != 0 {
+		t.Errorf("without daemon-info.json the fallback is instance args only, got %v", serveArgs)
+	}
+	if !strings.Contains(note, "instance args only") {
+		t.Errorf("fallback must disclose the flag loss, got %q", note)
 	}
 }

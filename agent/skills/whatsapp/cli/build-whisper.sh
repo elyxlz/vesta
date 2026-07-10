@@ -23,9 +23,12 @@ if [ ! -d "$DEST/.git" ]; then
 fi
 git -C "$DEST" checkout "$PIN" 2>/dev/null || { git -C "$DEST" fetch origin "$PIN" && git -C "$DEST" checkout "$PIN"; }
 
+# GGML_NATIVE=OFF: the image is built on release runners, so the static libs
+# must target the baseline ISA, not the builder CPU (SIGILL on lesser boxes).
 cmake -B "$DEST/build-static" -S "$DEST" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
+  -DGGML_NATIVE=OFF \
   -DGGML_OPENMP=ON
 cmake --build "$DEST/build-static" --config Release -j"$(nproc)"
 echo "$PIN" > "$DEST/.pin"

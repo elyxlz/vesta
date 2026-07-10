@@ -229,7 +229,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/vesta-whisper
-          key: whisper-${{ hashFiles('agent/skills/whatsapp/cli/go.mod') }}
+          key: whisper-${{ hashFiles('agent/skills/whatsapp/cli/go.mod', 'agent/skills/whatsapp/cli/build-whisper.sh') }}
 
       - name: Run whatsapp checks
         run: ./check.sh whatsapp
