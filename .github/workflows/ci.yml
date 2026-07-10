@@ -14,7 +14,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only cancel superseded runs on PRs. Master push runs must complete:
+  # cancelling them makes merge-gate-ci report cancelled siblings as a
+  # failure, painting a red X on every merge burst.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
