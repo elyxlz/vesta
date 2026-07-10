@@ -4,7 +4,9 @@ name: Promote
 # only opted-in beta clients follow; this workflow does the stable half once the beta
 # has soaked: move the agent image :latest tag, flip the GitHub release to latest, and
 # advance the production branch. No rebuild happens here, the exact artifacts that beta
-# users tested become stable.
+# users tested become stable. Promotion also cascades: every non-draft prerelease older
+# than the target is flipped to stable too (never marked latest), so no beta is ever
+# left behind below the new stable.
 
 on:
   workflow_dispatch:
@@ -42,6 +44,33 @@ jobs:
             exit 1
           fi
           echo "✓ $TAG is a prerelease, promoting to stable"
+
+      # Cascade: flip every non-draft prerelease older than the target to stable,
+      # oldest first, so no beta lingers as a prerelease below the new stable. Only
+      # the target (below) gets --latest, the :latest image move, and the production
+      # push; cascaded releases are explicitly not marked latest.
+      - name: Promote older prereleases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          RELEASE_LIST_LIMIT=100
+          TARGET_VERSION="${TAG#v}"
+          PRERELEASE_TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit "$RELEASE_LIST_LIMIT" \
+            --json tagName,isPrerelease,isDraft \
+            --jq '.[] | select(.isPrerelease and (.isDraft | not)) | .tagName')
+          for OLDER_TAG in $(printf '%s\n' "$PRERELEASE_TAGS" | sort -V); do
+            OLDER_VERSION="${OLDER_TAG#v}"
+            if [ "$OLDER_VERSION" = "$TARGET_VERSION" ]; then
+              continue
+            fi
+            NEWEST=$(printf '%s\n%s\n' "$OLDER_VERSION" "$TARGET_VERSION" | sort -V | tail -n 1)
+            if [ "$NEWEST" != "$TARGET_VERSION" ]; then
+              continue
+            fi
+            echo "Cascading: flipping older beta $OLDER_TAG to stable"
+            gh release edit "$OLDER_TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest=false
+          done
 
       # Full history: the production push is a force-push of the tag's commit, and a
       # shallow checkout can be rejected with "shallow update not allowed".
