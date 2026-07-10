@@ -17,13 +17,11 @@ import { cn } from "@/lib/utils";
 import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { AgentActivityState } from "@/lib/types";
 
 interface ChatComposerProps {
   fullscreen?: boolean;
   connected: boolean;
   notAuthenticated: boolean;
-  agentState: AgentActivityState;
   sttAvailable: boolean;
   isRecording: boolean;
   voiceAutoSend: boolean;
@@ -42,7 +40,6 @@ export function ChatComposer({
   fullscreen,
   connected,
   notAuthenticated,
-  agentState,
   sttAvailable,
   isRecording,
   voiceAutoSend,
@@ -111,9 +108,7 @@ export function ChatComposer({
               ? "listening..."
               : notAuthenticated
                 ? "sign in to chat"
-                : agentState === "thinking"
-                  ? "working... send a message to steer"
-                  : "send a message..."
+                : "send a message..."
           }
           disabled={inputDisabled}
           rows={1}

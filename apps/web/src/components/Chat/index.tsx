@@ -45,7 +45,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const {
     messages,
-    agentState,
     isTyping,
     connected,
     historyLoaded,
@@ -80,14 +79,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       ),
     [messages, showToolCalls],
   );
-
-  // The pacing drain only flags isTyping once a reply has already arrived, so it fires after
-  // the fact. Fill the real gap (the model is still working) whenever the last visible message
-  // is the user's own and the agent isn't idle; any agent-authored bubble (or tool call) already
-  // shows activity on its own.
-  const lastVisible = chatMessages[chatMessages.length - 1];
-  const showTyping =
-    isTyping || (agentState !== "idle" && lastVisible?.type === "user");
 
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollToBottom();
@@ -152,7 +143,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           historyLoaded={historyLoaded}
           agentName={name}
           notAuthenticated={notAuthenticated}
-          isTyping={showTyping}
+          isTyping={isTyping}
           isMobile={isMobile}
         />
 
@@ -162,7 +153,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             fullscreen={fullscreen}
             connected={connected}
             notAuthenticated={notAuthenticated}
-            agentState={agentState}
             sttAvailable={sttAvailable}
             isRecording={isRecording}
             voiceAutoSend={voiceAutoSend}
