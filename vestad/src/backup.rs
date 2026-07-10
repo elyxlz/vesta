@@ -4,7 +4,7 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status, create_container,
-    inspect_container, remove_container_force, start_container, stop_container_with_timeout, validate_name,
+    ensure_container_removed, inspect_container, start_container, stop_container_with_timeout, validate_name,
     write_pending_restart_reason, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
@@ -127,7 +127,9 @@ where
         if let Err(err) = write_pending_restart_reason(docker, &cname, resume_reason).await {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
-        start_container(docker, &cname).await;
+        if !start_container(docker, &cname).await {
+            tracing::error!(agent = %name, "failed to restart agent after backup");
+        }
     }
     result
 }
@@ -291,7 +293,15 @@ pub async fn restore_backup(
         }
         return Err(DockerError::Failed(format!("pre-restore safety backup failed: {e}")));
     }
-    remove_container_force(docker, &cname).await.ok();
+    // Confirm it's actually gone (don't swallow): docker rm can return before the name frees,
+    // and a create colliding on the name would delete the env file while the old container
+    // still exists. The pre-restore safety backup is already taken, so restart and bail.
+    if let Err(e) = ensure_container_removed(docker, &cname).await {
+        if info.status == ContainerStatus::Running {
+            start_container(docker, &cname).await;
+        }
+        return Err(e);
+    }
 
     let port = info
         .port
@@ -456,6 +466,29 @@ mod tests {
         assert!(
             started.load(Ordering::SeqCst),
             "start_container must run to completion regardless of SSE client disconnect"
+        );
+    }
+
+    #[test]
+    fn restore_backup_confirms_removal_before_create() {
+        // restore_backup recreates under the SAME name, so the old container must be confirmed
+        // gone before create. A best-effort `remove_container_force(...).await.ok()` could let
+        // the create collide on the name after the env file was already rewritten (docker rm can
+        // return before the name frees, or fail transiently), same failure mode as rebuild_agent.
+        let src = include_str!("backup.rs");
+        let restore_start = src.find("pub async fn restore_backup").expect("restore_backup present");
+        let delete_start = src.find("pub async fn delete_backup").expect("delete_backup present");
+        assert!(restore_start < delete_start, "restore_backup must appear before delete_backup for this test to slice correctly");
+        let restore_body = &src[restore_start..delete_start];
+
+        let remove_pos = restore_body
+            .find("ensure_container_removed")
+            .expect("restore_backup must confirm the old container is gone via ensure_container_removed before recreating");
+        let create_pos = restore_body.find("create_container").expect("create_container must be called in restore_backup");
+        assert!(remove_pos < create_pos, "restore_backup must remove the old container before creating the new one");
+        assert!(
+            !restore_body.contains("remove_container_force"),
+            "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
     }
 

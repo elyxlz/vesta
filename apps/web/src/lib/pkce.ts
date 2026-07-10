@@ -139,7 +139,7 @@ export async function completeHostedLogin(
  */
 export async function startNativeLogin(): Promise<void> {
   if (buildPlatform === "ios" || buildPlatform === "android") {
-    throw new Error("mobile sign-in is coming soon — use the web app for now");
+    throw new Error("mobile sign-in is coming soon, use the web app for now");
   }
 
   const { start, onUrl, cancel } =

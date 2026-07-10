@@ -24,7 +24,7 @@ function socketValue(
     pendingNotifications: pending,
     hasMore: false,
     loadingMore: false,
-    loadMore: () => {},
+    loadMore: async () => {},
     send: () => true,
     sendEvent: () => true,
     showToolCalls: false,

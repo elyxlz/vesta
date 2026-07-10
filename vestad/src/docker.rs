@@ -70,16 +70,8 @@ const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
-const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
-
-const OAUTH_HTTP_TIMEOUT_SECS: u64 = 30;
-
-pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
-pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 // --- Expected container config (single source of truth) ---
 
@@ -1579,145 +1571,6 @@ pub(crate) async fn docker_cp_content(docker: &Docker, container: &str, content:
     upload_to_container(docker, container, parent, file_name, content.as_bytes()).await
 }
 
-// --- Auth flow (split for HTTP API) ---
-
-pub(crate) fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => {
-                out.push('%');
-                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
-                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
-            }
-        }
-    }
-    out
-}
-
-fn base64url_encode(data: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
-}
-
-use ring::rand::SecureRandom;
-
-fn generate_pkce() -> (String, String) {
-    let rng = ring::rand::SystemRandom::new();
-    let mut verifier_bytes = [0u8; 32];
-    rng.fill(&mut verifier_bytes).expect("random failed");
-    let verifier = base64url_encode(&verifier_bytes);
-
-    let challenge_hash = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
-    let challenge = base64url_encode(challenge_hash.as_ref());
-
-    (verifier, challenge)
-}
-
-fn generate_state() -> String {
-    let rng = ring::rand::SystemRandom::new();
-    let mut state_bytes = [0u8; 32];
-    rng.fill(&mut state_bytes).expect("random failed");
-    base64url_encode(&state_bytes)
-}
-
-/// Start the OAuth PKCE flow. Returns (auth_url, code_verifier, state).
-pub fn start_auth_flow() -> (String, String, String) {
-    let (code_verifier, code_challenge) = generate_pkce();
-    let state = generate_state();
-
-    let auth_url = format!(
-        "{}?code=true&client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
-        OAUTH_AUTHORIZE_URL,
-        OAUTH_CLIENT_ID,
-        percent_encode(OAUTH_REDIRECT_URI),
-        percent_encode("org:create_api_key user:profile user:inference"),
-        code_challenge,
-        state,
-    );
-
-    (auth_url, code_verifier, state)
-}
-
-/// Complete the OAuth flow by exchanging the auth code for tokens.
-/// Returns the credentials JSON string.
-pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_verifier: &str, expected_state: &str) -> Result<String, DockerError> {
-    let (auth_code, pasted_state) = match input.split_once('#') {
-        Some((code, st)) => (code, st),
-        None => (input, expected_state),
-    };
-
-    if pasted_state != expected_state {
-        return Err(DockerError::Failed("state mismatch — possible CSRF, please retry auth".into()));
-    }
-
-    let body = serde_json::json!({
-        "grant_type": "authorization_code",
-        "code": auth_code,
-        "state": pasted_state,
-        "client_id": OAUTH_CLIENT_ID,
-        "redirect_uri": OAUTH_REDIRECT_URI,
-        "code_verifier": code_verifier,
-    });
-
-    let response = client.post(OAUTH_TOKEN_URL)
-        .header("User-Agent", "axios/1.13.6")
-        .timeout(std::time::Duration::from_secs(OAUTH_HTTP_TIMEOUT_SECS))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                DockerError::Failed(format!("token exchange timed out after {OAUTH_HTTP_TIMEOUT_SECS}s"))
-            } else {
-                DockerError::Failed(format!("token exchange request failed: {e}"))
-            }
-        })?;
-
-    let response_str = response.text().await
-        .map_err(|e| DockerError::Failed(format!("failed to read token response: {e}")))?;
-
-    let token_data: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|_| DockerError::Failed(format!("token exchange failed: {}", response_str)))?;
-
-    if let Some(error) = token_data.get("error") {
-        return Err(DockerError::Failed(format!(
-            "auth failed: {} — {}",
-            error,
-            token_data
-                .get("error_description")
-                .unwrap_or(error)
-        )));
-    }
-
-    let access_token = token_data["access_token"]
-        .as_str()
-        .ok_or(DockerError::Failed("no access_token in response".into()))?;
-    let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
-    let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
-
-    let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
-
-    let mut creds = serde_json::json!({
-        "claudeAiOauth": {
-            "accessToken": access_token,
-            "expiresAt": expires_at as u64,
-        }
-    });
-    if let Some(rt) = refresh_token {
-        creds["claudeAiOauth"]["refreshToken"] = serde_json::json!(rt);
-    }
-    if let Some(scopes) = token_data.get("scope").and_then(|v| v.as_str()) {
-        let scope_list: Vec<&str> = scopes.split_whitespace().collect();
-        creds["claudeAiOauth"]["scopes"] = serde_json::json!(scope_list);
-    }
-
-    Ok(creds.to_string())
-}
-
 // --- High-level operations (used by serve.rs handlers) ---
 
 pub async fn get_status(
@@ -2090,7 +1943,9 @@ pub async fn reconcile_containers(
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
-                start_container(docker, cname).await;
+                if !start_container(docker, cname).await {
+                    tracing::error!(agent = %name, "boot-start failed");
+                }
             } else if agent_code_changed && has_core_mount {
                 // vestad re-extracted the embedded core this boot. A running agent still holds the
                 // old code in memory and its core mount points at the now-replaced dir, so restart
@@ -2353,7 +2208,10 @@ pub async fn rename_agent(
     snapshot_container(docker, &old_cname, &snapshot_tag, &[]).await?;
 
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
-    remove_container_force(docker, &old_cname).await.ok();
+    // Confirm it's actually gone (don't swallow): the snapshot is safely captured and the env
+    // file and constitution are still untouched, so failing here leaves the old agent fully
+    // intact instead of leaving a live container squatting on the WS port under the old name.
+    ensure_container_removed(docker, &old_cname).await?;
     // Carry the constitution across the rename before the new container is created, so its
     // bind mount resolves to the existing content rather than a fresh empty file.
     let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
@@ -2901,6 +2759,21 @@ mod tests {
         assert!(
             !rebuild_body.contains("remove_container_force"),
             "rebuild_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+
+        // rename_agent has the same shape (snapshot, remove, create) and the same failure mode:
+        // a surviving old container keeps the same baked-in WS_PORT while its env file and
+        // constitution are deleted, and the next reconcile boot-starts it alongside the new one.
+        let tests_start = src.find("#[cfg(test)]").expect("test module present");
+        let rename_body = &src[rename_start..tests_start];
+        let rename_remove_pos = rename_body
+            .find("ensure_container_removed")
+            .expect("rename_agent must confirm the old container is gone via ensure_container_removed before recreating");
+        let rename_create_pos = rename_body.find("create_container").expect("create_container must be called in rename_agent");
+        assert!(rename_remove_pos < rename_create_pos, "rename_agent must remove the old container before creating the new one");
+        assert!(
+            !rename_body.contains("remove_container_force"),
+            "rename_agent must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
     }
 

@@ -2,25 +2,37 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
 
+func isHelpArg(arg string) bool {
+	return arg == "--help" || arg == "-h" || arg == "help"
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: telegram <command> [args] [flags]")
+	fmt.Fprintln(w, "Lifecycle:")
+	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon (idempotent start; stop/restart also handle the watchdog)")
+	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
+	fmt.Fprintln(w, "  authenticate                         save the bot token / print auth status")
+	fmt.Fprintln(w, "Commands (short aliases in parentheses):")
+	fmt.Fprintln(w, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
+	fmt.Fprintln(w, "    send-message flags: --buttons 'L1=d1,L2=d2;L3=d3'  --reply-to <id>  --message-file <path>")
+	fmt.Fprintln(w, "  edit-message [to] [message-id] [message] (--buttons)  delete-message (del) [to] [message-id]")
+	fmt.Fprintln(w, "  answer-callback [callback-id] (--text --alert)   send-voice [to] [file-path]")
+	fmt.Fprintln(w, "  send-chat-action [to] [action]       pin-message [to] [message-id]   unpin-message [to] [message-id]")
+	fmt.Fprintln(w, "  send-reaction (react) [to] [id] [emoji]")
+	fmt.Fprintln(w, "  list-messages (messages) [to]        list-chats (chats)")
+	fmt.Fprintln(w, "  list-contacts (contacts)             list-groups (groups)")
+	fmt.Fprintln(w, "  add-contact [name] [chat-id]         remove-contact [identifier]")
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: telegram <command> [args] [flags]")
-		fmt.Fprintln(os.Stderr, "Commands (short aliases in parentheses):")
-		fmt.Fprintln(os.Stderr, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
-		fmt.Fprintln(os.Stderr, "    send-message flags: --buttons 'L1=d1,L2=d2;L3=d3'  --reply-to <id>  --message-file <path>")
-		fmt.Fprintln(os.Stderr, "  edit-message [to] [message-id] [message] (--buttons)  delete-message (del) [to] [message-id]")
-		fmt.Fprintln(os.Stderr, "  answer-callback [callback-id] (--text --alert)   send-voice [to] [file-path]")
-		fmt.Fprintln(os.Stderr, "  send-chat-action [to] [action]       pin-message [to] [message-id]   unpin-message [to] [message-id]")
-		fmt.Fprintln(os.Stderr, "  send-reaction (react) [to] [id] [emoji]")
-		fmt.Fprintln(os.Stderr, "  list-messages (messages) [to]        list-chats (chats)")
-		fmt.Fprintln(os.Stderr, "  list-contacts (contacts)             list-groups (groups)")
-		fmt.Fprintln(os.Stderr, "  add-contact [name] [chat-id]         remove-contact [identifier]")
-		fmt.Fprintln(os.Stderr, "  serve  authenticate")
-		os.Exit(1)
+	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
+		printUsage(os.Stdout)
+		os.Exit(0)
 	}
 
 	command := os.Args[1]
@@ -86,6 +98,8 @@ func main() {
 		runServe()
 	case "authenticate":
 		runAuthenticate()
+	case "daemon":
+		runDaemon()
 	default:
 		runOneShot(command)
 	}

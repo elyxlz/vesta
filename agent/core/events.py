@@ -313,7 +313,7 @@ class EventBus:
                     (event["ts"], json.dumps(event)),
                 )
                 self._conn.commit()
-            except sqlite3.OperationalError as e:
+            except sqlite3.Error as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
         for q in self._subscribers:
             self._offer(q, event)
