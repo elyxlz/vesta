@@ -13,10 +13,12 @@ Subagent (general-purpose):
     finished spec: compact, dense, and genuinely well designed. You work one shot and cannot
     reach the user, so the spec below is final. Build it, verify it serves, and report back.
 
-    Before any UI change, read the shadcn reference vendored with this skill:
-    `~/agent/skills/dashboard/shadcn/SKILL.md` and its rule files in
-    `~/agent/skills/dashboard/shadcn/rules/` (styling, composition, forms, icons, base-vs-radix).
-    Those rules are always enforced. It is your component library reference; build from it.
+    Before any UI change, read the two references vendored with this skill and follow them:
+    - `~/agent/skills/dashboard/shadcn/SKILL.md` and `shadcn/rules/` (styling, composition, forms,
+      icons, base-vs-radix): the component library rules, always enforced.
+    - `~/agent/skills/dashboard/craft/SKILL.md`: how this dashboard looks and reads, including
+      density and sizing, hierarchy, color, desktop and mobile, progressive disclosure, states,
+      and copy. Build to it; aim past a basic implementation, crafted and never generic AI-slop.
 
     ## Your spec (final)
 
@@ -42,22 +44,6 @@ Subagent (general-purpose):
     and adding it to the TOP of the `pages` array in `config.tsx` with an id, title, and a lucide
     icon.
 
-    ## Density and sizing (this is what makes the dashboard look right)
-
-    It is a high density command center, not a roomy app. Default shadcn sizes are too large, so
-    override them: a lot should fit without feeling cramped.
-
-    - Text: default `text-sm`; labels `text-xs text-muted-foreground` (do NOT lower the opacity,
-      it washes out on the dark theme); large numbers only `text-lg` or `text-xl font-semibold`.
-    - Spacing: widget wrapper `rounded-2xl bg-secondary p-3 text-sm`; dense widgets `p-2`; grid
-      `gap-2`; inside widgets `space-y-2`. Combine related info into single rows.
-    - Controls: `<Button size="sm" className="h-8 px-2 text-xs">`; inputs `h-8 text-xs`.
-    - Grid spans: `col-span-1` is the default and ~90% of widgets (metrics, counters, trackers);
-      `col-span-2` only for charts that need width; `col-span-full` almost never.
-
-    A widget heavy page is a responsive auto fill grid:
-    `grid gap-2 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]`.
-
     ## Data
 
     - No client side third party API calls: they fail on CORS in the browser. Fetch server side
@@ -69,19 +55,11 @@ Subagent (general-purpose):
       does not crash on undefined; show a skeleton while loading. Fetch on mount, and add a
       compact refresh button for data that changes through the day.
 
-    ## Make it good, not generic
-
-    Read `~/agent/skills/dashboard/craft/SKILL.md` for design judgment: hierarchy (one thing per
-    widget), color as signal, structure that encodes meaning, quiet charts, consistency with
-    neighboring widgets, designed empty and loading states, restraint, self-critique, and clear UI
-    copy. It is written for this dashboard's fixed system (synced fonts and theme, shadcn tokens),
-    so express taste through composition and semantic color, not new fonts or palettes. Aim past a
-    basic implementation: it should feel crafted, never generic AI-slop.
-
     ## Your job
 
     1. Build exactly what the spec asks for. YAGNI: nothing speculative beyond it.
-    2. Follow the structure, density, and data rules above, and the vendored shadcn rules.
+    2. Follow the data rules above, the vendored shadcn rules, and the craft guide (look, density,
+       and design judgment).
     3. Build and verify it actually serves (required, see below).
     4. Self-review, then report.
 

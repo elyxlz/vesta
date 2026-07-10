@@ -14,6 +14,17 @@ The craft of building dashboard widgets that feel considered. You work inside a 
 
 Each card leads with a single primary value, its reason to exist, set large; everything else is secondary and muted. If a widget has two equally loud numbers, split it into two or demote one. The eye should land in one place, then travel to the supporting detail.
 
+## Density and sizing
+
+A high density command center, not a roomy app: default shadcn sizes are too large, so override them so a lot fits without feeling cramped.
+
+- Text: default `text-sm`; labels `text-xs text-muted-foreground` (do not lower the opacity, it washes out on the dark theme); large numbers only `text-lg` or `text-xl font-semibold`.
+- Spacing: widget wrapper `rounded-2xl bg-secondary p-3 text-sm`; dense widgets `p-2`; grid `gap-2`; inside widgets `space-y-2`. Combine related info into single rows.
+- Controls: `<Button size="sm" className="h-8 px-2 text-xs">`; inputs `h-8 text-xs`.
+- Grid spans: `col-span-1` is the default and ~90% of widgets (metrics, counters, trackers); `col-span-2` only for charts that need width; `col-span-full` almost never.
+
+A widget-heavy page is a responsive auto-fill grid: `grid gap-2 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]`.
+
 ## Desktop and mobile are both first class
 
 The dashboard renders inside an iframe, in a card that sits in the main app's layout, on both desktop and mobile. It never owns the viewport: the frame is wide on desktop and narrow on a phone. Design every widget and page for both from the start, not desktop first with mobile bolted on afterward. The grid reflows to a single column on a narrow frame, text and controls stay legible and tappable, and nothing overflows the card. Do not assume full-screen chrome or fixed viewport heights, you live inside a card.
