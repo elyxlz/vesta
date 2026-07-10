@@ -66,6 +66,7 @@ type WhatsAppClient struct {
 	transcribeSem     chan struct{} // limits concurrent audio transcriptions
 	readQueueMu       sync.Mutex
 	readQueue         map[string]*chatReadBatch // keyed by chatJID|senderJID; coalesces read receipts in order
+	callMgr           *CallManager              // live voice calling; set in serve after Connect, nil for one-shot clients
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {

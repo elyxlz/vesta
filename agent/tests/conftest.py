@@ -62,6 +62,10 @@ def result_msg():
 
     msg = MagicMock(spec=ResultMessage)
     msg.content = []
+    msg.usage = None
+    msg.total_cost_usd = None
+    msg.duration_ms = 0
+    msg.session_id = None  # no persist: harness configs point at the real home, not a tmp dir
     return msg
 
 

@@ -184,6 +184,9 @@ func runServe(logger waLog.Logger) {
 		os.Exit(1)
 	}
 
+	// Live voice calling wraps the connected client; it answers inbound calls from here on.
+	wac.callMgr = NewCallManager(wac)
+
 	sockPath := filepath.Join(dataDir, "whatsapp.sock")
 	listener, err := startSocketServer(sockPath, wac)
 	if err != nil {
@@ -311,6 +314,10 @@ var commands = []command{
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
 	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
 	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
+	{name: "call", positionals: []string{"to"}, write: true, run: cmdCall},
+	{name: "say", positionals: []string{"text"}, write: true, run: cmdSay},
+	{name: "hangup", write: true, run: cmdHangup},
+	{name: "call-status", run: cmdCallStatus},
 	{name: "daemon-status", run: cmdDaemonStatus},
 	{name: "link-start", run: cmdLinkStart},
 	{name: "link-status", run: cmdLinkStatus},
