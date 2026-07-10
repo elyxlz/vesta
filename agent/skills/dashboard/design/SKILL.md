@@ -1,14 +1,14 @@
 ---
-name: dashboard-craft
+name: dashboard-design
 description: Design judgment and UI copy for building Vesta dashboard widgets that feel considered rather than templated, within the fixed design system.
 license: MIT (anthropics/claude-code), adapted and extended
 ---
 
 <!-- Design-judgment sections (structure, match-complexity, motion, restraint, self-critique, CSS gotcha, writing/copy) are adapted from anthropics/claude-code plugins/frontend-design (MIT), trimmed to the dashboard context. The brand-identity, hero, distinctive-typography, and invent-a-palette guidance is dropped on purpose: the dashboard's fonts, base theme, and color tokens are synced (index.css + shadcn) and must not change. The dashboard-specific sections (hierarchy, color, charts, family, states) are ours. -->
 
-# Dashboard Craft
+# Dashboard Design
 
-The craft of building dashboard widgets that feel considered. You work inside a fixed system: the fonts, base theme, and color tokens are synced from the main app (`index.css`, shadcn), and the density rules are set. You do not choose fonts or invent palettes. Your craft is hierarchy, composition, structure, color as signal, motion, restraint, and copy. Make deliberate choices that fit this specific data, not the templated defaults you would reach for on any dashboard.
+How to build dashboard widgets that feel considered. You work inside a fixed system: the fonts, base theme, and color tokens are synced from the main app (`index.css`, shadcn), and the density rules are set. You do not choose fonts or invent palettes. Your material is hierarchy, composition, structure, color as signal, motion, restraint, and copy. Make deliberate choices that fit this specific data, not the templated defaults you would reach for on any dashboard.
 
 ## One thing per widget
 

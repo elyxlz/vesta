@@ -16,9 +16,9 @@ Subagent (general-purpose):
     Before any UI change, read the two references vendored with this skill and follow them:
     - `~/agent/skills/dashboard/shadcn/SKILL.md` and `shadcn/rules/` (styling, composition, forms,
       icons, base-vs-radix): the component library rules, always enforced.
-    - `~/agent/skills/dashboard/craft/SKILL.md`: how this dashboard looks and reads, including
+    - `~/agent/skills/dashboard/design/SKILL.md`: how this dashboard looks and reads, including
       density and sizing, hierarchy, color, desktop and mobile, progressive disclosure, states,
-      and copy. Build to it; aim past a basic implementation, crafted and never generic AI-slop.
+      and copy. Build to it; aim past a basic implementation, polished and never generic AI-slop.
 
     ## Your spec (final)
 
@@ -58,7 +58,7 @@ Subagent (general-purpose):
     ## Your job
 
     1. Build exactly what the spec asks for. YAGNI: nothing speculative beyond it.
-    2. Follow the data rules above, the vendored shadcn rules, and the craft guide (look, density,
+    2. Follow the data rules above, the vendored shadcn rules, and the design guide (look, density,
        and design judgment).
     3. Build and verify it actually serves (required, see below).
     4. Self-review, then report.
