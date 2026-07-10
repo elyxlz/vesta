@@ -44,6 +44,10 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		go wac.recoverOrRestart("stream_error:" + v.Code)
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
+		wac.writeAuthStatusFile(map[string]string{
+			"status": "logged_out",
+			"note":   "WhatsApp logged this device out (account under review, or unlinked from the phone). Re-linking needs the user's explicit go-ahead, do NOT retry-loop pairing.",
+		})
 		wac.initiateReauth()
 	}
 }
@@ -265,6 +269,13 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
+	// History backfill can outlast the fixed post-link window; slide the window
+	// while batches are still arriving so stop/restart stay refused mid-sync.
+	// An expired window is never re-armed: routine syncs outside it are ignored.
+	if syncWindowRemaining(wac.dataDir, time.Now()) > 0 {
+		recordLinkedAt(wac.dataDir, time.Now())
+	}
+
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))
 
 	// Commit one transaction per conversation so the writer lock releases between

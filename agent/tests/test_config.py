@@ -2,6 +2,7 @@
 
 import json
 import os
+import pathlib as pl
 
 import pytest
 
@@ -162,6 +163,31 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch, tmp_path):
     assert read_config_store() == {}
     config, _ = load_config()
     assert config.provider is None
+
+
+def _deny_read_text(self, *args, **kwargs):
+    raise PermissionError("permission denied")
+
+
+def test_unreadable_store_aborts_update(agentdir, monkeypatch):
+    # A transient OSError on the read (permission flip, EIO) over an intact store must abort the
+    # merge-and-write: handing back {} as the merge base would clobber the stored provider, prefs,
+    # and rules with only the incoming keys. Fail loud, leave the file untouched.
+    update_config_store({"agent_personality": "warm"})
+    before = config_store_path().read_text()
+    with monkeypatch.context() as patched:
+        patched.setattr(pl.Path, "read_text", _deny_read_text)
+        with pytest.raises(OSError):
+            update_config_store({"seed_context": "fresh"})
+    assert config_store_path().read_text() == before
+
+
+def test_unreadable_store_does_not_crash_rules_load(agentdir, monkeypatch):
+    # load_notification_rules runs on monitor_loop's per-tick hot path; an unreadable store must
+    # yield no rules, never an exception that kills notification processing.
+    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
+    monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
+    assert load_notification_rules() == []
 
 
 def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path):

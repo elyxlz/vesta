@@ -26,6 +26,7 @@ from .client import (
     compact_session,
     client_session,
     cancel_task,
+    QueryNotDelivered,
 )
 from .diagnostics import format_crash_detail
 from .helpers import load_prompt, build_restart_context, clear_notifications
@@ -62,10 +63,9 @@ def drop_core_notification(*, type_: str, body: str, config: cfg.VestaConfig, na
     Core notifications are exempt from the user's rules; monitor_loop derives their disposition from
     the type (see CORE_POOL_TYPES)."""
     notif = Notification(timestamp=dt.datetime.now(), source=CORE_SOURCE, type=type_, body=body)
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
     stem = name if name is not None else f"{type_}-{int(time.time() * 1000)}"
     path = config.notifications_dir / f"{stem}.json"
-    path.write_text(notif.model_dump_json())
+    cfg.atomic_write_text(path, notif.model_dump_json())
     return path
 
 
@@ -253,7 +253,12 @@ async def _run_messages_with_interrupts(
             state_store.save_state(state.persisted, config)
             state.graceful_shutdown.set()
             raise
-        except (*SDK_ERRORS, ValueError, TimeoutError) as e:
+        except (*SDK_ERRORS, ValueError, TimeoutError, QueryNotDelivered) as e:
+            # QueryNotDelivered means the CLI never received the prompt (send timeout or a dead
+            # transport): the outer loop must keep the notification file instead of clearing it,
+            # mirroring the auth-loss branch, since the resumed session never saw the message.
+            if isinstance(e, QueryNotDelivered):
+                state.query_not_delivered = True
             error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
             exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
             detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
@@ -292,6 +297,7 @@ async def _run_messages_with_interrupts(
             state.interrupt_event = asyncio.Event()
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
+            state.query_not_delivered = False
             process_task = asyncio.create_task(run_one(current.text, user=current.is_user, pre_sent=current.pre_sent))
 
             while not process_task.done():
@@ -329,12 +335,15 @@ async def _run_messages_with_interrupts(
             await process_task
             state.noninterruptible_turn_active = False
             # Keep the file if the turn flipped auth to not_authenticated (converse detects a
-            # terminal 401/402 mid-turn): like a deferred message above, it must re-run after re-auth.
-            # Operate on in_flight_notification_paths, not current.file_paths: an intentional restart
-            # mid-turn already cleared and emptied it, so this stays a no-op instead of re-emitting.
-            if state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED:
+            # terminal 401/402 mid-turn) or the query never reached the CLI (state.query_not_delivered):
+            # like a deferred message above, either way it must re-run, on re-auth or on the next
+            # restart. Operate on in_flight_notification_paths, not current.file_paths: an intentional
+            # restart mid-turn already cleared and emptied it, so this stays a no-op instead of re-emitting.
+            authenticated = state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED
+            if authenticated and not state.query_not_delivered:
                 clear_notifications(state, state.in_flight_notification_paths)
             state.in_flight_notification_paths = []
+            state.query_not_delivered = False
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:

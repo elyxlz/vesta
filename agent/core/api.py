@@ -25,7 +25,7 @@ import json
 import logging
 import typing as tp
 import sqlite3
-import uuid
+import time
 import weakref
 
 import aiohttp as _aiohttp
@@ -33,7 +33,15 @@ import pydantic as pyd
 from aiohttp import web
 
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
-from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
+from .config import (
+    ClaudeConfig,
+    VestaConfig,
+    atomic_write_text,
+    load_notification_rules,
+    stored_config,
+    update_config_store,
+    validate_config_updates,
+)
 from .helpers import get_memory_path
 from .models import State
 from .notification import Notification
@@ -88,11 +96,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
-        if recv_task:
-            recv_task.cancel()
-        if send_task:
-            send_task.cancel()
-        await asyncio.gather(recv_task, send_task, return_exceptions=True)
+        tasks = [task for task in (recv_task, send_task) if task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         event_bus.unsubscribe(sub)
         request.app["websockets"].discard(ws)
 
@@ -115,8 +122,8 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
     notif = Notification.model_validate(
         {"timestamp": dt.datetime.now(), "source": "app-chat", "type": "message", "message": text, "interrupt": True}
     )
-    path = directory / f"{uuid.uuid4()}-app-chat-message.json"
-    path.write_text(notif.model_dump_json(), encoding="utf-8")
+    path = directory / f"{time.time_ns()}-app-chat-message.json"
+    atomic_write_text(path, notif.model_dump_json())
 
 
 async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig) -> None:
@@ -127,7 +134,7 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: Ves
                 data = json.loads(msg.data)
             except (json.JSONDecodeError, TypeError):
                 continue
-            if "type" not in data:
+            if not isinstance(data, dict) or "type" not in data:
                 continue
             msg_type = data["type"]
             if msg_type in ("message", "chat"):
@@ -187,7 +194,7 @@ async def _history_handler(request: web.Request) -> web.Response:
     query = request.query.get("q", "").strip()
     if query:
         try:
-            events = event_bus.search(query, limit=limit if limit is not None else 20)
+            events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
         except sqlite3.OperationalError as e:
             # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
             logger.warning(f"search query rejected: {e}")
@@ -406,11 +413,10 @@ async def _memory_put_handler(request: web.Request) -> web.Response:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if "content" not in data or not isinstance(data["content"], str):
+    if not isinstance(data, dict) or "content" not in data or not isinstance(data["content"], str):
         return web.json_response({"error": "body must be {content: string}"}, status=400)
     path = get_memory_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(data["content"])
+    await asyncio.to_thread(atomic_write_text, path, data["content"])
     return web.json_response({"ok": True})
 
 

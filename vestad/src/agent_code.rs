@@ -73,13 +73,15 @@ pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), dir = %dir.display(), "writing embedded agent code");
 
     if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| AgentCodeError::Io(format!("clean {}: {e}", dir.display())))?;
+        fs::remove_dir_all(&dir)
+            .map_err(|e| AgentCodeError::Io(format!("clean {}: {e}", dir.display())))?;
     }
     fs::create_dir_all(&dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     for name in AgentSource::iter() {
-        let file = AgentSource::get(&name)
-            .ok_or_else(|| AgentCodeError::Io(format!("embedded file {name} missing at extraction time")))?;
+        let file = AgentSource::get(&name).ok_or_else(|| {
+            AgentCodeError::Io(format!("embedded file {name} missing at extraction time"))
+        })?;
         let dest = dir.join(name.as_ref());
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| AgentCodeError::Io(e.to_string()))?;
@@ -98,9 +100,12 @@ pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
             if !path.exists() {
                 continue; // the build.rs walk and the embed filters are maintained separately
             }
-            let mut perms = fs::metadata(&path).map_err(|e| AgentCodeError::Io(e.to_string()))?.permissions();
+            let mut perms = fs::metadata(&path)
+                .map_err(|e| AgentCodeError::Io(e.to_string()))?
+                .permissions();
             perms.set_mode(perms.mode() | 0o111);
-            fs::set_permissions(&path, perms).map_err(|e| AgentCodeError::Io(format!("chmod {}: {e}", path.display())))?;
+            fs::set_permissions(&path, perms)
+                .map_err(|e| AgentCodeError::Io(format!("chmod {}: {e}", path.display())))?;
         }
     }
 
@@ -141,14 +146,21 @@ mod tests {
         assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
         assert!(dir.join("MEMORY.md").is_file());
         assert!(dir.join(".gitignore").is_file());
-        assert!(dir.join("ruff.toml").is_file());  // box needs it for upstream-pr formatting
+        assert!(dir.join("ruff.toml").is_file()); // box needs it for upstream-pr formatting
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             // Modes survive: the snapshot must record scripts as 100755, matching the image.
             let attach = dir.join("core/skills/workspace-sync/scripts/attach.sh");
-            let mode = attach.metadata().expect("attach.sh extracted").permissions().mode();
-            assert!(mode & 0o111 != 0, "executable bit restored on extraction, got mode {mode:o}");
+            let mode = attach
+                .metadata()
+                .expect("attach.sh extracted")
+                .permissions()
+                .mode();
+            assert!(
+                mode & 0o111 != 0,
+                "executable bit restored on extraction, got mode {mode:o}"
+            );
         }
         assert_eq!(
             fs::read_to_string(dir.join(FINGERPRINT_MARKER)).expect("marker"),
@@ -173,14 +185,27 @@ mod tests {
         let config = tmp.path();
 
         // Nothing extracted yet -> stale (the next ensure would extract).
-        assert!(agent_code_is_stale(config), "missing code must read as stale");
+        assert!(
+            agent_code_is_stale(config),
+            "missing code must read as stale"
+        );
 
         ensure_agent_code(config).expect("extract");
-        assert!(!agent_code_is_stale(config), "freshly extracted code is not stale");
+        assert!(
+            !agent_code_is_stale(config),
+            "freshly extracted code is not stale"
+        );
 
         // A fingerprint mismatch (what a new vestad version produces) reads as stale -> reconcile
         // restarts running agents to pick up the re-extracted core.
-        fs::write(agent_code_dir(config).join(FINGERPRINT_MARKER), "different-version").expect("write marker");
-        assert!(agent_code_is_stale(config), "a fingerprint mismatch must read as stale");
+        fs::write(
+            agent_code_dir(config).join(FINGERPRINT_MARKER),
+            "different-version",
+        )
+        .expect("write marker");
+        assert!(
+            agent_code_is_stale(config),
+            "a fingerprint mismatch must read as stale"
+        );
     }
 }

@@ -146,9 +146,15 @@ def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
 
 def load_notification_rules() -> list[NotificationInterruptRule]:
     """The current ruleset, read live from the store on disk (not the boot-time config) via
-    read_config_store, so monitor_loop and edits stay in step without a restart. One malformed rule
-    (e.g. an invalid regex from a newer skill) is dropped and the rest kept; never raises."""
-    store = read_config_store()
+    read_config_store, so monitor_loop and edits stay in step without a restart. It runs on the
+    per-tick notification hot path, so a transient unreadable store (OSError) yields no rules rather
+    than raising; one malformed rule (e.g. an invalid regex from a newer skill) is dropped and the
+    rest kept."""
+    try:
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); ignoring it")
+        return []
     section = store["notification_rules"] if "notification_rules" in store else []
     if not isinstance(section, list):
         logger.error("config store notification_rules is not a list; ignoring")

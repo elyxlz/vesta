@@ -130,6 +130,10 @@ class State:
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDelivered): the
+    # message loop then keeps in_flight_notification_paths instead of clearing it, since the
+    # resumed session never saw the message. Reset at the start of every turn.
+    query_not_delivered: bool = False
     # A deferred compaction scheduled by the compact_context tool, drained after the turn's
     # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
     pending_compaction: PendingCompaction | None = None

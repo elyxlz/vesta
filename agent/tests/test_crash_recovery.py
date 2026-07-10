@@ -167,6 +167,42 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
     assert crashed is True
 
 
+@pytest.mark.anyio
+async def test_monitor_crash_triggers_graceful_shutdown(tmp_path):
+    """When monitor_loop crashes, the done callback records a crash reason and shuts down, so a dead
+    notification/app-chat intake restarts the agent instead of silently wedging behind a live WS."""
+    from core.main import run_vesta
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    for path in [config.data_dir, config.notifications_dir, config.logs_dir, config.dreamer_dir]:
+        path.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+
+    async def running_processor(queue, *, state, config, **kwargs):
+        await asyncio.Event().wait()
+
+    async def crashing_monitor(queue, *, state, config, **kwargs):
+        raise RuntimeError("monitor exploded")
+
+    with (
+        patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
+        patch("core.main.message_processor", side_effect=running_processor),
+        patch("core.main.monitor_loop", side_effect=crashing_monitor),
+        patch("core.main.collect_boot_turns", return_value=[]),
+    ):
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_ws.return_value = mock_runner
+
+        crashed = await run_vesta(config, state=state)
+
+    reason = state.persisted.last_restart_reason or ""
+    assert "crash" in reason
+    assert "RuntimeError" in reason
+    assert crashed is True
+
+
 # --- stderr buffer ---
 
 

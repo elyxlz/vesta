@@ -18,6 +18,9 @@ const BANNER_MARGIN: usize = 3; // spaces between the border and content
 const BANNER_LABEL_W: usize = 9; // config label column width
 const BANNER_ART_W: usize = 46; // fixed width of every VESTA_ART line
 
+const STATUS_FRESH_WAIT_MS: u64 = 5000; // longest we wait for a post-start status.json write
+const STATUS_FRESH_POLL_INTERVAL_MS: u64 = 100;
+
 /// "VESTA" in an ANSI-shadow block font. Every line is exactly BANNER_ART_W wide
 /// (a unit test enforces this, since the box geometry centers on that width).
 const VESTA_ART: [&str; 6] = [
@@ -33,12 +36,12 @@ const VESTA_ART: [&str; 6] = [
 /// so the renderer can size the box and pad every line to a uniform interior.
 enum BoxRow {
     Gap,
-    Art(usize),     // index into VESTA_ART, centered, accent colour
-    Center(String), // centered dim text (e.g. the version subtitle)
-    Raw(String),    // left-aligned uncoloured text (QR rows must stay scannable)
+    Art(usize),         // index into VESTA_ART, centered, accent colour
+    Center(String),     // centered dim text (e.g. the version subtitle)
+    Raw(String),        // left-aligned uncoloured text (QR rows must stay scannable)
     Kv(String, String), // "label   value", left-aligned; labels longer than the fixed column widen it
-    Value(String),  // a full-width left-aligned value (e.g. the api key)
-    Rule(String),   // "── label ─────" section divider
+    Value(String),      // a full-width left-aligned value (e.g. the api key)
+    Rule(String),       // "── label ─────" section divider
 }
 
 impl BoxRow {
@@ -48,7 +51,9 @@ impl BoxRow {
             BoxRow::Gap => 0,
             BoxRow::Art(_) => BANNER_ART_W,
             BoxRow::Center(s) | BoxRow::Raw(s) | BoxRow::Value(s) => s.chars().count(),
-            BoxRow::Kv(label, value) => label.chars().count().max(BANNER_LABEL_W) + value.chars().count(),
+            BoxRow::Kv(label, value) => {
+                label.chars().count().max(BANNER_LABEL_W) + value.chars().count()
+            }
             BoxRow::Rule(label) => label.chars().count() + 5, // "── " + " ─"
         }
     }
@@ -91,7 +96,10 @@ impl BoxRow {
                     .enumerate()
                     .map(|(line_no, chunk)| {
                         if line_no == 0 {
-                            (format!("{label_col}{chunk}"), format!("{}{chunk}", paint(BANNER_DIM, &label_col)))
+                            (
+                                format!("{label_col}{chunk}"),
+                                format!("{}{chunk}", paint(BANNER_DIM, &label_col)),
+                            )
                         } else {
                             // continuation lines align under the value column
                             let pad = " ".repeat(label_w);
@@ -156,7 +164,12 @@ fn render_box_capped(rows: &[BoxRow], cap: usize) -> Vec<String> {
     let inner = natural.min(cap).max(1);
     let span = BANNER_MARGIN * 2 + inner;
     let edge = |left: &str, right: &str| {
-        format!("{}{}{}", paint(BANNER_ACCENT, left), paint(BANNER_ACCENT, &"─".repeat(span)), paint(BANNER_ACCENT, right))
+        format!(
+            "{}{}{}",
+            paint(BANNER_ACCENT, left),
+            paint(BANNER_ACCENT, &"─".repeat(span)),
+            paint(BANNER_ACCENT, right)
+        )
     };
     let mut out = vec![edge("╭", "╮")];
     let side = paint(BANNER_ACCENT, "│");
@@ -181,7 +194,10 @@ fn first_line_truncated(msg: &str, max: usize) -> String {
     if line.chars().count() <= max {
         line.to_string()
     } else {
-        format!("{}…", line.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            line.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -215,14 +231,22 @@ fn qr_lines(data: &str) -> Vec<String> {
 /// The `── agents (N) ──` section: one row per agent, name column padded so the
 /// status column stays aligned even for names longer than the config label column.
 fn agent_rows(agents: &[AgentEntry]) -> Vec<BoxRow> {
-    let name_w = agents.iter().map(|agent| agent.name.chars().count() + 2).max().unwrap_or(0).max(BANNER_LABEL_W);
+    let name_w = agents
+        .iter()
+        .map(|agent| agent.name.chars().count() + 2)
+        .max()
+        .unwrap_or(0)
+        .max(BANNER_LABEL_W);
     let mut rows = vec![BoxRow::Rule(format!("agents ({})", agents.len()))];
     for agent in agents {
         let status_text = match agent.status {
             Some(status) => status.human_text(),
             None => "",
         };
-        rows.push(BoxRow::Kv(format!("{:<name_w$}", agent.name), status_text.to_string()));
+        rows.push(BoxRow::Kv(
+            format!("{:<name_w$}", agent.name),
+            status_text.to_string(),
+        ));
     }
     rows
 }
@@ -285,7 +309,17 @@ impl Status {
         tunnel: TunnelStatus,
         agents: Vec<AgentEntry>,
     ) -> Self {
-        Status { version, user, port, dev_mode, expose_lan, lan_url, tunnel, agents, pid: std::process::id() }
+        Status {
+            version,
+            user,
+            port,
+            dev_mode,
+            expose_lan,
+            lan_url,
+            tunnel,
+            agents,
+            pid: std::process::id(),
+        }
     }
 
     /// Sole owner of the `status.json` path.
@@ -314,6 +348,29 @@ impl Status {
         serde_json::from_str(&data).ok()
     }
 
+    /// Poll for `status.json` to be (re)written at or after `since`. The systemd
+    /// unit is not `Type=notify`, so the caller's "process is active" check only
+    /// confirms the daemon launched, not that its async startup (tunnel dial,
+    /// etc.) finished and persisted a fresh status. Gives up after
+    /// `STATUS_FRESH_WAIT_MS`; the caller renders whatever `status.json` holds
+    /// either way.
+    pub fn wait_for_fresh(config: &Path, since: std::time::SystemTime) -> bool {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(STATUS_FRESH_WAIT_MS);
+        while std::time::Instant::now() < deadline {
+            let fresh = std::fs::metadata(Self::path(config))
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified >= since);
+            if fresh {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(
+                STATUS_FRESH_POLL_INTERVAL_MS,
+            ));
+        }
+        false
+    }
+
     pub fn set_tunnel(&mut self, tunnel: TunnelStatus) {
         self.tunnel = tunnel;
     }
@@ -329,14 +386,19 @@ impl Status {
         let local_url = format!("http://localhost:{}", self.port + 1);
         let tunnel_url = self.tunnel.url();
 
-        // enabled = tunnel up; disabled = --no-tunnel; error — <reason> = a tunnel
+        // enabled = tunnel up; disabled = --no-tunnel; error: <reason> = a tunnel
         // was wanted but couldn't be established (no creds, dead tunnel, API error).
         let tunnel_desc = match &self.tunnel {
             TunnelStatus::Active(_) => "enabled".to_string(),
             TunnelStatus::Disabled => "disabled".to_string(),
-            TunnelStatus::Failed(reason) => format!("error — {}", first_line_truncated(reason, 100)),
+            TunnelStatus::Failed(reason) => format!("error: {}", first_line_truncated(reason, 100)),
         };
-        let lan_desc = if self.expose_lan { "enabled" } else { "disabled" }.to_string();
+        let lan_desc = if self.expose_lan {
+            "enabled"
+        } else {
+            "disabled"
+        }
+        .to_string();
         let lan_url = self.lan_url.as_deref();
         // The address most useful to a human: public tunnel, else the LAN URL when
         // exposed, else the same-machine local URL.
@@ -360,7 +422,14 @@ impl Status {
             BoxRow::Gap,
             BoxRow::Kv("user".into(), self.user.clone()),
             BoxRow::Kv("port".into(), self.port.to_string()),
-            BoxRow::Kv("mode".into(), if self.dev_mode { "development".to_string() } else { "production".to_string() }),
+            BoxRow::Kv(
+                "mode".into(),
+                if self.dev_mode {
+                    "development".to_string()
+                } else {
+                    "production".to_string()
+                },
+            ),
             BoxRow::Kv("tunnel".into(), tunnel_desc),
             BoxRow::Kv("lan".into(), lan_desc),
             BoxRow::Gap,
@@ -384,7 +453,9 @@ impl Status {
                 rows.push(BoxRow::Gap);
                 rows.extend(qr_lines(&link).into_iter().map(BoxRow::Raw));
             }
-            None => rows.push(BoxRow::Value("run `vestad connect` for a public URL".to_string())),
+            None => rows.push(BoxRow::Value(
+                "run `vestad connect` for a public URL".to_string(),
+            )),
         }
         if let Some(url) = lan_app {
             rows.push(BoxRow::Gap);
@@ -421,7 +492,10 @@ pub fn print_status_banner(config: &Path, api_key: Option<&str>) {
             Some(key) => status.print_banner(key),
             None => {
                 eprintln!();
-                eprintln!("  {}", paint(BANNER_DIM, "vestad is running (api key unavailable)"));
+                eprintln!(
+                    "  {}",
+                    paint(BANNER_DIM, "vestad is running (api key unavailable)")
+                );
                 eprintln!();
             }
         },
@@ -458,11 +532,17 @@ mod tests {
         ];
         let lines = render_box(&rows);
         let width = lines[0].chars().count();
-        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
+        assert!(
+            lines.iter().all(|l| l.chars().count() == width),
+            "every box line is the same width"
+        );
         assert!(lines.first().unwrap().starts_with('╭') && lines.first().unwrap().ends_with('╮'));
         assert!(lines.last().unwrap().starts_with('╰') && lines.last().unwrap().ends_with('╯'));
         for interior in &lines[1..lines.len() - 1] {
-            assert!(interior.starts_with('│') && interior.ends_with('│'), "interior row is bordered: {interior}");
+            assert!(
+                interior.starts_with('│') && interior.ends_with('│'),
+                "interior row is bordered: {interior}"
+            );
         }
     }
 
@@ -473,11 +553,20 @@ mod tests {
         let lines = render_box_capped(&[BoxRow::Value(long), BoxRow::Art(0)], cap);
         let width = lines[0].chars().count();
         // Uniform width, and the whole box stays within the cap (+ borders/margins).
-        assert!(lines.iter().all(|l| l.chars().count() == width), "every box line is the same width");
-        assert!(width <= cap + 2 + BANNER_MARGIN * 2, "box width {width} exceeds cap {cap}");
+        assert!(
+            lines.iter().all(|l| l.chars().count() == width),
+            "every box line is the same width"
+        );
+        assert!(
+            width <= cap + 2 + BANNER_MARGIN * 2,
+            "box width {width} exceeds cap {cap}"
+        );
         // The 120-char value wrapped across multiple interior lines instead of overflowing.
         let value_lines = lines.iter().filter(|l| l.contains('x')).count();
-        assert!(value_lines >= 4, "expected the long value to wrap into >=4 lines, got {value_lines}");
+        assert!(
+            value_lines >= 4,
+            "expected the long value to wrap into >=4 lines, got {value_lines}"
+        );
     }
 
     #[test]
@@ -487,7 +576,16 @@ mod tests {
             TunnelStatus::Active("https://host.example/".into()),
             TunnelStatus::Failed("invalid token".into()),
         ] {
-            let status = Status::new("0.1.0".into(), "emi".into(), 8080, true, false, None, tunnel.clone(), Vec::new());
+            let status = Status::new(
+                "0.1.0".into(),
+                "emi".into(),
+                8080,
+                true,
+                false,
+                None,
+                tunnel.clone(),
+                Vec::new(),
+            );
             let json = serde_json::to_string(&status).expect("serialize");
             let back: Status = serde_json::from_str(&json).expect("deserialize");
             assert!(back.tunnel == tunnel);
@@ -499,11 +597,25 @@ mod tests {
     #[test]
     fn status_json_round_trips_agents() {
         let agents = vec![
-            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
-            AgentEntry { name: "fresh".into(), status: None },
+            AgentEntry {
+                name: "vesta".into(),
+                status: Some(AgentStatus::Alive),
+            },
+            AgentEntry {
+                name: "fresh".into(),
+                status: None,
+            },
         ];
-        let status =
-            Status::new("0.1.0".into(), "emi".into(), 8080, false, false, None, TunnelStatus::Disabled, agents.clone());
+        let status = Status::new(
+            "0.1.0".into(),
+            "emi".into(),
+            8080,
+            false,
+            false,
+            None,
+            TunnelStatus::Disabled,
+            agents.clone(),
+        );
         let json = serde_json::to_string(&status).expect("serialize");
         let back: Status = serde_json::from_str(&json).expect("deserialize");
         assert!(back.agents == agents);
@@ -512,8 +624,14 @@ mod tests {
     #[test]
     fn agent_section_renders_count_names_and_statuses() {
         let agents = vec![
-            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
-            AgentEntry { name: "backup".into(), status: Some(AgentStatus::NotAuthenticated) },
+            AgentEntry {
+                name: "vesta".into(),
+                status: Some(AgentStatus::Alive),
+            },
+            AgentEntry {
+                name: "backup".into(),
+                status: Some(AgentStatus::NotAuthenticated),
+            },
         ];
         let text = render_box_capped(&agent_rows(&agents), 60).join("\n");
         assert!(text.contains("agents (2)"));
@@ -525,7 +643,10 @@ mod tests {
 
     #[test]
     fn agent_section_without_statuses_shows_names_only() {
-        let agents = vec![AgentEntry { name: "vesta".into(), status: None }];
+        let agents = vec![AgentEntry {
+            name: "vesta".into(),
+            status: None,
+        }];
         let text = render_box_capped(&agent_rows(&agents), 60).join("\n");
         assert!(text.contains("agents (1)"));
         assert!(text.contains("vesta"));
@@ -542,8 +663,14 @@ mod tests {
     #[test]
     fn agent_names_longer_than_the_label_column_stay_separated_and_aligned() {
         let agents = vec![
-            AgentEntry { name: "vesta".into(), status: Some(AgentStatus::Alive) },
-            AgentEntry { name: "longagentname".into(), status: Some(AgentStatus::Stopped) },
+            AgentEntry {
+                name: "vesta".into(),
+                status: Some(AgentStatus::Alive),
+            },
+            AgentEntry {
+                name: "longagentname".into(),
+                status: Some(AgentStatus::Stopped),
+            },
         ];
         let lines = render_box_capped(&agent_rows(&agents), 60);
         let column_of = |needle: &str| {
@@ -552,7 +679,11 @@ mod tests {
                 .find_map(|line| line.find(needle))
                 .unwrap_or_else(|| panic!("no line contains {needle}"))
         };
-        assert_eq!(column_of("alive"), column_of("stopped"), "status column is aligned across rows");
+        assert_eq!(
+            column_of("alive"),
+            column_of("stopped"),
+            "status column is aligned across rows"
+        );
         assert!(
             lines.iter().any(|line| line.contains("longagentname ")),
             "long name stays separated from its status"
@@ -563,6 +694,9 @@ mod tests {
     fn pid_liveness_detects_self_and_a_dead_pid() {
         assert!(pid_is_live(std::process::id()), "our own pid must be live");
         // i32::MAX is above the kernel pid_max, so it can never name a process.
-        assert!(!pid_is_live(i32::MAX as u32), "a never-allocated pid must be dead");
+        assert!(
+            !pid_is_live(i32::MAX as u32),
+            "a never-allocated pid must be dead"
+        );
     }
 }

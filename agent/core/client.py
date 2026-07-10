@@ -350,6 +350,13 @@ async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.Asyn
             retried = True
 
 
+class QueryNotDelivered(Exception):
+    """The query never reached the CLI: the send timed out, or client.query() raised on a dead
+    transport. The caller must keep the notification file that fed this turn (the resumed session
+    never saw the message), unlike a post-delivery failure (response timeout, stream death) where
+    deletion stays correct because the session already contains it."""
+
+
 async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
     """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
     wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
@@ -375,7 +382,13 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
         except TimeoutError:
             _close_turn(state, turn)
             await attempt_interrupt(state, config=config, reason="Query timeout")
-            raise
+            raise QueryNotDelivered("query timed out before the CLI received it") from None
+        except Exception as e:
+            # query() surfaces SDK/transport failures across a wide, loosely typed error surface
+            # (see attempt_interrupt above) — catch broadly, like a send timeout this means the CLI
+            # never got the prompt.
+            _close_turn(state, turn)
+            raise QueryNotDelivered(str(e) or type(e).__name__) from e
     diagnostics.touch_activity(state, "query_sent")
 
     interrupt_task: asyncio.Task[tp.Any] | None = None

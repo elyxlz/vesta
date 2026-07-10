@@ -112,8 +112,7 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     }
 
     let new_binary = format!("{}/vestad", tmp);
-    self_replace::self_replace(&new_binary)
-        .map_err(|e| UpdateError::Replace(e.to_string()))?;
+    self_replace::self_replace(&new_binary).map_err(|e| UpdateError::Replace(e.to_string()))?;
 
     std::fs::remove_dir_all(&tmp).ok();
     tracing::info!("vestad binary replaced successfully");

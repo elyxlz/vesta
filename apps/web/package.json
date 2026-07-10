@@ -1,7 +1,7 @@
 {
   "name": "@vesta/web",
   "private": true,
-  "version": "0.1.173",
+  "version": "0.1.174",
   "description": "Vesta web app (served by vestad at /app)",
   "license": "MIT",
   "repository": {
@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "tsc --noEmit",
+    "check": "tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
@@ -34,7 +34,6 @@
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-store": "^2.4.3",
     "@tauri-apps/plugin-updater": "^2",
-    "babel-plugin-react-compiler": "1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -47,7 +46,6 @@
     "next-themes": "^0.4.6",
     "radix-ui": "^1.6.1",
     "react": "^19.2.7",
-    "react-day-picker": "^10.0.1",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",
     "react-markdown": "^10.1.0",
@@ -69,6 +67,7 @@
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.10.9",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",

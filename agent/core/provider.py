@@ -214,6 +214,14 @@ _CLAUDE_USAGE_METERS = (
 )
 
 
+def _as_float(value: pyd.JsonValue) -> float | None:
+    return value if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _as_str(value: pyd.JsonValue) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _read_oauth_token() -> str | None:
     try:
         data = json.loads(CREDENTIALS_PATH.read_text())
@@ -246,17 +254,25 @@ async def _claude_usage() -> Usage:
     data = await _fetch_usage_json(f"{ANTHROPIC_API_URL}/api/oauth/usage", headers=headers)
     meters = []
     for key, label in _CLAUDE_USAGE_METERS:
-        bucket = data[key] if key in data and isinstance(data[key], dict) else None
+        bucket_raw = data[key] if key in data else None
+        bucket = bucket_raw if isinstance(bucket_raw, dict) else None
         if bucket is not None and "utilization" in bucket:
             meters.append(
-                UsageMeter(label=label, used_pct=bucket["utilization"], resets_at=bucket["resets_at"] if "resets_at" in bucket else None)
+                UsageMeter(
+                    label=label,
+                    used_pct=_as_float(bucket["utilization"]),
+                    resets_at=_as_str(bucket["resets_at"]) if "resets_at" in bucket else None,
+                )
             )
     credits = None
-    extra = data["extra_usage"] if "extra_usage" in data and isinstance(data["extra_usage"], dict) else None
+    extra_raw = data["extra_usage"] if "extra_usage" in data else None
+    extra = extra_raw if isinstance(extra_raw, dict) else None
     if extra is not None and "is_enabled" in extra and extra["is_enabled"]:
         # Anthropic reports extra-usage in cents; normalize to dollars to match OpenRouter's units.
-        used = extra["used_credits"] / 100 if "used_credits" in extra and extra["used_credits"] is not None else None
-        limit = extra["monthly_limit"] / 100 if "monthly_limit" in extra and extra["monthly_limit"] is not None else None
+        used_credits = _as_float(extra["used_credits"]) if "used_credits" in extra else None
+        monthly_limit = _as_float(extra["monthly_limit"]) if "monthly_limit" in extra else None
+        used = used_credits / 100 if used_credits is not None else None
+        limit = monthly_limit / 100 if monthly_limit is not None else None
         credits = UsageCredits(used=used, limit=limit)
     return Usage(meters=meters, credits=credits)
 
@@ -267,13 +283,14 @@ async def _openrouter_usage(config: VestaConfig) -> Usage:
     headers = {"Authorization": f"Bearer {config.provider.key.get_secret_value()}"}
     data = await _fetch_usage_json(OPENROUTER_KEY_URL, headers=headers)
     # OpenRouter wraps the payload in {"data": {...}}; usage and limit are already in dollars.
-    payload = data["data"] if "data" in data and isinstance(data["data"], dict) else {}
-    used = payload["usage"] if "usage" in payload else None
-    limit = payload["limit"] if "limit" in payload else None
+    payload_raw = data["data"] if "data" in data else None
+    payload = payload_raw if isinstance(payload_raw, dict) else {}
+    used = _as_float(payload["usage"]) if "usage" in payload else None
+    limit = _as_float(payload["limit"]) if "limit" in payload else None
     return Usage(meters=[], credits=UsageCredits(used=used, limit=limit))
 
 
-async def _fetch_usage_json(url: str, *, headers: dict[str, str]) -> dict[str, tp.Any]:
+async def _fetch_usage_json(url: str, *, headers: dict[str, str]) -> dict[str, pyd.JsonValue]:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=_USAGE_TIMEOUT_S)) as resp:

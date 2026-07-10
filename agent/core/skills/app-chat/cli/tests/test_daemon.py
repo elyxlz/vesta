@@ -146,6 +146,33 @@ def test_daemon_start_launches_and_waits_for_the_socket(tmp_path, monkeypatch, c
     assert calls["launched"] is True
 
 
+def test_daemon_start_clears_a_leaked_stop_marker_before_launching(tmp_path, monkeypatch, capsys):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    daemon._stop_marker_path(data_dir).write_text("")
+
+    calls = {"launched": False}
+
+    def fake_alive(sock_path):
+        return calls["launched"]
+
+    def fake_run(cmd, check):
+        calls["launched"] = True
+        # the leaked marker must be gone before the fresh daemon is launched, so its own
+        # unexpected death still reports daemon_died rather than silently consuming the marker
+        assert not daemon._stop_marker_path(data_dir).exists()
+
+    monkeypatch.setattr(daemon, "daemon_alive", fake_alive)
+    monkeypatch.setattr(daemon.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
+    monkeypatch.setattr(daemon.time, "sleep", lambda seconds: None)
+
+    daemon.cmd_daemon_start(_args(tmp_path))
+
+    assert json.loads(capsys.readouterr().out) == {"status": "started", "session": "app-chat"}
+    assert not daemon._stop_marker_path(data_dir).exists()
+
+
 def test_daemon_stop_is_idempotent_when_already_stopped(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(daemon, "daemon_alive", lambda sock_path: False)
 

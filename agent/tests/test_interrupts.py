@@ -198,6 +198,49 @@ async def test_run_messages_with_interrupts_cancels_process_task(config, state):
 
 
 @pytest.mark.anyio
+async def test_query_not_delivered_keeps_notification_file(config, state, tmp_path):
+    """A turn whose query never reached the CLI (send timeout, or client.query() raised on a dead
+    transport) must not delete its notification file: the resumed session never saw the message,
+    so it must re-run on the next boot rather than being silently lost."""
+    from core.client import QueryNotDelivered
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    notif_path = tmp_path / "notif.json"
+    notif_path.write_text("{}")
+
+    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+        raise QueryNotDelivered("query timed out before the CLI received it")
+
+    with patch("core.loops.process_message", failing_process):
+        await _run_messages_with_interrupts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
+
+    assert notif_path.exists(), "file must survive a query that never reached the CLI"
+    assert state.graceful_shutdown.is_set()
+    assert state.query_not_delivered is False, "the per-turn flag resets once consumed"
+
+
+@pytest.mark.anyio
+async def test_response_timeout_deletes_notification_file(config, state, tmp_path):
+    """A response timeout after the query was already sent still deletes the notification file:
+    the resumed session already contains the message, so keeping the file would replay it."""
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    notif_path = tmp_path / "notif.json"
+    notif_path.write_text("{}")
+
+    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+        raise TimeoutError
+
+    with patch("core.loops.process_message", failing_process):
+        await _run_messages_with_interrupts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
+
+    assert not notif_path.exists(), "file must be deleted: the resumed session already saw the message"
+    assert state.graceful_shutdown.is_set()
+
+
+@pytest.mark.anyio
 async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
     """A boot turn (interruptible=False) runs to completion; a message queued mid-turn waits its turn."""
     from core.loops import _run_messages_with_interrupts
@@ -721,6 +764,39 @@ async def test_converse_times_out_on_stream_silence():
             await converse("test", state=state, config=config, show_output=True)
 
     assert mock_client.interrupt.called, "a response timeout must attempt to interrupt the hung turn"
+
+
+@pytest.mark.anyio
+async def test_converse_raises_query_not_delivered_on_send_timeout():
+    """A query send that never completes within query_timeout raises QueryNotDelivered, not a bare
+    TimeoutError, so the caller can tell a pre-delivery failure from a post-delivery one."""
+    from core.client import QueryNotDelivered, converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    config.query_timeout = 1
+
+    async def slow_query(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    mock_client.query = AsyncMock(side_effect=slow_query)
+
+    async with consuming(state, config):
+        with pytest.raises(QueryNotDelivered):
+            await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
+
+
+@pytest.mark.anyio
+async def test_converse_raises_query_not_delivered_on_dead_transport():
+    """client.query() raising on a dead transport (no send timeout involved) is also surfaced as
+    QueryNotDelivered: the CLI never received the prompt either way."""
+    from core.client import QueryNotDelivered, converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    mock_client.query = AsyncMock(side_effect=RuntimeError("transport closed"))
+
+    async with consuming(state, config):
+        with pytest.raises(QueryNotDelivered):
+            await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
 
 
 @pytest.mark.anyio

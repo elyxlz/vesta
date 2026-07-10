@@ -232,6 +232,11 @@ def cmd_daemon_start(args: argparse.Namespace) -> None:
         _print({"error": "app-chat is not on PATH; install it per SKILL.md first"})
         sys.exit(1)
 
+    # A stop marker can outlive its daemon (a stop that raced the process's death, or a failed
+    # quit), so clear it before launching; this fresh daemon's own unexpected death then still
+    # fires daemon_died instead of silently consuming the stale marker.
+    data_dir.mkdir(parents=True, exist_ok=True)
+    _stop_marker_path(data_dir).unlink(missing_ok=True)
     subprocess.run([screen_bin, "-dmS", SESSION_NAME, app_chat_bin, "serve"], check=False)
 
     deadline = time.monotonic() + DAEMON_START_TIMEOUT

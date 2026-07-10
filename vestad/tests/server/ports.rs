@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, SHARED_RO_AGENT, unique_agent};
+use vesta_tests::{unique_agent, TestAgent, SERVER, SHARED_RO_AGENT};
 
 #[test]
 fn multi_agent_unique_ports() {
@@ -49,12 +49,15 @@ fn stopped_agent_port_not_stolen() {
 fn agent_env_file_includes_vestad_port() {
     let name: &str = &SHARED_RO_AGENT;
 
-    let env_path = SERVER._tmpdir_path()
+    let env_path = SERVER
+        ._tmpdir_path()
         .join(format!(".config/vesta/vestad/agents/{}.env", name));
-    let content = std::fs::read_to_string(&env_path)
-        .expect("per-agent env file should exist");
+    let content = std::fs::read_to_string(&env_path).expect("per-agent env file should exist");
     let expected = format!("export VESTAD_PORT={}", SERVER.port);
-    assert!(content.contains(&expected), "agent env file should contain VESTAD_PORT: {content}");
+    assert!(
+        content.contains(&expected),
+        "agent env file should contain VESTAD_PORT: {content}"
+    );
 }
 
 #[test]
@@ -63,23 +66,42 @@ fn agent_has_env_file_with_token() {
 
     let agents_dir = SERVER._tmpdir_path().join(".config/vesta/vestad/agents");
     let env_path = agents_dir.join(format!("{}.env", name));
-    assert!(env_path.exists(), "per-agent env file should exist at {:?}", env_path);
+    assert!(
+        env_path.exists(),
+        "per-agent env file should exist at {:?}",
+        env_path
+    );
 
     let content = std::fs::read_to_string(&env_path).expect("should be able to read env file");
-    let token_line = content.lines()
+    let token_line = content
+        .lines()
         .find(|l| l.contains("AGENT_TOKEN="))
         .expect("env file should contain AGENT_TOKEN");
-    let token = token_line.strip_prefix("export AGENT_TOKEN=").expect("should have export prefix");
-    assert_eq!(token.len(), 64, "token should be 32 bytes hex-encoded (64 chars)");
+    let token = token_line
+        .strip_prefix("export AGENT_TOKEN=")
+        .expect("should have export prefix");
+    assert_eq!(
+        token.len(),
+        64,
+        "token should be 32 bytes hex-encoded (64 chars)"
+    );
 
     let output = std::process::Command::new("docker")
         .args([
-            "inspect", "--format",
+            "inspect",
+            "--format",
             "{{index .Config.Labels \"vesta.agent_token\"}}",
-            &format!("vesta-{}-{}", std::env::var("USER").unwrap_or_default(), name),
+            &format!(
+                "vesta-{}-{}",
+                std::env::var("USER").unwrap_or_default(),
+                name
+            ),
         ])
         .output()
         .expect("docker inspect should work");
     let label = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(label.is_empty() || label == "<no value>", "token should NOT be in Docker labels");
+    assert!(
+        label.is_empty() || label == "<no value>",
+        "token should NOT be in Docker labels"
+    );
 }

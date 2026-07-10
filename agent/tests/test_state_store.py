@@ -6,6 +6,7 @@ import datetime as dt
 import pytest
 
 import core.config as cfg
+import core.models as vm
 from core.state_store import PersistedState
 from core import state_store
 
@@ -65,3 +66,37 @@ async def test_save_state_async_round_trip(tmp_path):
     config = _config(tmp_path)
     await state_store.save_state_async(PersistedState(session_id="saved-off-loop"), config)
     assert state_store.load_state(config).session_id == "saved-off-loop"
+
+
+def test_corrupt_state_with_no_events_db_starts_truly_fresh(tmp_path):
+    """A corrupt state.json on a brand-new agent (no events.db yet) has nothing to corroborate
+    against, so it falls back to first_start_done=False like today."""
+    config = _config(tmp_path)
+    state_store.state_path(config).write_text("not valid json {{{")
+
+    state = state_store.load_state(config)
+
+    assert state.first_start_done is False
+
+
+def test_corrupt_state_with_existing_events_db_stays_a_veteran(tmp_path):
+    """A corrupt state.json on a veteran agent (events.db already exists) must not re-onboard or
+    silently pre-mark pending migrations on top of months of memory: it comes back as
+    first_start_done=True so migrations re-run idempotently instead of being skipped."""
+    from core.migrations import pending_migration_turns
+
+    config = _config(tmp_path)
+    (config.data_dir / "events.db").write_text("pretend this is a real sqlite file")
+    state_store.state_path(config).write_text("not valid json {{{")
+
+    state = state_store.load_state(config)
+    assert state.first_start_done is True
+
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    migrations_dir.mkdir(parents=True)
+    (migrations_dir / "001-first.md").write_text("do the thing")
+
+    turns = pending_migration_turns(state=vm.State(persisted=state), config=config, first_start=not state.first_start_done)
+
+    assert len(turns) == 1, "the migration must queue as a real turn, not be pre-marked applied"
+    assert state.applied_migrations == [], "pre-marking never happens on the veteran recovery path"
