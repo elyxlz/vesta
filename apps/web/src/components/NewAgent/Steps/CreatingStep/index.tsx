@@ -56,12 +56,9 @@ export function CreatingStep({
       <Orb state={orbState} size={96} />
       <div className="mt-3 flex flex-col items-center gap-1 text-center">
         {done ? (
-          <>
-            <h2 className="text-base font-semibold leading-tight">
-              {agentName} is ready
-            </h2>
-            <p className="text-xs text-muted-foreground">say hi.</p>
-          </>
+          <h2 className="text-base font-semibold leading-tight">
+            {agentName} is ready
+          </h2>
         ) : error !== null ? (
           <p
             role="status"

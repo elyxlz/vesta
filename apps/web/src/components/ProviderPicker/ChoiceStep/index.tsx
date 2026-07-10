@@ -1,5 +1,5 @@
-import { FieldDescription } from "@/components/ui/field";
 import type { Manifest } from "@/api/manifest";
+import { StepHeading } from "@/components/StepHeading";
 import { PROVIDERS } from "../providers";
 import type { ProviderMode } from "../types";
 
@@ -19,12 +19,10 @@ export function ChoiceStep({
   );
   return (
     <div className="flex w-full flex-col items-start gap-4">
-      <div className="flex w-full flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">how should it run?</h2>
-        <FieldDescription className="text-center text-[13px]">
-          choose how to power your agent.
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="how should it run?"
+        description="choose how to power your agent."
+      />
 
       <div className="flex w-full gap-2">
         {ordered.map(({ id, tagline, Logo }) => (
