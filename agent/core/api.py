@@ -32,6 +32,7 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
+from . import state_store
 from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import ClaudeConfig, VestaConfig, load_notification_rules, stored_config, update_config_store, validate_config_updates
 from .helpers import get_memory_path
@@ -87,11 +88,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
-        if recv_task:
-            recv_task.cancel()
-        if send_task:
-            send_task.cancel()
-        await asyncio.gather(recv_task, send_task, return_exceptions=True)
+        tasks = [task for task in (recv_task, send_task) if task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         event_bus.unsubscribe(sub)
         request.app["websockets"].discard(ws)
 
@@ -126,7 +126,7 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: Ves
                 data = json.loads(msg.data)
             except (json.JSONDecodeError, TypeError):
                 continue
-            if "type" not in data:
+            if not isinstance(data, dict) or "type" not in data:
                 continue
             msg_type = data["type"]
             if msg_type in ("message", "chat"):
@@ -403,11 +403,10 @@ async def _memory_put_handler(request: web.Request) -> web.Response:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if "content" not in data or not isinstance(data["content"], str):
+    if not isinstance(data, dict) or "content" not in data or not isinstance(data["content"], str):
         return web.json_response({"error": "body must be {content: string}"}, status=400)
     path = get_memory_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(data["content"])
+    await asyncio.to_thread(state_store.atomic_write_text, path, data["content"])
     return web.json_response({"ok": True})
 
 

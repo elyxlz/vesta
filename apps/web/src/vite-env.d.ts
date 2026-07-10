@@ -22,6 +22,13 @@ declare module "@/lib/Carousel/index.mjs" {
   export function Carousel(props: CarouselProps): ReactNode;
 }
 
+declare module "@/lib/Ticker/context.mjs" {
+  export function useTicker(): {
+    itemPositions: { start: number; end: number }[];
+    clampOffset: (offset: number) => number;
+  };
+}
+
 declare module "@/lib/Ticker/use-ticker-item.mjs" {
   import type { MotionValue } from "motion/react";
 

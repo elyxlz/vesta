@@ -178,6 +178,71 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
         await runner.cleanup()
 
 
+@pytest.mark.anyio
+async def test_ws_survives_non_dict_json_frame(event_bus):
+    """A frame whose JSON is not an object (a number, list, or null) is ignored, not a connection
+    killer: a later valid message on the same socket still comes through."""
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+                await ws.send_str("123")
+                await ws.send_str("[]")
+                await ws.send_str("null")
+                await ws.send_json({"type": "chat", "text": "still alive"})
+                received = await _drain_until(
+                    ws,
+                    lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
+                )
+                assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch):
+    """A snapshot-phase failure (before the recv/send loops exist) still runs the handler's finally
+    cleanup: the bus subscription is dropped instead of a TypeError from gathering the not-yet-created
+    tasks masking the original error and leaking the subscriber."""
+    from core import api
+
+    def _boom(config):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(api, "_pending_notification_ids", _boom)
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
+        await wait_for_condition(lambda: len(event_bus._subscribers) == 0, message="subscriber leaked after snapshot failure")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_memory_put_writes_atomically(tmp_path):
+    """PUT /memory lands the full content through the atomic tmp+rename writer, leaving no partial
+    or leftover temp file behind."""
+    from core.api import _memory_put_handler
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+
+    class _Req:
+        app = {"config": config}
+
+        async def json(self):
+            return {"content": "remember me"}
+
+    resp = await _memory_put_handler(typing.cast("web.Request", _Req()))
+    assert resp.status == 200
+    memory_path = tmp_path / "agent" / "MEMORY.md"
+    assert memory_path.read_text() == "remember me"
+    assert not memory_path.with_name(memory_path.name + ".tmp").exists()
+
+
 # Regression: ws_runner.cleanup() used to sit on aiohttp's 60s default shutdown_timeout
 # per open WS handler because _ws_handler had no shutdown signal. Each connected client
 # (CLI + web + mobile) added another 60s wait. Now the app's on_shutdown closes them all.
@@ -435,5 +500,20 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
         assert data["cursor"] is None
         texts = [e["text"] for e in data["events"]]
         assert "paris is lovely" in texts and "london is grey" not in texts
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    runner = await start_ws_server(event_bus, config, host="127.0.0.1")
+    base = f"http://127.0.0.1:{config.ws_port}"
+    auth = {"X-Agent-Token": "test-token"}
+
+    try:
+        async with ClientSession() as session:
+            async with session.put(f"{base}/memory", json=42, headers=auth) as resp:
+                assert resp.status == 400
     finally:
         await runner.cleanup()

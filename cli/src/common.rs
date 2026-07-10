@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-// ── Constants ───────────────────────────────────────────────────
-
 // ── Types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,20 +67,6 @@ impl std::fmt::Display for BackupType {
     }
 }
 
-impl std::str::FromStr for BackupType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "manual" => Ok(Self::Manual),
-            "daily" => Ok(Self::Daily),
-            "weekly" => Ok(Self::Weekly),
-            "monthly" => Ok(Self::Monthly),
-            "pre-restore" => Ok(Self::PreRestore),
-            other => Err(format!("unknown backup type: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupInfo {
     pub id: String,
@@ -113,8 +97,11 @@ pub fn config_path() -> PathBuf {
 
 pub fn load_config() -> VestaConfig {
     if let Ok(content) = std::fs::read_to_string(config_path()) {
-        if let Ok(config) = serde_json::from_str(&content) {
-            return config;
+        match serde_json::from_str(&content) {
+            Ok(config) => return config,
+            Err(parse_err) => {
+                eprintln!("warning: {} is corrupt ({parse_err}); ignoring it", config_path().display());
+            }
         }
     }
     VestaConfig::default()
