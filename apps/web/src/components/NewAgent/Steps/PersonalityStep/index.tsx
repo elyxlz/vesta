@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StepHeading } from "@/components/StepHeading";
 import { useManifest } from "@/hooks/use-manifest";
 
 export function PersonalityStep({
@@ -18,13 +18,10 @@ export function PersonalityStep({
 
   return (
     <div className="flex flex-col items-center gap-4 w-[560px] max-w-full px-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">pick a vibe</h2>
-        <FieldDescription>
-          starting point, not a commitment. ask your agent to change it anytime,
-          and it'll keep shifting as it gets to know you.
-        </FieldDescription>
-      </div>
+      <StepHeading
+        title="pick a vibe"
+        description="starting point, not a commitment. ask your agent to change it anytime, and it'll keep shifting as they get to know you."
+      />
 
       {personalities === null ? (
         <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">

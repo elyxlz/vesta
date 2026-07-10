@@ -1348,7 +1348,7 @@ fn run(cli: Cli) {
                 None => {
                     let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
                     if results.is_empty() {
-                        eprintln!("no agents found. create one with: vesta setup");
+                        eprintln!("no agents yet. create one with: vesta setup");
                     } else {
                         for r in &results {
                             if !r.ok {

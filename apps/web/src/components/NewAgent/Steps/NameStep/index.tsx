@@ -8,6 +8,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
+import { StepHeading } from "@/components/StepHeading";
 import { useGateway } from "@/providers/GatewayProvider";
 
 function normalizeName(input: string): string {
@@ -30,9 +31,10 @@ export function NameStep({
   const navigate = useNavigate();
   const { agents } = useGateway();
   const [name, setName] = useState("");
+  const trimmed = name.trim();
+  const normalized = normalizeName(name);
 
   const submit = () => {
-    const normalized = normalizeName(name);
     if (!normalized) return;
     onNamed(normalized);
   };
@@ -44,10 +46,10 @@ export function NameStep({
 
   return (
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-      <div className="flex flex-col items-center gap-1 text-center">
-        <h2 className="text-base font-semibold">new agent</h2>
-        <FieldDescription>give it a name to get started.</FieldDescription>
-      </div>
+      <StepHeading
+        title="new agent"
+        description="give them a name to get started."
+      />
 
       <FieldGroup className="gap-3">
         <Field>
@@ -63,14 +65,17 @@ export function NameStep({
             autoFocus
             className="text-center"
           />
+          {normalized !== trimmed && (
+            <FieldDescription className="text-center">
+              {normalized
+                ? `will be called "${normalized}"`
+                : "needs at least one letter or number"}
+            </FieldDescription>
+          )}
         </Field>
       </FieldGroup>
 
-      <Button
-        onClick={submit}
-        disabled={!normalizeName(name)}
-        className="w-full"
-      >
+      <Button onClick={submit} disabled={!normalized} className="w-full">
         continue
       </Button>
 

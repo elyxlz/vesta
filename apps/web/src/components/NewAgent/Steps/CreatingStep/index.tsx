@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ProgressBar } from "@/components/ProgressBar";
+import { StepHeading } from "@/components/StepHeading";
 import {
   buildPhaseMessage,
   getBuildPhase,
@@ -34,10 +35,10 @@ export function CreatingStep({ agentName }: { agentName: string }) {
 
   return (
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-      <h2 className="text-base font-semibold">setting up</h2>
-      <p className="text-xs text-muted-foreground">
-        first setup can take several minutes.
-      </p>
+      <StepHeading
+        title="setting up"
+        description="first setup can take several minutes."
+      />
       <ProgressBar message={buildPhaseMessage(phase)} />
     </div>
   );
