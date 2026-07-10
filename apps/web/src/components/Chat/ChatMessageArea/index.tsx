@@ -277,7 +277,7 @@ export function ChatMessageArea({
                   <div style={{ paddingTop: topPad }}>
                     {!hasMore && (
                       <div className="flex justify-center py-3">
-                        <span className="text-[11px] text-muted-foreground/40">
+                        <span className="text-[11px] text-muted-foreground">
                           beginning of conversation
                         </span>
                       </div>
@@ -292,7 +292,7 @@ export function ChatMessageArea({
                         !row.isFirst && "mt-5",
                       )}
                     >
-                      <span className="text-[11px] text-muted-foreground/60 select-none">
+                      <span className="text-[11px] text-muted-foreground select-none">
                         {row.dayLabel}
                       </span>
                     </div>

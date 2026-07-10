@@ -111,7 +111,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         tabIndex={interactive ? undefined : -1}
         className={cn(
           "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
-          active ? "text-white" : "text-muted-foreground",
+          active ? "text-primary-foreground" : "text-muted-foreground",
         )}
       >
         <LayoutDashboard className="size-4" />
@@ -125,7 +125,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         tabIndex={interactive ? undefined : -1}
         className={cn(
           "flex h-9 flex-1 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
-          active ? "text-white" : "text-muted-foreground",
+          active ? "text-primary-foreground" : "text-muted-foreground",
         )}
       >
         <MessageSquare className="size-4" />

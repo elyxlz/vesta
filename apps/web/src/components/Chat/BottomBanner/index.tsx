@@ -18,7 +18,7 @@ export function BottomBanner({ error }: BottomBannerProps) {
           transition={{ duration: 0.18 }}
           className={cn(
             "absolute top-0 left-1/2 z-10 -my-1.5 max-w-[100%] -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-2 text-center text-xs shadow-sm",
-            "border-destructive bg-destructive text-white",
+            "bg-card text-destructive border-destructive/30 shadow-sm",
           )}
         >
           {error}

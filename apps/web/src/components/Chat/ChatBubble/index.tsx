@@ -71,9 +71,7 @@ export const ChatBubble = memo(function ChatBubble({
             <span
               className={cn(
                 "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
-                isUser
-                  ? "text-primary-foreground/50"
-                  : "text-muted-foreground/50",
+                isUser ? "text-primary-foreground/90" : "text-muted-foreground",
               )}
             >
               {ts}

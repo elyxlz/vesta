@@ -42,18 +42,18 @@ export const ToolCallLabel = memo(function ToolCallLabel({
             className="w-fit cursor-pointer gap-1.5 px-2.5 py-1 hover:bg-muted/80 data-[state=open]:px-3 data-[state=open]:pt-2 data-[state=open]:pb-1.5"
           >
             <button type="button">
-              <MarkerIcon className="size-3 text-muted-foreground/60">
+              <MarkerIcon className="size-3 text-muted-foreground">
                 <Wrench className="size-3" />
               </MarkerIcon>
-              <MarkerContent className="whitespace-nowrap text-[11px] text-muted-foreground/70">
+              <MarkerContent className="whitespace-nowrap text-[11px] text-muted-foreground">
                 {TOOL_LABELS[tool] ?? tool}
               </MarkerContent>
-              <ChevronRight className="size-3 text-muted-foreground/40 transition-transform group-data-[state=open]/tool:rotate-90" />
+              <ChevronRight className="size-3 text-muted-foreground/70 transition-transform group-data-[state=open]/tool:rotate-90" />
             </button>
           </Marker>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <pre className="w-full whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-relaxed text-muted-foreground/70">
+          <pre className="w-full whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
             {input}
           </pre>
         </CollapsibleContent>
