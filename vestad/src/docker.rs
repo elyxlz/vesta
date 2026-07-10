@@ -609,13 +609,13 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     builder.sparse(false);
     builder.follow_symlinks(true);
 
-    let ignore_patterns = load_dockerignore(context);
+    let ignore_patterns = load_dockerignore(context)?;
 
     fn visit_dir(
         builder: &mut tar::Builder<Vec<u8>>,
         base: &std::path::Path,
         dir: &std::path::Path,
-        ignore: &[String],
+        ignore: &Dockerignore,
     ) -> Result<(), DockerError> {
         let entries = std::fs::read_dir(dir)
             .map_err(|e| DockerError::Failed(format!("failed to read directory {}: {e}", dir.display())))?;
@@ -649,114 +649,67 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     Ok(bytes::Bytes::from(tar_bytes))
 }
 
-/// Load and parse dockerignore patterns. Prefers `<dockerfile>.dockerignore`
+/// Compiled `.dockerignore` patterns; `negated` holds each glob's `!` flag.
+#[derive(Debug)]
+struct Dockerignore {
+    set: globset::GlobSet,
+    negated: Vec<bool>,
+}
+
+/// Load and compile dockerignore patterns. Prefers `<dockerfile>.dockerignore`
 /// next to the Dockerfile (Docker 20.10+ convention); falls back to a
 /// `.dockerignore` at the build context root.
-fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
+fn load_dockerignore(context: &std::path::Path) -> Result<Dockerignore, DockerError> {
     let content = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
         .or_else(|_| std::fs::read_to_string(context.join(".dockerignore")))
         .unwrap_or_default();
-    content.lines()
-        .map(|l| l.trim())
+    let patterns: Vec<&str> = content.lines()
+        .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.to_string())
-        .collect()
+        .collect();
+    compile_dockerignore(&patterns)
+}
+
+/// Compile dockerignore patterns into one `GlobSet`. Each pattern becomes two
+/// globs, the pattern itself plus `<pattern>/**` so a matched directory also
+/// ignores its contents; slash-free glob patterns get a `**/` prefix to match
+/// filenames at any depth, while literals and slashed patterns anchor at the
+/// context root.
+fn compile_dockerignore(patterns: &[&str]) -> Result<Dockerignore, DockerError> {
+    let mut builder = globset::GlobSetBuilder::new();
+    let mut negated = Vec::with_capacity(patterns.len() * 2);
+    for raw in patterns {
+        let (negate, pat) = match raw.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, *raw),
+        };
+        let pat = pat.trim_end_matches('/');
+        let anchored = if !pat.contains('/') && (pat.contains('*') || pat.contains('?')) {
+            format!("**/{pat}")
+        } else {
+            pat.to_string()
+        };
+        let contents = format!("{anchored}/**");
+        for glob in [anchored, contents] {
+            let compiled = globset::GlobBuilder::new(&glob)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| DockerError::Failed(format!("invalid dockerignore pattern {raw:?}: {e}")))?;
+            builder.add(compiled);
+            negated.push(negate);
+        }
+    }
+    let set = builder.build()
+        .map_err(|e| DockerError::Failed(format!("failed to compile dockerignore patterns: {e}")))?;
+    Ok(Dockerignore { set, negated })
 }
 
 /// Check if a relative path matches `.dockerignore` patterns.
-/// Supports `!` negation, `*` (non-separator wildcard), `**` (multi-directory),
-/// and `?` (single character). Last matching pattern wins.
-fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
-    let mut ignored = false;
-    for raw in patterns {
-        let (negated, pat) = match raw.strip_prefix('!') {
-            Some(p) => (true, p.trim()),
-            None => (false, raw.as_str()),
-        };
-        let pat = pat.trim_end_matches('/');
-        if docker_pattern_matches(rel_path, pat) {
-            ignored = !negated;
-        }
-    }
-    ignored
-}
-
-/// Check if `path` starts with `prefix` as a complete directory segment.
-fn is_path_prefix(path: &str, prefix: &str) -> bool {
-    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
-}
-
-/// Match a path against a single dockerignore glob pattern.
-fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
-    // "**/" prefix: match against any subpath
-    if let Some(rest) = pattern.strip_prefix("**/") {
-        if docker_pattern_matches(path, rest) {
-            return true;
-        }
-        let mut remaining = path;
-        while let Some(pos) = remaining.find('/') {
-            remaining = &remaining[pos + 1..];
-            if docker_pattern_matches(remaining, rest) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // No slash in pattern.
-    if !pattern.contains('/') {
-        // Glob patterns (*, ?) match against the filename component at any depth —
-        // e.g. "*.pyc" matches "dir/foo.pyc".
-        if pattern.contains('*') || pattern.contains('?') {
-            let filename = path.rsplit('/').next().unwrap_or(path);
-            if glob_match(filename.as_bytes(), pattern.as_bytes()) {
-                return true;
-            }
-        }
-        // Literal names match only from the context root — "app" matches "./app"
-        // but not "agent/skills/dashboard/app".
-        return glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern);
-    }
-
-    // Pattern has slashes: match from context root, or as directory prefix
-    glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern)
-}
-
-/// Simple glob: `*` matches non-`/` chars, `?` matches single non-`/` char,
-/// `**` between slashes matches any number of path segments.
-fn glob_match(text: &[u8], pattern: &[u8]) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
-    }
-    match pattern[0] {
-        b'*' => {
-            // "**/" inside pattern: match zero or more path segments
-            if pattern.starts_with(b"**/") {
-                let rest = &pattern[3..];
-                if glob_match(text, rest) {
-                    return true;
-                }
-                for (i, &byte) in text.iter().enumerate() {
-                    if byte == b'/' && glob_match(&text[i + 1..], rest) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            // Single `*`: match any sequence of non-`/` characters
-            let rest = &pattern[1..];
-            for i in 0..=text.len() {
-                if i > 0 && text[i - 1] == b'/' {
-                    break;
-                }
-                if glob_match(&text[i..], rest) {
-                    return true;
-                }
-            }
-            false
-        }
-        b'?' => !text.is_empty() && text[0] != b'/' && glob_match(&text[1..], &pattern[1..]),
-        c => !text.is_empty() && text[0] == c && glob_match(&text[1..], &pattern[1..]),
+/// Last matching pattern wins, honoring `!` negation.
+fn is_dockerignored(rel_path: &str, ignore: &Dockerignore) -> bool {
+    match ignore.set.matches(rel_path).last() {
+        Some(&glob_idx) => !ignore.negated[glob_idx],
+        None => false,
     }
 }
 
@@ -2692,6 +2645,8 @@ mod tests {
             ("doublestar matches one level", &["**/logs"], "a/logs", true),
             ("doublestar matches two levels", &["**/logs"], "a/b/logs", true),
             ("doublestar matches contents", &["**/logs"], "a/b/logs/debug.log", true),
+            ("interior doublestar matches zero levels", &["agent/**/*.pyc"], "agent/foo.pyc", true),
+            ("interior doublestar matches deep", &["agent/**/*.pyc"], "agent/a/b/foo.pyc", true),
             ("negation re-includes file", &["*.md", "!README.md"], "README.md", false),
             ("negation leaves others ignored", &["*.md", "!README.md"], "CHANGELOG.md", true),
             ("slash pattern exact", &["agent/tests"], "agent/tests", true),
@@ -2701,8 +2656,8 @@ mod tests {
             ("prefix dir matches contents", &["app"], "app/foo", true),
         ];
         for (label, pats, path, expected) in cases {
-            let pats: Vec<String> = pats.iter().map(|s| s.to_string()).collect();
-            assert_eq!(is_dockerignored(path, &pats), *expected, "{label}");
+            let ignore = compile_dockerignore(pats).expect("patterns compile");
+            assert_eq!(is_dockerignored(path, &ignore), *expected, "{label}");
         }
     }
 
