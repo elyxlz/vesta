@@ -86,6 +86,14 @@ from imap_client import (  # noqa: E402
 )
 
 
+_DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+
+
+def _draft_only_enabled() -> bool:
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _from_address(from_header: str) -> str:
     """Extract the bare email from a From header (e.g. ``Foo <a@b>`` becomes ``a@b``)."""
     m = _re.search(r"<([^>]+)>", from_header or "")
@@ -565,6 +573,11 @@ def main():
         help="save the composed message to the Drafts folder instead of sending; works with --reply-to-uid / --forward-uid to draft for review",
     )
     args = ap.parse_args()
+    # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
+    # before touching SMTP. Drafting (--draft) and the no-network preview (--dry-run)
+    # stay allowed. Default off: no behavior change when EMAIL_DRAFT_ONLY is unset.
+    if _draft_only_enabled() and not args.draft and not args.dry_run:
+        sys.exit(_DRAFT_ONLY_MESSAGE)
     send(
         args.to,
         args.subject,

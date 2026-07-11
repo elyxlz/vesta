@@ -15,6 +15,17 @@ from . import backend, owa_rest, owa_rest_commands, teams
 from .context import MicrosoftContext
 
 
+# Commands whose effect is to actually transmit mail. In draft-only mode these are
+# refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
+_TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+
+
+def _draft_only_enabled() -> bool:
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _write_pid(config):
     (config.data_dir / "serve.pid").write_text(str(os.getpid()))
 
@@ -526,6 +537,11 @@ def _route(args, config, account_email, graph_fn, rest_fn):
 
 def _dispatch_email(args, config, client):
     acct = args.account
+
+    # Hard draft-only guard: refuse any transmitting command before it can reach
+    # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
+    if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
+        raise RuntimeError(_DRAFT_ONLY_MESSAGE)
 
     def route(graph_fn, rest_fn):
         return _route(args, config, acct, graph_fn, rest_fn)

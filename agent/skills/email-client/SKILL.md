@@ -171,6 +171,10 @@ email-client-send --account personal --forward-uid 999 --to recipient@example.co
 
 A draft does not contact SMTP and does not flag the original `\Answered` (nothing was sent). `--dry-run` previews the draft without writing it. The Drafts folder is auto-detected (see below).
 
+### Draft-only mode
+
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset/empty means today's behavior, no change.
+
 ## Account management
 
 ```bash

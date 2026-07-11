@@ -24,6 +24,10 @@ Each area's detail lives in its own file, read it when you work in that area:
 - `--backend {auto,graph,owa-rest}` (default `auto`) picks the path; both backends support the full surface except `block`/`unblock` (Graph-only). See [SETUP.md](SETUP.md).
 - List commands (`email list`/`search`, `calendar list`/`calendars`, `folder list`, `teams chats`/`messages`/`teams`/`channels`) default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
 
+## Draft-only mode
+
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode `email send`/`reply`/`forward` are refused before any Graph or OWA-REST call (non-zero exit with a clear message); only `email draft` works. This is a CLI-level safety guarantee, not a behavioral promise, and it covers **both** backends. Default off: unset/empty means today's behavior, no change.
+
 ## Personalization
 
 ### Contact Communication Styles
