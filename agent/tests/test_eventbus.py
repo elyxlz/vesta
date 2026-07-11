@@ -97,35 +97,66 @@ def test_persists_across_instances(tmp_path):
 # --- Backpressure ---
 
 
-def test_slow_subscriber_queue_is_bounded(event_bus):
-    """A subscriber that never drains stays bounded; the oldest events are dropped."""
+def test_stalled_subscriber_is_evicted_on_overflow(event_bus):
+    """A subscriber that stops draining is evicted at its first overflow: the stale backlog is
+    replaced by a single EvictedEvent telling the send loop to close (the client reconnects and
+    resyncs from the connect snapshot), and further emits no longer reach it. A subscriber
+    either receives every event or gets a clean disconnect; nothing is dropped silently
+    (regression: issue #1160's unbounded drop-oldest storm)."""
     q = event_bus.subscribe()
-    overflow = 50
-    total = SUBSCRIBER_QUEUE_MAXSIZE + overflow
-    for i in range(total):
+    for i in range(SUBSCRIBER_QUEUE_MAXSIZE + 1):
         event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
 
-    assert q.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+    assert q.qsize() == 1
+    assert q.get_nowait()["type"] == "evicted"
 
-    drained = [q.get_nowait() for _ in range(q.qsize())]
-    texts = [tp.cast(tp.Any, e)["text"] for e in drained]
-    # Oldest `overflow` events were evicted; the queue holds the most recent window.
-    assert texts[0] == f"msg {overflow}"
-    assert texts[-1] == f"msg {total - 1}"
+    event_bus.emit(UserEvent(type="user", text="after eviction"))
+    assert q.qsize() == 0
 
 
-def test_drop_does_not_affect_other_subscribers(event_bus):
-    """Overflowing one subscriber must not drop events for a healthy one."""
+def test_eviction_logs_one_warning_not_a_storm(event_bus, caplog):
+    """The overflow storm is coalesced: a stalled subscriber produces exactly one warning at
+    eviction, no matter how many events keep flowing afterwards, not one line per event."""
+    q = event_bus.subscribe()
+    with caplog.at_level("WARNING", logger="vesta.events"):
+        for i in range(SUBSCRIBER_QUEUE_MAXSIZE + 200):
+            event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+
+    assert q.qsize() == 1  # the sentinel; the post-eviction flood never reached it
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+
+
+def test_eviction_does_not_affect_other_subscribers(event_bus):
+    """Evicting an overflowing subscriber must not drop events for a healthy one."""
     slow = event_bus.subscribe()
     fast = event_bus.subscribe()
     total = SUBSCRIBER_QUEUE_MAXSIZE + 10
+    delivered = []
     for i in range(total):
-        event = UserEvent(type="user", text=f"msg {i}")
-        event_bus.emit(event)
-        fast.get_nowait()  # fast subscriber keeps draining, never overflows
+        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        delivered.append(tp.cast(tp.Any, fast.get_nowait())["text"])  # fast keeps draining
 
-    assert slow.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
-    assert fast.qsize() == 0
+    assert delivered == [f"msg {i}" for i in range(total)]
+    assert slow.qsize() == 1
+    assert slow.get_nowait()["type"] == "evicted"
+
+
+def test_draining_subscriber_is_never_evicted(event_bus):
+    """A subscriber that keeps draining, even one that hovers at the queue bound, receives
+    every event and is never evicted."""
+    q = event_bus.subscribe()
+    for i in range(SUBSCRIBER_QUEUE_MAXSIZE):
+        event_bus.emit(UserEvent(type="user", text=f"fill {i}"))
+    for i in range(50):
+        q.get_nowait()  # make one slot of room
+        event_bus.emit(UserEvent(type="user", text=f"paced {i}"))
+
+    assert q.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
+    drained = [tp.cast(tp.Any, q.get_nowait())["text"] for _ in range(q.qsize())]
+    assert drained[-1] == "paced 49"
+    event_bus.emit(UserEvent(type="user", text="still subscribed"))
+    assert tp.cast(tp.Any, q.get_nowait())["text"] == "still subscribed"
 
 
 # --- Pagination ---

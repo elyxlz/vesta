@@ -15,8 +15,7 @@ EVENTS_DB_FILENAME = "events.db"
 # Upper bound on events buffered per subscriber. A slow-but-alive WS client (phone
 # on a weak link, wedged webview) whose send loop stalls would otherwise grow its
 # queue without limit. 1000 events covers a long burst of streamed text/tool blocks
-# while capping memory; on overflow we drop the oldest event (see emit) so the
-# stream stays current rather than replaying a stale backlog.
+# while capping memory; a subscriber that overflows it is evicted (see _offer).
 SUBSCRIBER_QUEUE_MAXSIZE = 1000
 
 type AgentState = tp.Literal["idle", "thinking"]
@@ -158,7 +157,13 @@ class SnapshotEvent(tp.TypedDict):
     notifications: SnapshotNotifications
 
 
-type VestaEvent = StreamEvent | SnapshotEvent
+# Bus-internal: the single item left in an evicted subscriber's queue (see EventBus._offer).
+# The send loop closes the WS on it; never emitted, persisted, or sent to a client.
+class EvictedEvent(_BaseEvent):
+    type: tp.Literal["evicted"]
+
+
+type VestaEvent = StreamEvent | SnapshotEvent | EvictedEvent
 
 PAGE_SIZE = 50
 
@@ -290,6 +295,7 @@ class EventBus:
                 self._conn = _open(self._db_path)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
+        """A live event queue; yields a final EvictedEvent if the bus evicts it (see _offer)."""
         q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
         self._subscribers.add(q)
         return q
@@ -315,24 +321,33 @@ class EventBus:
                 self._conn.commit()
             except sqlite3.Error as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
-        for q in self._subscribers:
+        for q in list(self._subscribers):
             self._offer(q, event)
 
     def _offer(self, q: asyncio.Queue[VestaEvent], event: StreamEvent) -> None:
-        """Enqueue for one subscriber, dropping its oldest event on overflow.
+        """Enqueue for one subscriber, evicting it on overflow.
 
-        A stalled send loop must not pin memory: when the queue is full we evict
-        the oldest buffered event to make room for the newest, keeping the live
-        stream current. History replay is delivered out-of-band on connect (api.py),
-        never through this queue, so it is unaffected."""
+        A subscriber either receives every event or gets a clean disconnect: one
+        whose send loop stalls long enough to fall a full queue behind is getting
+        no value from the live stream, so on overflow its stale backlog is replaced
+        by a single EvictedEvent (with one warning, not one per event) telling its
+        send loop to close the WS; the client reconnects and resyncs from the
+        connect snapshot. History replay is delivered out-of-band on connect
+        (api.py), never through this queue, so it is unaffected."""
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
+            self._subscribers.discard(q)
             # emit runs on the loop thread, so no other coroutine drains between
-            # full and get_nowait: the queue is non-empty here by construction.
-            dropped = q.get_nowait()
-            logger.warning("subscriber queue full, dropped oldest event type=%s", dropped["type"])
-            q.put_nowait(event)
+            # full here and the drain below: the queue stays at capacity.
+            while not q.empty():
+                q.get_nowait()
+            q.put_nowait(EvictedEvent(type="evicted"))
+            logger.warning(
+                "subscriber stalled %d events behind, evicting so its client reconnects (latest type=%s)",
+                SUBSCRIBER_QUEUE_MAXSIZE,
+                event["type"],
+            )
 
     @property
     def state(self) -> AgentState:
