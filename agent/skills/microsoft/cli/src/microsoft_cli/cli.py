@@ -131,6 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
 
+    p_reply_draft = email_sub.add_parser("reply-draft")
+    p_reply_draft.add_argument("--account", required=True)
+    p_reply_draft.add_argument("--id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
+    p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
+    p_reply_draft.add_argument("--attachments", nargs="+", default=None)
+    p_reply_draft.add_argument("--reply-all", action="store_true")
+    p_reply_draft.add_argument("--replace-draft", dest="replace_draft", default=None, help="Delete this draft id first (for re-edits)")
+
     p_forward = email_sub.add_parser("forward")
     p_forward.add_argument("--account", required=True)
     p_forward.add_argument("--id", required=True, dest="email_id")
@@ -469,6 +477,19 @@ def _dispatch_email(args, config, client):
             account_email=acct, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all, html=args.html
         )
         return route(lambda: email.reply_to_email(config, client, **kw), lambda: owa_rest_commands.reply_to_email(config, client, **kw))
+    elif args.command == "reply-draft":
+        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
+        # has no OWA REST counterpart, so this bypasses the backend router.
+        return email.reply_draft(
+            config,
+            client,
+            account_email=acct,
+            email_id=args.email_id,
+            body=args.body,
+            attachments=args.attachments,
+            reply_all=args.reply_all,
+            replace_draft=args.replace_draft,
+        )
     elif args.command == "forward":
         kw = dict(
             account_email=acct, email_id=args.email_id, to=args.to, body=args.body, cc=args.cc, attachments=args.attachments, html=args.html
