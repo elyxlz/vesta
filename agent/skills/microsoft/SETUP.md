@@ -57,7 +57,7 @@ The commands below (`auth login`/`complete`, `owa-login`, `teams-login`/`teams-c
 lower-level pieces `auth setup` orchestrates; reach for them only for manual control.
 
 ```bash
-microsoft auth login                         # Start device flow - gives you a URL and code
+microsoft auth login                         # Start device flow: gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
 ```
 
@@ -136,7 +136,7 @@ When adding new API permissions (e.g. MailboxSettings.ReadWrite) to an existing 
 
 ## First Use: Data Gathering
 
-On first activation with a new user, go deep into their email and calendar to learn who they are. This is the single most important onboarding step. Treat it as a real project, not a quick skim: budget hours, not minutes, and fan out background subagents to read in parallel so you cover far more without burning your own context.
+The moment an account finishes connecting, DO this, don't wait to be asked. Go deep into their email and calendar to learn who they are. This is the single most important onboarding step, and it is proactive: reading what you just connected is the whole point of connecting it, so start immediately rather than gating on a fresh permission. For a work/school or otherwise sensitive account, a one-line heads-up that you're doing the gathering is courteous, but it is a heads-up, not a request for permission: the reading still happens. Treat it as a real project, not a quick skim: budget hours, not minutes, and fan out background subagents to read in parallel so you cover far more without burning your own context.
 
 1. **Read sent emails** (`email list --account <acct> --folder sentitems --limit 200`, then keep paging back): writing style, tone, sign-offs, key contacts. Read the full content of interesting ones (`email get --account <acct> --id <id>`) to understand how their tone shifts by recipient (boss vs friend vs partner)
 2. **Read inbox** (`email list --account <acct> --limit 200`, keep paging): what they receive, subscriptions, who contacts them. Skim subject lines, read anything that looks important or personal
