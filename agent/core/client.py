@@ -215,7 +215,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
     if turn and thinking_estimate is not None:
         diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
-    texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
+    texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
@@ -234,6 +234,10 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
             filtered = sdk_parsing.filter_tool_lines(text)
             if filtered:
                 _emit_text(filtered, state=state)
+    for error_text in error_texts:
+        # CLI-synthesized error text is kept out of Vesta's speech by parse_sdk_message; surface
+        # the failure through the error channel instead so a failed turn is never silent in the app.
+        state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
     if isinstance(msg, RateLimitEvent):
         # Surface the rejection from the structured classification: the CLI's synthesized text
         # for the same event misnames the window (issue #1071), so this event is what consumers
