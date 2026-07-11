@@ -176,6 +176,10 @@
     "description": "This skill should be used when the user asks about their torrent box: searching trackers, adding torrents to qBittorrent, monitoring downloads, or browsing the media library on the server."
   },
   {
+    "name": "trivia",
+    "description": "Run a trivia game with the user. Use when the user says \"let's play trivia\", \"trivia game\", \"quiz\", or asks for trivia questions on a topic. Generates 15 multiple-choice questions easy to hard, marks correct answers, and tallies scores across multiple players."
+  },
+  {
     "name": "upstream-pr",
     "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
   },
