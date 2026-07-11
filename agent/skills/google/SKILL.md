@@ -34,6 +34,10 @@ google meet create                  # Create a standalone Meet link (no calendar
 
 Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 
+## Draft-only mode
+
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to hard-disable sending. In this mode `email send`/`reply` (and `forward`, when present) are refused before any Gmail API call (non-zero exit with a clear message); only `email draft` works. Default off: unset/empty means today's behavior, no change.
+
 ## Notes
 - No `--account` needed. Google CLI uses a single authenticated account
 - Gmail uses `--label` (INBOX, SENT, DRAFT, etc.) instead of folders
