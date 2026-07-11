@@ -231,9 +231,19 @@ export function FilesTab() {
       return;
     }
     setTreeError(null);
+    let cancelled = false;
     fetchFileTree(agentName)
-      .then(setEntries)
-      .catch((e: Error) => setTreeError(e.message));
+      .then((entries) => {
+        if (cancelled) return;
+        setEntries(entries);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setTreeError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [agentName, isAlive]);
 
   useEffect(() => {

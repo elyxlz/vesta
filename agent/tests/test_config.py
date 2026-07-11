@@ -2,10 +2,11 @@
 
 import json
 import os
+import pathlib as pl
 
 import pytest
 
-import core.models as vm
+import core.config as cfg
 from core.config import (
     ClaudeConfig,
     config_store_path,
@@ -27,7 +28,7 @@ def test_config_paths_under_agent_dir(config, tmp_path):
 
 
 def test_config_default_values():
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
 
@@ -130,12 +131,12 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_
     assert config.provider is None
     assert config.agent_personality == "dry"
     assert issues == []
-    assert isinstance(config, vm.VestaConfig)
+    assert isinstance(config, cfg.VestaConfig)
 
 
 def test_store_sets_nested_provider(agentdir):
     update_config_store({"provider": {"kind": "claude", "model": "sonnet"}})
-    provider = vm.VestaConfig().provider
+    provider = cfg.VestaConfig().provider
     assert isinstance(provider, ClaudeConfig)
     assert provider.model == "sonnet"
 
@@ -146,7 +147,7 @@ def test_update_merges_and_clear_reverts(agentdir):
     # A None clears just that key; the provider override stays.
     update_config_store({"agent_personality": None})
     assert read_config_store() == {"provider": {"kind": "claude", "model": "sonnet"}}
-    assert vm.VestaConfig().agent_personality == "dry"
+    assert cfg.VestaConfig().agent_personality == "dry"
 
 
 def test_update_rejects_keys_that_are_not_config_fields(agentdir):
@@ -162,6 +163,31 @@ def test_corrupt_store_does_not_crash_load(agentdir, monkeypatch, tmp_path):
     assert read_config_store() == {}
     config, _ = load_config()
     assert config.provider is None
+
+
+def _deny_read_text(self, *args, **kwargs):
+    raise PermissionError("permission denied")
+
+
+def test_unreadable_store_aborts_update(agentdir, monkeypatch):
+    # A transient OSError on the read (permission flip, EIO) over an intact store must abort the
+    # merge-and-write: handing back {} as the merge base would clobber the stored provider, prefs,
+    # and rules with only the incoming keys. Fail loud, leave the file untouched.
+    update_config_store({"agent_personality": "warm"})
+    before = config_store_path().read_text()
+    with monkeypatch.context() as patched:
+        patched.setattr(pl.Path, "read_text", _deny_read_text)
+        with pytest.raises(OSError):
+            update_config_store({"seed_context": "fresh"})
+    assert config_store_path().read_text() == before
+
+
+def test_unreadable_store_does_not_crash_rules_load(agentdir, monkeypatch):
+    # load_notification_rules runs on monitor_loop's per-tick hot path; an unreadable store must
+    # yield no rules, never an exception that kills notification processing.
+    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
+    monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
+    assert load_notification_rules() == []
 
 
 def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path):
@@ -204,12 +230,22 @@ def test_validate_provider_partial_deep_merges(config):
 
 
 def test_config_applies_timezone_to_process_env(monkeypatch):
-    # The config object owns timezone: constructing it pushes the value into TZ so every child
-    # process (shell, calendar/reminders skills, tasks' tzlocal) inherits it.
+    # The TZ alias lets a legacy agent's env seed the timezone field; main.py applies it to the
+    # process once at boot (this construction itself must not touch TZ, asserted below).
     monkeypatch.setenv("TZ", "Asia/Tokyo")
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     assert config.timezone == "Asia/Tokyo"
     assert os.environ["TZ"] == "Asia/Tokyo"
+
+
+def test_validating_a_config_update_does_not_apply_it(config, monkeypatch):
+    """Config is inert data: a PUT /config with a new timezone validates by constructing a full
+    VestaConfig, which must not flip the live process TZ (or read credentials); the new value
+    applies on the next restart, at main.py's boot apply."""
+    monkeypatch.setenv("TZ", "UTC")
+    updates = validate_config_updates(config, {"timezone": "Pacific/Auckland"})
+    assert updates == {"timezone": "Pacific/Auckland"}
+    assert os.environ["TZ"] == "UTC"
 
 
 # --- migrate_notification_policy_file (legacy notification_policy.json -> notification_rules) ---
@@ -223,7 +259,7 @@ def test_migrate_policy_folds_rules_and_deletes_file(agentdir):
     _write_legacy_policy(agentdir, {"rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
     migrate_notification_policy_file()
     assert "notification_rules" in read_config_store()
-    assert [rule.source for rule in load_notification_rules(vm.VestaConfig())] == ["twitter"]
+    assert [rule.source for rule in load_notification_rules()] == ["twitter"]
     assert not (agentdir / "data" / "notification_policy.json").exists()
 
 
@@ -241,7 +277,7 @@ def test_migrate_policy_translates_defaults_into_trailing_rules(agentdir):
         },
     )
     migrate_notification_policy_file()
-    rules = load_notification_rules(vm.VestaConfig())
+    rules = load_notification_rules()
     assert [(rule.source, rule.type, rule.action) for rule in rules] == [
         ("twitter", None, "interrupt"),
         ("outlook", None, "pool"),
@@ -259,5 +295,5 @@ def test_migrate_policy_does_not_overwrite_existing_rules(agentdir):
     update_config_store({"notification_rules": [{"id": "keep", "source": "existing", "action": "pool"}]})
     _write_legacy_policy(agentdir, {"rules": [{"source": "twitter", "action": "interrupt"}]})
     migrate_notification_policy_file()
-    assert [rule.source for rule in load_notification_rules(vm.VestaConfig())] == ["existing"]
+    assert [rule.source for rule in load_notification_rules()] == ["existing"]
     assert not (agentdir / "data" / "notification_policy.json").exists()

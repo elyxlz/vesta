@@ -21,21 +21,20 @@
      ```
 4. Start the daemon:
    ```bash
-   screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
+   telegram daemon start
    ```
+   Idempotent (a running daemon is a no-op) and defaults `--notifications-dir` to `~/agent/notifications`. Check with `telegram daemon status`.
 5. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
-6. Add to the `## Services` section of `~/agent/skills/restart/SKILL.md`:
+6. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
-   screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications
-   screen -dmS telegram-watchdog bash ~/agent/skills/telegram/telegram-watchdog.sh
+   running telegram || { telegram daemon start; sleep 1; }
+   running telegram-watchdog || { screen -dmS telegram-watchdog bash ~/agent/skills/telegram/telegram-watchdog.sh; sleep 1; }
    ```
    The watchdog (`telegram-watchdog.sh`) runs in its own screen session and restarts the daemon
    if it dies, independent of the agent loop, so the channel self-heals even while the agent is
    busy or mid-restart. It is rate-limited (backs off after repeated restarts) and drops a
    notification when it acts. Especially important when Telegram is the primary/only channel.
 
-   **Deploying a new binary:** quit the watchdog FIRST, then the daemon, then swap the binary and
-   restart both (`screen -S telegram-watchdog -X quit; screen -S telegram -X quit; ...build...;
-   screen -dmS telegram ...; screen -dmS telegram-watchdog ...`). If you restart the daemon while
-   the watchdog is live, the watchdog races you and you end up with two daemons (two pollers →
-   Telegram 409 Conflict).
+   **Deploying a new binary:** build it, then `telegram daemon restart`. The restart quits the
+   watchdog first, restarts the daemon, and brings the watchdog back, so the watchdog can never
+   race you into two daemons (two pollers, Telegram 409 Conflict).

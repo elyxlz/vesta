@@ -38,7 +38,13 @@ const (
 	ReactionDelayMin = 400 * time.Millisecond
 	ReactionDelayMax = 700 * time.Millisecond
 	PreSendDelayMin  = 250 * time.Millisecond
-	PreSendDelayMax  = 400 * time.Millisecond
+
+	PreSendDelayMax = 400 * time.Millisecond
+
+	// SendTimeout bounds one SendMessage round-trip. The daemon's known
+	// deadlock ("Node handling is taking long", sends hang forever) surfaces
+	// as this timeout, which triggers one safe reconnect via recoverOrRestart.
+	SendTimeout = 60 * time.Second
 
 	RapidMessageThreshold  = 3 * time.Second
 	PresenceVarianceFactor = 0.2

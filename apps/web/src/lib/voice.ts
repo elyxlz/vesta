@@ -81,10 +81,6 @@ export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
 
 export const setSttEnabled = (n: string, value: boolean) =>
   voicePost(n, "stt/set-enabled", { value });
-export const setSttEot = (
-  n: string,
-  params: { threshold?: number; timeout_ms?: number },
-) => voicePost(n, "stt/set-eot", params);
 
 // --- TTS ---
 
@@ -117,8 +113,6 @@ export async function fetchTtsUsage(agentName: string): Promise<TtsUsage> {
 
 export const setTtsEnabled = (n: string, value: boolean) =>
   voicePost(n, "tts/set-enabled", { value });
-export const setTtsVoice = (n: string, voiceId: string) =>
-  voicePost(n, "tts/set-voice", { voice_id: voiceId });
 
 // --- TTS playback ---
 //
@@ -366,6 +360,7 @@ export class Transcriber {
       if (this.active) {
         this.active = false;
         this.opts.onError("Transcription connection closed unexpectedly");
+        this.cleanup();
       }
     };
 

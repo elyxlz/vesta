@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
+import core.config as cfg
 from conftest import consuming, make_stream_harness, result_msg
 from core.client import converse
 from wait_util import wait_for_condition
@@ -317,7 +318,7 @@ async def test_converse_touches_activity_on_messages():
     """The stream consumer updates last_sdk_activity when SDK messages arrive."""
 
     state = vm.State()
-    config = vm.VestaConfig(interrupt_timeout=0.5)
+    config = cfg.VestaConfig(interrupt_timeout=0.5)
 
     mock_client = MagicMock()
     mock_client.query = AsyncMock()
@@ -341,7 +342,7 @@ async def test_converse_clears_active_tools_on_start():
     """converse clears stale active_tools from prior calls."""
 
     state = vm.State()
-    config = vm.VestaConfig(interrupt_timeout=0.5)
+    config = cfg.VestaConfig(interrupt_timeout=0.5)
     state.active_tools["stale"] = vm.ActiveTool(name="Old", summary="leftover", started_at=0)
 
     mock_client = MagicMock()
