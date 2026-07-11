@@ -17,12 +17,13 @@ import tomllib
 
 from . import logger
 from . import models as vm
+from . import config as cfg
 from . import state_store
 
 UNKNOWN_VERSION = "unknown"
 
 
-def vesta_version(config: vm.VestaConfig) -> str:
+def vesta_version(config: cfg.VestaConfig) -> str:
     """Version of the code actually running, read from core/pyproject.toml (re-extracted on
     upgrade, so it tracks the running core). Best-effort: never raises over a version label."""
     pyproject = config.agent_dir / "core" / "pyproject.toml"
@@ -35,7 +36,7 @@ def vesta_version(config: vm.VestaConfig) -> str:
         return UNKNOWN_VERSION
 
 
-def upstream_sync_turn(*, state: vm.State, config: vm.VestaConfig, first_start: bool) -> str | None:
+def upstream_sync_turn(*, state: vm.State, config: cfg.VestaConfig, first_start: bool) -> str | None:
     """Boot-turn body telling the agent to sync onto this version's snapshot, or None.
 
     First start pre-marks the running version (fresh image is already current). An

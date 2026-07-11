@@ -25,7 +25,7 @@ export function ContextStep({
     <ProviderStep
       logo={logo}
       title="context window"
-      subtitle="how much vesta keeps in mind before compacting. longer means vesta is less likely to forget things during the day, but uses more of your usage; shorter is cheaper and compacts sooner."
+      subtitle="how much vesta keeps in mind. longer remembers more, uses more; shorter is cheaper."
       submitLabel={submitLabel}
       onSubmit={() => onSubmit(selected)}
       onCancel={onCancel}

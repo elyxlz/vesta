@@ -1,152 +1,109 @@
 ---
 name: dashboard
-description: Build or modify the user's dashboard: widgets, pages, layouts, or custom UI.
-serve: screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
+description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it.
+serve: ~/agent/skills/dashboard/scripts/daemon start
 ---
 
 # Dashboard
 
-A React app embedded in the main Vesta app that serves as the user's **life HQ**, a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
+A React app embedded in the Vesta app, the user's **life HQ**: a personal command center for health, finances, productivity, habits, goals, and anything else they track. It uses a sidebar + page layout.
 
-## Before building
+You do not build the dashboard yourself. You understand what the user wants, design the change, capture it as a spec, and dispatch the `dashboard-builder` subagent (a UI/UX specialist primed on this dashboard) to build it. It works in an isolated context, so the token-heavy build churn (shadcn docs, large React files, vite output) stays out of your conversation; it returns a summary, and you confirm it serves and relay.
 
-Ask the user three things before writing code, then build only after they've answered:
+**The design is yours.** The user is a non-technical owner: they tell you what they want to see or do, not how to build it. You own every technical and design decision (placement, widgets, layout, data source, visual treatment). Ask the user only to resolve genuine intent, one question at a time, and only when the request is actually ambiguous. Never make them review a design or a spec.
 
-1. **Goal**: if the request is vague, clarify what they actually want to see or do
-2. **Interaction**: display-only, or do they want to tap/click/toggle/input things?
-3. **Data**: should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
+## Checklist
 
-**Exception, dreamer auto-builds.** During a dream pass, the agent may add widgets without asking. See the `dream` skill for when and how.
+Create a task per item and work them in order:
 
-## Project structure
+1. **Explore the dashboard**: read `config.tsx` and the existing pages and widgets, so you build on what is there instead of duplicating it.
+2. **Clarify intent (only if needed)**: if the ask is ambiguous, ask the user one focused question at a time about what they want to see or do. Skip this when the ask is already clear.
+3. **Design the change**: decide the placement, widgets, layout, data source, and visual treatment yourself.
+4. **Write the spec**: a short brief the builder implements (template below).
+5. **Dispatch the dashboard-builder**: a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec.
+6. **Verify and relay**: confirm the dashboard actually serves before you tell the user it is done, then summarize what changed in plain terms.
 
-```text
-~/agent/skills/dashboard/app/src/
-├── App.tsx              ← layout shell (sidebar + content area)
-├── config.tsx           ← EDIT THIS: define pages, sidebar nav, branding
-├── main.tsx             ← do NOT modify
-├── index.css            ← do NOT modify (synced from main app)
-├── pages/               ← page components (one per sidebar nav item)
-├── examples/            ← reference components (read for inspiration, BUT scale down their sizes)
-├── components/
-│   ├── ui/              ← shadcn components (synced, do NOT modify)
-│   ├── app-sidebar.tsx  ← sidebar component (reads from config)
-│   ├── site-header.tsx  ← header with page title
-│   ├── nav-main.tsx     ← main nav items
-├── widgets/             ← reusable widget components
-├── lib/
-│   ├── parent-bridge.ts ← auth + API helpers
-│   └── utils.ts         ← synced utility (do NOT modify)
-└── hooks/               ← synced hooks (do NOT modify)
-```
+**Exception, dreamer auto-builds.** During a dream pass you may add widgets without asking: compose the spec yourself and dispatch the builder. See the `dream` skill.
 
-**You can freely edit:** `config.tsx`, `App.tsx`, anything in `pages/`, `components/`, `widgets/`, and any new files you create.
-**Do NOT modify:** `main.tsx`, `index.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
+## Process flow
 
-## How it works
+```dot
+digraph dashboard {
+    "Explore the dashboard" [shape=box];
+    "Clear enough to design?" [shape=diamond];
+    "Ask one intent question" [shape=box];
+    "Design the change" [shape=box];
+    "Write the spec" [shape=box];
+    "Dispatch dashboard-builder" [shape=box];
+    "Verify it serves" [shape=doublecircle];
 
-The dashboard uses a **sidebar + page** layout controlled by `config.tsx`. Each `pages` entry creates a sidebar nav item. Clicking it renders that page's component. Pages can have `children` to create collapsible sub-pages in the sidebar.
-
-When adding a widget without a specified page, **choose a fitting page name yourself**. Group related widgets under a meaningful category (e.g., "Health" with `<HeartIcon />`, "Finance" with `<DollarSignIcon />`). If a suitable page already exists, add the widget there.
-
-## Density & Sizing Rules
-
-The dashboard is a high-density UI, not a standard app interface. Default shadcn components are too large for it: override them so everything feels compact. Large elements are the exception.
-
-**1. Typography**
-*   Default text: `text-sm`
-*   Secondary text / labels: `text-xs text-muted-foreground`. Do NOT lower the opacity (no `text-muted-foreground/70`), especially on tiny labels like `text-[10px]`: it washes out and becomes unreadable on the dark theme.
-*   Large numbers only: `text-lg` or `text-xl font-semibold`
-*   Reserve `text-lg`+ for genuinely large numbers or when the user asks for it.
-
-**2. Padding, Spacing & Layout**
-*   Default widget wrapper: `<div className="rounded-2xl bg-secondary p-3 text-sm">`
-*   Dense widgets: `p-2`. Reserve `p-4` for the rare case it actually needs the room.
-*   Grid gap: Use `gap-2` (preferred) or `gap-3`. Reserve `gap-4`.
-*   Inside widgets: Use `space-y-2` instead of `space-y-4`.
-*   Prefer horizontal density over tall widgets. Combine related info into single rows.
-
-**3. Buttons & Controls**
-*   Compact buttons by default: `<Button size="sm" className="h-8 px-2 text-xs">`
-*   Inputs: `h-8 text-xs`. Reserve full-width inputs for cases that genuinely need them.
-*   Reserve the default `<Button>` size for when the user asks for it.
-
-**4. Grid Span Rules**
-*   **col-span-1** (default): metric cards, counters, status indicators, trackers. *This is 90% of widgets.*
-*   **col-span-2**: Only for charts/graphs that genuinely need horizontal space.
-*   **col-span-full**: Almost never needed (only wide data tables).
-
-### Adding a page
-
-1. Create `src/pages/my-page.tsx` with whatever layout fits the content (single column, tables, etc.).
-
-**Example (grid layout page)** for a widget-heavy page: a responsive auto-fill grid with compact gaps.
-
-```tsx
-export function MyPage() {
-  return (
-    <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-      <SmallWidget />
-      <SmallWidget />
-    </div>
-  )
+    "Explore the dashboard" -> "Clear enough to design?";
+    "Clear enough to design?" -> "Ask one intent question" [label="no"];
+    "Ask one intent question" -> "Clear enough to design?";
+    "Clear enough to design?" -> "Design the change" [label="yes"];
+    "Design the change" -> "Write the spec";
+    "Write the spec" -> "Dispatch dashboard-builder";
+    "Dispatch dashboard-builder" -> "Verify it serves";
 }
 ```
 
-2. Add it to the **top** of the `pages` array in `config.tsx`:
-```tsx
-import { MyPage } from "./pages/my-page"
-import { StarIcon } from "lucide-react"
+## Understanding intent
 
-// Inside config.pages:
-{ id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
-```
+- Read the current dashboard first (`config.tsx`, pages, widgets) and build on it rather than duplicating.
+- The user tells you what they care about, not how to build it. Ask only to resolve real ambiguity: what they want to see, what a number should mean to them, whether something is view only or interactive. One question per message, multiple choice when you can.
+- Do not ask about implementation (files, components, styling). Those decisions are yours.
 
-## Data Patterns
+## Designing the change
 
-**1. No client-side external API fetches.** The dashboard runs in a browser; cross-origin requests to third-party APIs (weather, finance) fail due to CORS. Create a skill that fetches data server-side, expose it as an endpoint, and call it from the dashboard using `apiFetch` from `@/lib/parent-bridge`.
+You own these decisions:
 
-**2. Persist user data server-side.** The user reads the dashboard across devices, so the source of truth lives in a skill with API endpoints. Hardcoded data and `localStorage` shouldn't act as the canonical store.
+- **Placement**: which page, or a new page or category with a fitting lucide icon. Group related widgets under a meaningful category.
+- **Widgets**: what to show, and how to break it into compact cards.
+- **Interaction**: view only, or clicks, toggles, and inputs.
+- **Data**: sample data, or live data from a skill or API (fetched server side; the dashboard cannot call third party APIs directly). Whether it must persist server side and stay in sync across apps like mobile.
+- **Visual**: keep it dense and compact. The builder holds the exact density and sizing rules.
 
-**3. `localStorage` is for local visual state only.** Use it for device-specific UI states (sidebar order, collapsed sections, selected tabs). Prefix keys with `vesta-dashboard-`.
+YAGNI: build the smallest thing that satisfies the intent. No speculative widgets.
 
-**4. Loading and missing data:**
-*   Show a skeleton or spinner while data is loading.
-*   Arrays/objects may be undefined on first render. Default to `[]` or `{}` so `.reduce()`, `.map()`, and charts don't crash.
+## The spec
 
-**5. Data freshness:** Default to fetching on mount (`useEffect`). For data that updates through the day, add a compact refresh button. Reserve polling (`setInterval`) for live data like timers or stock tickers, and ask the user how often it should auto-refresh.
+The spec is the one thing that crosses to the subagent, and it cannot ask you anything, so leave nothing open. Name the widgets, the data source, and what "done" looks like, and state what is out of scope so the builder does not overbuild:
 
-## UI & Styling
+    Goal:         <what the user wants to see or do>
+    Placement:    <page name, existing or new, with an icon>
+    Interaction:  <view-only | clicks/toggles/inputs: describe each>
+    Data:         <sample | live from skill/API X; persist and sync across apps? y/n>
+    Content:      <the exact metrics, widgets, fields, and layout>
+    Out of scope: <what NOT to build, so it does not wander>
+    Notes:        <anything the user asked for specifically>
+    Done when:    <serves, and shows X>
 
-*   **Read the docs:** Before every UI change, read `shadcn/SKILL.md` and its linked rules.
-*   **Make it fun:** Use lucide icons for visual flair (like `<Flame />` for streaks, `<CheckCircle />` for completed).
-*   **Use semantic colors:** Use Tailwind classes (like `text-green-500`, `bg-amber-100`, `border-pink-400`) for badges, progress bars, and status indicators.
+Example, for a request like "show me my running this week":
 
-## After every change
+    Goal:         See this week's runs at a glance.
+    Placement:    Health page (exists); new "Running" widget.
+    Interaction:  View-only.
+    Data:         Sample for now (last 7 days: date, distance km, pace).
+    Content:      One col-span-1 card: this-week total km as the big number, a 7-bar mini
+                  chart of daily distance, and last run's pace as a small label.
+    Out of scope: No history beyond 7 days, no goals, no live device sync.
+    Done when:    Health page shows the Running card and the dashboard serves.
 
-Rebuild, re-register with vestad, restart the preview server, and notify the Vesta app:
+## Dispatch the dashboard-builder
 
-```bash
-# First build only: node_modules is not baked into the image, so install deps once.
-cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
-screen -S dashboard -X quit 2>/dev/null
-screen -dmS dashboard ~/agent/skills/dashboard/scripts/serve
-# Wait for the server to be ready
-for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
-# Smoke test: fetch the page and check for runtime errors
-SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
-if ! echo "$SMOKE" | grep -q '<div id="root"'; then
-  echo "ERROR: Dashboard failed to load. Check the build output."
-fi
-# Notify the app to reload the dashboard iframe
-curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
-```
+Dispatch a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec as `{SPEC}`. Give it a strong coding model. It builds in isolation, verifies the app serves, and returns a summary. The subagent cannot ask the user anything, so your spec must be complete.
 
-## Cache gotchas (read once)
+## Verify and relay
 
-- **Do NOT pass `--base`** to vite preview. Vestad strips the `/agents/{name}/{service}/` prefix when proxying, so the local server must serve at `/`. With `--base` set, `/assets/...` requests come in stripped and 404. The HTML uses relative `./assets/...` already (vite config `base: "./"`), which resolves correctly under the proxy path in the browser.
-- **Cloudflare caches 404 responses for ~4 hours via the public tunnel.** If you accidentally serve a broken build that 404s on assets, even after fixing the build, the tunnel will keep serving the cached 404 until either (a) the URL changes, (b) the cache expires, or (c) you bust with a `?v=...` query. Vite's content hashes change automatically when source changes, so normally this isn't an issue. If you ever get a stuck 404 with no source change, temporarily add `Date.now()` to `entryFileNames` in `vite.config.ts`, rebuild, then revert.
+When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
+
+## Key principles
+
+- **You hold the design.** The user gives intent; you make the calls.
+- **One question at a time**, and only to resolve real ambiguity.
+- **YAGNI**: the smallest change that satisfies the intent.
+- **Build on what exists**: extend pages and widgets rather than duplicating.
+- **Verify before done**: confirm it serves, don't assume.
 
 ## Troubleshooting
 *   **Dashboard not showing?** `screen -ls | grep dashboard`

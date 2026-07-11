@@ -155,10 +155,12 @@ On iOS, install the resulting .ipa to a paired device without the Xcode GUI: `xc
 ### Releasing
 
 ```bash
-./release.sh         # Patch release (0.1.0 -> 0.1.1)
-./release.sh minor   # Minor release (0.1.0 -> 0.2.0)
-./release.sh major   # Major release (0.1.0 -> 1.0.0)
+./release.sh "<message>"         # Patch release (0.1.0 -> 0.1.1)
+./release.sh minor "<message>"   # Minor release (0.1.0 -> 0.2.0)
+./release.sh major "<message>"   # Major release (0.1.0 -> 1.0.0)
 ```
+
+The message is required: user-facing "What's new" marketing copy embedded in the release body (the app and changelog parse it). Pull a broken beta with `./unrelease.sh vX.Y.Z`; promote a soaked one with `./promote.sh vX.Y.Z`.
 
 Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and creates the GitHub release. CI then builds artifacts and publishes. Do NOT bump versions in PRs: `release.sh` handles version bumps at release time.
 

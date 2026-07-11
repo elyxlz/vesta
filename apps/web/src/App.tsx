@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { InsetFrame } from "@/components/InsetFrame";
+import { WhatsNewDialog } from "@/components/WhatsNew";
 import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
@@ -34,6 +35,7 @@ function AppContent() {
           transition={{ duration: 0.3 }}
         >
           <RouterProvider router={router} />
+          <WhatsNewDialog />
         </motion.div>
       )}
     </AnimatePresence>

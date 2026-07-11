@@ -1,0 +1,29 @@
+[project]
+name = "discord"
+version = "0.1.0"
+description = "Discord channel CLI: gateway daemon writing notifications plus send/read commands"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9",
+    "discord-py>=2.7",
+    "pydantic>=2.7",
+]
+
+[project.scripts]
+discord = "discord_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/discord_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
