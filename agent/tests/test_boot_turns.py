@@ -24,7 +24,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
     (config.agent_dir / "core" / "default-skills.txt").write_text("alpha\n")  # alpha missing on disk
-    # An out-of-date sync marker vs the running core version fires the workspace-sync turn.
+    # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
     turns = collect_boot_turns(
@@ -37,7 +37,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
 
     assert len(turns) == 5
     assert "[Migration: 001-x]" in turns[0]
-    assert "[Workspace sync]" in turns[1]
+    assert "[Upstream sync]" in turns[1]
     assert "skills-install alpha" in turns[2]
     assert "BAD=1" in turns[3]
     assert "[System Restart]\nReason: routine restart, no specific reason" in turns[4]

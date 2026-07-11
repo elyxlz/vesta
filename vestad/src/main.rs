@@ -31,8 +31,8 @@ mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod upstream;
 mod vendored_bin;
-mod workspace;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
 
@@ -976,8 +976,12 @@ fn main() {
                             vestad_port,
                             vestad_tunnel,
                         };
-                        agent_code::ensure_agent_code(&config)
+                        let code_dir = agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+                        // The container bind-mounts the upstream dir; build it here like server
+                        // startup does, or rootful Docker would create the missing host path as
+                        // root and the next vestad startup could no longer write into it.
+                        upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
                         docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, &[]).await
                             .unwrap_or_else(|e| die(&e));

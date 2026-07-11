@@ -4,8 +4,12 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "upstream-sync",
+    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock snapshot. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+  },
+  {
     "name": "workspace-sync",
-    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+    "description": "Renamed to upstream-sync. Read ~/agent/core/skills/upstream-sync/SKILL.md instead."
   },
   {
     "name": "agentmail",

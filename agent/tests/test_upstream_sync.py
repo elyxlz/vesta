@@ -1,7 +1,7 @@
-"""Exercises the REAL box workspace flow against local workspace bundles (no network).
+"""Exercises the REAL box workspace flow against local upstream repos (no network).
 
-Fixtures build a bundle with the REAL build-workspace.sh (the script vestad runs), then
-drive the REAL attach.sh / fetch-workspace.sh / skills-install / skills-remove scripts plus
+Fixtures build an upstream repo with the REAL build-upstream.sh (the script vestad runs),
+then drive the REAL attach.sh / fetch-upstream.sh / skills-install / skills-remove scripts plus
 the documented raw porcelain (checkpoint + fetch + rebase) in a fake $HOME, pinning the
 assumptions the fleet relies on: worktree-safe attach, version-pinned rebase, cone scoping
 (engine and uninstalled skills stay off disk), offline installs, downgrades, and the
@@ -17,13 +17,16 @@ import pytest
 
 AGENT_ROOT = pl.Path(__file__).resolve().parents[1]
 REPO_ROOT = AGENT_ROOT.parent
-BUILD = REPO_ROOT / "vestad/scripts/build-workspace.sh"
-ATTACH = AGENT_ROOT / "core/skills/workspace-sync/scripts/attach.sh"
-FETCH = AGENT_ROOT / "core/skills/workspace-sync/scripts/fetch-workspace.sh"
-SET_CONE = AGENT_ROOT / "core/skills/workspace-sync/scripts/set-cone.sh"
+BUILD = REPO_ROOT / "vestad/scripts/build-upstream.sh"
+ATTACH = AGENT_ROOT / "core/skills/upstream-sync/scripts/attach.sh"
+FETCH = AGENT_ROOT / "core/skills/upstream-sync/scripts/fetch-upstream.sh"
+SET_CONE = AGENT_ROOT / "core/skills/upstream-sync/scripts/set-cone.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
 SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
-BRANCH = "agent-workspace"
+BRANCH = "agent-upstream"
+# LEGACY(remove-when: no agent predating the rename release remains): the forwarding
+# shims old boxes' synced scripts and released migrations rely on.
+FORWARDING = AGENT_ROOT / "core/skills/workspace-sync/scripts"
 
 BASE_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -42,7 +45,7 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None or shutil.which("tar
 
 def _env(home, extra=None):
     e = os.environ.copy()
-    e.pop("VESTA_WORKSPACE_BUNDLE", None)
+    e.pop("VESTA_UPSTREAM_SOURCE", None)
     e.update(BASE_ENV)
     e["HOME"] = str(home)
     if extra:
@@ -60,11 +63,17 @@ def _run(script, home, args=(), extra_env=None):
     return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True)
 
 
-def _copy_sync_scripts(core_scripts):
-    """The workspace-sync scripts a box ships in agent/core (one owner for the list)."""
-    core_scripts.mkdir(parents=True, exist_ok=True)
+def _copy_sync_scripts(core_skills):
+    """The upstream-sync scripts a box ships in agent/core (one owner for the list),
+    plus the forwarding workspace-sync shims at their old paths."""
+    scripts = core_skills / "upstream-sync/scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
     for script in (ATTACH, FETCH, SET_CONE):
-        shutil.copy(script, core_scripts / script.name)
+        shutil.copy(script, scripts / script.name)
+    forwarding = core_skills / "workspace-sync/scripts"
+    forwarding.mkdir(parents=True, exist_ok=True)
+    for shim in FORWARDING.glob("*.sh"):
+        shutil.copy(shim, forwarding / shim.name)
 
 
 def _memory_template(version):
@@ -85,19 +94,20 @@ def _write_content(content, version):
     (content / "MEMORY.md").write_text(_memory_template(version))
     (content / ".gitignore").write_text((AGENT_ROOT / ".gitignore").read_text())
     (content / "ruff.toml").write_text("line-length = 144\n")  # box needs it (formatting); ships in the snapshot
-    _copy_sync_scripts(content / "core/skills/workspace-sync/scripts")
+    _copy_sync_scripts(content / "core/skills")
 
 
-def _bundle_fixture(tmp_path, versions=("0.1.170",)):
-    """Build a workspace bundle with the REAL build-workspace.sh, one snapshot per version.
-    Returns the bundle path (what a box's fetch-workspace.sh consumes)."""
+def _upstream_fixture(tmp_path, versions=("0.1.170",)):
+    """Build an upstream repo with the REAL build-upstream.sh, one snapshot per version.
+    Returns the bare repo path (what a box's fetch-upstream.sh consumes; on real boxes it
+    is bind-mounted at /run/vesta-upstream/upstream.git)."""
     content = tmp_path / "agent-code"
-    ws = tmp_path / "workspace"
+    ws = tmp_path / "upstream"
     for version in versions:
         _write_content(content, version)
         r = subprocess.run(["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True)
         assert r.returncode == 0, r.stdout + r.stderr
-    return ws / "workspace.bundle"
+    return ws / "upstream.git"
 
 
 def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream"), managed=True):
@@ -119,8 +129,8 @@ def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream"), managed=T
     (home / "agent/constitution.md").write_text("# user rules\n")  # bind-mounted read-only on real boxes
     (home / "agent/ruff.toml").write_text("line-length = 144\n")  # shipped in the image; tracked, must stay clean
     # The image ships the core skills on disk; skills-install and the sync flow shell out
-    # to attach.sh / fetch-workspace.sh at their ~-anchored paths.
-    _copy_sync_scripts(home / "agent/core/skills/workspace-sync/scripts")
+    # to attach.sh / fetch-upstream.sh at their ~-anchored paths.
+    _copy_sync_scripts(home / "agent/core/skills")
     if managed:
         core = home / "agent/core"
         for d in [core, *(p for p in core.rglob("*") if p.is_dir())]:
@@ -128,49 +138,49 @@ def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream"), managed=T
     return home
 
 
-def _box_env(bundle):
-    return {"VESTA_WORKSPACE_BUNDLE": str(bundle), "AGENT_NAME": "testbox"}
+def _box_env(source):
+    return {"VESTA_UPSTREAM_SOURCE": str(source), "AGENT_NAME": "testbox"}
 
 
-def _attach(home, bundle):
-    return _run(ATTACH, home, extra_env=_box_env(bundle))
+def _attach(home, source):
+    return _run(ATTACH, home, extra_env=_box_env(source))
 
 
 def test_fresh_attach_is_clean_and_never_touches_worktree(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     marker = home / "agent/skills/tasks/SKILL.md"
     before = marker.read_text()
-    r = _attach(home, bundle)
+    r = _attach(home, source)
     assert r.returncode == 0, r.stdout + r.stderr
     assert marker.read_text() == before
-    assert _git(["status", "--porcelain"], home, _box_env(bundle)) == ""
+    assert _git(["status", "--porcelain"], home, _box_env(source)) == ""
     assert not (home / "agent/skills/whatsapp").exists()  # not installed -> off disk
 
 
 def test_attach_is_idempotent(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
-    assert _attach(home, bundle).returncode == 0
-    assert _git(["status", "--porcelain"], home, _box_env(bundle)) == ""
+    assert _attach(home, source).returncode == 0
+    assert _attach(home, source).returncode == 0
+    assert _git(["status", "--porcelain"], home, _box_env(source)) == ""
 
 
 def test_attach_fails_loudly_when_snapshot_missing(tmp_path):
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170",))
-    home = _fresh_box(tmp_path, version="0.1.999")  # no agent-v0.1.999 in the bundle
-    r = _attach(home, bundle)
+    source = _upstream_fixture(tmp_path, versions=("0.1.170",))
+    home = _fresh_box(tmp_path, version="0.1.999")  # no agent-v0.1.999 in the upstream repo
+    r = _attach(home, source)
     assert r.returncode == 3
     assert not (home / ".git" / "HEAD").exists() or "agent-v0.1.999" in r.stderr
 
 
 def test_sync_rebases_local_changes_onto_new_snapshot(tmp_path):
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
+    assert _attach(home, source).returncode == 0
     memory = home / "agent/MEMORY.md"
     memory.write_text(memory.read_text() + "my personal notes\n")
-    env = _box_env(bundle)
+    env = _box_env(source)
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "checkpoint"], home, env)
     # Simulate the upgrade: the core mount now runs 0.1.171. Core is mount-owned and
@@ -186,10 +196,10 @@ def test_sync_rebases_local_changes_onto_new_snapshot(tmp_path):
 
 
 def test_sync_conflict_stops_and_continues(tmp_path):
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
-    env = _box_env(bundle)
+    assert _attach(home, source).returncode == 0
+    env = _box_env(source)
     (home / "agent/skills/tasks/SKILL.md").write_text("mine\n")  # conflicts with 0.1.171's edit
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "checkpoint"], home, env)
@@ -203,26 +213,26 @@ def test_sync_conflict_stops_and_continues(tmp_path):
 
 
 def test_install_is_offline_and_remove_drops_dir(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
-    bundle.unlink()  # sever the source: install must still work from local history
-    r = _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=_box_env(bundle))
+    assert _attach(home, source).returncode == 0
+    shutil.rmtree(source)  # sever the source: install must still work from local history
+    r = _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=_box_env(source))
     assert r.returncode == 0, r.stdout + r.stderr
     assert (home / "agent/skills/whatsapp/SKILL.md").exists()
-    r = _run(SKILLS_REMOVE, home, args=("whatsapp",), extra_env=_box_env(bundle))
+    r = _run(SKILLS_REMOVE, home, args=("whatsapp",), extra_env=_box_env(source))
     assert r.returncode == 0
     assert not (home / "agent/skills/whatsapp").exists()
 
 
 def test_install_unknown_skill_errors_and_leaves_cone_untouched(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
-    cone_before = _git(["sparse-checkout", "list"], home, _box_env(bundle))
-    r = _run(SKILLS_INSTALL, home, args=("nope",), extra_env=_box_env(bundle))
+    assert _attach(home, source).returncode == 0
+    cone_before = _git(["sparse-checkout", "list"], home, _box_env(source))
+    r = _run(SKILLS_INSTALL, home, args=("nope",), extra_env=_box_env(source))
     assert r.returncode == 1
-    assert _git(["sparse-checkout", "list"], home, _box_env(bundle)) == cone_before
+    assert _git(["sparse-checkout", "list"], home, _box_env(source)) == cone_before
 
 
 def _commit_user_dir(home, env, path="agent/prompts/restart.md", body="my daemon block\n"):
@@ -240,10 +250,10 @@ def test_committed_agent_dirs_join_cone_and_survive_reapply(tmp_path):
     """Issue #979: tracked dirs under agent/ outside the skills cone were pruned by any
     sparse-checkout reapply. set-cone.sh derives the cone from the tracked tree, so a
     committed dir survives."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     restart = _commit_user_dir(home, env)
     scripts = _commit_user_dir(home, env, path="agent/scripts/state-server.py", body="print()\n")
     r = _run(SET_CONE, home, extra_env=env)
@@ -258,10 +268,10 @@ def test_committed_agent_dirs_join_cone_and_survive_reapply(tmp_path):
 def test_install_and_remove_preserve_committed_agent_dirs(tmp_path):
     """A dir committed after the last cone computation must not be pruned when
     skills-install/skills-remove rewrite the cone."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     restart = _commit_user_dir(home, env)
     r = _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -276,13 +286,13 @@ def test_install_and_remove_preserve_committed_agent_dirs(tmp_path):
 def test_reattach_preserves_user_dirs_and_unmanaged_core(tmp_path):
     """Re-running attach.sh (idempotence promise) must keep tracked agent dirs and an
     unmanaged box's one-time agent/core opt-in in the cone."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path, managed=False)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     _git(["sparse-checkout", "add", "agent/core"], home, env)  # SETUP.md: once, ever
     restart = _commit_user_dir(home, env)
-    r = _attach(home, bundle)
+    r = _attach(home, source)
     assert r.returncode == 0, r.stdout + r.stderr
     cone = _git(["sparse-checkout", "list"], home, env).splitlines()
     assert "agent/core" in cone and "agent/prompts" in cone
@@ -292,10 +302,10 @@ def test_reattach_preserves_user_dirs_and_unmanaged_core(tmp_path):
 def test_remove_last_skill_refuses_instead_of_emptying_cone(tmp_path):
     """An empty cone would prune every tracked file under agent/ (MEMORY.md included);
     removing the last skill must fail loudly, not report success."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path, skills=("tasks",))
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     r = _run(SKILLS_REMOVE, home, args=("tasks",), extra_env=env)
     assert r.returncode != 0
     assert (home / "agent/MEMORY.md").exists()
@@ -305,10 +315,10 @@ def test_remove_last_skill_refuses_instead_of_emptying_cone(tmp_path):
 def test_removed_dirty_skill_errors_and_stays_out_of_the_cone(tmp_path):
     """git leaves a skill dir behind when it holds uncommitted edits: remove must say so
     (the skill stays active), and later recomputes must not resurrect the cone entry."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     (home / "agent/skills/dream/SKILL.md").write_text("my personalization\n")  # uncommitted
     r = _run(SKILLS_REMOVE, home, args=("dream",), extra_env=env)
     assert r.returncode != 0
@@ -321,10 +331,10 @@ def test_removed_dirty_skill_errors_and_stays_out_of_the_cone(tmp_path):
 def test_stray_core_cone_entry_on_managed_box_heals(tmp_path):
     """agent/core in the cone of a managed box (read-only mount) is a mistake; the next
     recompute must drop it rather than perpetuate it."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     _git(["sparse-checkout", "add", "agent/core"], home, env)  # the stray
     r = _run(SET_CONE, home, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -333,10 +343,10 @@ def test_stray_core_cone_entry_on_managed_box_heals(tmp_path):
 
 def test_committed_root_dir_survives_recompute(tmp_path):
     """A force-added tracked dir at the workspace root (outside agent/) must stay coned."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
-    assert _attach(home, bundle).returncode == 0
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
     note = home / "notes/n.md"
     note.parent.mkdir()
     note.write_text("keep\n")
@@ -351,9 +361,9 @@ def test_committed_root_dir_survives_recompute(tmp_path):
 def test_set_cone_refuses_legacy_workspace(tmp_path):
     """A legacy no-cone sparse file must not be force-converted by a cone recompute; the
     boot migration owns that conversion."""
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
+    env = _box_env(source)
     _git(["init", "-b", "testbox"], home, env)
     (home / ".git/info").mkdir(parents=True, exist_ok=True)
     (home / ".git/info/sparse-checkout").write_text("/agent/\n!/agent/core/\n!/agent/skills/*/\n")
@@ -363,10 +373,10 @@ def test_set_cone_refuses_legacy_workspace(tmp_path):
 
 
 def test_managed_cone_never_materializes_or_stages_core(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    assert _attach(home, bundle).returncode == 0
-    env = _box_env(bundle)
+    assert _attach(home, source).returncode == 0
+    env = _box_env(source)
     # core/ exists on disk (the mount provides it) but is out of cone: status ignores it,
     # add -A stages nothing under it.
     (home / "agent/core/loops.py").write_text("# mount content, newer\n")
@@ -377,10 +387,10 @@ def test_managed_cone_never_materializes_or_stages_core(tmp_path):
 
 
 def test_unmanaged_box_pulls_core_updates_through_the_same_rebase(tmp_path):
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path, managed=False)
-    assert _attach(home, bundle).returncode == 0
-    env = _box_env(bundle)
+    assert _attach(home, source).returncode == 0
+    env = _box_env(source)
     _git(["sparse-checkout", "add", "agent/core"], home, env)
     assert _run(FETCH, home, extra_env=env).returncode == 0
     _git(["rebase", "agent-v0.1.171"], home, env)
@@ -389,10 +399,10 @@ def test_unmanaged_box_pulls_core_updates_through_the_same_rebase(tmp_path):
 
 
 def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path, version="0.1.171")
-    assert _attach(home, bundle).returncode == 0
-    env = _box_env(bundle)
+    assert _attach(home, source).returncode == 0
+    env = _box_env(source)
     memory = home / "agent/MEMORY.md"
     memory.write_text(memory.read_text() + "keep me\n")
     _git(["add", "-A"], home, env)
@@ -403,20 +413,20 @@ def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
 
 
 def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
-    bundle = _bundle_fixture(tmp_path)
+    source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
-    env = _box_env(bundle)
+    env = _box_env(source)
     # Fabricate the legacy shape: a repo with old no-cone patterns and stray engine files.
     _git(["init", "-b", "testbox"], home, env)
     (home / ".git/info").mkdir(parents=True, exist_ok=True)
     (home / ".git/info/sparse-checkout").write_text("/agent/\n!/agent/core/\n!/agent/skills/*/\n")
     (home / "agent/pyproject.toml").write_text("stale\n")
     (home / "agent/MEMORY.md").write_text("# memory template 0.1.170\nmy personal notes\n")
-    assert _attach(home, bundle).returncode == 4
+    assert _attach(home, source).returncode == 4
     # The conversion spine from agent/core/migrations/2026-07-workspace-conversion.md:
     (home / ".git").rename(home / ".git-legacy")
     (home / "agent/pyproject.toml").unlink()
-    assert _attach(home, bundle).returncode == 0
+    assert _attach(home, source).returncode == 0
     status = _git(["status", "--porcelain"], home, env)
     assert "agent/MEMORY.md" in status  # personalization surfaced, not lost
     _git(["add", "-A"], home, env)
@@ -425,21 +435,21 @@ def test_legacy_workspace_detected_and_migration_spine_converts_it(tmp_path):
 
 
 def test_migration_restores_legacy_repo_when_snapshot_unavailable(tmp_path):
-    """An unmanaged legacy box at a version the bundle doesn't carry (its snapshot predates
+    """An unmanaged legacy box at a version the upstream doesn't carry (its snapshot predates
     the workspace feature) must never be left repo-less: the documented spine restores the
     old repo when the conversion attach fails, so git still works and the box degrades
     gracefully instead of bricking."""
-    bundle = _bundle_fixture(tmp_path, versions=("0.1.170",))
-    home = _fresh_box(tmp_path, version="0.1.999")  # 0.1.999 is not in the bundle
-    env = _box_env(bundle)
+    source = _upstream_fixture(tmp_path, versions=("0.1.170",))
+    home = _fresh_box(tmp_path, version="0.1.999")  # 0.1.999 is not in the upstream repo
+    env = _box_env(source)
     _git(["init", "-b", "testbox"], home, env)
     (home / ".git/info").mkdir(parents=True, exist_ok=True)
     (home / ".git/info/sparse-checkout").write_text("/agent/\n!/agent/core/\n!/agent/skills/*/\n")
-    assert _attach(home, bundle).returncode == 4  # legacy detected
+    assert _attach(home, source).returncode == 4  # legacy detected
 
     # Spine step 2: retire, attach (fails exit 3 — no agent-v0.1.999), then restore.
     (home / ".git").rename(home / ".git-legacy")
-    assert _attach(home, bundle).returncode == 3
+    assert _attach(home, source).returncode == 3
     shutil.rmtree(home / ".git")  # drop the half-made repo the failed attach left
     (home / ".git-legacy").rename(home / ".git")
 
@@ -447,3 +457,47 @@ def test_migration_restores_legacy_repo_when_snapshot_unavailable(tmp_path):
     assert _git(["rev-parse", "--is-inside-work-tree"], home, env).strip() == "true"
     assert (home / ".git/info/sparse-checkout").exists()
     assert not (home / ".git-legacy").exists()
+
+
+def test_fetch_from_the_legacy_bundle_lands_the_same_refs(tmp_path):
+    """LEGACY(remove-when: no agent predating the rename release remains): old boxes fetch
+    the bundle the endpoint serves; it must carry the same snapshot as the bare repo."""
+    source = _upstream_fixture(tmp_path)
+    bundle = source.parent / "workspace.bundle"
+    home = _fresh_box(tmp_path)
+    assert _attach(home, source).returncode == 0
+    via_repo = _git(["rev-parse", "refs/tags/agent-v0.1.170"], home, _box_env(source)).strip()
+    other = tmp_path / "home2"
+    other.mkdir()
+    _git(["init", "-b", "otherbox"], other)
+    r = _run(FETCH, other, extra_env={"VESTA_UPSTREAM_SOURCE": str(bundle), "AGENT_NAME": "otherbox"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _git(["rev-parse", "refs/tags/agent-v0.1.170"], other).strip() == via_repo
+
+
+def test_forwarding_workspace_sync_scripts_behave_identically(tmp_path):
+    """LEGACY(remove-when: no agent predating the rename release remains): released
+    migrations call the old script paths verbatim; the shims must forward."""
+    source = _upstream_fixture(tmp_path)
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    shim_attach = home / "agent/core/skills/workspace-sync/scripts/attach.sh"
+    r = _run(shim_attach, home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _git(["status", "--porcelain"], home, env) == ""
+    r = _run(home / "agent/core/skills/workspace-sync/scripts/fetch-workspace.sh", home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _git(["rev-parse", "refs/remotes/upstream/agent-upstream"], home, env).strip()
+
+
+def test_fetch_without_mount_falls_into_the_endpoint_fallback(tmp_path):
+    """LEGACY(remove-when: no agent predating the rename release remains): a pre-rename
+    container has no /run/vesta-upstream; fetch must take the bundle-endpoint fallback
+    (demanding the vestad env) instead of failing on a missing repo path."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _env(home, {"AGENT_NAME": "testbox"})
+    env.pop("VESTAD_PORT", None)
+    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "VESTAD_PORT" in r.stderr

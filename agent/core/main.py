@@ -25,7 +25,7 @@ from .default_skills import default_skill_sync_turn
 from .events import EventBus
 from .migrations import pending_migration_turns
 from .provider import derive_status
-from .workspace_sync import workspace_sync_turn, vesta_version
+from .upstream_sync import upstream_sync_turn, vesta_version
 
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
@@ -158,12 +158,12 @@ def config_issues_turn(issues: list[str], *, config: cfg.VestaConfig) -> str | N
 def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
-    """Boot-time control-flow as ordered prompt bodies: migrations, then workspace sync, then
+    """Boot-time control-flow as ordered prompt bodies: migrations, then upstream sync, then
     default-skill sync, then config issues, then the greeting last — converge first, orient and
     reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification."""
     turns: list[str] = []
     turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
-    sync_turn = workspace_sync_turn(state=state, config=config, first_start=first_start)
+    sync_turn = upstream_sync_turn(state=state, config=config, first_start=first_start)
     if sync_turn is not None:
         turns.append(sync_turn)
     skill_sync = default_skill_sync_turn(config=config, first_start=first_start)

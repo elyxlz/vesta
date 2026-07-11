@@ -13,14 +13,14 @@ fi
 
 # Self-init a virgin workspace. Skipped when already attached: attach fetches, and
 # installs from local history must stay offline.
-[ -d .git ] || bash ~/agent/core/skills/workspace-sync/scripts/attach.sh
+[ -d .git ] || bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
 
 # Validate before touching the cone; attach guarantees HEAD, the install source.
 git rev-parse -q --verify "HEAD:$DEST" >/dev/null || {
     echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
     exit 1
 }
-bash ~/agent/core/skills/workspace-sync/scripts/set-cone.sh --add "$DEST"
+bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh --add "$DEST"
 
 echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then
