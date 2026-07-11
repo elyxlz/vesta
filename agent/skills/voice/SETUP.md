@@ -1,18 +1,26 @@
 # Voice setup
 
-## 1. Start the voice server
+## 1. Install the CLI
 
-1. Register with vestad to get a port (see [service](../service/SKILL.md)), then start the server in a background screen session:
+```bash
+uv tool install --editable ~/agent/skills/voice/cli
+```
+
+This provides the `voice-server` and `voice-keys` commands.
+
+## 2. Start the voice server
+
+1. Start the daemon:
    ```bash
-   PORT=$(~/agent/skills/service/scripts/register-service voice)
-   SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+   voice-keys daemon start
    ```
+   Idempotent (a running daemon is a no-op) and owns the register-service call (see [service](../service/SKILL.md)) so there is nothing else to wire up. Check with `voice-keys daemon status`.
 2. Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
-   PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+   voice-keys daemon start
    ```
 
-## 2. API keys
+## 3. API keys
 
 Each user needs their own API keys: one Deepgram key for STT (voice input) and one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's configuration.
 

@@ -8,6 +8,47 @@ description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forwa
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 
+## Two backends (Graph + OWA REST)
+
+Every email, folder, and calendar command runs over one of two paths, chosen with
+`--backend {auto,graph,owa-rest}` (default `auto`):
+
+- **`graph`**: the official Microsoft Graph API (`graph.microsoft.com`). The
+  clean, supported, first-class path. Uses a device-flow OAuth token (see SETUP).
+- **`owa-rest`**: calls the OWA REST API (`outlook.office.com/api/v2.0`) with a
+  token captured from a signed-in Outlook-on-the-web session in the agent's own
+  browser (`microsoft auth owa-login`). This is the universal fallback: locked
+  tenants that block Graph usually block device-code flow too, and browser capture
+  works on all of them. The capture is agent-driven and runs on the agent's box, so
+  it needs nothing from the user's machine.
+- **`auto`** (default): tries Graph; on a permission failure (401/402/403, or the
+  account is only authorized for OWA REST) falls back to OWA REST. Non-permission
+  errors propagate unchanged so the fallback never hides real bugs.
+
+Both backends support the full command surface below. The one exception:
+inbox rules (`block`/`unblock`) are Graph-only, since OWA REST v2.0 does not
+expose them; on the REST path they raise a clear error pointing to `--backend graph`.
+
+**OWA REST setup** (only needed if Graph is blocked on the tenant). Open Outlook
+on the web in the agent's browser and sign in with the `browser` skill (navigate,
+enter the user's credentials, handle MFA), then capture the token:
+```bash
+microsoft auth owa-login --account you@company.com
+```
+If the session is not signed in yet it returns `sign_in_required` (no blocking);
+finish the sign-in via the `browser` skill and run it again. The captured token
+lasts about 24 h; re-run to refresh. `auto` uses it automatically once captured.
+
+When the agent cannot reach the user's browser (agent on another machine), let the
+user sign in on their **own** browser and paste just the token, so their password and
+MFA never reach the agent. Give them the one-line snippet `auth_commands.OWA_TOKEN_SNIPPET`
+to run in the Outlook DevTools console (it copies the token to their clipboard), then:
+```bash
+microsoft auth owa-login --account you@company.com --token <PASTED_TOKEN>
+```
+On a tenant that still permits device flow, `owa-login --device` (then
+`owa-complete`) does a code sign-in instead, which MSAL auto-refreshes.
+
 ## Email
 
 ```bash
@@ -18,7 +59,10 @@ microsoft email reply --account user@example.com --id <email_id> --body "Thanks!
 microsoft email reply --account user@example.com --id <email_id> --body "Thanks all!" --reply-all
 microsoft email forward --account user@example.com --id <email_id> --to bob@example.com --body "fyi, see below"
 microsoft email search --account user@example.com --query "project update"
+microsoft email list --account user@example.com --search "project update"   # alias for the line above
 ```
+
+Both `email search --query "..."` and `email list --search "..."` run the same search (search defaults to all folders; add `--folder` to narrow). Before making any negative claim ("not in the inbox") off empty output, confirm the command actually exited 0: an empty result with a non-zero exit means the query failed, not that nothing matched.
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 

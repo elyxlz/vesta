@@ -10,7 +10,8 @@ use std::fmt;
 /// agent's entire world (home, `/root/agent/data` = events.db + state.json, `/root/.claude` = auth,
 /// `/root/agent/core` = code); the rest are OS dirs whose replacement would break the container.
 pub const PROTECTED_PREFIXES: &[&str] = &[
-    "/root", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run", "/proc", "/sys", "/dev", "/boot",
+    "/root", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run", "/proc", "/sys", "/dev",
+    "/boot",
 ];
 
 /// Writable container runtime roots that must not be *shadowed at their top level* (mounting onto
@@ -42,7 +43,9 @@ impl fmt::Display for MountError {
             MountError::ContainerPathProtected(path) => {
                 write!(f, "container path '{path}' is protected; choose a path outside /root and system dirs, e.g. under /mnt")
             }
-            MountError::DuplicateContainerPath(path) => write!(f, "duplicate container path '{path}'"),
+            MountError::DuplicateContainerPath(path) => {
+                write!(f, "duplicate container path '{path}'")
+            }
         }
     }
 }
@@ -65,7 +68,9 @@ pub fn is_protected(container_path: &str) -> bool {
     if path == "/" || PROTECTED_EXACT.contains(&path) {
         return true;
     }
-    PROTECTED_PREFIXES.iter().any(|root| path == *root || path.starts_with(&format!("{root}/")))
+    PROTECTED_PREFIXES
+        .iter()
+        .any(|root| path == *root || path.starts_with(&format!("{root}/")))
 }
 
 /// Validate one grant. `host_path` must be absolute and (normally) exist — it is canonicalized so the
@@ -102,16 +107,26 @@ pub fn validate_mount(
     if is_protected(&container) {
         return Err(MountError::ContainerPathProtected(container));
     }
-    if std::path::Path::new(&container).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if std::path::Path::new(&container)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err(MountError::ContainerPathProtected(container));
     }
-    Ok(HostMount { host_path: canonical, container_path: container, writable })
+    Ok(HostMount {
+        host_path: canonical,
+        container_path: container,
+        writable,
+    })
 }
 
 /// Validate a full list and reject duplicate container paths (two grants can't target one dest).
 /// `known_host_paths` (the agent's already-accepted grant paths) grandfathers temporarily-offline
 /// existing grants so a single missing path can't reject the whole edit — see `validate_mount`.
-pub fn validate_mounts(inputs: &[(String, Option<String>, bool)], known_host_paths: &HashSet<String>) -> Result<Vec<HostMount>, MountError> {
+pub fn validate_mounts(
+    inputs: &[(String, Option<String>, bool)],
+    known_host_paths: &HashSet<String>,
+) -> Result<Vec<HostMount>, MountError> {
     let mut out: Vec<HostMount> = Vec::with_capacity(inputs.len());
     for (host, container, writable) in inputs {
         let mount = validate_mount(host, container.as_deref(), *writable, known_host_paths)?;
@@ -147,10 +162,18 @@ fn join_and(items: &[String]) -> String {
 /// (`docker::actual_user_mounts`); `desired` is the new grant list. Classified per
 /// container_path: new path = granted, dropped path = removed, same path with a different
 /// mode = changed — a downgrade must read as a revocation of write access, never a gain.
-pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMount]) -> Option<String> {
-    let actual_modes: std::collections::HashMap<&str, bool> =
-        actual.iter().map(|(_, container, writable)| (container.as_str(), *writable)).collect();
-    let desired_paths: std::collections::HashSet<&str> = desired.iter().map(|mount| mount.container_path.as_str()).collect();
+pub fn mount_change_reason(
+    actual: &[(String, String, bool)],
+    desired: &[HostMount],
+) -> Option<String> {
+    let actual_modes: std::collections::HashMap<&str, bool> = actual
+        .iter()
+        .map(|(_, container, writable)| (container.as_str(), *writable))
+        .collect();
+    let desired_paths: std::collections::HashSet<&str> = desired
+        .iter()
+        .map(|mount| mount.container_path.as_str())
+        .collect();
 
     let mode = |writable: bool| if writable { "read-write" } else { "read-only" };
 
@@ -158,9 +181,17 @@ pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMou
     let mut changed: Vec<String> = Vec::new();
     for mount in desired {
         match actual_modes.get(mount.container_path.as_str()) {
-            None => granted.push(format!("{} ({})", mount.container_path, mode(mount.writable))),
+            None => granted.push(format!(
+                "{} ({})",
+                mount.container_path,
+                mode(mount.writable)
+            )),
             Some(current) if *current != mount.writable => {
-                changed.push(format!("{} (now {})", mount.container_path, mode(mount.writable)));
+                changed.push(format!(
+                    "{} (now {})",
+                    mount.container_path,
+                    mode(mount.writable)
+                ));
             }
             Some(_) => {}
         }
@@ -173,9 +204,18 @@ pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMou
 
     match (granted.is_empty(), removed.is_empty(), changed.is_empty()) {
         (true, true, true) => None,
-        (false, true, true) => Some(format!("mounts: you now have access to {}", join_and(&granted))),
-        (true, false, true) => Some(format!("mounts: your access to {} was removed", join_and(&removed))),
-        (true, true, false) => Some(format!("mounts: your access changed: {}", join_and(&changed))),
+        (false, true, true) => Some(format!(
+            "mounts: you now have access to {}",
+            join_and(&granted)
+        )),
+        (true, false, true) => Some(format!(
+            "mounts: your access to {} was removed",
+            join_and(&removed)
+        )),
+        (true, true, false) => Some(format!(
+            "mounts: your access changed: {}",
+            join_and(&changed)
+        )),
         _ => {
             let mut segments: Vec<String> = Vec::new();
             if !granted.is_empty() {
@@ -187,7 +227,10 @@ pub fn mount_change_reason(actual: &[(String, String, bool)], desired: &[HostMou
             if !changed.is_empty() {
                 segments.push(format!("changed: {}", changed.join(", ")));
             }
-            Some(format!("mounts: filesystem access changed. {}", segments.join("; ")))
+            Some(format!(
+                "mounts: filesystem access changed. {}",
+                segments.join("; ")
+            ))
         }
     }
 }
@@ -208,8 +251,14 @@ pub fn effective_restart_reason(
 pub const SUGGESTION_ROOTS: &[&str] = &["/mnt", "/media", "/srv", "/data", "/pool", "/tank"];
 
 /// Well-known folders inside the host user's home worth suggesting when they exist.
-pub const HOME_SUGGESTIONS: &[&str] =
-    &["Downloads", "Movies", "Videos", "Music", "Pictures", "Documents"];
+pub const HOME_SUGGESTIONS: &[&str] = &[
+    "Downloads",
+    "Movies",
+    "Videos",
+    "Music",
+    "Pictures",
+    "Documents",
+];
 
 /// Existing host folders to suggest as shares, so the user doesn't hand-type a path. Scans the
 /// immediate children of the common mount roots plus a few well-known home folders. Only
@@ -257,7 +306,11 @@ mod tests {
     }
 
     fn m(container: &str, writable: bool) -> HostMount {
-        HostMount { host_path: container.into(), container_path: container.into(), writable }
+        HostMount {
+            host_path: container.into(),
+            container_path: container.into(),
+            writable,
+        }
     }
 
     #[test]
@@ -274,7 +327,8 @@ mod tests {
         );
         // removal only
         assert_eq!(
-            mount_change_reason(&[("/media/Plex".into(), "/media/Plex".into(), false)], &[]).as_deref(),
+            mount_change_reason(&[("/media/Plex".into(), "/media/Plex".into(), false)], &[])
+                .as_deref(),
             Some("mounts: your access to /media/Plex was removed")
         );
         // mixed
@@ -297,14 +351,22 @@ mod tests {
             Some("mounts: filesystem access changed. granted: /new (read-only); changed: /x (now read-write)")
         );
         // no change
-        assert_eq!(mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", true)]), None);
+        assert_eq!(
+            mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", true)]),
+            None
+        );
     }
 
     #[test]
     fn effective_restart_reason_prefers_the_caller_reason() {
         // Caller intent wins over the synthesized delta...
         assert_eq!(
-            effective_restart_reason(Some("manual: switching model".into()), &[], &[m("/new", false)]).as_deref(),
+            effective_restart_reason(
+                Some("manual: switching model".into()),
+                &[],
+                &[m("/new", false)]
+            )
+            .as_deref(),
             Some("manual: switching model")
         );
         // ...else the delta speaks, and no delta means no reason.
@@ -327,7 +389,10 @@ mod tests {
 
     #[test]
     fn rejects_relative_host_path() {
-        assert!(matches!(validate_mount("relative/path", None, false, &no_known()), Err(MountError::NotAbsolute)));
+        assert!(matches!(
+            validate_mount("relative/path", None, false, &no_known()),
+            Err(MountError::NotAbsolute)
+        ));
     }
 
     #[test]
@@ -339,7 +404,10 @@ mod tests {
         let known: HashSet<String> = [missing.to_string()].into_iter().collect();
         let m = validate_mount(missing, Some("/mnt/offline"), false, &known).unwrap();
         assert_eq!(m.host_path, missing);
-        assert!(matches!(validate_mount(missing, Some("/mnt/offline"), false, &no_known()), Err(MountError::HostPathMissing(_))));
+        assert!(matches!(
+            validate_mount(missing, Some("/mnt/offline"), false, &no_known()),
+            Err(MountError::HostPathMissing(_))
+        ));
     }
 
     #[test]
@@ -362,21 +430,40 @@ mod tests {
         std::fs::write(root.join("a-file"), b"x").unwrap(); // a file, not a dir — excluded
         let home = tmp.join("home");
         std::fs::create_dir_all(home.join("Downloads")).unwrap(); // exists
-        // "Movies" intentionally not created — must be excluded.
+                                                                  // "Movies" intentionally not created — must be excluded.
 
-        let got = scan_candidate_folders(&[root.to_str().unwrap()], home.to_str(), &["Downloads", "Movies"]);
+        let got = scan_candidate_folders(
+            &[root.to_str().unwrap()],
+            home.to_str(),
+            &["Downloads", "Movies"],
+        );
 
-        assert!(got.iter().any(|p| p.ends_with("/media")), "should list /mnt/media child: {got:?}");
+        assert!(
+            got.iter().any(|p| p.ends_with("/media")),
+            "should list /mnt/media child: {got:?}"
+        );
         assert!(got.iter().any(|p| p.ends_with("/downloads")));
-        assert!(got.iter().any(|p| p.ends_with("/Downloads")), "should include existing home folder");
-        assert!(!got.iter().any(|p| p.ends_with("/a-file")), "files must be excluded");
-        assert!(!got.iter().any(|p| p.ends_with("/Movies")), "nonexistent home folder must be excluded");
+        assert!(
+            got.iter().any(|p| p.ends_with("/Downloads")),
+            "should include existing home folder"
+        );
+        assert!(
+            !got.iter().any(|p| p.ends_with("/a-file")),
+            "files must be excluded"
+        );
+        assert!(
+            !got.iter().any(|p| p.ends_with("/Movies")),
+            "nonexistent home folder must be excluded"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn rejects_missing_host_path() {
-        assert!(matches!(validate_mount("/definitely/does/not/exist/xyzzy", None, false, &no_known()), Err(MountError::HostPathMissing(_))));
+        assert!(matches!(
+            validate_mount("/definitely/does/not/exist/xyzzy", None, false, &no_known()),
+            Err(MountError::HostPathMissing(_))
+        ));
     }
 
     #[test]
@@ -385,7 +472,12 @@ mod tests {
         let sub = dir.join("vesta-mount-test-dotdot");
         std::fs::create_dir_all(&sub).unwrap();
         assert!(matches!(
-            validate_mount(sub.to_str().unwrap(), Some("/mnt/../root/.claude"), false, &no_known()),
+            validate_mount(
+                sub.to_str().unwrap(),
+                Some("/mnt/../root/.claude"),
+                false,
+                &no_known()
+            ),
             Err(MountError::ContainerPathProtected(_))
         ));
     }
@@ -419,9 +511,17 @@ mod tests {
 
     #[test]
     fn bind_string_ro_and_rw() {
-        let ro = HostMount { host_path: "/mnt/media".into(), container_path: "/mnt/media".into(), writable: false };
+        let ro = HostMount {
+            host_path: "/mnt/media".into(),
+            container_path: "/mnt/media".into(),
+            writable: false,
+        };
         assert_eq!(bind_string(&ro), "/mnt/media:/mnt/media:ro");
-        let rw = HostMount { host_path: "/mnt/dl".into(), container_path: "/mnt/dl".into(), writable: true };
+        let rw = HostMount {
+            host_path: "/mnt/dl".into(),
+            container_path: "/mnt/dl".into(),
+            writable: true,
+        };
         assert_eq!(bind_string(&rw), "/mnt/dl:/mnt/dl:rw");
     }
 
@@ -436,9 +536,20 @@ mod tests {
         std::fs::create_dir_all(&sub_a).unwrap();
         std::fs::create_dir_all(&sub_b).unwrap();
         let inputs = vec![
-            (sub_a.to_str().unwrap().to_string(), Some("/mnt/x".to_string()), false),
-            (sub_b.to_str().unwrap().to_string(), Some("/mnt/x".to_string()), false),
+            (
+                sub_a.to_str().unwrap().to_string(),
+                Some("/mnt/x".to_string()),
+                false,
+            ),
+            (
+                sub_b.to_str().unwrap().to_string(),
+                Some("/mnt/x".to_string()),
+                false,
+            ),
         ];
-        assert!(matches!(validate_mounts(&inputs, &no_known()), Err(MountError::DuplicateContainerPath(_))));
+        assert!(matches!(
+            validate_mounts(&inputs, &no_known()),
+            Err(MountError::DuplicateContainerPath(_))
+        ));
     }
 }

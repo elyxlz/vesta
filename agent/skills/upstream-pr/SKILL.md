@@ -7,6 +7,12 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from upstream `master`, never from your workspace branch or local HEAD.
 
+## Setup
+
+```bash
+uv tool install --editable ~/agent/skills/upstream-pr/cli
+```
+
 ## Discovering what to file (run this every night, in the dream's Upstream phase)
 
 Don't wait to stumble on things worth upstreaming: sweep for them. Your workspace (`~`) is a git repo whose stock baseline is the tag `agent-vX.Y.Z` matching the version you run. Diffing your branch against that tag surfaces **everything you've changed or added on top of stock**, i.e. the full contribution surface, in one command:
@@ -34,7 +40,7 @@ Three gates before opening a worktree.
 - Infrastructure or tooling improvements
 
 **2. Issue, PR, or both?**
-- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `pr.py --body "...fixes #N"` is enough.
+- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream-pr --body "...fixes #N"` is enough.
 - You don't have a fix yet: **issue only**.
 
 **3. Strip personal information.** Upstream is public, so the user must not be identifiable: never file personal config, their own memory content, credentials, or user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks). Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
@@ -46,7 +52,7 @@ Every PR and every issue must carry the agent name and vesta version, so maintai
 - Agent name: `$AGENT_NAME`
 - Vesta version: read from `~/agent/core/pyproject.toml`
 
-`pr.py` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
+`upstream-pr` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
 
 ```
 ---
@@ -71,30 +77,30 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    ```bash
    cd /tmp/vesta-pr
    git add <files> && git commit -m "<description>"
-   uv run ~/agent/skills/upstream-pr/pr.py --title "..." --body "..."
+   upstream-pr --title "..." --body "..."
    ```
 
 5. **Clean up:** `git -C ~ worktree remove /tmp/vesta-pr`
 
-6. **Wait for CI to pass.** Get a token with `pr.py --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
+6. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
 Only report a PR as done once every CI check is green.
 
 ## Filing an issue
 
-Get a token with `pr.py --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+Get a token with `upstream-pr --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
 
-## pr.py reference
+## upstream-pr reference
 
 ```bash
 # Create a PR (auto branch, base=master)
-uv run ~/agent/skills/upstream-pr/pr.py --title "fix: ..." --body "..."
+upstream-pr --title "fix: ..." --body "..."
 
 # Custom branch and base
-uv run ~/agent/skills/upstream-pr/pr.py --title "..." --branch my-branch --base master
+upstream-pr --title "..." --branch my-branch --base master
 
 # Short-lived GitHub API token (for issues, check-runs, PR status)
-uv run ~/agent/skills/upstream-pr/pr.py --token-only
+upstream-pr --token-only
 ```
 
 ## Formatting Python before pushing

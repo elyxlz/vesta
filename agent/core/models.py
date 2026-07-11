@@ -1,42 +1,15 @@
 import asyncio
 import collections
 import dataclasses as dc
-import datetime as dt
 import time
 import typing as tp
 
-import pydantic as pyd
 from aiohttp.web import AppRunner
 from claude_agent_sdk import ClaudeSDKClient
 
-from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config
 from .events import EventBus
-from .notification_interrupt_policy import CORE_SOURCE
 from .provider import ProviderStatus
 from .state_store import PersistedState
-
-__all__ = [
-    "State",
-    "Notification",
-    "VestaConfig",
-    "ClaudeConfig",
-    "OpenRouterConfig",
-    "Provider",
-    "PersistedState",
-    "CORE_SOURCE",
-    "load_config",
-]
-
-# Notification `type` values for the `source=core` notifications that remain notifications (periodic
-# control-flow). Boot-time control-flow (greeting, migrations, skill-sync, config issues) is delivered
-# as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
-TYPE_PROACTIVE_CHECK = "proactive_check"
-TYPE_NIGHTLY_DREAM = "nightly_dream"
-TYPE_COMPACTION_FOLLOWUP = "compaction_followup"
-
-# Core notifications are exempt from the user's rules; loops.py derives their disposition from the type.
-# Types listed here pool (wait for idle); every other core type interrupts.
-CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
 
 
 class QueuedTurn(tp.NamedTuple):
@@ -157,9 +130,17 @@ class State:
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDelivered): the
+    # message loop then keeps in_flight_notification_paths instead of clearing it, since the
+    # resumed session never saw the message. Reset at the start of every turn.
+    query_not_delivered: bool = False
     # A deferred compaction scheduled by the compact_context tool, drained after the turn's
     # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
     pending_compaction: PendingCompaction | None = None
+    # The last rejected rate-limit window surfaced as an error event, as (rate_limit_type,
+    # resets_at): the CLI re-reports the same rejection on every retry, so _dispatch_message
+    # announces each window once (issue #1071).
+    rate_limit_noticed: tuple[str | None, int | None] | None = None
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
@@ -171,40 +152,3 @@ class State:
     # True while context usage is above the warning threshold, so log_context_usage emits
     # the warning event once on crossing rather than on every per-message check.
     context_warning_active: bool = False
-
-
-class Notification(pyd.BaseModel):
-    model_config = pyd.ConfigDict(extra="allow")
-
-    timestamp: dt.datetime
-    source: str
-    type: str
-    # The producing skill's default disposition, used when no user rule matches (True -> interrupt,
-    # False -> pool). See notification_interrupt_policy.notif_disposition.
-    interrupt: bool = True
-    body: str | None = None
-    file_path: str | None = pyd.Field(default=None, exclude=True)
-
-    def format_for_display(self) -> str:
-        """Render the notification as an XML element for unambiguous parsing.
-
-        When `body` is set it becomes the inner text (used by multi-line system prompts).
-        Otherwise the remaining fields render as `key=value` attributes.
-
-        Drops empty strings, False bools, empty lists, and None since they cost tokens without
-        carrying information. Booleans should be named so True is the interesting case
-        (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
-        datetime field.
-        """
-        if self.body is not None:
-            return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
-        data = self.model_dump(exclude={"file_path", "type", "source", "body", "interrupt"})
-        parts = []
-        for key, value in data.items():
-            if value is None or value == "" or value is False or value == []:
-                continue
-            if isinstance(value, dt.datetime):
-                value = value.replace(microsecond=0).isoformat()
-            parts.append(f"{key}={value}")
-        body = ", ".join(parts)
-        return f'<notification source="{self.source}" type="{self.type}">{body}</notification>'

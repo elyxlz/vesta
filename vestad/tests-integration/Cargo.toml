@@ -3,7 +3,7 @@
 # them (CARGO_BIN_EXE_vestad); vestad dev-depends on this crate for the harness.
 [package]
 name = "vesta-tests"
-version = "0.1.170"
+version = "0.1.174"
 edition = "2021"
 publish = false
 

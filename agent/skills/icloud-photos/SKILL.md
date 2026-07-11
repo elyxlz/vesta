@@ -84,4 +84,4 @@ Creates one subfolder per shared album. Same `--quality` and `--include-videos` 
 
 ## Installed via
 
-`uv tool install ~/agent/skills/icloud-photos/cli`
+`uv tool install --editable ~/agent/skills/icloud-photos/cli`

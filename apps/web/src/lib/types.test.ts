@@ -11,6 +11,7 @@ describe("VestaEvent contract", () => {
     "tool_start",
     "tool_end",
     "error",
+    "rate_limited",
     "notification",
     "notification_cleared",
     "subagent_start",
@@ -32,6 +33,12 @@ describe("VestaEvent contract", () => {
     { type: "subagent_start", agent_id: "abc", agent_type: "browser" },
     { type: "subagent_stop", agent_id: "abc", agent_type: "browser" },
     { type: "notification_cleared", notif_id: "email-123" },
+    {
+      type: "rate_limited",
+      text: "Claude rate limit hit",
+      window: "five_hour",
+      resets_at: 1767225600,
+    },
     {
       type: "snapshot",
       state: "idle",

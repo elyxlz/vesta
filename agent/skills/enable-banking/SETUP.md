@@ -13,7 +13,7 @@
 ## 2. Install CLI
 
 ```bash
-cd ~/agent/skills/enable-banking/cli && uv tool install --force --reinstall .
+cd ~/agent/skills/enable-banking/cli && uv tool install --editable --force --reinstall .
 ```
 
 ## 3. Configure

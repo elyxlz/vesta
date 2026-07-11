@@ -124,8 +124,10 @@ If these work, repeat steps 2-3 for each additional account.
 ## 4. Start the poll daemon
 
 ```bash
-screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
+email-client daemon start
 ```
+
+Idempotent (a running daemon is a no-op) and defaults `--interval` to `$EMAIL_CLIENT_POLL_INTERVAL` or 15 seconds. Check with `email-client daemon status`, which reports process state plus per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand. `email-client daemon stop` and `email-client daemon restart` are also available; a deliberate stop or restart marks itself intentional first, so it never fires the `daemon_died` notification the agent would otherwise investigate.
 
 The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
 
@@ -147,7 +149,7 @@ connects out to IMAP and writes notification files, so it needs no inbound port:
 daemon, not a vestad service.
 
 ```
-screen -dmS email-client bash -c "cd ~/.email-client/runtime && PYTHONUNBUFFERED=1 uv run python3 ~/.email-client/poll_daemon.py --interval 15 > ~/.email-client/poll_daemon.log 2>&1"
+running email-client || { email-client daemon start; sleep 1; }
 ```
 
 ## 6. Wire the rules into MEMORY.md
@@ -169,7 +171,7 @@ EOF
 A notification arrives to you looking like this, so your rules can match on `from` / `subject` / `folder`:
 
 ```
-<notification source="email-client" type="email">account=personal, folder=INBOX, from=Jane Doe <jane@example.com>, subject=Q2 budget review, date=..., uid=12345</notification>
+<channel source="email-client" type="email" account="personal" folder="INBOX" from="Jane Doe &lt;jane@example.com&gt;" subject="Q2 budget review" date="..." uid="12345"></channel>
 ```
 
 Without this line you still handle email on request, but standing rules (especially "stay silent" / auto-handle rules) may not fire on their own.
@@ -194,7 +196,7 @@ Repeat for each connected account. Don't rush this. Go through many hundreds of 
 - **Gmail `invalid_grant` on refresh**: access revoked or the refresh token aged out. Run `email-client auth add --account <name> --provider gmail --reauth`.
 - **Yahoo / iCloud `LOGIN failed`**: app password rotated or wrong. Generate a new one and `--reauth`.
 - **Loopback OAuth `bind: Address already in use`**: another process grabbed the port between probe and bind. Re-run; the CLI picks a fresh random port each time.
-- **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and the daemon shows in `screen -ls`.
+- **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and `email-client daemon status` shows `"running": true`. A `daemon_died` notification with a `reason` field means it crashed or was killed outside the CLI; restart with `email-client daemon start`.
 - **`list --limit 200` is slow on a huge mailbox**: expected; IMAP `SEARCH ALL` + `FETCH` is O(n). Scope with `search --query 'SINCE <date>'`.
 - **`unknown account 'foo'`**: run `email-client auth list`; add the missing one with `email-client auth add --account foo`.
 - **Microsoft 365 custom domain** (`you@yourcompany.com`): use `--provider microsoft-work`. See "Microsoft 365 with a custom domain" below for the four org-side blockers (`AADSTS50020` / admin consent, IMAP disabled, SMTP AUTH disabled, Conditional Access).
@@ -213,6 +215,9 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
       high_uid.txt                # INBOX watermark
       high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
     work/ ...
+  daemon.pid                      # poll daemon pid; owned by `email-client daemon start|stop|restart|status`
+  daemon-info.json                # {"interval", "started_at"} of the running daemon, for `daemon restart`
+  stop-requested                  # marker `daemon stop`/`restart` writes so a deliberate exit skips daemon_died
 ```
 
 `token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.

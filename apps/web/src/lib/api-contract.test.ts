@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { BackupInfo } from "@/api/agents";
-import type { AuthStartResult } from "@/api/auth";
+import type { OAuthStartResult } from "@/api/providers/claude";
 import type { FileTreeEntry } from "@/api/files";
 import type {
   AgentActivityState,
@@ -52,8 +52,8 @@ describe("vestad API contract", () => {
     ]);
   });
 
-  it("auth flow response satisfies AuthStartResult", () => {
-    const auth = vestadApiFixtures.auth_start satisfies AuthStartResult;
+  it("auth flow response satisfies OAuthStartResult", () => {
+    const auth = vestadApiFixtures.auth_start satisfies OAuthStartResult;
     expect(auth.auth_url).toContain("https://");
     expect(auth.session_id).toBeTruthy();
   });
@@ -88,6 +88,7 @@ describe("agent stream contract", () => {
       "tool_start",
       "tool_end",
       "error",
+      "rate_limited",
       "notification",
       "notification_cleared",
       "subagent_start",

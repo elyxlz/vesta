@@ -49,6 +49,13 @@ export const streamEventFixtures = {
       "text": "oops"
     },
     {
+      "type": "rate_limited",
+      "ts": "2026-01-01T00:00:00Z",
+      "text": "Claude rate limit hit",
+      "window": "five_hour",
+      "resets_at": 1767225600
+    },
+    {
       "type": "notification",
       "ts": "2026-01-01T00:00:00Z",
       "source": "email",

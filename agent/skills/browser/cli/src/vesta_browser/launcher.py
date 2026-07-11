@@ -1,192 +1,148 @@
-"""Launch a stealth Chromium and wait until its CDP endpoint is reachable."""
+"""Lazily fetch, verify, and launch Camoufox; drive it over WebDriver BiDi.
+
+Camoufox is a recompiled Firefox that spoofs its fingerprint in C++ below JS, so
+headless is fully stealthy (no Xvfb, no HeadlessChrome-style UA leak that stock
+Chromium needs a real display to hide). We fetch the pinned release on first launch,
+verify its sha256, and cache the extracted browser under ~/.cache/camoufox/<tag>/.
+The fingerprint comes from a seed-selected preset exported as CAMOU_CONFIG_* env
+vars (presets.py). Camoufox announces its BiDi WebSocket once on stderr and offers
+no HTTP rediscovery endpoint (unlike CDP's /json/version), so we log stderr to a
+file the detached process can always write to and tail it for the URL.
+"""
 
 from __future__ import annotations
 
-import json
 import os
+import platform
+import re
 import shutil
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
+import zipfile
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
-CDP_PORT_START = 9222
-CDP_PORT_END = 9322
-PROFILE_ROOT = Path.home() / ".browser" / "profile"
-READY_TIMEOUT_S = 15.0
-READY_POLL_S = 0.2
+from .presets import camou_config_env, fit_to_screen, select_preset
 
-# Anti-detection Chrome args from Scrapling (https://github.com/D4Vinci/Scrapling).
-# Applied when stealth is enabled to reduce automation fingerprint.
-STEALTH_ARGS = [
-    "--no-pings",
-    "--disable-infobars",
-    "--disable-breakpad",
-    "--no-service-autorun",
-    "--homepage=about:blank",
-    "--disable-hang-monitor",
-    "--disable-session-crashed-bubble",
-    "--disable-search-engine-choice-screen",
-    "--test-type",
-    "--lang=en-US",
-    "--mute-audio",
-    "--hide-scrollbars",
-    "--disable-logging",
-    "--start-maximized",
-    "--enable-async-dns",
-    "--accept-lang=en-US",
-    "--use-mock-keychain",
-    "--disable-translate",
-    "--disable-voice-input",
-    "--window-position=0,0",
-    "--disable-wake-on-wifi",
-    "--ignore-gpu-blocklist",
-    "--enable-tcp-fast-open",
-    "--enable-web-bluetooth",
-    "--disable-cloud-import",
-    "--disable-print-preview",
-    "--metrics-recording-only",
-    "--disable-crash-reporter",
-    "--disable-partial-raster",
-    "--disable-gesture-typing",
-    "--disable-checker-imaging",
-    "--disable-prompt-on-repost",
-    "--force-color-profile=srgb",
-    "--font-render-hinting=none",
-    "--aggressive-cache-discard",
-    "--disable-domain-reliability",
-    "--disable-threaded-animation",
-    "--disable-threaded-scrolling",
-    "--enable-simple-cache-backend",
-    "--enable-surface-synchronization",
-    "--disable-image-animation-resync",
-    "--disable-renderer-backgrounding",
-    "--disable-ipc-flooding-protection",
-    "--prerender-from-omnibox=disabled",
-    "--safebrowsing-disable-auto-update",
-    "--disable-offer-upload-credit-cards",
-    "--disable-background-timer-throttling",
-    "--disable-new-content-rendering-timeout",
-    "--run-all-compositor-stages-before-draw",
-    "--disable-client-side-phishing-detection",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-layer-tree-host-memory-pressure",
-    "--autoplay-policy=user-gesture-required",
-    "--disable-offer-store-unmasked-wallet-cards",
-    "--disable-component-extensions-with-background-pages",
-    "--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance,SharedArrayBuffer",
-    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
-    "--disable-features=AudioServiceOutOfProcess,TranslateUI,BlinkGenPropertyTrees",
-]
-
-HARMFUL_ARGS = {
-    "--enable-automation",
-    "--disable-popup-blocking",
-    "--disable-component-update",
-    "--disable-default-apps",
-    "--disable-extensions",
+CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
+# arm64 and x86_64 assets carry different build numbers within one release, so pin
+# each arch's exact asset name + digest rather than templating from a version string.
+CAMOUFOX_ASSETS = {
+    "aarch64": ("camoufox-150.0.2-alpha.25-lin.arm64.zip", "b2870af8cd99721d41bd48f0cce0f949449ab75364b80ee3d389bd35953ea213"),
+    "x86_64": ("camoufox-150.0.2-alpha.26-lin.x86_64.zip", "b146b98b0c2c41023716feef36451f319a534309f72c54584a4b0b88670f510b"),
 }
+RELEASE_DOWNLOAD_URL = "https://github.com/daijro/camoufox/releases/download"
+CACHE_ROOT = Path.home() / ".cache" / "camoufox"
+PROFILE_ROOT = Path.home() / ".browser" / "profile"
 
-LINUX_CHROMIUM_PATHS = [
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/snap/bin/chromium",
-]
-
-MAC_CHROMIUM_PATHS = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-]
+DOWNLOAD_TIMEOUT_S = 600.0
+DOWNLOAD_CHUNK = 1 << 20
+READY_TIMEOUT_S = 45.0
+READY_POLL_S = 0.2
+BIDI_RE = re.compile(r"WebDriver BiDi listening on (ws://\S+)")
 
 
 @dataclass
-class RunningChrome:
+class RunningCamoufox:
     pid: int
-    cdp_port: int
+    ws_url: str
     user_data_dir: Path
     exe_path: str
     proc: subprocess.Popen[bytes]
 
 
-def find_chromium_executable(override: str | None = None) -> str:
-    """Locate a chromium executable. Prefers playwright-core's installed chromium on Linux."""
+def _asset_for_arch() -> tuple[str, str]:
+    machine = platform.machine()
+    if machine not in CAMOUFOX_ASSETS:
+        raise RuntimeError(f"no Camoufox build for arch {machine!r}; supported: {sorted(CAMOUFOX_ASSETS)}")
+    return CAMOUFOX_ASSETS[machine]
+
+
+def camoufox_home() -> Path:
+    return CACHE_ROOT / CAMOUFOX_RELEASE_TAG
+
+
+def camoufox_installed() -> bool:
+    return (camoufox_home() / "camoufox").is_file()
+
+
+def _verify_sha256(path: Path, expected: str) -> None:
+    digest = sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(DOWNLOAD_CHUNK), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise RuntimeError(f"Camoufox download sha256 mismatch: expected {expected}, got {actual}")
+
+
+def _download(url: str, dest: Path) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": "vesta-browser"})
+    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_S) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f, DOWNLOAD_CHUNK)
+
+
+def _extract_preserving_mode(zip_path: Path, dest: Path) -> None:
+    """Extract, restoring unix exec bits (zipfile.extractall drops them, which would
+    leave the camoufox binary and its .so loader non-executable)."""
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            z.extract(info, dest)
+            mode = info.external_attr >> 16
+            if mode:
+                os.chmod(dest / info.filename, mode)
+
+
+def ensure_camoufox(override: str | None = None) -> str:
+    """Return a path to the Camoufox executable, fetching + extracting on first use."""
     if override:
         if not Path(override).is_file():
             raise RuntimeError(f"executable not found: {override}")
         return override
 
-    # Playwright-core installs chromium under ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome.
-    pw_cache = Path.home() / ".cache" / "ms-playwright"
-    if pw_cache.is_dir():
-        for d in sorted(pw_cache.glob("chromium-*"), reverse=True):
-            for candidate in (d / "chrome-linux" / "chrome", d / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"):
-                if candidate.is_file():
-                    return str(candidate)
+    home = camoufox_home()
+    exe = home / "camoufox"
+    if exe.is_file():
+        return str(exe)
 
-    paths = LINUX_CHROMIUM_PATHS if sys.platform.startswith("linux") else MAC_CHROMIUM_PATHS
-    for p in paths:
-        if Path(p).is_file():
-            return p
+    asset_name, expected_sha = _asset_for_arch()
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp_zip = CACHE_ROOT / f".{asset_name}.part"
+    _download(f"{RELEASE_DOWNLOAD_URL}/{CAMOUFOX_RELEASE_TAG}/{asset_name}", tmp_zip)
+    _verify_sha256(tmp_zip, expected_sha)
 
-    which = shutil.which("chromium") or shutil.which("google-chrome") or shutil.which("chrome")
-    if which:
-        return which
+    staging = CACHE_ROOT / f".{CAMOUFOX_RELEASE_TAG}.staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+    _extract_preserving_mode(tmp_zip, staging)
+    tmp_zip.unlink(missing_ok=True)
 
-    raise RuntimeError("No chromium executable found. Install via `npx playwright-core install chromium` or set VESTA_BROWSER_EXECUTABLE.")
-
-
-def _port_free(port: int) -> bool:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+    # Atomic publish: rename staging -> home. If a concurrent launch already
+    # published it, keep theirs and drop ours.
+    if exe.is_file():
+        shutil.rmtree(staging, ignore_errors=True)
+    else:
+        os.replace(staging, home)
+    return str(exe)
 
 
-def find_free_port(start: int = CDP_PORT_START, end: int = CDP_PORT_END) -> int:
-    for port in range(start, end):
-        if _port_free(port):
-            return port
-    raise RuntimeError(f"No free CDP port in range {start}-{end}")
-
-
-def is_cdp_reachable(port: int, timeout_s: float = 0.5) -> bool:
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=timeout_s) as r:
-            return r.status == 200
-    except (TimeoutError, OSError):
-        # urllib raises URLError (OSError subclass) for refused/reset connections and
-        # socket.timeout (TimeoutError) on the deadline. Treat both as "not ready yet".
-        return False
-
-
-def read_ws_url(port: int, timeout_s: float = 2.0) -> str:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=timeout_s) as r:
-        data = json.loads(r.read())
-    if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
-        raise RuntimeError(f"/json/version on port {port} returned no webSocketDebuggerUrl")
-    return data["webSocketDebuggerUrl"]
-
-
-def _ensure_clean_exit(user_data_dir: Path) -> None:
-    """Flip profile 'exited_cleanly' so Chrome doesn't show the crash bubble on next launch."""
-    prefs_path = user_data_dir / "Default" / "Preferences"
-    try:
-        prefs = json.loads(prefs_path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return
-    prefs["exit_type"] = "Normal"
-    prefs["exited_cleanly"] = True
-    prefs_path.write_text(json.dumps(prefs))
+def _read_ws_url(proc: subprocess.Popen[bytes], log_path: Path, timeout_s: float) -> str:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        text = log_path.read_text(errors="replace") if log_path.exists() else ""
+        match = BIDI_RE.search(text)
+        if match:
+            # The bare ws://host:port serves Marionette's httpd and rejects the
+            # upgrade with HTTP 200; the BiDi endpoint is at /session.
+            return match.group(1).rstrip("/") + "/session"
+        if proc.poll() is not None:
+            raise RuntimeError(f"Camoufox exited (code {proc.returncode}) before BiDi was ready. Log tail:\n{text[-800:]}")
+        time.sleep(READY_POLL_S)
+    tail = log_path.read_text(errors="replace")[-800:] if log_path.exists() else "(no log)"
+    raise RuntimeError(f"Camoufox did not announce BiDi within {timeout_s}s. Log tail:\n{tail}")
 
 
 def _x_display_reachable(display: str) -> bool:
@@ -219,15 +175,14 @@ def _x_display_reachable(display: str) -> bool:
         return False
 
 
-def _ensure_xvfb(display: str) -> bool:
-    """Best-effort: guarantee an X server is up on `display` before headed Chrome.
+def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
+    """Best-effort: guarantee an X server is up on `display` before a headed browser.
 
-    The Xvfb daemon is normally started at boot (restart skill), but if it died
-    or never came up this self-heals in ~2s instead of letting Chrome fail with
-    "Missing X server". Clears the stale lock an unclean shutdown leaves behind
-    (which otherwise makes Xvfb refuse to start), serialised with an flock so
-    concurrent launches don't stomp each other. Never raises; on failure the
-    caller falls back to headless.
+    Camoufox runs headless by default, so only the handover flow (streaming a headed
+    browser to the user over VNC) needs this. Self-heals a dead/lock-stuck Xvfb in
+    ~2s, serialised with an flock so concurrent launches don't stomp each other. Never
+    raises; on failure the caller falls back to headless. `screen` is the Xvfb
+    `WxHxDEPTH` geometry; handover uses a larger one so the stream stays crisp on HiDPI.
     """
     if _x_display_reachable(display):
         return True
@@ -251,7 +206,7 @@ def _ensure_xvfb(display: str) -> bool:
             except OSError:
                 pass
         subprocess.Popen(
-            [xvfb, display, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+            [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -275,134 +230,108 @@ def _ensure_xvfb(display: str) -> bool:
                 pass
 
 
+# Prefs for the headed path (handover): force software WebRender so Camoufox renders without a
+# GPU. Camoufox ships no `glxtest` helper, so on a GL-less display (Xvfb) headed Gecko otherwise
+# stalls during graphics init. swgl needs no GL and does not touch the fingerprint (WebGL still
+# reports Camoufox's spoofed vendor/renderer, so we deliberately do NOT disable WebGL).
+_HEADED_PREFS = 'user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n'
+
+
+def _launch_env(profile_dir: Path, use_headless: bool, window_size: tuple[int, int] | None = None) -> dict[str, str]:
+    """Build the child env: fingerprint config, plus headless/headed rendering hygiene."""
+    env = {**os.environ, "HOME": str(Path.home())}
+    preset = select_preset(profile_dir)
+    if window_size:
+        preset = fit_to_screen(preset, *window_size)
+    env.update(camou_config_env(preset))
+    if use_headless:
+        env["MOZ_HEADLESS"] = "1"
+        # Strip any inherited DISPLAY/WAYLAND_DISPLAY: headless Firefox still runs GTK init and
+        # blocks trying to reach a dead display (e.g. a caller that set DISPLAY=:99 out of a
+        # stock-Chromium habit, with no X server). Headless needs no display, so drop them.
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+    else:
+        env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    return env
+
+
+def _ensure_headed_prefs(profile_dir: Path) -> None:
+    """Write the software-render user.js so headed Camoufox starts on a GL-less display.
+
+    handover.stop removes it again: the pref only matters for the headed handover, so it must
+    not linger in the shared profile and follow later headless launches.
+    """
+    (profile_dir / "user.js").write_text(_HEADED_PREFS)
+
+
 def launch(
     *,
-    port: int | None = None,
     user_data_dir: Path | None = None,
     headless: bool = False,
-    stealth: bool = False,
-    no_sandbox: bool = False,
     executable: str | None = None,
     extra_args: list[str] | None = None,
-) -> RunningChrome:
-    """Spawn a Chromium and wait for its CDP endpoint. Returns a RunningChrome handle."""
-    exe = find_chromium_executable(executable)
-    cdp_port = port or find_free_port()
+    log_path: Path | None = None,
+    window_size: tuple[int, int] | None = None,
+) -> RunningCamoufox:
+    """Spawn Camoufox and wait for its BiDi WebSocket. Returns a RunningCamoufox handle.
+
+    window_size refits the preset's spoofed screen/window geometry to a real screen so the
+    window fills it exactly (Camoufox sizes the window to the spoofed window.outer*).
+    """
+    exe = ensure_camoufox(executable)
     profile_dir = user_data_dir or PROFILE_ROOT
     profile_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_clean_exit(profile_dir)
 
-    args = [
-        exe,
-        f"--remote-debugging-port={cdp_port}",
-        f"--user-data-dir={profile_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-sync",
-        "--disable-background-networking",
-        "--disable-component-update",
-        "--disable-features=Translate,MediaRouter",
-        "--enable-features=SharedArrayBuffer",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-session-crashed-bubble",
-        "--hide-crash-restore-bubble",
-        "--password-store=basic",
-    ]
+    # Headless is the stealthy default: Camoufox's fingerprint is spoofed in C++, so
+    # headless leaks nothing. Only run headed when a real display exists and headless
+    # wasn't asked for (containers have no DISPLAY, so they always go headless).
+    use_headless = headless or not os.environ.get("DISPLAY")
 
-    # Stealth wants a real display (headless leaks a "HeadlessChrome" UA), so provision
-    # one on demand instead of relying on a boot daemon: default to :99 when DISPLAY is
-    # unset, then ensure an X server is actually up, self-healing a dead or lock-stuck
-    # Xvfb. Zero setup, no restart-skill entry. If it can't come up, degrade to headless.
-    display = os.environ.get("DISPLAY", "")
-    if stealth and not display:
-        display = ":99"
-    has_display = bool(display)
-    if stealth and display.startswith(":") and not _ensure_xvfb(display):
-        has_display = False
-        display = ""
-    use_headless = headless and not (stealth and has_display)
+    args = [exe, "-no-remote", "-profile", str(profile_dir), "--remote-debugging-port", "0"]
     if use_headless:
-        args += ["--headless=new", "--disable-gpu"]
-
-    # Chromium refuses to run as root without --no-sandbox, and these containers
-    # run as root, so auto-apply it when euid==0 (env/flag can still force it).
-    running_as_root = sys.platform.startswith("linux") and hasattr(os, "geteuid") and os.geteuid() == 0
-    if no_sandbox or os.environ.get("VESTA_BROWSER_NO_SANDBOX") == "1" or running_as_root:
-        args += ["--no-sandbox", "--disable-setuid-sandbox"]
-
-    if sys.platform.startswith("linux"):
-        args.append("--disable-dev-shm-usage")
-
-    if stealth:
-        existing_keys = {a.split("=", 1)[0] for a in args}
-        args += [a for a in STEALTH_ARGS if a.split("=", 1)[0] not in existing_keys]
-        args = [a for a in args if a not in HARMFUL_ARGS]
-
+        args.insert(1, "-headless")
+    else:
+        _ensure_headed_prefs(profile_dir)
     if extra_args:
         args += extra_args
 
-    args.append("about:blank")
+    env = _launch_env(profile_dir, use_headless, window_size)
 
-    chrome_env = {**os.environ, "HOME": str(Path.home())}
-    # Pass the (possibly defaulted) display through so Chrome uses it even when
-    # DISPLAY wasn't set in the environment.
-    if has_display and display:
-        chrome_env["DISPLAY"] = display
-    proc = subprocess.Popen(
-        args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        env=chrome_env,
-    )
-
-    deadline = time.time() + READY_TIMEOUT_S
-    while time.time() < deadline:
-        if is_cdp_reachable(cdp_port):
-            return RunningChrome(
-                pid=proc.pid,
-                cdp_port=cdp_port,
-                user_data_dir=profile_dir,
-                exe_path=exe,
-                proc=proc,
-            )
-        if proc.poll() is not None:
-            break
-        time.sleep(READY_POLL_S)
-
-    # Stop the process first, then drain stderr so the failure message has
-    # something useful in it. Reading from a PIPE before kill can hang if the
-    # child is still blocked, and the original code closed stderr without
-    # reading it, leaving every "Chromium did not become CDP-reachable" error
-    # with stderr_tail=b''.
+    stderr_log = log_path or Path(f"/tmp/vesta-camoufox-{os.getpid()}.log")
+    log_handle = open(stderr_log, "w+b")
     try:
-        proc.kill()
-    except ProcessLookupError:
-        pass
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=log_handle,
+            env=env,
+            start_new_session=True,
+        )
+    finally:
+        # The child dup'd the fd; our copy is no longer needed and closing it lets
+        # this launch CLI exit cleanly while the detached browser keeps writing.
+        log_handle.close()
 
-    stderr_bytes = b""
-    if proc.stderr:
+    try:
+        ws_url = _read_ws_url(proc, stderr_log, READY_TIMEOUT_S)
+    except Exception:
         try:
-            stderr_bytes = proc.stderr.read() or b""
-        except (OSError, ValueError):
+            proc.kill()
+        except ProcessLookupError:
             pass
-        finally:
-            try:
-                proc.stderr.close()
-            except OSError:
-                pass
+        raise
 
-    try:
-        proc.wait(timeout=2.0)
-    except subprocess.TimeoutExpired:
-        pass
-
-    raise RuntimeError(
-        f"Chromium did not become CDP-reachable on port {cdp_port} within {READY_TIMEOUT_S}s. "
-        f"exit_code={proc.returncode} stderr_tail={stderr_bytes[-500:]!r}"
+    return RunningCamoufox(
+        pid=proc.pid,
+        ws_url=ws_url,
+        user_data_dir=profile_dir,
+        exe_path=exe,
+        proc=proc,
     )
 
 
-def stop(running: RunningChrome, timeout_s: float = 5.0) -> None:
+def stop(running: RunningCamoufox, timeout_s: float = 5.0) -> None:
     proc = running.proc
     if proc.poll() is not None:
         return

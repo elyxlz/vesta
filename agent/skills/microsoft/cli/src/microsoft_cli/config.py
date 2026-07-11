@@ -19,6 +19,15 @@ def resolve_scopes() -> list[str]:
     return list(DEFAULT_CLIENT_SCOPES) if get_settings().microsoft_mcp_client_id == DEFAULT_CLIENT_ID else list(OWNED_APP_SCOPES)
 
 
+# Delegated scopes for the OWA REST fallback: tokens for the outlook.office.com resource,
+# obtained by device-code flow with the first-party client (no browser). The api/v2.0 REST
+# endpoint authorizes by these scopes, the same operations the Graph path uses.
+OWA_REST_SCOPES = [
+    "https://outlook.office.com/Mail.ReadWrite",
+    "https://outlook.office.com/Mail.Send",
+    "https://outlook.office.com/Calendars.ReadWrite",
+]
+
 BASE_URL = "https://graph.microsoft.com/v1.0"
 UPLOAD_CHUNK_SIZE = 15 * 320 * 1024
 

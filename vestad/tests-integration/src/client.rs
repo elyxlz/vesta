@@ -25,7 +25,11 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
         return Ok(resp);
     }
     let error_msg = resp.into_body().read_to_string().ok().and_then(|body| {
-        serde_json::from_str::<serde_json::Value>(&body).ok()?.get("error")?.as_str().map(|s| s.to_string())
+        serde_json::from_str::<serde_json::Value>(&body)
+            .ok()?
+            .get("error")?
+            .as_str()
+            .map(|s| s.to_string())
     });
     match status {
         401 => Err("invalid API key".into()),
@@ -43,7 +47,9 @@ fn urlencod(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => {
                 out.push('%');
                 out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
@@ -121,62 +127,92 @@ impl Client {
     }
 
     fn get(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self.agent.get(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .get(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call().map_err(map_error)?;
+            .call()
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     fn post(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self.agent.post(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_empty().map_err(map_error)?;
+            .send_empty()
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self.agent.post(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body).map_err(map_error)?;
+            .send_json(body)
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self.agent.put(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .put(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body).map_err(map_error)?;
+            .send_json(body)
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self.agent.patch(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .patch(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body).map_err(map_error)?;
+            .send_json(body)
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     fn delete(&self, path: &str) -> Result<Response<Body>, String> {
-        let resp = self.agent.delete(&format!("{}{}", self.base_url, path))
+        let resp = self
+            .agent
+            .delete(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call().map_err(map_error)?;
+            .call()
+            .map_err(map_error)?;
         check_response(resp)
     }
 
     pub fn health(&self) -> Result<(), String> {
-        let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
+        let resp = self
+            .agent
+            .get(&format!("{}/health", self.base_url))
+            .call()
+            .map_err(map_error)?;
         check_response(resp)?;
         Ok(())
     }
 
     pub fn health_json(&self) -> Result<serde_json::Value, String> {
-        let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
+        let resp = self
+            .agent
+            .get(&format!("{}/health", self.base_url))
+            .call()
+            .map_err(map_error)?;
         let resp = check_response(resp)?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
     /// Register a background service exactly as the in-container skill does:
@@ -217,20 +253,29 @@ impl Client {
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {
         let resp = self.get(&format!("/agents/{}", name))?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
     pub fn create_agent(&self, name: &str) -> Result<String, String> {
         self.create_agent_ex(name, None)
     }
 
-    pub fn create_agent_ex(&self, name: &str, manage_agent_code: Option<bool>) -> Result<String, String> {
+    pub fn create_agent_ex(
+        &self,
+        name: &str,
+        manage_agent_code: Option<bool>,
+    ) -> Result<String, String> {
         let mut body = serde_json::json!({"name": name});
         if let Some(m) = manage_agent_code {
             body["manage_agent_code"] = serde_json::json!(m);
         }
         let resp = self.post_json("/agents", &body)?;
-        let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
@@ -241,9 +286,14 @@ impl Client {
 
     pub fn start_all(&self) -> Result<Vec<StartAllResult>, String> {
         #[derive(serde::Deserialize)]
-        struct Resp { results: Vec<StartAllResult> }
+        struct Resp {
+            results: Vec<StartAllResult>,
+        }
         let resp = self.post("/agents/start")?;
-        let v: Resp = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
+        let v: Resp = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
         Ok(v.results)
     }
 
@@ -270,7 +320,10 @@ impl Client {
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
         let resp = self.patch_json(&format!("/agents/{}", name), &body)?;
-        let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(new_name).to_string())
     }
 
@@ -281,13 +334,17 @@ impl Client {
             let status = self.agent_status(name)?;
             match status.status.as_str() {
                 "alive" => return Ok(()),
-                "not_found" | "dead" | "stopped" | "not_authenticated" | "unprovisioned" =>
-                    return Err(format!("{}: {}", name, status.status)),
+                "not_found" | "dead" | "stopped" | "not_authenticated" | "unprovisioned" => {
+                    return Err(format!("{}: {}", name, status.status))
+                }
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
-                return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+                return Err(format!(
+                    "{}: timeout waiting for ready (status: {})",
+                    name, status.status
+                ));
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
@@ -307,7 +364,10 @@ impl Client {
             }
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
-                return Err(format!("{}: timeout waiting for stopped (status: {})", name, status));
+                return Err(format!(
+                    "{}: timeout waiting for stopped (status: {})",
+                    name, status
+                ));
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
@@ -323,13 +383,18 @@ impl Client {
         loop {
             let status = self.agent_status(name)?.status;
             match status.as_str() {
-                "alive" | "setting_up" | "not_authenticated" | "unprovisioned" => return Ok(status),
+                "alive" | "setting_up" | "not_authenticated" | "unprovisioned" => {
+                    return Ok(status)
+                }
                 "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
-                return Err(format!("{}: timeout waiting for running (status: {})", name, status));
+                return Err(format!(
+                    "{}: timeout waiting for running (status: {})",
+                    name, status
+                ));
             }
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
@@ -339,15 +404,23 @@ impl Client {
     /// Standalone Claude OAuth start (not agent-scoped). Returns the auth URL and session id.
     pub fn oauth_start(&self) -> Result<AuthFlowResponse, String> {
         let resp = self.post("/providers/claude/oauth/start")?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
     /// Standalone Claude OAuth completion. Returns the credentials JSON on success.
     pub fn oauth_complete(&self, session_id: &str, code: &str) -> Result<String, String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
         let resp = self.post_json("/providers/claude/oauth/complete", &body)?;
-        let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
-        v["credentials"].as_str().map(str::to_string).ok_or_else(|| "missing credentials in response".to_string())
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
+        v["credentials"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "missing credentials in response".to_string())
     }
 
     /// Sign an agent in with an OpenRouter key + model via `PUT /provider`. The write doesn't restart
@@ -364,7 +437,8 @@ impl Client {
     /// doesn't restart; callers restart afterwards. The agent must be running to receive the call.
     pub fn sign_in_claude(&self, name: &str, credentials: &str, model: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
-        let body = serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
+        let body =
+            serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
         self.put_json(&format!("/agents/{}/provider", name), &body)?;
         Ok(())
     }
@@ -377,19 +451,33 @@ impl Client {
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
         let resp = self.get(&format!("/agents/{}/backups", name))?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
-        let resp = self.post(&format!("/agents/{}/backups/{}/restore", name, urlencod(backup_id)))?;
+        let resp = self.post(&format!(
+            "/agents/{}/backups/{}/restore",
+            name,
+            urlencod(backup_id)
+        ))?;
         read_sse_result(resp)?;
         Ok(())
     }
 
     pub fn delete_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
-        let resp = self.agent.delete(&format!("{}/agents/{}/backups/{}", self.base_url, name, urlencod(backup_id)))
+        let resp = self
+            .agent
+            .delete(&format!(
+                "{}/agents/{}/backups/{}",
+                self.base_url,
+                name,
+                urlencod(backup_id)
+            ))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call().map_err(map_error)?;
+            .call()
+            .map_err(map_error)?;
         check_response(resp)?;
         Ok(())
     }

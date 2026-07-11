@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "vestad"
-version = "0.1.170"
+version = "0.1.174"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
@@ -44,6 +44,7 @@ reqwest = { version = "0.12", default-features = false, features = ["stream", "j
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 bollard = "0.21"
+globset = "0.4"
 tar = "0.4"
 flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }

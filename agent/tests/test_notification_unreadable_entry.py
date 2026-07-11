@@ -7,7 +7,7 @@ The correct behavior is that the bad entry is skipped and an empty list is retur
 """
 
 import pytest
-import core.models as vm
+import core.config as cfg
 from core.loops import load_notifications
 
 
@@ -22,7 +22,7 @@ async def test_directory_named_dot_json_is_skipped_not_fatal(tmp_path):
     bad_entry = notifs_dir / "foo.json"
     bad_entry.mkdir()
 
-    config = vm.VestaConfig(agent_dir=agent_dir)
+    config = cfg.VestaConfig(agent_dir=agent_dir)
 
     # Bug: raises IsADirectoryError instead of returning [] and skipping the bad entry.
     result = await load_notifications(config=config)

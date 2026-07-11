@@ -19,7 +19,7 @@
 ## Step 2: Install the CLI
 
 ```bash
-uv tool install <path-to-this-skill>/cli
+uv tool install --editable <path-to-this-skill>/cli
 ```
 
 ## Step 3: Configure credentials

@@ -2,7 +2,8 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
-from . import graph, auth, notifications, notify, folders
+from . import graph, auth, notifications, notify, folders, owa_rest
+from .config import Config
 from .context import MicrosoftContext
 
 
@@ -91,6 +92,122 @@ def _format_threshold_label(minutes: int) -> str:
     return f"{minutes} minute" + ("s" if minutes != 1 else "")
 
 
+def _emit_email_notification(ctx: MicrosoftContext, email: dict, account: str, folder_token: str, catching_up: bool) -> None:
+    """Write an email notification from a graph-shaped message dict (Graph and OWA REST both use it)."""
+    logger = ctx.monitor_logger
+    email_from = email["from"] if "from" in email else None
+    if not email_from or "emailAddress" not in email_from:
+        logger.warning(f"Email missing sender info: {email['id'] if 'id' in email else '?'}")
+        return
+    sender = email_from["emailAddress"]
+    sender_name = sender["name"] if "name" in sender else None
+    sender_addr = sender["address"] if "address" in sender else None
+    if not sender_addr:
+        logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
+        return
+    logger.info(f"Writing notification for email from {sender_addr}")
+    display_name = sender_name or sender_addr
+    # Only include sender_address when it adds info beyond the display name.
+    extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
+    notifications.write_notification(
+        ctx.notif_dir,
+        "email",
+        # Email pools by default (calendar reminders keep interrupting); the user adds
+        # interrupt rules for the senders/keywords that should reach them right away.
+        interrupt=False,
+        sender=display_name,
+        subject=email["subject"] if "subject" in email else None,
+        preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
+        sender_address=extra_addr,
+        account=account,
+        folder=folder_token,
+        missed=catching_up or None,
+    )
+
+
+def _emit_calendar_reminders(
+    ctx: MicrosoftContext, events: list, account: str, last_dt: datetime, new_check_time: datetime, catching_up: bool
+) -> None:
+    """Write calendar reminders for events crossing a notify threshold this cycle (Graph and OWA REST)."""
+    logger = ctx.monitor_logger
+    for event in events:
+        try:
+            event_time = _parse_event_time(event)
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Skipping event {event['id'] if 'id' in event else '?'}: {e}")
+            continue
+
+        start_dt = event["start"]["dateTime"]
+        location = event["location"] if "location" in event else None
+        loc = location["displayName"] if location and "displayName" in location else None
+        subject = (event["subject"] if "subject" in event else None) or "(No title)"
+        mins_until = int((event_time - new_check_time).total_seconds() / 60)
+
+        for threshold_mins in ctx.get_calendar_notify_thresholds():
+            trigger_time = event_time - timedelta(minutes=threshold_mins)
+            if not (last_dt <= trigger_time < new_check_time):
+                continue
+            label = _format_threshold_label(threshold_mins)
+            logger.info(f"Writing {label} reminder for calendar event: {subject}")
+            notifications.write_notification(
+                ctx.notif_dir,
+                "calendar",
+                subject=subject,
+                start_time=strip_fractional(start_dt),
+                minutes_until=mins_until,
+                location=loc,
+                account=account,
+                missed=(catching_up and event_time < new_check_time) or None,
+            )
+
+
+def _poll_owa_rest_account(
+    ctx: MicrosoftContext,
+    config: Config,
+    account_email: str,
+    watch_folders: list[str],
+    last_dt: datetime,
+    new_check_time: datetime,
+    catching_up: bool,
+) -> None:
+    """Poll a locked-tenant OWA REST account for new mail and calendar reminders. Fetching also
+    triggers the token auto-refresh in load_token, so this keeps the token warm in the background."""
+    logger = ctx.monitor_logger
+    for folder_token in watch_folders:
+        try:
+            messages = owa_rest.list_messages(ctx.http_client, account_email, config, folder=folder_token, limit=50)
+            new_messages = []
+            for message in messages:
+                if "receivedDateTime" not in message:
+                    continue
+                try:
+                    received = datetime.fromisoformat(message["receivedDateTime"].replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if received > last_dt:
+                    new_messages.append(message)
+            logger.info(f"OWA REST: {len(new_messages)} new emails for {account_email} in {folder_token}")
+            for message in reversed(new_messages):  # oldest first, matching arrival order
+                _emit_email_notification(ctx, message, account_email, folder_token, catching_up)
+        except Exception as e:
+            logger.error(f"Error fetching OWA REST emails for {account_email} folder {folder_token}: {e}")
+
+    try:
+        max_threshold = max(ctx.get_calendar_notify_thresholds())
+        window_end = new_check_time + timedelta(minutes=max_threshold + 60)
+        events = owa_rest.list_events(
+            ctx.http_client,
+            account_email,
+            config,
+            start_utc=last_dt.isoformat().replace("+00:00", "Z"),
+            end_utc=window_end.isoformat().replace("+00:00", "Z"),
+            limit=100,
+        )
+        _emit_calendar_reminders(ctx, events, account_email, last_dt, new_check_time, catching_up)
+    except Exception as e:
+        logger.error(f"Error fetching OWA REST calendar for {account_email}: {e}")
+
+
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
@@ -119,7 +236,8 @@ def run(ctx: MicrosoftContext):
 
             new_check_time = datetime.now(UTC)
 
-            for acc in auth.list_accounts(ctx.cache_file):
+            msal_accounts = auth.list_accounts(ctx.cache_file)
+            for acc in msal_accounts:
                 logger.info(f"Checking account: {acc.username}")
 
                 watch_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
@@ -150,35 +268,7 @@ def run(ctx: MicrosoftContext):
                         logger.info(f"Found {len(emails)} new emails for {acc.username} in {folder_token}")
 
                         for email in emails:
-                            email_from = email["from"] if "from" in email else None
-                            if not email_from or "emailAddress" not in email_from:
-                                logger.warning(f"Email missing sender info: {email['id'] if 'id' in email else '?'}")
-                                continue
-                            sender = email_from["emailAddress"]
-                            sender_name = sender["name"] if "name" in sender else None
-                            sender_addr = sender["address"] if "address" in sender else None
-                            if not sender_addr:
-                                logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
-                                continue
-
-                            logger.info(f"Writing notification for email from {sender_addr}")
-                            display_name = sender_name or sender_addr
-                            # Only include sender_address when it adds info beyond the display name.
-                            extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
-                            notifications.write_notification(
-                                ctx.notif_dir,
-                                "email",
-                                # Email pools by default (calendar reminders keep interrupting); the user adds
-                                # interrupt rules for the senders/keywords that should reach them right away.
-                                interrupt=False,
-                                sender=display_name,
-                                subject=email["subject"] if "subject" in email else None,
-                                preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
-                                sender_address=extra_addr,
-                                account=acc.username,
-                                folder=folder_token,
-                                missed=catching_up or None,
-                            )
+                            _emit_email_notification(ctx, email, acc.username, folder_token, catching_up)
                     except Exception as e:
                         logger.error(f"Error fetching emails for {acc.username} folder {folder_token}: {e}")
 
@@ -205,40 +295,22 @@ def run(ctx: MicrosoftContext):
                         continue
                     events = cal_result["value"]
                     logger.info(f"Found {len(events)} upcoming calendar events for {acc.username}")
-
-                    for event in events:
-                        try:
-                            event_time = _parse_event_time(event)
-                        except (KeyError, ValueError) as e:
-                            logger.warning(f"Skipping event {event['id'] if 'id' in event else '?'}: {e}")
-                            continue
-
-                        start_dt = event["start"]["dateTime"]
-                        location = event["location"] if "location" in event else None
-                        loc = location["displayName"] if location and "displayName" in location else None
-                        subject = (event["subject"] if "subject" in event else None) or "(No title)"
-                        mins_until = int((event_time - new_check_time).total_seconds() / 60)
-
-                        for threshold_mins in ctx.get_calendar_notify_thresholds():
-                            trigger_time = event_time - timedelta(minutes=threshold_mins)
-                            if not (last_dt <= trigger_time < new_check_time):
-                                continue
-
-                            label = _format_threshold_label(threshold_mins)
-                            logger.info(f"Writing {label} reminder for calendar event: {subject}")
-
-                            notifications.write_notification(
-                                ctx.notif_dir,
-                                "calendar",
-                                subject=subject,
-                                start_time=strip_fractional(start_dt),
-                                minutes_until=mins_until,
-                                location=loc,
-                                account=acc.username,
-                                missed=(catching_up and event_time < new_check_time) or None,
-                            )
+                    _emit_calendar_reminders(ctx, events, acc.username, last_dt, new_check_time, catching_up)
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")
+
+            # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them here over
+            # OWA REST for anything Graph did not already cover. The fetch runs through load_token,
+            # which silently re-mints an expiring token from the signed-in browser profile, so this
+            # also keeps the token warm in the background.
+            config = Config(data_dir=ctx.cache_file.parent)
+            msal_usernames = {acc.username.casefold() for acc in msal_accounts}
+            for account_email in owa_rest.list_accounts(config):
+                if account_email.casefold() in msal_usernames:
+                    continue
+                logger.info(f"Checking OWA REST account: {account_email}")
+                watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
+                _poll_owa_rest_account(ctx, config, account_email, watch_folders, last_dt, new_check_time, catching_up)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())

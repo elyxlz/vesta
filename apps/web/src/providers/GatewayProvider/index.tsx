@@ -17,6 +17,7 @@ import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import type {
   AgentInfo,
+  ControlWsMessage,
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
@@ -158,7 +159,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       onOpen: () => setReachable(true),
       onMessage: (data) => {
         try {
-          const msg = JSON.parse(data);
+          const msg = JSON.parse(data) as ControlWsMessage;
           switch (msg.type) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
@@ -167,7 +168,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               break;
             }
             case "agents": {
-              const agents: AgentInfo[] = msg.agents ?? [];
+              const agents = msg.agents ?? [];
               setAgents(agents);
               setAgentsFetched(true);
               // Clear any "restart to apply" flag whose agent has since restarted (by any path).

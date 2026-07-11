@@ -49,6 +49,14 @@ export type VestaEvent =
   | (BaseEvent & { type: "tool_end"; tool: string; subagent?: boolean })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & {
+      // A rejected Claude rate limit, from the SDK's structured classification (the agent never
+      // relays the model's own paraphrase of which limit tripped).
+      type: "rate_limited";
+      text: string;
+      window: string | null; // five_hour, seven_day, ... or null when unreported
+      resets_at: number | null; // unix seconds the window resets at, when reported
+    })
+  | (BaseEvent & {
       type: "notification";
       source: string;
       summary: string;
@@ -101,3 +109,9 @@ export interface GatewayVersionInfo {
   channel?: ReleaseChannel;
   auto_update?: boolean;
 }
+
+// The gateway control WS's own frames (distinct from the per-agent VestaEvent stream): a version
+// handshake on connect, then agent-list snapshots on every roster change.
+export type ControlWsMessage =
+  | { type: "hello"; version?: string; port?: number }
+  | { type: "agents"; agents?: AgentInfo[] };

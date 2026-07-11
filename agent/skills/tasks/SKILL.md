@@ -99,7 +99,7 @@ DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/log
 
 ## Setup
 ```bash
-uv tool install ~/agent/skills/tasks/cli
+uv tool install --editable ~/agent/skills/tasks/cli
 ```
 
 ## Background Daemon
@@ -107,15 +107,19 @@ uv tool install ~/agent/skills/tasks/cli
 Register with vestad to get a port (see [service](../service/SKILL.md)), then start:
 ```bash
 PORT=$(~/agent/skills/service/scripts/register-service tasks)
-screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+screen -dmS tasks tasks serve --port $PORT
 ```
+
+`--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.
 
 One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
 **Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
 ```
+
+`--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.
 
 ### Reminder Patterns
 [User's common reminder types and preferences]

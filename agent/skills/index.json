@@ -4,8 +4,12 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "upstream-sync",
+    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock snapshot. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+  },
+  {
     "name": "workspace-sync",
-    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+    "description": "Renamed to upstream-sync. Read ~/agent/core/skills/upstream-sync/SKILL.md instead."
   },
   {
     "name": "agentmail",
@@ -17,7 +21,7 @@
   },
   {
     "name": "browser",
-    "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
+    "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages with a stealth (Camoufox) browser."
   },
   {
     "name": "claude-code",
@@ -28,8 +32,16 @@
     "description": "The people Vesta knows, a living address book and CRM. Who they are, how they communicate, what you know about them, and the history. Use whenever a person comes up, someone new appears, or you learn something about anyone in the user's world. Read a contact before reaching out to them; update it after."
   },
   {
+    "name": "cooking-hacks",
+    "description": "Hands-on kitchen and cooking technique hacks across prep and tools, produce and herbs, eggs, sauces and stocks, meat, fish, baking and pastry, and frying. Use when the user wants a cooking tip, a better way to do a kitchen task, or how a technique works."
+  },
+  {
     "name": "dashboard",
-    "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
+    "description": "Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it."
+  },
+  {
+    "name": "discord",
+    "description": "\"Discord: send/receive server messages and DMs; reply to source=discord notifications. Requires daemon.\""
   },
   {
     "name": "dream",
@@ -132,8 +144,16 @@
     "description": "Register a background daemon with vestad to get a port, and keep it alive across restarts. Use when a skill runs a long-lived serve process (dashboard, tasks, voice, webhook receivers)."
   },
   {
+    "name": "shop",
+    "description": "Shop for real products on the user's behalf via Shop.app. Catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy ('order me X', 'find me running shoes', 'track my order', 'reorder the coffee'). For paying non-Shop merchants, use the stripe-pay skill instead."
+  },
+  {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
+  },
+  {
+    "name": "slack",
+    "description": "\"Slack: send/receive workspace messages, DMs, threads; reply to source=slack notifications. Requires daemon.\""
   },
   {
     "name": "spotify",
@@ -145,7 +165,7 @@
   },
   {
     "name": "stripe-pay",
-    "description": "Use when the user wants the agent to make a payment on their behalf via Stripe Link Wallet for Agents. Always asks for explicit per-charge approval. Requires `stripe-pay authorize` setup first."
+    "description": "Use when the user wants Vesta to pay a merchant on their behalf (buy something, renew a domain, settle an invoice at a card-taking site). Drives Stripe's Link CLI; the user approves each spend in their Link app. Requires one-time setup (see SETUP.md)."
   },
   {
     "name": "tasks",
@@ -189,7 +209,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon."
+    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon."
   },
   {
     "name": "whisper",

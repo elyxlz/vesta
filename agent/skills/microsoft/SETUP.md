@@ -6,7 +6,7 @@ Graph scopes it needs (`Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`,
 `MailboxSettings.ReadWrite`) via dynamic consent at sign-in. Just install, start the daemon, and
 authenticate:
 
-1. Install: `uv tool install ~/agent/skills/microsoft/cli`
+1. Install: `uv tool install --editable ~/agent/skills/microsoft/cli`
 2. Start background daemon: `screen -dmS microsoft microsoft serve`
 3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
@@ -34,7 +34,34 @@ Then copy the **Application (client) ID** and set `MICROSOFT_MCP_CLIENT_ID=<your
 microsoft auth login                         # Start device flow - gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
 microsoft auth list                           # List authenticated accounts
+microsoft auth remove --account <email>       # Sign an account out
 ```
+
+## Fallback backend: OWA REST (locked tenants only)
+
+If the tenant blocks Graph entirely (third-party apps disabled, missing scopes),
+use the OWA REST fallback. Locked tenants usually block device-code flow as well,
+so the default is a **browser capture**, driven by the agent on its own machine
+(the `browser` skill daemon with `DISPLAY=:99`). The agent opens Outlook on the web,
+signs in (relaying the user's credentials and MFA through chat), then captures the
+`outlook.office.com` token from the live session:
+
+```bash
+microsoft auth owa-login --account you@company.com     # captures the token, or returns sign_in_required
+microsoft email list --account you@company.com --backend owa-rest
+```
+
+If the browser is not signed in yet, `owa-login` returns `sign_in_required` (it does
+not block); finish the sign-in with the `browser` skill and run it again. The token
+lasts about 24 h; re-run to refresh. With a token in place, `--backend auto` (the
+default) falls back to OWA REST automatically whenever Graph returns a permission
+error. Every command works on both backends **except** `block`/`unblock` (inbox
+rules), which are Graph-only.
+
+**Tenants that still permit device flow:** `microsoft auth owa-login --account you@company.com --device`
+does a device-code sign-in instead (enter a code at a URL, no browser), finished with
+`microsoft auth owa-complete --account you@company.com --flow-cache <cache>`. MSAL then
+auto-refreshes that token.
 
 ## Troubleshooting: Adding New Azure Permissions
 

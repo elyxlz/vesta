@@ -290,5 +290,5 @@ playing doorman can turn it off; then decline warmly and point them at `vesta.ru
 The CLI is bundled; install it once (the agent does this on first use):
 
 ```bash
-uv tool install ~/agent/skills/onboard/cli
+uv tool install --editable ~/agent/skills/onboard/cli
 ```

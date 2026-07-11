@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+
+import pytest
+
 from vesta_browser import helpers
 
 
@@ -68,7 +72,13 @@ def test_recipe_banner_empty_when_no_match(tmp_path, monkeypatch):
     assert helpers.recipe_banner("https://unknown.example") == ""
 
 
-# ── Keyboard primitives ────────────────────────────────────────
+# ── Keyboard primitives (BiDi input.performActions) ────────────
+
+
+def _record(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(helpers, "bidi", lambda method, **params: calls.append((method, params)) or {})
+    return calls
 
 
 def test_special_keys_cover_navigation_keys():
@@ -76,83 +86,148 @@ def test_special_keys_cover_navigation_keys():
         assert k in helpers.SPECIAL_KEYS
 
 
-def test_modifier_bits_are_cdp_spec():
+def test_modifier_bits_unchanged():
     assert helpers.MODIFIER_BITS == {"Alt": 1, "Control": 2, "Meta": 4, "Shift": 8}
 
 
-def test_press_key_special_dispatches_correct_events(monkeypatch):
-    sent: list[tuple[str, dict]] = []
-
-    def fake_cdp(method: str, session_id=None, **params):
-        sent.append((method, params))
-        return {}
-
-    monkeypatch.setattr(helpers, "cdp", fake_cdp)
-
+def test_press_key_special_maps_to_code_point(monkeypatch):
+    calls = _record(monkeypatch)
     helpers.press_key("Enter")
-    types = [(m, p["type"]) for m, p in sent]
-    assert ("Input.dispatchKeyEvent", "keyDown") in types
-    assert ("Input.dispatchKeyEvent", "char") in types  # Enter has text '\r'
-    assert ("Input.dispatchKeyEvent", "keyUp") in types
-
-    key_up = [p for m, p in sent if p["type"] == "keyUp"][0]
-    assert key_up["key"] == "Enter"
-    assert key_up["windowsVirtualKeyCode"] == 13
+    method, params = calls[0]
+    assert method == "input.performActions"
+    source = params["actions"][0]
+    assert source["type"] == "key"
+    values = [a["value"] for a in source["actions"]]
+    assert "" in values  # WebDriver Enter code point
 
 
-def test_press_key_single_char_sends_char_event(monkeypatch):
-    sent: list[dict] = []
-    monkeypatch.setattr(helpers, "cdp", lambda method, session_id=None, **p: sent.append({"method": method, **p}) or {})
-
+def test_press_key_single_char(monkeypatch):
+    calls = _record(monkeypatch)
     helpers.press_key("a")
+    actions = calls[0][1]["actions"][0]["actions"]
+    assert [a["type"] for a in actions] == ["keyDown", "keyUp"]
+    assert all(a["value"] == "a" for a in actions)
 
-    chars = [s for s in sent if "type" in s and s["type"] == "char"]
-    assert len(chars) == 1
-    assert chars[0]["text"] == "a"
 
-
-def test_press_key_modifier_list_converts_to_bits(monkeypatch):
-    sent: list[dict] = []
-    monkeypatch.setattr(helpers, "cdp", lambda method, session_id=None, **p: sent.append({"method": method, **p}) or {})
-
+def test_press_key_modifier_list_wraps_key(monkeypatch):
+    calls = _record(monkeypatch)
     helpers.press_key("a", modifiers=["Control", "Shift"])
+    actions = calls[0][1]["actions"][0]["actions"]
+    downs = [a["value"] for a in actions if a["type"] == "keyDown"]
+    assert "" in downs  # Control
+    assert "" in downs  # Shift
+    assert "a" in downs
 
-    key_down = [s for s in sent if "type" in s and s["type"] == "keyDown"][0]
-    assert key_down["modifiers"] == (2 | 8)
+
+def test_press_key_bitfield_modifiers(monkeypatch):
+    calls = _record(monkeypatch)
+    helpers.press_key("a", modifiers=2 | 8)  # Control | Shift
+    downs = [a["value"] for a in calls[0][1]["actions"][0]["actions"] if a["type"] == "keyDown"]
+    assert "" in downs
+    assert "" in downs
 
 
 def test_press_key_unknown_modifier_ignored(monkeypatch):
-    sent: list[dict] = []
-    monkeypatch.setattr(helpers, "cdp", lambda method, session_id=None, **p: sent.append({"method": method, **p}) or {})
+    calls = _record(monkeypatch)
+    helpers.press_key("a", modifiers=["NotAKey", "Control"])
+    downs = [a["value"] for a in calls[0][1]["actions"][0]["actions"] if a["type"] == "keyDown"]
+    assert "" in downs
+    assert "a" in downs
+    assert len(downs) == 2  # only Control modifier + the key
 
-    helpers.press_key("a", modifiers=["NotARealKey", "Control"])
 
-    key_down = [s for s in sent if "type" in s and s["type"] == "keyDown"][0]
-    assert key_down["modifiers"] == 2  # Only Control survives.
+def test_type_text_emits_keydown_keyup_per_char(monkeypatch):
+    calls = _record(monkeypatch)
+    helpers.type_text("hi")
+    actions = calls[0][1]["actions"][0]["actions"]
+    assert [a["value"] for a in actions] == ["h", "h", "i", "i"]
+    assert [a["type"] for a in actions] == ["keyDown", "keyUp", "keyDown", "keyUp"]
 
 
 # ── Click / scroll primitives ──────────────────────────────────
 
 
-def test_click_sends_press_then_release(monkeypatch):
-    calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr(helpers, "cdp", lambda method, session_id=None, **p: calls.append((method, p)) or {})
-
+def test_click_sends_pointer_move_down_up(monkeypatch):
+    calls = _record(monkeypatch)
     helpers.click(100, 200, button="right", clicks=2)
+    method, params = calls[0]
+    assert method == "input.performActions"
+    source = params["actions"][0]
+    assert source["type"] == "pointer"
+    actions = source["actions"]
+    assert actions[0] == {"type": "pointerMove", "x": 100, "y": 200}
+    downs = [a for a in actions if a["type"] == "pointerDown"]
+    assert len(downs) == 2
+    assert downs[0]["button"] == 2  # right
 
-    assert len(calls) == 2
-    assert calls[0][0] == "Input.dispatchMouseEvent"
-    assert calls[0][1]["type"] == "mousePressed"
-    assert calls[0][1]["button"] == "right"
-    assert calls[0][1]["clickCount"] == 2
-    assert calls[1][1]["type"] == "mouseReleased"
 
-
-def test_scroll_uses_mouse_wheel(monkeypatch):
-    calls: list[dict] = []
-    monkeypatch.setattr(helpers, "cdp", lambda method, session_id=None, **p: calls.append({"method": method, **p}) or {})
-
+def test_scroll_uses_wheel_source(monkeypatch):
+    calls = _record(monkeypatch)
     helpers.scroll(50, 50, dy=-100)
-    assert calls[0]["method"] == "Input.dispatchMouseEvent"
-    assert calls[0]["type"] == "mouseWheel"
-    assert calls[0]["deltaY"] == -100
+    source = calls[0][1]["actions"][0]
+    assert source["type"] == "wheel"
+    assert source["actions"][0]["deltaY"] == -100
+
+
+# ── Ref resolution ─────────────────────────────────────────────
+
+
+def test_click_ref_resolves_center(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", lambda expr, context=None: {"found": True, "x": 12, "y": 34})
+    calls = _record(monkeypatch)
+    helpers.click_ref("e5")
+    source = calls[0][1]["actions"][0]
+    assert source["actions"][0] == {"type": "pointerMove", "x": 12, "y": 34}
+
+
+def test_click_ref_unknown_raises(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval_value", lambda expr, context=None: {"found": False})
+    with pytest.raises(RuntimeError, match="unknown ref"):
+        helpers.click_ref("e99")
+
+
+# ── JS evaluation unwrapping ───────────────────────────────────
+
+
+def test_js_unwraps_json_string(monkeypatch):
+    monkeypatch.setattr(
+        helpers, "_eval", lambda expr, context=None, await_promise=True: {"type": "success", "result": {"type": "string", "value": '{"a":1}'}}
+    )
+    assert helpers.js("whatever") == {"a": 1}
+
+
+def test_js_returns_none_for_undefined(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval", lambda *a, **k: {"type": "success", "result": {"type": "undefined"}})
+    assert helpers.js("x") is None
+
+
+def test_js_raises_on_exception(monkeypatch):
+    monkeypatch.setattr(helpers, "_eval", lambda *a, **k: {"type": "exception", "exceptionDetails": {"text": "boom"}})
+    with pytest.raises(RuntimeError, match="boom"):
+        helpers.js("x")
+
+
+# ── Screenshot format mapping ──────────────────────────────────
+
+
+def test_screenshot_webp_maps_to_jpeg(monkeypatch, tmp_path):
+    calls: list[tuple[str, dict]] = []
+    payload = base64.b64encode(b"img").decode()
+    monkeypatch.setattr(helpers, "bidi", lambda method, **params: calls.append((method, params)) or {"data": payload})
+    helpers.screenshot(path=str(tmp_path / "s.webp"), format="webp", quality=50)
+    fmt = calls[0][1]["format"]
+    assert fmt["type"] == "image/jpeg"
+    assert abs(fmt["quality"] - 0.5) < 1e-9
+
+
+def test_screenshot_full_page_sets_document_origin(monkeypatch, tmp_path):
+    calls: list[tuple[str, dict]] = []
+    payload = base64.b64encode(b"img").decode()
+    monkeypatch.setattr(helpers, "bidi", lambda method, **params: calls.append((method, params)) or {"data": payload})
+    helpers.screenshot(path=str(tmp_path / "s.png"), full_page=True)
+    assert calls[0][1]["origin"] == "document"
+
+
+def test_screenshot_rejects_bad_format():
+    with pytest.raises(ValueError, match="format must be"):
+        helpers.screenshot(format="gif")

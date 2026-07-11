@@ -1,69 +1,35 @@
 # Tabs
 
-Use **CDP for control**, **UI automation for user-visible order**.
+Camoufox runs headless, so there is no visible tab strip to keep in sync; tabs are just
+top-level BiDi browsing contexts you open, attach to, and close.
 
-## Pure CDP (portable: macOS / Linux / Windows)
+## The BiDi tab model
 
 ```python
-tabs = list_tabs()                    # includes chrome:// pages too
-real_tabs = list_tabs(include_chrome=False)
-tid = new_tab("https://example.com")  # create + attach
-switch_tab(tid)                       # attach harness to tab
-cdp("Target.activateTarget", targetId=tid)  # show it in Chrome
-print(current_tab())
+tabs = list_tabs()                     # top-level contexts; includes about: pages
+real_tabs = list_tabs(include_internal=False)  # drop about:/moz-extension:/etc
+ctx = new_tab("https://example.com")   # create + switch + navigate; returns the context id
+switch_tab(ctx)                        # make this context current (also activates it)
+print(current_tab())                   # {target_id, url, title} for the current context
 print(page_info())
+close_tab(ctx)                         # close a context by id
 ```
 
-What CDP is good at:
-- attach to a tab
-- open a tab
-- activate a known target
-- inspect URL/title/viewport
-- capture the attached tab's screenshot even if another tab is visibly frontmost
+`target_id` in every helper is the BiDi **context id** (a stable UUID for the tab), the analog
+of the old CDP target id.
 
-What CDP is bad at:
-- matching the **left-to-right tab strip order** the user sees
-- telling whether the attached target is an omnibox popup / internal page without URL filtering
+## What the model is good at
 
-## Visible order (platform UI)
-
-### macOS
-
-```applescript
-tell application "Google Chrome"
-  set out to {}
-  set i to 1
-  repeat with t in every tab of front window
-    set end of out to {tab_index:i, tab_title:(title of t), tab_url:(URL of t)}
-    set i to i + 1
-  end repeat
-  return out
-end tell
-```
-
-```applescript
-tell application "Google Chrome"
-  set active tab index of front window to 2
-  activate
-end tell
-```
-
-### Linux
-
-No AppleScript. Same split still applies:
-- use CDP for `new_tab`, attach, inspect, activate known targets
-- use window-manager / browser UI automation when the user means visible order
-
-Typical tools:
-- `xdotool`
-- `wmctrl`
-- desktop-environment scripting (`gdbus`, KWin, GNOME Shell extensions, etc.)
+- open, attach to, inspect, and close tabs
+- run JS / take a snapshot in any context by id (`js(expr, target_id=ctx)`)
+- reach an iframe's context: `iframe_target("substring-of-its-url")`
 
 ## Rules that held up in practice
 
-- `switch_tab()` is **not enough** if the user expects Chrome to visibly change.
-- `Target.activateTarget` is the CDP-side "show this tab".
-- `list_tabs()` includes `chrome://newtab/` by default; ask for `include_chrome=False` when you want only real pages.
-- `chrome://omnibox-popup.top-chrome/` can appear as a fake page target; ignore it for user-facing tab lists.
-- If a page has `w=0 h=0`, you may be attached to the wrong target or a non-window surface.
-- For dynamic UIs, re-read element rects after opening dropdowns / modals before coordinate-clicking.
+- Navigating away invalidates the snapshot's refs; take a fresh `browser snapshot` after.
+- `list_tabs()` includes internal `about:` pages by default; pass `include_internal=False` when
+  you want only real pages.
+- If a page reports `w=0 h=0` in `page_info()`, you're likely attached to a context that hasn't
+  laid out yet; `wait_for_load()` first.
+- For dynamic UIs, re-read element rects (fresh snapshot) after opening dropdowns / modals before
+  coordinate-clicking.

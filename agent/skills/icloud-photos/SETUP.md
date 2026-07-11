@@ -10,7 +10,7 @@
 ## Step 1: Install the CLI
 
 ```bash
-uv tool install --force --reinstall ~/agent/skills/icloud-photos/cli
+uv tool install --editable --force --reinstall ~/agent/skills/icloud-photos/cli
 ```
 
 ## Step 2: Provide credentials
