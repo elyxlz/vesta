@@ -2,9 +2,13 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
-from . import graph, auth, notifications, notify, folders, owa_rest
+import time
+
+from . import graph, auth, notifications, notify, folders, owa_rest, teams, capture
 from .config import Config
 from .context import MicrosoftContext
+
+_HTML_TAG = re.compile(r"<[^>]+>")
 
 
 # Zero-width and bidi / formatting characters that marketing emails use to pad previews with
@@ -208,11 +212,77 @@ def _poll_owa_rest_account(
         logger.error(f"Error fetching OWA REST calendar for {account_email}: {e}")
 
 
+def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> None:
+    """Emit a notification per chat whose latest message arrived since last_dt (excluding the user's
+    own messages). One /me/chats request per cycle carries every chat's last-message preview."""
+    logger = ctx.monitor_logger
+    try:
+        token = teams.resolve_token(config, account_email)
+    except teams.TeamsError as e:
+        logger.info(f"Teams token unavailable for {account_email}: {e}")
+        return
+    try:
+        my_id = teams._my_id(ctx.http_client, token)
+        chats = teams.list_chats(ctx.http_client, token, limit=50)
+    except Exception as e:
+        logger.error(f"Error fetching Teams chats for {account_email}: {e}")
+        return
+
+    for chat in chats:
+        preview = chat["lastMessagePreview"] if "lastMessagePreview" in chat else None
+        if not preview or "createdDateTime" not in preview:
+            continue
+        try:
+            created = datetime.fromisoformat(preview["createdDateTime"].replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if created <= last_dt:
+            continue
+        sender = preview["from"] if "from" in preview else None
+        sender_user = (sender["user"] if sender and "user" in sender else None) or {}
+        if "id" in sender_user and sender_user["id"] == my_id:
+            continue  # our own outgoing message
+        sender_name = sender_user["displayName"] if "displayName" in sender_user else "Someone"
+        members = ", ".join(m["displayName"] for m in (chat["members"] if "members" in chat else []) if "displayName" in m)
+        topic = (chat["topic"] if "topic" in chat else None) or members or None
+        body = preview["body"] if "body" in preview else {}
+        text = clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
+        logger.info(f"Writing Teams notification from {sender_name} in chat {chat['id']}")
+        notifications.write_notification(
+            ctx.notif_dir,
+            "teams",
+            interrupt=True,
+            sender=sender_name,
+            topic=topic,
+            preview=text,
+            chat_id=chat["id"],
+            account=account_email,
+            missed=catching_up or None,
+        )
+
+
+def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set[str]) -> None:
+    """Silently re-mint browser-captured tokens before they expire, so the user signs in only once.
+    On a lapsed sign-in, notify once and stop retrying that account until the daemon restarts."""
+    logger = ctx.monitor_logger
+    for account in capture.due_accounts(config, time.time()):
+        if account in gave_up:
+            continue
+        try:
+            saved = capture.refresh_and_save(config, account)
+            logger.info(f"Refreshed Microsoft tokens for {account}: {', '.join(saved)}")
+        except capture.CaptureError as e:
+            logger.warning(f"Token refresh failed for {account}: {e}")
+            gave_up.add(account)
+            notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
+
+
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
     first_run = True
     catching_up = False
+    refresh_gave_up: set[str] = set()
 
     while not ctx.monitor_stop_event.is_set():
         try:
@@ -311,6 +381,14 @@ def run(ctx: MicrosoftContext):
                 logger.info(f"Checking OWA REST account: {account_email}")
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
                 _poll_owa_rest_account(ctx, config, account_email, watch_folders, last_dt, new_check_time, catching_up)
+
+            # Teams chats: poll every account that has authorized Teams (device or captured token).
+            for account_email in teams.list_accounts(config):
+                logger.info(f"Checking Teams account: {account_email}")
+                _poll_teams_account(ctx, config, account_email, last_dt, catching_up)
+
+            # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
+            _refresh_captured_tokens(ctx, config, refresh_gave_up)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())

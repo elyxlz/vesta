@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
+from core.notification import Notification
 from conftest import assistant_msg, consuming, make_stream_harness, result_msg
 from wait_util import wait_for_condition
 
@@ -156,10 +157,10 @@ async def test_dash_correction_skipped_while_preempt_outstanding():
 # --- process_batch in the default message mode ---
 
 
-def _notif(tmp_path, name: str, source: str = "whatsapp") -> vm.Notification:
+def _notif(tmp_path, name: str, source: str = "whatsapp") -> Notification:
     f = tmp_path / f"{name}.json"
     f.write_text("x")
-    return vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type="message", body=name, file_path=str(f))
+    return Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type="message", body=name, file_path=str(f))
 
 
 @pytest.mark.anyio
@@ -167,7 +168,7 @@ async def test_process_batch_renders_and_queues_sections_plain(config, state, tm
     """process_batch only renders and enqueues (system section first): preempt delivery is
     owned by the queue-watcher, so nothing is sent or interrupted from here even mid-turn."""
     from core.loops import process_batch
-    from core.models import CORE_SOURCE
+    from core.notification import CORE_SOURCE
 
     state.client = MagicMock()
     state.client.query = AsyncMock()
@@ -206,8 +207,8 @@ async def test_notification_preempts_running_turn_end_to_end(tmp_path):
     await queue.put(vm.QueuedTurn("first message", True, []))
 
     with (
-        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
         patch("core.loops.load_prompt", return_value=""),
     ):
         processor = asyncio.create_task(message_processor(queue, state=state, config=config))

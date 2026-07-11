@@ -162,6 +162,9 @@ export function useAgentSocketState({
             enqueueChatMessage(event);
           } else {
             setMessages((prev) => capTail([...prev, event]));
+            if (event.type === "error" || event.type === "rate_limited") {
+              resetTyping();
+            }
           }
           if (event.type === "status") {
             setAgentState(event.state);

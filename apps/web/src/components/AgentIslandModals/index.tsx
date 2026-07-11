@@ -94,8 +94,8 @@ export function AgentIslandModals() {
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              this will permanently destroy the agent and all its data. this
-              action cannot be undone.
+              this permanently deletes {name} and everything they've learned. it
+              can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

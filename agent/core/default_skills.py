@@ -2,7 +2,7 @@
 
 The list of default skills lives in `core/default-skills.txt`, inside the
 read-only core mount, so it updates deterministically with the core code on
-upgrade (not deferred behind the agent's next workspace sync). Fresh vestas ship every default skill baked into the image; the
+upgrade (not deferred behind the agent's next upstream sync). Fresh vestas ship every default skill baked into the image; the
 Dockerfile prunes `skills/` down to this list. Existing boxes only gain a newly
 added default skill when something installs it. Rather than hand-write an install
 migration per skill, this reconciler derives the work from disk on every boot:
@@ -14,23 +14,23 @@ the next boot sees its `SKILL.md` and returns nothing, so re-running is always s
 """
 
 from . import logger
-from . import models as vm
+from . import config as cfg
 
 
-def _default_skill_names(config: vm.VestaConfig) -> list[str]:
+def _default_skill_names(config: cfg.VestaConfig) -> list[str]:
     default_skills_file = config.agent_dir / "core" / "default-skills.txt"
     if not default_skills_file.exists():
         return []
     return [line.strip() for line in default_skills_file.read_text().splitlines() if line.strip()]
 
 
-def missing_default_skills(config: vm.VestaConfig) -> list[str]:
+def missing_default_skills(config: cfg.VestaConfig) -> list[str]:
     """Default skills whose directory is not installed (no `SKILL.md` on disk)."""
     skills_dir = config.agent_dir / "skills"
     return [name for name in _default_skill_names(config) if not (skills_dir / name / "SKILL.md").exists()]
 
 
-def default_skill_sync_turn(*, config: vm.VestaConfig, first_start: bool = False) -> str | None:
+def default_skill_sync_turn(*, config: cfg.VestaConfig, first_start: bool = False) -> str | None:
     """Return a boot-turn prompt body listing default skills missing from this box (so the agent
     installs them and restarts), or None when nothing is missing. First start is a no-op: a fresh
     image already ships them all."""

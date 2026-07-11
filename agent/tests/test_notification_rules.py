@@ -7,16 +7,16 @@ import json
 import pydantic as pyd
 import pytest
 
-import core.models as vm
+from core.notification import CORE_SOURCE, Notification, TYPE_PROACTIVE_CHECK
 from core import config as cfg
 from core import loops
 from core import notification_interrupt_policy as npn
 
 
-def _notif(**fields) -> vm.Notification:
+def _notif(**fields) -> Notification:
     base = {"timestamp": dt.datetime(2025, 1, 1), "source": "twitter", "type": "tweet"}
     base.update(fields)
-    return vm.Notification.model_validate(base)
+    return Notification.model_validate(base)
 
 
 def _rule(**fields) -> npn.NotificationInterruptRule:
@@ -66,7 +66,7 @@ def test_conditions_are_anded_within_a_rule():
 
 
 def test_sender_substring_over_identity_fields():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice Smith"}
     )
     # A source rule pools whatsapp; a sender rule earlier interrupts alice specifically.
@@ -80,7 +80,7 @@ def test_keyword_matches_body():
 
 
 def test_keyword_matches_message_extra_field():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "message": "ping about taxes"}
     )
     assert npn.notif_disposition(notif, [_rule(keyword="taxes", action="pool")]) == "pool"
@@ -111,10 +111,10 @@ def test_invalid_keyword_regex_is_rejected():
 # --- general field predicates (match) ---
 
 
-def _wa(**fields) -> vm.Notification:
+def _wa(**fields) -> Notification:
     base = {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message"}
     base.update(fields)
-    return vm.Notification.model_validate(base)
+    return Notification.model_validate(base)
 
 
 def test_match_targets_a_concrete_extra_field():
@@ -255,13 +255,14 @@ def _write_rules_store(config, rules):
     (config.data_dir / "config.json").write_text(json.dumps({"notification_rules": rules}))
 
 
-def test_load_missing_store_returns_empty(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
-    assert cfg.load_notification_rules(config) == []
+def test_load_missing_store_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    assert cfg.load_notification_rules() == []
 
 
-def test_load_drops_invalid_rule_keeps_the_rest(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+def test_load_drops_invalid_rule_keeps_the_rest(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = cfg.VestaConfig()
     # The middle rule carries an unknown field (the model forbids extras). It must be dropped without
     # taking the surrounding valid rules down with it.
     _write_rules_store(
@@ -272,13 +273,14 @@ def test_load_drops_invalid_rule_keeps_the_rest(tmp_path):
             {"id": "c", "type": "dm", "action": "interrupt"},
         ],
     )
-    assert [rule.id for rule in cfg.load_notification_rules(config)] == ["a", "c"]
+    assert [rule.id for rule in cfg.load_notification_rules()] == ["a", "c"]
 
 
-def test_load_round_trips_a_written_store(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+def test_load_round_trips_a_written_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = cfg.VestaConfig()
     _write_rules_store(config, [{"id": "r1", "source": "twitter", "action": "pool"}])
-    loaded = cfg.load_notification_rules(config)
+    loaded = cfg.load_notification_rules()
     assert len(loaded) == 1
     assert loaded[0].id == "r1"
     assert loaded[0].source == "twitter"
@@ -292,12 +294,12 @@ def test_load_round_trips_a_written_store(tmp_path):
 
 def test_core_type_interrupts_despite_catch_all_pool_rule():
     # A non-pool core type (migration) preempts even under a broad user pool rule.
-    notif = _notif(source=vm.CORE_SOURCE, type="migration")
+    notif = _notif(source=CORE_SOURCE, type="migration")
     assert loops._notif_disposition(notif, [_rule(action="pool")]) == "interrupt"
 
 
 def test_core_pool_type_pools():
-    notif = _notif(source=vm.CORE_SOURCE, type=vm.TYPE_PROACTIVE_CHECK)
+    notif = _notif(source=CORE_SOURCE, type=TYPE_PROACTIVE_CHECK)
     assert loops._notif_disposition(notif, []) == "pool"
 
 
@@ -310,7 +312,7 @@ def test_non_core_goes_through_rules():
 def test_core_notification_is_never_trashed():
     # Core disposition is control-flow (type-derived) and exempt from user rules, so a broad trash rule
     # can't drop a core notification.
-    notif = _notif(source=vm.CORE_SOURCE, type="migration")
+    notif = _notif(source=CORE_SOURCE, type="migration")
     assert loops._notif_disposition(notif, [_rule(action="trash")]) == "interrupt"
 
 
@@ -318,19 +320,19 @@ def test_core_notification_is_never_trashed():
 
 
 def test_notif_sender_reads_first_identity_field():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice Smith"}
     )
     assert npn.notif_sender(notif) == "Alice Smith"
 
 
 def test_notif_sender_handle_field():
-    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet", "handle": "@bob"})
+    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet", "handle": "@bob"})
     assert npn.notif_sender(notif) == "@bob"
 
 
 def test_notif_sender_none_when_no_identity_field():
-    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet"})
+    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "twitter", "type": "tweet"})
     assert npn.notif_sender(notif) is None
 
 
@@ -338,7 +340,7 @@ def test_notif_sender_none_when_no_identity_field():
 
 
 def test_notif_facet_fields_surfaces_structured_extras():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
             "source": "whatsapp",
@@ -354,7 +356,7 @@ def test_notif_facet_fields_surfaces_structured_extras():
 
 
 def test_notif_facet_fields_skips_overlong_values():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "x", "type": "y", "blob": "z" * (npn.FACET_VALUE_MAXLEN + 1), "tag": "ok"}
     )
     fields = npn.notif_facet_fields(notif)
@@ -367,7 +369,7 @@ def test_notif_facet_fields_empty_without_extras():
 
 def test_notif_facet_fields_skips_non_scalar_values():
     # A list/dict extra would str() to a Python repr, not a real rule target, so it must be skipped.
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "x", "type": "y", "labels": ["a", "b"], "meta": {"k": "v"}, "tag": "ok"}
     )
     assert npn.notif_facet_fields(notif) == {"tag": "ok"}

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
+import core.config as cfg
+from core.notification import Notification
 from claude_agent_sdk.types import SubagentStartHookInput
 from conftest import assistant_msg, consuming, idle_message_stream, make_stream_harness, result_msg
 from core.sdk_parsing import _subagent_hook
@@ -104,9 +106,9 @@ async def test_message_processor_interrupts_on_new_message(config, state):
     from core.loops import message_processor
 
     with (
-        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
         patch("core.loops.process_message", tracking),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.build_client_options", return_value=MagicMock()),
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
@@ -150,9 +152,9 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
     from core.loops import message_processor
 
     with (
-        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
         patch("core.loops.process_message", slow_side_effect),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.build_client_options", return_value=MagicMock()),
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
@@ -193,6 +195,49 @@ async def test_run_messages_with_interrupts_cancels_process_task(config, state):
             await interruptible_task
 
     assert task_cancelled, "process_task should have been cancelled, not left orphaned"
+
+
+@pytest.mark.anyio
+async def test_query_not_delivered_keeps_notification_file(config, state, tmp_path):
+    """A turn whose query never reached the CLI (send timeout, or client.query() raised on a dead
+    transport) must not delete its notification file: the resumed session never saw the message,
+    so it must re-run on the next boot rather than being silently lost."""
+    from core.client import QueryNotDelivered
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    notif_path = tmp_path / "notif.json"
+    notif_path.write_text("{}")
+
+    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+        raise QueryNotDelivered("query timed out before the CLI received it")
+
+    with patch("core.loops.process_message", failing_process):
+        await _run_messages_with_interrupts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
+
+    assert notif_path.exists(), "file must survive a query that never reached the CLI"
+    assert state.graceful_shutdown.is_set()
+    assert state.query_not_delivered is False, "the per-turn flag resets once consumed"
+
+
+@pytest.mark.anyio
+async def test_response_timeout_deletes_notification_file(config, state, tmp_path):
+    """A response timeout after the query was already sent still deletes the notification file:
+    the resumed session already contains the message, so keeping the file would replay it."""
+    from core.loops import _run_messages_with_interrupts
+
+    queue: asyncio.Queue = asyncio.Queue()
+    notif_path = tmp_path / "notif.json"
+    notif_path.write_text("{}")
+
+    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+        raise TimeoutError
+
+    with patch("core.loops.process_message", failing_process):
+        await _run_messages_with_interrupts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
+
+    assert not notif_path.exists(), "file must be deleted: the resumed session already saw the message"
+    assert state.graceful_shutdown.is_set()
 
 
 @pytest.mark.anyio
@@ -241,7 +286,7 @@ async def test_process_batch_does_not_sdk_abort_a_boot_turn(config, state, tmp_p
 
     notif_file = tmp_path / "n.json"
     notif_file.write_text("x")
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
 
     with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
         await process_batch([notif], queue=queue, state=state, config=config)
@@ -262,7 +307,7 @@ async def test_process_batch_sdk_aborts_a_normal_turn(config, state, tmp_path):
 
     notif_file = tmp_path / "n.json"
     notif_file.write_text("x")
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="whatsapp", type="message", file_path=str(notif_file))
 
     with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
         await process_batch([notif], queue=queue, state=state, config=config)
@@ -366,7 +411,7 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path, state, 
     ending a genuinely dead turn (see issue #737)."""
     from core.client import attempt_interrupt
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
     state.event_bus = event_bus
     queue = event_bus.subscribe()
 
@@ -414,7 +459,7 @@ async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, eve
     so there is no reason to suppress the interrupt during tool work."""
     from core.client import attempt_interrupt
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)
     state.event_bus = event_bus
     state.active_tools["tool-1"] = vm.ActiveTool(name="Bash", summary="ls", started_at=0.0)
 
@@ -722,6 +767,39 @@ async def test_converse_times_out_on_stream_silence():
 
 
 @pytest.mark.anyio
+async def test_converse_raises_query_not_delivered_on_send_timeout():
+    """A query send that never completes within query_timeout raises QueryNotDelivered, not a bare
+    TimeoutError, so the caller can tell a pre-delivery failure from a post-delivery one."""
+    from core.client import QueryNotDelivered, converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    config.query_timeout = 1
+
+    async def slow_query(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    mock_client.query = AsyncMock(side_effect=slow_query)
+
+    async with consuming(state, config):
+        with pytest.raises(QueryNotDelivered):
+            await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
+
+
+@pytest.mark.anyio
+async def test_converse_raises_query_not_delivered_on_dead_transport():
+    """client.query() raising on a dead transport (no send timeout involved) is also surfaced as
+    QueryNotDelivered: the CLI never received the prompt either way."""
+    from core.client import QueryNotDelivered, converse
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    mock_client.query = AsyncMock(side_effect=RuntimeError("transport closed"))
+
+    async with consuming(state, config):
+        with pytest.raises(QueryNotDelivered):
+            await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
+
+
+@pytest.mark.anyio
 async def test_compact_session_waits_for_result(config):
     """compact_session blocks until the compaction turn's ResultMessage closes the turn."""
     from claude_agent_sdk import SystemMessage
@@ -733,7 +811,7 @@ async def test_compact_session_waits_for_result(config):
         boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
         await message_queue.put(boundary)
         await message_queue.put(result_msg())
-        await asyncio.wait_for(compact_session(state=state), timeout=5.0)
+        await asyncio.wait_for(compact_session(state=state, config=config), timeout=5.0)
 
     mock_client.query.assert_awaited_once_with("/compact")
     assert state.turn is None
@@ -753,9 +831,28 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
         await message_queue.put(boundary)
         await message_queue.put(result_msg())
         multiline = "keep open threads\nand this draft:\nline two"
-        await asyncio.wait_for(compact_session(state=state, prompt=multiline), timeout=5.0)
+        await asyncio.wait_for(compact_session(state=state, config=config, prompt=multiline), timeout=5.0)
 
     mock_client.query.assert_awaited_once_with("/compact keep open threads and this draft: line two")
+    assert state.turn is None
+
+
+@pytest.mark.anyio
+async def test_compact_session_query_send_timeout_fails_compaction():
+    """The /compact send is a stdin write to the CLI subprocess: a wedged CLI that never accepts it
+    must fail the compaction with TimeoutError (drain_compaction_request logs it, still delivers the
+    follow-up, still restarts) instead of wedging the message processor forever."""
+    from core.client import compact_session
+
+    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    config.query_timeout = 1
+
+    async def hung_query(query):
+        await asyncio.Event().wait()
+
+    mock_client.query = hung_query
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(compact_session(state=state, config=config), timeout=5.0)
     assert state.turn is None
 
 

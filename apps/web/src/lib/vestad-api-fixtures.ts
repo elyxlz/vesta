@@ -18,6 +18,19 @@ export const vestadApiFixtures = {
     "dead",
     "not_found"
   ],
+  "agents": [
+    {
+      "name": "sample-agent",
+      "startedAt": "2026-01-01T00:00:00Z",
+      "status": "alive",
+      "ws_port": 4200
+    },
+    {
+      "name": "stopped-agent",
+      "status": "stopped",
+      "ws_port": 4201
+    }
+  ],
   "agents_ws_message": {
     "agents": [
       {
@@ -85,6 +98,19 @@ export const vestadApiFixtures = {
       "size": 1234567890
     }
   ],
+  "start_all": {
+    "results": [
+      {
+        "name": "sample-agent",
+        "ok": true
+      },
+      {
+        "error": "failed to start",
+        "name": "broken-agent",
+        "ok": false
+      }
+    ]
+  },
   "tree_entry": {
     "is_dir": false,
     "mode": 420,

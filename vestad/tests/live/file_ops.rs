@@ -28,8 +28,9 @@ fn agent_notification_e2e_creates_then_modifies_file_via_vestad() {
         true,
     )
     .expect("write create notification");
-    let created_content = wait_for_file_contains(&container, &file, &expected, Duration::from_secs(180))
-        .expect("wait for created file");
+    let created_content =
+        wait_for_file_contains(&container, &file, &expected, Duration::from_secs(180))
+            .expect("wait for created file");
     assert!(created_content.contains(&expected));
 
     write_notification(
@@ -38,8 +39,12 @@ fn agent_notification_e2e_creates_then_modifies_file_via_vestad() {
         true,
     )
     .expect("write modify notification");
-    let modified_content = wait_for_file_contains(&container, &file, "APPENDED", Duration::from_secs(180))
-        .expect("wait for modified file");
-    assert!(modified_content.contains(&expected), "append must preserve the original content");
+    let modified_content =
+        wait_for_file_contains(&container, &file, "APPENDED", Duration::from_secs(180))
+            .expect("wait for modified file");
+    assert!(
+        modified_content.contains(&expected),
+        "append must preserve the original content"
+    );
     assert!(modified_content.contains("APPENDED"));
 }
