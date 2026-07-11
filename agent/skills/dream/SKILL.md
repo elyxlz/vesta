@@ -40,6 +40,8 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
+**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. A guessed cause the log would have corrected is a mis-diagnosis that aims the fix in the wrong direction: a silence blamed on a "delivery hole" that was actually a usage-cap rate-limit sends you building delivery plumbing for a problem the log already explained. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
+
 **Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class (rule -> runtime trigger -> structurally impossible), not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
 ### 2. Review the conversation
@@ -54,7 +56,7 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
-Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options in no particular order:
+Prefer the simplest, most reliable change that addresses the root cause. For a genuine judgment call or a behavior with no code locus, a one-line rule beats a clever rewrite. But when the failure is a fixable bug in a command/tool/CLI (it errored, returned wrong output, silently failed on a bad flag), a rule is the WRONG tool: fix the code at the source so the sharp edge is gone for good, then upstream it. Never write a rule or a SKILL.md caution that just tells future-you to route around a broken thing while the thing stays broken for every other instance. Options in no particular order:
 - Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
@@ -65,7 +67,7 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
-**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and file it upstream (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
+**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and file it upstream (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line. Fixing is not the same as documenting: a caution that says "flag --x is broken, don't use it" is a signpost around the hole, not a fix. The fix is making --x work, or making it fail loudly with a clear error. Leaving the sharp edge in place and writing a warning beside it is the band-aid this bullet forbids.
 
 ### 4. Validate each fix
 
@@ -78,6 +80,8 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it. Note in the summary what was filed (or that it was a no-op, and why).
 
 **File the moment you fix, never a queue for later.** When a fix is generalizable (litmus: "would another instance hit this?"), open the PR in the same step you make the fix. Don't park it in a list to file "later": the gap between finding and filing is exactly where upstreaming rots, so there is no local queue to drain. If you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates: file it and let CI catch errors. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now.
+
+**Empty the upstream queue's `## Open` to zero every dream, by FANNING OUT.** The dream is the filing window (no live task competing), so this is not optional and not "when there's time." For every open item, spawn ONE subagent (in parallel, they're independent) that does the whole job end to end: any cleanup, lint/type checks, and the actual PR filing via `upstream-pr`. Give each subagent the file paths, the exact cleanup needed, and "do it all yourself, verify the PR URL exists before finishing, return the PR number." Then VERIFY each PR exists (subagent claims are hearsay) and mark it filed. **"Needs a cleanup pass" is NOT a blocker, it is the filing work** the subagent does the cleanup. The only thing allowed to survive a dream open is an item with a real, tested, external blocker (waiting on the user, a key, or genuine design work that is its own task), tagged with the exact unblock condition. If a subagent could do it, it is not blocked. Fan out and file.
 
 ### 6. Recurrence sweep
 
