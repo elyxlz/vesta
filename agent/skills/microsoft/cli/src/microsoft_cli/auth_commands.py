@@ -451,6 +451,20 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
 # tenant is fully provisioned by a single code. Locked tenants fall through to the browser capture.
 _SETUP_SCOPES = [*DEFAULT_CLIENT_SCOPES, *teams.TEAMS_SCOPES]
 
+# Personal Microsoft consumer domains. Everything else is treated as a work/school (custom-domain)
+# account, whose tenant usually blocks the default public client, so we default those to the browser
+# handover instead of wasting a device-code round-trip that the tenant will reject.
+_PERSONAL_MS_DOMAINS = {"outlook.com", "hotmail.com", "live.com", "msn.com", "passport.com", "windowslive.com"}
+
+
+def _is_personal_ms_account(email: str) -> bool:
+    domain = email.rsplit("@", 1)[-1].lower().strip()
+    if domain in _PERSONAL_MS_DOMAINS:
+        return True
+    # Country variants: outlook.fr, hotmail.co.uk, live.de, etc.
+    first = domain.split(".")[0]
+    return first in {"outlook", "hotmail", "live"}
+
 
 def _setup_save_captured(config: Config, *, account_email: str, captured: dict) -> dict[str, str]:
     """Persist browser-captured tokens (mail over OWA REST, Teams over Graph) and summarize."""
@@ -482,14 +496,23 @@ def _setup_begin_browser(config: Config, *, account_email: str) -> dict[str, str
 
 
 def auth_setup(
-    config: Config, *, account_email: str, use_browser: bool = False, flow_cache: str | None = None, do_capture: bool = False
+    config: Config,
+    *,
+    account_email: str,
+    use_browser: bool = False,
+    flow_cache: str | None = None,
+    do_capture: bool = False,
+    force_device: bool = False,
 ) -> dict[str, str]:
     """One onboarding flow for mail + calendar + Teams.
 
-    No flags: start a device-code sign-in (works for personal / permissive tenants, and auto-refreshes
-    via MSAL). ``--flow-cache``: finish that sign-in; if the tenant walls it, pivot to the browser
-    automatically. ``--browser``: skip straight to the browser capture (for a known locked tenant).
-    ``--capture``: after signing in via the browser, lift the tokens and finish."""
+    No flags: a work/school (custom-domain) account defaults to the browser handover, since its tenant
+    usually blocks the default public client and would reject a device code; a personal Microsoft account
+    (outlook.com, hotmail.*, etc.) starts a device-code sign-in (auto-refreshes via MSAL). ``--flow-cache``:
+    finish a device-code sign-in; if the tenant walls it, pivot to the browser automatically. ``--browser``:
+    force the browser capture (for a known locked tenant). ``--device`` (``force_device``): force device code
+    even for a work/school domain (permissive tenants). ``--capture``: after signing in via the browser, lift
+    the tokens and finish."""
     if do_capture:
         captured = capture.finish_interactive(config, account_email)
         return _setup_save_captured(config, account_email=account_email, captured=captured)
@@ -523,6 +546,11 @@ def auth_setup(
             "backend": "graph",
             "message": f"{account_email} is set up over Graph (mail, calendar, Teams). Tokens auto-refresh; no re-auth needed.",
         }
+
+    if not force_device and not _is_personal_ms_account(account_email):
+        # Work/school (custom domain): the tenant almost always blocks the public client, so skip the
+        # device-code round-trip that would be rejected and hand off to the browser up front.
+        return _setup_begin_browser(config, account_email=account_email)
 
     app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
     flow = app.initiate_device_flow(scopes=_SETUP_SCOPES)
