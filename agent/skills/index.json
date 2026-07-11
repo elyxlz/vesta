@@ -33,7 +33,7 @@
   },
   {
     "name": "dashboard",
-    "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
+    "description": "Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it."
   },
   {
     "name": "discord",
