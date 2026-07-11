@@ -83,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_setup.add_argument("--account", required=True)
     p_setup.add_argument("--browser", action="store_true", help="Skip device code and capture from the browser (locked work/school tenant).")
+    p_setup.add_argument("--device", action="store_true", help="Force device-code sign-in even for a work/school domain (permissive tenants).")
     p_setup.add_argument("--flow-cache", default=None, help="Finish a device-code sign-in started by a prior `auth setup`.")
     p_setup.add_argument("--capture", action="store_true", help="Finish after signing in through the browser handover.")
 
@@ -480,7 +481,12 @@ def _dispatch_auth(args, config):
         return auth_commands.list_accounts(config)
     elif args.command == "setup":
         return auth_commands.auth_setup(
-            config, account_email=args.account, use_browser=args.browser, flow_cache=args.flow_cache, do_capture=args.capture
+            config,
+            account_email=args.account,
+            use_browser=args.browser,
+            flow_cache=args.flow_cache,
+            do_capture=args.capture,
+            force_device=args.device,
         )
     elif args.command == "login":
         return auth_commands.authenticate_account(config)

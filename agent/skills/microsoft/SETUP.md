@@ -35,16 +35,17 @@ Teams together and picks the right path on its own; each step returns a `next:` 
 exactly what to run.
 
 ```bash
-microsoft auth setup --account you@example.com          # start (device code by default)
+microsoft auth setup --account you@example.com          # start (default depends on domain, see below)
 microsoft auth setup --account you@example.com --flow-cache <cache>   # finish a device-code sign-in
-microsoft auth setup --account you@example.com --browser             # locked tenant: browser sign-in
+microsoft auth setup --account you@example.com --browser             # force browser sign-in (locked tenant)
+microsoft auth setup --account you@example.com --device              # force device code (permissive work tenant)
 microsoft auth setup --account you@example.com --capture             # finish after the browser sign-in
 ```
 
-How it chooses:
-- **Personal / permissive tenant**: device-code sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely.
-- **Locked work/school tenant** (a university/company that blocks the sign-in, like UCL): if the device code is rejected, `auth setup` **automatically switches** to a browser handover, it hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. If you already know the tenant is locked, skip the device-code round-trip with `--browser`.
-- **Ask the user personal vs work/school** if you want to pick `--browser` up front and save a step; otherwise just run `auth setup` and let it pivot.
+How it chooses (by the account's domain, no need to ask):
+- **Personal Microsoft account** (outlook.com, hotmail.*, live.*, msn.com, etc.): defaults to **device-code** sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely.
+- **Work/school account** (any custom domain, e.g. a university or company like UCL): defaults to the **browser handover** up front, because the tenant almost always blocks the default public client and would reject a device code. `auth setup` hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. No wasted device-code round-trip.
+- **Escape hatches**: `--browser` forces the browser route for any account; `--device` forces device code even for a work/school domain (for a permissive tenant that still allows it). If a device-code sign-in is later walled by the tenant, `auth setup --flow-cache` still **automatically pivots** to the browser handover.
 
 **Auto-refresh (locked tenants):** the user signs in **once**. The browser sign-in is saved to a per-account profile, and the daemon silently re-mints fresh tokens from it before they expire (works for weeks, until the SSO session itself ends), so there's no daily re-login. If the session finally lapses, the daemon emits a `type=auth_needed` notification to sign in again.
 
