@@ -93,7 +93,7 @@
   },
   {
     "name": "microsoft",
-    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, and new-mail paging. Requires daemon."
+    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon."
   },
   {
     "name": "nap",

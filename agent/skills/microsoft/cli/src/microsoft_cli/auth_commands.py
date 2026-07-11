@@ -3,9 +3,9 @@
 import json
 import subprocess
 
-from . import auth, owa_rest
-from .config import Config, OWA_REST_SCOPES
-from .settings import OWA_REST_CLIENT_ID
+from . import auth, capture, owa_rest, teams
+from .config import Config, OWA_REST_SCOPES, DEFAULT_CLIENT_SCOPES
+from .settings import OWA_REST_CLIENT_ID, DEFAULT_CLIENT_ID
 
 # JS that extracts the OWA access token from the browser's MSAL storage.
 # Returns the token secret (a JWT) or the string 'NONE'.
@@ -35,6 +35,27 @@ OWA_TOKEN_SNIPPET = (
     "const k=s.key(i);if(/accesstoken/i.test(k)){try{const v=JSON.parse(s.getItem(k));"
     "if((v.target||'').includes('outlook.office.com'))return v.secret;}catch(e){}}}return 'NONE';})())"
 )
+
+# One-liner for the user's own Teams browser console; copies the graph.microsoft.com token with the
+# most Teams scopes to their clipboard for `microsoft auth teams-capture --token <TOKEN>` (a session
+# can hold several graph tokens; the fullest-scoped one is the Teams app's).
+TEAMS_TOKEN_SNIPPET = (
+    "copy((()=>{const w=['Chat.','ChannelMessage.','Channel.','Team.','Presence.'];let b=null,bs=-1;"
+    "for(const s of[localStorage,sessionStorage])for(let i=0;i<s.length;i++){const k=s.key(i);"
+    "if(!/accesstoken/i.test(k))continue;try{const v=JSON.parse(s.getItem(k));const t=v.target||'';"
+    "if(!t.includes('graph.microsoft.com'))continue;const sc=w.reduce((n,x)=>n+(t.includes(x)?1:0),0);"
+    "if(sc>bs){bs=sc;b=v.secret;}}catch(e){}}return b||'NONE';})())"
+)
+
+
+# AADSTS codes and phrases a locked work/school tenant returns when it blocks the default
+# public client: the device-flow path is walled and the caller must switch to browser capture.
+_CONSENT_WALL_MARKERS = ("aadsts65001", "aadsts90094", "aadsts900", "admin", "consent", "not authorized")
+
+
+def _is_consent_wall(error_msg: str) -> bool:
+    lowered = error_msg.lower()
+    return any(marker in lowered for marker in _CONSENT_WALL_MARKERS)
 
 
 def list_accounts(config: Config) -> list[dict[str, str]]:
@@ -101,6 +122,16 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
             return {
                 "status": "pending",
                 "message": "Authentication is still pending.",
+            }
+        if _is_consent_wall(error_msg):
+            return {
+                "status": "admin_consent_required",
+                "message": (
+                    "This is a locked work/school tenant: it blocks the default app, so device-code sign-in needs an admin. "
+                    "Use the browser-capture fallback instead (no admin consent needed): `microsoft auth owa-login --account <email>` "
+                    "for mail/calendar, and `microsoft auth teams-capture --account <email>` for Teams. Then pass `--backend owa-rest`."
+                ),
+                "detail": error_msg,
             }
         raise Exception(f"Authentication failed: {error_msg}")
 
@@ -269,4 +300,250 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
         "status": "success",
         "account": account_email,
         "message": f"OWA REST token captured for {account_email}. Valid ~24 h; re-run this command to refresh when it expires.",
+    }
+
+
+def teams_login(config: Config) -> dict[str, str]:
+    """Start a device-flow sign-in for the Teams Graph scopes.
+
+    Kept separate from `auth login` so a mail-only account is never prompted to consent to Teams
+    scopes; MSAL caches the two scope sets side by side under the same account."""
+    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    flow = app.initiate_device_flow(scopes=teams.TEAMS_SCOPES)
+    if "user_code" not in flow:
+        error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
+        raise Exception(f"Failed to get device code: {error_msg}")
+
+    verification_url = (
+        flow["verification_uri"]
+        if "verification_uri" in flow
+        else (flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin")
+    )
+    return {
+        "status": "authentication_required",
+        "instructions": "To authorize Microsoft Teams:",
+        "step1": f"Visit: {verification_url}",
+        "step2": f"Enter code: {flow['user_code']}",
+        "step3": "Sign in with the Microsoft account whose Teams you want to reach",
+        "step4": "Then finish with: microsoft auth teams-complete",
+        "device_code": flow["user_code"],
+        "verification_url": verification_url,
+        "expires_in": flow["expires_in"] if "expires_in" in flow else 900,
+        "_flow_cache": json.dumps(flow),
+    }
+
+
+def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
+    try:
+        flow = json.loads(flow_cache)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError("Invalid flow cache data")
+
+    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    result = app.acquire_token_by_device_flow(flow)
+
+    if "error" in result:
+        error_msg = result["error_description"] if "error_description" in result else result["error"]
+        if "authorization_pending" in error_msg:
+            return {"status": "pending", "message": "Authorization is still pending."}
+        if _is_consent_wall(error_msg):
+            return {
+                "status": "admin_consent_required",
+                "message": (
+                    "This is a locked work/school tenant: device-code Teams sign-in needs an admin. Capture a token from Teams "
+                    "on the web instead (no admin consent needed): `microsoft auth teams-capture --account <email>`, then use `--backend owa-rest`."
+                ),
+                "detail": error_msg,
+            }
+        raise Exception(f"Teams authorization failed: {error_msg}")
+
+    cache = app.token_cache
+    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+        auth._write_cache(config.cache_file, content=cache.serialize())
+
+    claims = result["id_token_claims"] if "id_token_claims" in result else {}
+    username = claims["preferred_username"] if "preferred_username" in claims else ""
+    if not username:
+        return {"status": "error", "message": "Teams authorization succeeded but no account was found"}
+    teams.mark_device_account(username, config)
+    return {
+        "status": "success",
+        "account": username,
+        "message": f"Teams authorized for {username}. Tokens auto-refresh; no re-auth or browser needed.",
+    }
+
+
+def teams_capture(config: Config, *, account_email: str, token: str | None = None) -> dict[str, str]:
+    """Capture a Graph Teams token for a locked tenant.
+
+    `--token <JWT>`: save a token the user extracted from their own signed-in Teams session
+    (run TEAMS_TOKEN_SNIPPET in their browser console); their password and MFA never leave their
+    machine. Otherwise capture it from the agent's own browser session, non-blocking: opens Teams
+    on the web and reads the graph.microsoft.com token from its storage, returning
+    `sign_in_required` if the session is not signed in yet."""
+    if token:
+        return _teams_capture_paste(config, account_email=account_email, token=token)
+    return _teams_capture_browser(config, account_email=account_email)
+
+
+def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> dict[str, str]:
+    token = token.strip()
+    try:
+        expires_at = owa_rest.jwt_exp(token)
+    except Exception:
+        return {
+            "status": "error",
+            "message": "That does not look like a Teams access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard.",
+        }
+    teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
+    return {
+        "status": "success",
+        "account": account_email,
+        "message": f"Teams token saved for {account_email}. Paste a fresh one (re-run the snippet) when it expires.",
+    }
+
+
+def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, str]:
+    import os
+
+    env = dict(os.environ)
+    if "DISPLAY" not in env:
+        env["DISPLAY"] = ":99"
+
+    def _run(*args: str) -> str:
+        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env)
+        return result.stdout.strip()
+
+    _run("launch", "--stealth")
+    _run("open", "https://teams.microsoft.com/")
+    token = _run("evaluate", capture._TEAMS_TOKEN_JS)
+
+    if not token or token == "NONE":
+        return {
+            "status": "sign_in_required",
+            "account": account_email,
+            "url": "https://teams.microsoft.com/",
+            "message": (
+                f"Teams on the web is open in the browser but not signed in as {account_email}. "
+                "Drive the sign-in with the `browser` skill (navigate, enter credentials, handle MFA), "
+                "then run `microsoft auth teams-capture` again to capture the token."
+            ),
+        }
+
+    try:
+        expires_at = owa_rest.jwt_exp(token)
+    except Exception:
+        return {"status": "error", "message": "Token was captured but its expiry could not be decoded. The token may be malformed."}
+
+    teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
+    return {
+        "status": "success",
+        "account": account_email,
+        "message": f"Teams token captured for {account_email}. Valid ~24 h; re-run this command to refresh when it expires.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unified onboarding: one command sets up mail, calendar, and Teams together.
+# ---------------------------------------------------------------------------
+
+# Device-code setup consents mail + calendar + Teams in one sign-in, so a personal or permissive
+# tenant is fully provisioned by a single code. Locked tenants fall through to the browser capture.
+_SETUP_SCOPES = [*DEFAULT_CLIENT_SCOPES, *teams.TEAMS_SCOPES]
+
+
+def _setup_save_captured(config: Config, *, account_email: str, captured: dict) -> dict[str, str]:
+    """Persist browser-captured tokens (mail over OWA REST, Teams over Graph) and summarize."""
+    got = capture.save_captured(config, account_email, captured)
+    return {
+        "status": "success",
+        "account": account_email,
+        "provisioned": ", ".join(got) if got else "nothing",
+        "backend": "owa-rest",
+        "message": (
+            f"{account_email} is set up ({', '.join(got)}). The daemon silently refreshes these from the saved "
+            "sign-in, so no daily re-login. Use commands normally; `--backend auto` picks this path."
+        ),
+    }
+
+
+def _setup_begin_browser(config: Config, *, account_email: str) -> dict[str, str]:
+    user_url = capture.begin_interactive(config, account_email)
+    return {
+        "status": "sign_in",
+        "account": account_email,
+        "user_url": user_url,
+        "message": (
+            f"Open {user_url} and sign in as {account_email} (SSO + MFA) in that window. When you land on your "
+            f"inbox, finish with: microsoft auth setup --account {account_email} --capture"
+        ),
+        "next": f"microsoft auth setup --account {account_email} --capture",
+    }
+
+
+def auth_setup(
+    config: Config, *, account_email: str, use_browser: bool = False, flow_cache: str | None = None, do_capture: bool = False
+) -> dict[str, str]:
+    """One onboarding flow for mail + calendar + Teams.
+
+    No flags: start a device-code sign-in (works for personal / permissive tenants, and auto-refreshes
+    via MSAL). ``--flow-cache``: finish that sign-in; if the tenant walls it, pivot to the browser
+    automatically. ``--browser``: skip straight to the browser capture (for a known locked tenant).
+    ``--capture``: after signing in via the browser, lift the tokens and finish."""
+    if do_capture:
+        captured = capture.finish_interactive(config, account_email)
+        return _setup_save_captured(config, account_email=account_email, captured=captured)
+
+    if use_browser:
+        return _setup_begin_browser(config, account_email=account_email)
+
+    if flow_cache is not None:
+        try:
+            flow = json.loads(flow_cache)
+        except (json.JSONDecodeError, TypeError):
+            raise ValueError("Invalid flow cache data")
+        app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+        result = app.acquire_token_by_device_flow(flow)
+        if "error" in result:
+            error_msg = result["error_description"] if "error_description" in result else result["error"]
+            if "authorization_pending" in error_msg:
+                return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
+            if _is_consent_wall(error_msg):
+                # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
+                return _setup_begin_browser(config, account_email=account_email)
+            raise Exception(f"Sign-in failed: {error_msg}")
+        cache = app.token_cache
+        if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+            auth._write_cache(config.cache_file, content=cache.serialize())
+        teams.mark_device_account(account_email, config)
+        return {
+            "status": "success",
+            "account": account_email,
+            "provisioned": "mail/calendar, Teams",
+            "backend": "graph",
+            "message": f"{account_email} is set up over Graph (mail, calendar, Teams). Tokens auto-refresh; no re-auth needed.",
+        }
+
+    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    flow = app.initiate_device_flow(scopes=_SETUP_SCOPES)
+    if "user_code" not in flow:
+        error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
+        raise Exception(f"Failed to get device code: {error_msg}")
+    verification_url = (
+        flow["verification_uri"]
+        if "verification_uri" in flow
+        else (flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin")
+    )
+    return {
+        "status": "device_code",
+        "account": account_email,
+        "verification_url": verification_url,
+        "code": flow["user_code"],
+        "message": (
+            f"Ask {account_email} to visit {verification_url} and enter code {flow['user_code']}. Then finish with: "
+            f"microsoft auth setup --account {account_email} --flow-cache <cache>. If it's a locked work/school "
+            f"tenant that rejects the code, rerun with --browser instead."
+        ),
+        "next": f"microsoft auth setup --account {account_email} --flow-cache <cache>",
+        "_flow_cache": json.dumps(flow),
     }
