@@ -547,6 +547,59 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path, mon
 
 
 @pytest.mark.anyio
+async def test_proactive_check_skipped_while_busy_fires_on_first_idle_tick(tmp_path, monkeypatch):
+    """A proactive check that lands while the processor is busy stays due and fires on the first idle
+    tick after the interval, instead of waiting another full interval; once fired the timer resets."""
+    config = _passive_config(tmp_path, monkeypatch)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.processor_busy = True
+    state.event_bus.set_state("thinking")  # hold the pooled proactive drop so the queue stays empty
+    queue: asyncio.Queue = asyncio.Queue()
+
+    t0 = dt.datetime(2025, 1, 1, 12, 0, 0)
+    clock = [t0]
+    ticks = [0]
+    real_load = load_notifications
+
+    async def counting_load(*, config):
+        ticks[0] += 1
+        return await real_load(config=config)
+
+    def proactive_files():
+        return list(config.notifications_dir.glob("proactive_check-*.json"))
+
+    with (
+        patch("core.loops._now", side_effect=lambda: clock[0]),
+        patch("core.loops.load_prompt", return_value="check in"),
+        patch("core.loops.load_notifications", counting_load),
+    ):
+        task = asyncio.create_task(monitor_loop(queue, state=state, config=config))
+        try:
+            # Let the loop take its baseline timestamp at t0 before jumping the clock.
+            await wait_for_condition(lambda: ticks[0] >= 1, message="monitor_loop never ticked")
+
+            # Cross the interval boundary while busy: the check must be skipped, not fired.
+            clock[0] = t0 + dt.timedelta(minutes=config.proactive_check_interval + 1)
+            seen = ticks[0]
+            await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick past the boundary")
+            assert proactive_files() == [], "proactive check must not fire while the processor is busy"
+
+            # Release busy: the still-due check fires on the next tick, not a full interval later.
+            state.processor_busy = False
+            await wait_for_condition(lambda: len(proactive_files()) == 1, message="proactive check never fired after busy released")
+
+            # Timer reset on fire: further ticks at the frozen clock drop nothing more.
+            seen = ticks[0]
+            await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick after the check fired")
+            assert len(proactive_files()) == 1, "exactly one proactive check fires per elapsed interval"
+        finally:
+            state.shutdown_event.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
 async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path, monkeypatch):
     """A persisted file re-read every tick must emit a single 'notification' event, not one
     per tick. Files kept on disk (e.g. deferred while unauthenticated) re-emitting every 2s
