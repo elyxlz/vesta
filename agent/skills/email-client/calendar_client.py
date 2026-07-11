@@ -113,9 +113,7 @@ def _http(method: str, url: str, token: str, body: dict | None = None) -> dict:
             return json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace") if hasattr(e, "read") else str(e)
-        if e.code in (401, 403) and (
-            "insufficient" in detail.lower() or "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in detail
-        ):
+        if e.code in (401, 403) and ("insufficient" in detail.lower() or "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in detail):
             sys.exit(
                 "Google Calendar refused the request: this account's token lacks "
                 "the calendar scope (old mail-only auth). Re-auth to grant it:\n"
@@ -139,7 +137,7 @@ def _url(path: str, params: dict | None = None) -> str:
 
 def _time_window(days_ahead: int, days_back: int) -> tuple[str, str]:
     """Return (timeMin, timeMax) RFC3339 UTC timestamps for the query window."""
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     time_min = start_of_today - dt.timedelta(days=days_back)
     time_max = start_of_today + dt.timedelta(days=days_ahead + 1)
