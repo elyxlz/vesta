@@ -11,8 +11,7 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 ## Quick Reference
 ```bash
 telegram send '<contact_name>' 'Hello!'
-telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # avoid shell-escaping
-# NEVER put backticks or $(...) in a message string: even inside quotes the shell can evaluate them and mangle or blank the message. If the text needs backticks/code/`$`, use --message-file.
+telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # prefer --message-file when the body has apostrophes, quotes, backticks, $(...), or multiple lines: an inline string lets the shell mangle or even evaluate it
 telegram send '<contact_name>' 'reply' --reply-to '<message_id>'          # quote a message
 telegram send '<contact_name>' '<a brief or list they asked for>' --longform  # bypass short-bubble lint
 telegram chats
