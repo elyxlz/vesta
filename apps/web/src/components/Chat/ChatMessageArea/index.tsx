@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { stepTransition } from "@/lib/motion";
 import { ChatBubble } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
@@ -123,6 +124,13 @@ export function ChatMessageArea({
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
+  const lastAgentText = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const event = chatMessages[i];
+      if (event.type === "chat") return event.text;
+    }
+    return "";
+  }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
   // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
   // the user scrolls up. Recomputed on scroll and on content resize (see below).
@@ -176,6 +184,15 @@ export function ChatMessageArea({
     hadRowsRef.current = hasRows;
   }, [count, virtualizer]);
 
+  // Highest row index seen as of the last commit — read during render (holds the prior
+  // value, since this effect hasn't fired yet) to tell a genuine append from a history
+  // page landing or an unrelated re-render, then advanced after commit. Gated on
+  // hadRowsRef so the first page of history never plays the entrance animation.
+  const maxSeenIndexRef = useRef(-1);
+  useLayoutEffect(() => {
+    maxSeenIndexRef.current = count - 1;
+  }, [count]);
+
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -214,6 +231,10 @@ export function ChatMessageArea({
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+      {/* persistent live region so screen readers hear agent replies as they arrive */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {lastAgentText}
+      </span>
       {count === 0 &&
         (connected && !historyLoaded ? (
           <ChatSkeleton />
@@ -261,6 +282,8 @@ export function ChatMessageArea({
           {items.map((item) => {
             const row = decorated[item.index];
             const isLast = item.index === count - 1;
+            const isNewAppend =
+              hadRowsRef.current && item.index > maxSeenIndexRef.current;
             return (
               <div
                 key={item.key}
@@ -297,21 +320,37 @@ export function ChatMessageArea({
                       </span>
                     </div>
                   )}
-                  <ChatBubble
-                    event={row.event}
-                    className={row.gap}
-                    fullscreen={fullscreen}
-                    isMobile={isMobile}
-                  />
+                  {isNewAppend ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={stepTransition.transition}
+                    >
+                      <ChatBubble
+                        event={row.event}
+                        className={row.gap}
+                        fullscreen={fullscreen}
+                        isMobile={isMobile}
+                      />
+                    </motion.div>
+                  ) : (
+                    <ChatBubble
+                      event={row.event}
+                      className={row.gap}
+                      fullscreen={fullscreen}
+                      isMobile={isMobile}
+                    />
+                  )}
                 </div>
                 {isLast && (
                   <div className="px-4 pb-4">
                     {isTyping && (
                       <div className="flex justify-start mt-2">
                         <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+                          <span className="sr-only">typing...</span>
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
                         </div>
                       </div>
                     )}

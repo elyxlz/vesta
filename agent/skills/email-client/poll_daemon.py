@@ -28,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import sys
 import threading
 import time
@@ -35,19 +36,25 @@ import uuid
 
 from imap_tools import AND
 
-# Reuse imap_client helpers.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Reuse imap_client helpers. realpath (not abspath) so this resolves through the
+# ~/.email-client/poll_daemon.py symlink back to the skill's real directory.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from imap_client import (  # noqa: E402
     _env,
     _from_full,
+    _state_dir,
     _to_full,
     account_dir,
     connect,
     list_accounts,
     notify_folders,
 )
+import daemon_lifecycle  # noqa: E402
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
+# Bounded wait for worker threads to notice a stop_event and exit, so shutdown
+# on SIGTERM cannot hang forever on a wedged IMAP connection.
+WORKER_JOIN_TIMEOUT_SECS = 5
 
 # Re-issue IDLE well under the 29-minute RFC 2177 ceiling; this also bounds
 # how quickly a worker notices a shutdown request.
@@ -200,6 +207,21 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
     log(f"[{account}:{folder}] worker stopped")
 
 
+def write_daemon_died_notification(reason: str) -> None:
+    NOTIF_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": "email-client",
+        "type": "daemon_died",
+        "reason": reason,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+    }
+    fname = f"email-client-daemon_died-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    final = NOTIF_DIR / fname
+    tmp = NOTIF_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
+    os.replace(tmp, final)
+
+
 def desired_workers() -> set[tuple[str, str]]:
     """The set of ``(account, folder)`` pairs that should be watched now."""
     wanted: set[tuple[str, str]] = set()
@@ -214,10 +236,12 @@ def main():
     ap.add_argument(
         "--interval",
         type=int,
-        default=int(_env("EMAIL_CLIENT_POLL_INTERVAL", "15")),
+        default=int(_env("EMAIL_CLIENT_POLL_INTERVAL", str(daemon_lifecycle.DEFAULT_POLL_INTERVAL_SECS))),
         help="poll seconds (fallback only; servers with IDLE push in real time)",
     )
     args = ap.parse_args()
+
+    state_dir = _state_dir()
 
     log_lock = threading.Lock()
 
@@ -225,43 +249,72 @@ def main():
         with log_lock:
             print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
+    shutdown_event = threading.Event()
+    shutdown_reason = "unknown"
+
+    def handle_signal(signum, frame):
+        nonlocal shutdown_reason
+        shutdown_reason = signal.Signals(signum).name
+        shutdown_event.set()
+
+    # SIGHUP fires when the controlling screen session quits; ignored so only an
+    # explicit `daemon stop`/`restart` (SIGTERM) or Ctrl-C (SIGINT) triggers shutdown.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
     last_desired: set[tuple[str, str]] | None = None
 
-    while True:
-        try:
-            wanted = desired_workers()
-        except Exception as e:
-            log(f"could not read accounts: {e}")
-            time.sleep(INDEX_CHECK_SECS)
-            continue
-        if wanted != last_desired:
-            last_desired = wanted
-            log(f"watching: {sorted(wanted)}")
-        for key in list(workers):
-            thread, _ = workers[key]
-            if not thread.is_alive():
-                workers.pop(key)
-                log(f"[{key[0]}:{key[1]}] worker died; restarting")
-        for key in wanted:
-            if key not in workers:
-                account, folder = key
-                stop_event = threading.Event()
-                thread = threading.Thread(
-                    target=folder_worker,
-                    args=(account, folder, args.interval, log, stop_event),
-                    name=f"{account}:{folder}",
-                    daemon=True,
-                )
-                workers[key] = (thread, stop_event)
-                thread.start()
-                log(f"[{account}:{folder}] worker started")
-        for key in list(workers):
-            if key not in wanted:
-                _, stop_event = workers.pop(key)
-                stop_event.set()
-                log(f"[{key[0]}:{key[1]}] worker stopping")
-        time.sleep(INDEX_CHECK_SECS)
+    daemon_lifecycle.write_pid(state_dir)
+    daemon_lifecycle.write_daemon_info(state_dir, args.interval)
+
+    try:
+        while not shutdown_event.is_set():
+            try:
+                wanted = desired_workers()
+            except Exception as e:
+                log(f"could not read accounts: {e}")
+                shutdown_event.wait(INDEX_CHECK_SECS)
+                continue
+            if wanted != last_desired:
+                last_desired = wanted
+                log(f"watching: {sorted(wanted)}")
+            for key in list(workers):
+                thread, _ = workers[key]
+                if not thread.is_alive():
+                    workers.pop(key)
+                    log(f"[{key[0]}:{key[1]}] worker died; restarting")
+            for key in wanted:
+                if key not in workers:
+                    account, folder = key
+                    stop_event = threading.Event()
+                    thread = threading.Thread(
+                        target=folder_worker,
+                        args=(account, folder, args.interval, log, stop_event),
+                        name=f"{account}:{folder}",
+                        daemon=True,
+                    )
+                    workers[key] = (thread, stop_event)
+                    thread.start()
+                    log(f"[{account}:{folder}] worker started")
+            for key in list(workers):
+                if key not in wanted:
+                    _, stop_event = workers.pop(key)
+                    stop_event.set()
+                    log(f"[{key[0]}:{key[1]}] worker stopping")
+            shutdown_event.wait(INDEX_CHECK_SECS)
+    finally:
+        for _, stop_event in workers.values():
+            stop_event.set()
+        for thread, _ in workers.values():
+            thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
+        if daemon_lifecycle.consume_stop_requested(state_dir):
+            log(f"intentional stop ({shutdown_reason}); skipping daemon_died notification")
+        else:
+            log(f"shutting down ({shutdown_reason}); writing daemon_died notification")
+            write_daemon_died_notification(shutdown_reason)
+        daemon_lifecycle.remove_pid(state_dir)
 
 
 if __name__ == "__main__":

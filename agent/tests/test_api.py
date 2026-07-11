@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import socket
 import tempfile
 import time
@@ -14,7 +15,8 @@ import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
 import core.models as vm
-from core.api import _ws_handler, start_ws_server
+import core.config as cfg
+from core.api import _ws_handler, _write_app_chat_notification, start_ws_server
 from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
 
@@ -28,7 +30,7 @@ def _pick_port() -> int:
 async def _start_server(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
-    app["config"] = vm.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
+    app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -155,7 +157,7 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
     """Regression (#809): an inbound app `message` is turned into a `source=app-chat` notification
     by the agent itself, in-process — not by a sidecar subscriber that could die and silently drop
     it. A `chat` frame (the agent's own reply path) broadcasts but writes no intake."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     runner, base = await _start_server_with_config(event_bus, config)
     try:
         async with ClientSession() as session:
@@ -178,6 +180,103 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
         await runner.cleanup()
 
 
+def test_app_chat_messages_delivered_in_send_order(config):
+    """Two app-chat messages written in quick succession must be read back in send order. The
+    monotonic time_ns() stem sorts lexically the same as send order; a uuid4 stem would not."""
+    _write_app_chat_notification(config, "first")
+    _write_app_chat_notification(config, "second")
+
+    files = sorted(config.notifications_dir.glob("*.json"))
+    assert len(files) == 2
+    texts = [json.loads(f.read_text())["message"] for f in files]
+    assert texts == ["first", "second"]
+
+
+def test_write_app_chat_notification_never_exposes_partial_file(config, monkeypatch):
+    """The write goes through atomic_write_text: a sibling .tmp file, then os.replace. A monitor
+    tick globbing the notifications dir mid-write can only ever see the tmp file (excluded by the
+    *.json glob) or the fully written target, never a truncated target."""
+    observed_matches: list[list[Path]] = []
+    real_replace = os.replace
+
+    def spying_replace(src, dst):
+        observed_matches.append(list(config.notifications_dir.glob("*.json")))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(cfg.os, "replace", spying_replace)
+    _write_app_chat_notification(config, "hello")
+
+    assert observed_matches == [[]]  # no *.json match existed right before the rename
+    files = list(config.notifications_dir.glob("*.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text())["message"] == "hello"
+
+
+@pytest.mark.anyio
+async def test_ws_survives_non_dict_json_frame(event_bus):
+    """A frame whose JSON is not an object (a number, list, or null) is ignored, not a connection
+    killer: a later valid message on the same socket still comes through."""
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+                await ws.send_str("123")
+                await ws.send_str("[]")
+                await ws.send_str("null")
+                await ws.send_json({"type": "chat", "text": "still alive"})
+                received = await _drain_until(
+                    ws,
+                    lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
+                )
+                assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch):
+    """A snapshot-phase failure (before the recv/send loops exist) still runs the handler's finally
+    cleanup: the bus subscription is dropped instead of a TypeError from gathering the not-yet-created
+    tasks masking the original error and leaking the subscriber."""
+    from core import api
+
+    def _boom(config):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(api, "_pending_notification_ids", _boom)
+    runner, base = await _start_server(event_bus)
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{base}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
+        await wait_for_condition(lambda: len(event_bus._subscribers) == 0, message="subscriber leaked after snapshot failure")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_memory_put_writes_atomically(tmp_path):
+    """PUT /memory lands the full content through the atomic tmp+rename writer, leaving no partial
+    or leftover temp file behind."""
+    from core.api import _memory_put_handler
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+
+    class _Req:
+        app = {"config": config}
+
+        async def json(self):
+            return {"content": "remember me"}
+
+    resp = await _memory_put_handler(typing.cast("web.Request", _Req()))
+    assert resp.status == 200
+    memory_path = tmp_path / "agent" / "MEMORY.md"
+    assert memory_path.read_text() == "remember me"
+    assert not memory_path.with_name(memory_path.name + ".tmp").exists()
+
+
 # Regression: ws_runner.cleanup() used to sit on aiohttp's 60s default shutdown_timeout
 # per open WS handler because _ws_handler had no shutdown signal. Each connected client
 # (CLI + web + mobile) added another 60s wait. Now the app's on_shutdown closes them all.
@@ -186,7 +285,7 @@ SHUTDOWN_BUDGET_SEC = 3.0
 
 @pytest.mark.anyio
 async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -212,7 +311,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
 @pytest.mark.anyio
 async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
     auth = {"X-Agent-Token": "test-token"}
@@ -355,7 +454,7 @@ async def test_status_reports_readiness_separate_from_provider(config):
 
     # A signed-in Claude agent: the chosen provider lives in the store, so /provider reports its kind.
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.persisted.first_start_done = True
@@ -381,12 +480,12 @@ async def test_provider_get_surfaces_claude_plan_tier():
     from core.config import ClaudeConfig, ClaudeOAuth
     from core.provider import ProviderAuthState, ProviderStatus
 
-    cfg = vm.VestaConfig.model_construct(provider=ClaudeConfig(oauth=ClaudeOAuth(subscriptionType="pro")))
+    config = cfg.VestaConfig.model_construct(provider=ClaudeConfig(oauth=ClaudeOAuth(subscriptionType="pro")))
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     class _Req:
-        app = {"state": state, "config": cfg}
+        app = {"state": state, "config": config}
 
     resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     body = json.loads(typing.cast("str", resp.text))
@@ -435,5 +534,20 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
         assert data["cursor"] is None
         texts = [e["text"] for e in data["events"]]
         assert "paris is lovely" in texts and "london is grey" not in texts
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token=pyd.SecretStr("test-token"))
+    runner = await start_ws_server(event_bus, config, host="127.0.0.1")
+    base = f"http://127.0.0.1:{config.ws_port}"
+    auth = {"X-Agent-Token": "test-token"}
+
+    try:
+        async with ClientSession() as session:
+            async with session.put(f"{base}/memory", json=42, headers=auth) as resp:
+                assert resp.status == 400
     finally:
         await runner.cleanup()

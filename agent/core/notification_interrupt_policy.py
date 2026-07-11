@@ -24,12 +24,7 @@ import typing as tp
 
 import pydantic as pyd
 
-if tp.TYPE_CHECKING:
-    from . import models as vm
-
-# The source string for internal control-flow notifications. Owned here (the module that defines the
-# core exemption); models.py re-exports it so `vm.CORE_SOURCE` keeps working.
-CORE_SOURCE = "core"
+from .notification import CORE_SOURCE, Notification
 
 # A predicate's `field` is the notification key it reads. Concrete keys (chat_name, chat_type, …) read
 # that exact field; an alias here expands to a set of per-source synonyms and matches if ANY of them
@@ -140,7 +135,7 @@ def _coerce(value: object) -> str | None:
     return str(value)
 
 
-def _field_raw(notif: "vm.Notification", field: str) -> object | None:
+def _field_raw(notif: Notification, field: str) -> object | None:
     """The raw value of one notification field (declared or extra), or None if absent. Declared fields
     the matcher can target (`timestamp` str-coerced; `file_path` is internal and omitted) are read
     explicitly, then the open `model_extra` keys."""
@@ -153,14 +148,14 @@ def _field_raw(notif: "vm.Notification", field: str) -> object | None:
     return None
 
 
-def _field_values(notif: "vm.Notification", field: str) -> list[str]:
+def _field_values(notif: Notification, field: str) -> list[str]:
     """The notification's value(s) for a predicate field: one value for a concrete key, or every
     present synonym for an alias. Coerced to strings; absent fields contribute nothing."""
     fields = _FIELD_ALIASES[field] if field in _FIELD_ALIASES else (field,)
     return [v for f in fields if (v := _coerce(_field_raw(notif, f))) is not None]
 
 
-def _predicate_matches(predicate: FieldPredicate, notif: "vm.Notification") -> bool:
+def _predicate_matches(predicate: FieldPredicate, notif: Notification) -> bool:
     values = _field_values(notif, predicate.field)
     if predicate.op == "contains":
         needle = predicate.value.lower()
@@ -181,7 +176,7 @@ _FACET_EXCLUDE = frozenset({*_IDENTITY_FIELDS, *_BODY_FIELDS, "file_path"})
 FACET_VALUE_MAXLEN = 80
 
 
-def notif_facet_fields(notif: "vm.Notification") -> dict[str, str]:
+def notif_facet_fields(notif: Notification) -> dict[str, str]:
     """The notification's targetable structured extras, as {field: value} — what the rule editor and the
     skill's `facets` surface so an author can discover fields like `chat_name` to match on. Scalars only,
     string-coerced; identity/text/internal keys are excluded (see `_FACET_EXCLUDE`)."""
@@ -202,7 +197,7 @@ def notif_facet_fields(notif: "vm.Notification") -> dict[str, str]:
     return fields
 
 
-def notif_sender(notif: "vm.Notification") -> str | None:
+def notif_sender(notif: Notification) -> str | None:
     """The notification's sender, normalized across the per-source identity fields.
 
     Sender is not one field: each source attaches its own (`contact_name`, `handle`, ...), which is
@@ -212,7 +207,7 @@ def notif_sender(notif: "vm.Notification") -> str | None:
     return next(iter(_field_values(notif, "sender")), None)
 
 
-def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
+def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     if rule.source is not None and rule.source.lower() != notif.source.lower():
         return False
     if rule.type is not None and rule.type.lower() != notif.type.lower():
@@ -220,7 +215,7 @@ def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
 
 
-def notif_disposition(notif: "vm.Notification", rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "pool", "trash"]:
+def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "pool", "trash"]:
     """The effective disposition for an arriving notification: `interrupt` (preempt the current turn now),
     `pool` (wait for the idle triage pass), or `trash` (drop without ever reaching the agent).
 

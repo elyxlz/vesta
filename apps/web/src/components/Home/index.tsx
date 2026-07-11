@@ -57,7 +57,7 @@ function SkeletonList() {
         <SkeletonCard key={i} index={i} opacity={1 - i / SKELETON_COUNT} />
       ))}
       <p className="absolute bottom-12 left-0 right-0 text-center text-sm text-muted-foreground">
-        loading agents…
+        loading agents...
       </p>
     </motion.div>
   );

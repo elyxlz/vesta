@@ -4,12 +4,14 @@ import asyncio
 import os
 import signal
 import sys
+import time
 import types
 import typing as tp
 
 from rich import print_json
 
 from . import models as vm
+from . import config as cfg
 from . import logger
 from . import state_store
 from .api import start_ws_server
@@ -20,7 +22,9 @@ from .loops import (
     monitor_loop,
 )
 from .default_skills import default_skill_sync_turn
+from .events import EventBus
 from .migrations import pending_migration_turns
+from .provider import derive_status
 from .workspace_sync import workspace_sync_turn, vesta_version
 
 
@@ -41,28 +45,28 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-def handle_processor_done(task: asyncio.Task[None], *, state: vm.State, config: vm.VestaConfig) -> None:
+def handle_processor_done(task: asyncio.Task[None], *, name: str, state: vm.State, config: cfg.VestaConfig) -> None:
     """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.graceful_shutdown.is_set():
         return
     if task.cancelled():
-        logger.error("message_processor cancelled unexpectedly, restarting")
-        state.persisted.last_restart_reason = "crash: the processor was cancelled unexpectedly"
+        logger.error(f"{name} cancelled unexpectedly, restarting")
+        state.persisted.last_restart_reason = f"crash: the {name} was cancelled unexpectedly"
     else:
         exc = task.exception()
         if exc is not None:
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
-            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
+            logger.error(f"{name} crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
             state.persisted.last_restart_reason = f"crash: {type(exc).__name__}: {exc}"
         else:
-            logger.error("message_processor exited without error, restarting")
-            state.persisted.last_restart_reason = "crash: the processor exited silently"
+            logger.error(f"{name} exited without error, restarting")
+            state.persisted.last_restart_reason = f"crash: the {name} exited silently"
     state_store.save_state(state.persisted, config)
     state.graceful_shutdown.set()
 
 
 async def run_vesta(
-    config: vm.VestaConfig,
+    config: cfg.VestaConfig,
     *,
     state: vm.State,
     first_start: bool = False,
@@ -97,12 +101,12 @@ async def run_vesta(
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
-    processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state, config=config))
+    processor_task.add_done_callback(lambda t: handle_processor_done(t, name="message processor", state=state, config=config))
 
-    tasks = [
-        processor_task,
-        asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
-    ]
+    monitor_task = asyncio.create_task(monitor_loop(message_queue, state=state, config=config))
+    monitor_task.add_done_callback(lambda t: handle_processor_done(t, name="notification monitor", state=state, config=config))
+
+    tasks = [processor_task, monitor_task]
 
     try:
         await state.graceful_shutdown.wait()
@@ -138,7 +142,7 @@ async def run_vesta(
     return crashed
 
 
-def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | None:
+def config_issues_turn(issues: list[str], *, config: cfg.VestaConfig) -> str | None:
     """Surface config vars that failed validation: log them and return a boot-turn body telling the
     agent to flag the bad values to the user (the agent ran with defaults), or None when clean."""
     if not issues:
@@ -152,7 +156,7 @@ def config_issues_turn(issues: list[str], *, config: vm.VestaConfig) -> str | No
 
 
 def collect_boot_turns(
-    *, state: vm.State, config: vm.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
+    *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: migrations, then workspace sync, then
     default-skill sync, then config issues, then the greeting last — converge first, orient and
@@ -174,7 +178,7 @@ def collect_boot_turns(
     return turns
 
 
-def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_start: bool) -> str:
+def _consume_restart_reason(state: vm.State, config: cfg.VestaConfig, *, first_start: bool) -> str:
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
     # Drain the inbox on every boot, including first start: a file left behind would fire stale
     # on some later, unrelated boot.
@@ -192,13 +196,10 @@ def _consume_restart_reason(state: vm.State, config: vm.VestaConfig, *, first_st
     return stored or vm.CRASH_RESTART
 
 
-def init_state(*, config: vm.VestaConfig) -> vm.State:
+def init_state(*, config: cfg.VestaConfig) -> vm.State:
     persisted = state_store.load_state(config)
     if persisted.session_id:
         logger.init(f"Resuming session {persisted.session_id[:16]}...")
-    from .events import EventBus
-    from .provider import derive_status
-
     event_bus = EventBus(data_dir=config.data_dir)
     provider_status = derive_status(config)
     logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")
@@ -206,7 +207,12 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 
 async def async_main() -> bool:
-    config, config_issues = vm.load_config()
+    config, config_issues = cfg.load_config()
+    # Apply the configured timezone to the process once, here at the entry point, so every consumer
+    # (shell `date`, calendar/reminders skills, tasks' tzlocal) inherits it. Config is inert data:
+    # a PUT /config timezone change applies on the next restart, never mid-request.
+    os.environ["TZ"] = config.timezone
+    time.tzset()
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
 

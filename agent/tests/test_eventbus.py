@@ -1,7 +1,10 @@
 """Tests for EventBus: emit, persist, pagination, search, lifecycle, schema migration."""
 
+import os
 import sqlite3
 import typing as tp
+
+import pytest
 
 from core.events import (
     _EVENTS_SCHEMA,
@@ -52,6 +55,16 @@ def test_status_not_persisted(event_bus):
 
     events, _ = event_bus.recent()
     assert len(events) == 0
+
+
+def test_emit_survives_history_write_failure(event_bus):
+    """A failed history write never crashes the emitting coroutine: any sqlite3.Error (a closed or
+    corrupt db, not only a locked one) drops the row with a warning and live subscribers still
+    receive the event."""
+    q = event_bus.subscribe()
+    event_bus._conn.close()
+    event_bus.emit(ChatEvent(type="chat", text="still delivered"))
+    assert q.get_nowait()["text"] == "still delivered"
 
 
 def test_no_data_dir():
@@ -253,6 +266,20 @@ def test_search_limit(event_bus):
     assert len(results) == 3
 
 
+def test_search_runs_off_the_connection_home_thread(event_bus):
+    """Like recent(), search() must work from a worker thread so /history can offload it via
+    asyncio.to_thread — an FTS MATCH over a years-old db must never block the event loop or
+    interleave with emit's writer-connection transactions. A connection bound to one thread
+    raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
+    import concurrent.futures
+
+    event_bus.emit(UserEvent(type="user", text="what is the weather in paris"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        results = pool.submit(event_bus.search, "paris").result()
+    assert len(results) == 1
+    assert results[0]["text"] == "what is the weather in paris"
+
+
 # --- Schema migration ---
 
 
@@ -287,3 +314,50 @@ def test_pre_versioned_db_upgraded_in_place(tmp_path):
     assert _db_user_version(tmp_path) == _SCHEMA_VERSION
     assert len(events) == 1
     assert tp.cast(tp.Any, events[0])["text"] == "legacy"
+
+
+def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
+    """A corrupt events.db (disk-full mid-write, bit rot, a restored hot backup) must not
+    crash-loop the container: it is renamed aside intact and the agent boots with empty history."""
+    db_path = tmp_path / "events.db"
+    original_bytes = b"not a sqlite database, just garbage bytes overwriting a once-valid file"
+    db_path.write_bytes(original_bytes)
+
+    bus = EventBus(data_dir=tmp_path)
+    try:
+        events, _ = bus.recent()
+        assert events == []
+
+        bus.emit(ChatEvent(type="chat", text="alive after recovery"))
+        events, _ = bus.recent()
+        assert len(events) == 1
+        assert tp.cast(tp.Any, events[0])["text"] == "alive after recovery"
+    finally:
+        bus.close()
+
+    assert db_path.exists(), "a fresh events.db must exist after quarantine"
+    quarantined = list(tmp_path.glob("events.db.corrupt-*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == original_bytes
+
+
+def test_transient_open_error_propagates_without_quarantine(tmp_path):
+    """A transient OperationalError at boot (locked, disk full, IO error) is not corruption:
+    it must crash for Docker's on-failure retry, never quarantine the healthy db."""
+    db_path = tmp_path / "events.db"
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(ChatEvent(type="chat", text="precious history"))
+    bus.close()
+    original_bytes = db_path.read_bytes()
+
+    os.chmod(db_path, 0o444)
+    os.chmod(tmp_path, 0o555)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            EventBus(data_dir=tmp_path)
+    finally:
+        os.chmod(tmp_path, 0o755)
+        os.chmod(db_path, 0o644)
+
+    assert db_path.read_bytes() == original_bytes
+    assert list(tmp_path.glob("events.db.corrupt-*")) == []

@@ -1,11 +1,14 @@
 use super::common::start_pair;
-use vesta_tests::{TestAgent, unique_agent};
+use vesta_tests::{unique_agent, TestAgent};
 
 #[test]
 fn two_servers_start_different_ports() {
     let (alice, bob, _, _) = start_pair();
 
-    assert_ne!(alice.port, bob.port, "servers should bind to different ports");
+    assert_ne!(
+        alice.port, bob.port,
+        "servers should bind to different ports"
+    );
 
     alice.client().health().expect("alice health check failed");
     bob.client().health().expect("bob health check failed");
@@ -26,8 +29,16 @@ fn agents_isolated_between_users() {
 
     let alice_match: Vec<_> = alice_list.iter().filter(|a| a.name == name).collect();
     let bob_match: Vec<_> = bob_list.iter().filter(|a| a.name == name).collect();
-    assert_eq!(alice_match.len(), 1, "alice should see exactly one agent named {name}");
-    assert_eq!(bob_match.len(), 1, "bob should see exactly one agent named {name}");
+    assert_eq!(
+        alice_match.len(),
+        1,
+        "alice should see exactly one agent named {name}"
+    );
+    assert_eq!(
+        bob_match.len(),
+        1,
+        "bob should see exactly one agent named {name}"
+    );
 
     let alice_status = alice_client.agent_status(&name).unwrap();
     let bob_status = bob_client.agent_status(&name).unwrap();
