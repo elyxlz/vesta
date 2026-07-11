@@ -11,9 +11,9 @@ Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and 
 
 ## Where it lives
 
-`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
+`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `sam-brother.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
 
-The user gets a file too, the deepest one in the store: the full profile, history, and texture that outgrows MEMORY.md lives there.
+The user themselves never gets a contact file. They matter too much to page out: the full profile, history, and texture live in MEMORY.md's USER PROFILE and stay in memory. Contacts are the other people in the user's world.
 
 To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
 

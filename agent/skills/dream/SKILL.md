@@ -141,7 +141,7 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
-- Person-depth over the cap moves to the user's own ~/.contacts/ file, never gets deleted; MEMORY.md §4 keeps the working snapshot plus a pointer.
+- Depth about other people over the cap moves to their `~/.contacts/` file, never gets deleted. The user's own depth is the exception: it stays in MEMORY.md §4, never paged out to contacts.
 
 If it won't matter in two weeks, delete it.
 

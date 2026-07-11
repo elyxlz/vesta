@@ -133,7 +133,7 @@ All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_
 [Music, events, hobbies, food, things they enjoy. The teasable texture too: guilty pleasures, funny contradictions, recurring quirks, the things they're a little sheepish about. Affectionate callback material, never anything they're actually hurting over. Same for close contacts]
 
 ### Important Contacts
-[To be filled as learned. The user's own deeper profile (the full history and texture that outgrows this section) lives in `~/.contacts/`, per the `contacts` skill.]
+[To be filled as learned. Other people in the user's world; the user themselves is never a contact, their own profile lives in this section 4 and is always kept in memory.]
 
 ### User State
 The dreamer's rolling snapshot of where the user is at. Field meanings and how to write them live in the `dream` skill; this section holds only the filled-in values.
