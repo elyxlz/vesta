@@ -83,6 +83,12 @@ default) falls back to OWA REST automatically whenever Graph returns a permissio
 error. Every command works on both backends **except** `block`/`unblock` (inbox
 rules), which are Graph-only.
 
+**Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` in the environment to
+hard-disable sending on this CLI. `email send`/`reply`/`forward` are then refused before
+any Graph or OWA-REST call (non-zero exit); only `email draft` works. Truthy values:
+`1`/`true`/`yes` (case-insensitive). Default off. This guards **both** backends, so it
+holds for an OWA-REST-only FAO/work account too.
+
 When the agent cannot reach the user's browser (agent on another machine), let the user sign in on
 their **own** browser and paste just the token, so their password and MFA never reach the agent. Give
 them the one-line snippet `auth_commands.OWA_TOKEN_SNIPPET` to run in the Outlook DevTools console (it

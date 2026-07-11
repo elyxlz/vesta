@@ -99,6 +99,8 @@ email-client-send --account personal --reply-to-uid <uid> --body "draft reply fo
 email-client list --account personal --folder Drafts --limit 3
 ```
 
+**Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` in the environment to hard-disable sending. Any send/reply/forward is refused before touching SMTP (non-zero exit), while `--draft` still works. Truthy values: `1`/`true`/`yes` (case-insensitive). Default off. Verify with `EMAIL_DRAFT_ONLY=1 email-client-send --account personal --to "<user-email>" --subject x --body y` (refuses) vs. the same with `--draft` (succeeds).
+
 Verify mailbox edits, folder counts, and folder management:
 
 ```bash
