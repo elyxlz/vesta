@@ -172,6 +172,22 @@ microsoft notify remove --account user@example.com --folder inbox     # stop not
 
 `notify add --folder` validates the folder exists first. Removing every folder mutes the account. The watch list lives in `~/.microsoft/notify.json`. Watching is time-based: it fires on **new arrivals** (including rule-routed mail), not on messages you manually move into a folder.
 
+## Threaded reply DRAFT (leave unsent for the user to send)
+
+`email reply` ALWAYS sends; `email draft` orphans the thread. To leave a threaded reply(-all)
+draft the user reviews + sends themselves, use the helper (createReplyAll + PATCH body over the
+preserved quote + attach, no /send). Run with the CLI's own venv so uv doesn't rebuild the agent
+root venv:
+
+```bash
+~/agent/skills/microsoft/cli/.venv/bin/python ~/agent/skills/microsoft/scripts/reply_draft.py \
+  --account user@example.com --base-msg-id '<latest-msg-id-in-thread>' \
+  --body-file /tmp/body.txt --attach /path/file.pdf --reply-all
+```
+
+Body file is plain text (`- ` lines become bullets). On a re-edit pass `--replace-draft <old_id>`
+(printed by the prior run) so repeated tweaks leave exactly one draft, not a pile.
+
 ### Contact Communication Styles
 [How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
