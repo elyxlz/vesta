@@ -5,8 +5,6 @@ description: What to do after a container restart. Holds the per-skill daemon st
 
 # Restart
 
-**A migration prompt is also a boot turn.** When the boot turn hands you a `[Migration: ...]` prompt (or an upgrade), the daemons are DOWN. Run the daemon guard block FIRST, before doing the migration's steps, then do the migration. It's easy to tunnel-vision on the migration and skip daemon restore, leaving your messaging/mail/tasks daemons down for minutes until something incidentally catches it. Restore daemons first, always, whatever the boot prompt says.
-
 Read `/run/vestad-env` so the values are in your context (Read tool, not bash).
 
 Run the Daemons block below. Every command is guarded by `running <name> ||`, so running the whole block is always safe and starts only what's missing. Then check User State in MEMORY.md and reach out on their preferred channel. Match the moment: new day → warm; mid-convo restart → brief; crash → mention it; middle of the night → wait.

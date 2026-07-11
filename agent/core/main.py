@@ -155,12 +155,25 @@ def config_issues_turn(issues: list[str], *, config: cfg.VestaConfig) -> str | N
     )
 
 
+# A migration/upgrade boot is a restart: the daemons are down, but the converge turns (migrations,
+# upstream sync) run before the greeting's restart turn, so nothing has restored them yet. Prepend
+# this to the first converge turn so the agent runs the restart skill first, exactly as it would on
+# a plain restart, before tunnelling into the migration or upgrade.
+BOOT_RESTORE_ORIENTATION = (
+    "Your daemons are down after this boot, just like any restart. Before the task below, read the "
+    "`restart` skill and run its daemon guard block to bring your daemons back (it is idempotent, so "
+    "running it when everything is already up is a safe no-op). Then continue with the task."
+)
+
+
 def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: migrations, then upstream sync, then
     default-skill sync, then config issues, then the greeting last — converge first, orient and
-    reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification."""
+    reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification.
+    The greeting's restart turn restores daemons; converge turns run before it, so the first one carries
+    BOOT_RESTORE_ORIENTATION to restore daemons first."""
     turns: list[str] = []
     turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
     sync_turn = upstream_sync_turn(state=state, config=config, first_start=first_start)
@@ -172,6 +185,8 @@ def collect_boot_turns(
     config_turn = config_issues_turn(config_issues, config=config)
     if config_turn is not None:
         turns.append(config_turn)
+    if turns:
+        turns[0] = f"{BOOT_RESTORE_ORIENTATION}\n\n{turns[0]}"
     greeting = greeting_turn(config=config, state=state, reason=greeting_reason)
     if greeting is not None:
         turns.append(greeting)
