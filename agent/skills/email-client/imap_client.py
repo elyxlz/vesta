@@ -246,13 +246,16 @@ def _refresh_google(tok: dict, profile: dict, account: str) -> dict:
     rt = tok.get("refresh_token")
     if not rt:
         sys.exit("no refresh_token in cached token; re-run auth")
-    data = urllib.parse.urlencode(
-        {
-            "client_id": profile["oauth_client_id"],
-            "refresh_token": rt,
-            "grant_type": "refresh_token",
-        }
-    ).encode()
+    refresh_params = {
+        "client_id": profile["oauth_client_id"],
+        "refresh_token": rt,
+        "grant_type": "refresh_token",
+    }
+    # Same published desktop-app secret the code exchange uses; Google's token
+    # endpoint requires it on refresh for this client too.
+    if profile.get("oauth_client_secret"):
+        refresh_params["client_secret"] = profile["oauth_client_secret"]
+    data = urllib.parse.urlencode(refresh_params).encode()
     req = urllib.request.Request(
         profile["oauth_token_url"],
         data=data,
@@ -1032,6 +1035,12 @@ def main():
     pd_restart.add_argument("--interval", type=int, default=None)
     dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
 
+    # Google Calendar (Gmail accounts only). Imported lazily because
+    # calendar_client imports this module; a top-level import would be circular.
+    import calendar_client  # noqa: E402
+
+    calendar_client.build_parser(sub)
+
     if len(sys.argv) == 1:
         ap.print_help()
         sys.exit(0)
@@ -1080,6 +1089,12 @@ def main():
             "restart": cmd_daemon_restart,
             "status": cmd_daemon_status,
         }[args.daemon_cmd](args)
+        return
+
+    if args.cmd == "calendar":
+        import calendar_client
+
+        calendar_client.dispatch(args)
         return
 
     {

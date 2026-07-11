@@ -30,7 +30,21 @@ from __future__ import annotations
 # baked into Thunderbird's source and are the canonical "open-source
 # mail client" choice for personal Microsoft and Google accounts.
 THUNDERBIRD_MS_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
-THUNDERBIRD_GOOGLE_CLIENT_ID = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com"
+# Thunderbird's CURRENT published Google desktop client. The previous value
+# shipped here (...t1glqf) was an older Thunderbird client that Google no
+# longer recognizes: its token endpoint returns invalid_client ("The OAuth
+# client was not found"), so a fresh Gmail sign-in fails. The live client is
+# ...t1hgqj (verified against comm-central OAuth2Providers.sys.mjs and a live
+# probe of Google's token endpoint). It is registered under Mozilla's Google
+# Cloud project (number 406964657835) whose verified consent screen already
+# grants mail + calendar + carddav in one sign-in.
+THUNDERBIRD_GOOGLE_CLIENT_ID = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com"
+# Thunderbird's published desktop-app "client secret". Desktop-app OAuth
+# clients are public by design (the binary ships this string), so this is NOT
+# a credential to protect: it is baked into every Thunderbird release. Google's
+# token endpoint nonetheless requires it in the authorization-code and
+# refresh-token exchanges for this client, so it must be sent.
+THUNDERBIRD_GOOGLE_CLIENT_SECRET = "kSmqreRr0qwBWJgbf5Y-PjSU"
 
 
 PROVIDERS: dict[str, dict] = {
@@ -81,11 +95,21 @@ PROVIDERS: dict[str, dict] = {
         "smtp_starttls": True,
         "sent_folder": "[Gmail]/Sent Mail",
         "oauth_client_id": THUNDERBIRD_GOOGLE_CLIENT_ID,
+        "oauth_client_secret": THUNDERBIRD_GOOGLE_CLIENT_SECRET,
         # Google does not use this field but we keep the shape uniform.
         "oauth_authority": "https://accounts.google.com",
         "oauth_auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "oauth_token_url": "https://oauth2.googleapis.com/token",
-        "oauth_scopes": ["https://mail.google.com/"],
+        # mail.google.com covers IMAP/SMTP. The calendar scope rides the same
+        # verified Thunderbird consent screen, so one Gmail sign-in also grants
+        # Google Calendar (used by the `calendar` commands via Calendar REST v3).
+        # calendar is a "sensitive" (not "restricted") scope, so no CASA.
+        # Existing Gmail accounts authed before this scope was added must
+        # re-run: email-client auth add --account <name> --provider gmail --reauth
+        "oauth_scopes": [
+            "https://mail.google.com/",
+            "https://www.googleapis.com/auth/calendar",
+        ],
     },
     "yahoo-app-password": {
         "label": "Yahoo Mail (app password)",
@@ -203,6 +227,7 @@ def apply_env_overrides(profile: dict, env: dict) -> dict:
         "smtp_host": env.get("EMAIL_CLIENT_SMTP_HOST"),
         "smtp_port": env.get("EMAIL_CLIENT_SMTP_PORT"),
         "oauth_client_id": env.get("EMAIL_CLIENT_OAUTH_CLIENT_ID"),
+        "oauth_client_secret": env.get("EMAIL_CLIENT_OAUTH_CLIENT_SECRET"),
         "oauth_authority": env.get("EMAIL_CLIENT_OAUTH_AUTHORITY"),
     }
     for k, v in overrides.items():
