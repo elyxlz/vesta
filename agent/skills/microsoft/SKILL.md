@@ -32,6 +32,14 @@ Each area's detail lives in its own file, read it when you work in that area:
 ### Email Preferences
 [User's email patterns. Fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone, which account for what]
 
+### Cold-email screening (optional standing behavior)
+If the user asks you to screen their inbox, watch new-mail notifications for **cold 1:1 outreach**: unsolicited investor/VC pitches, recruitment/mentor solicitations, sales/SaaS/agency prospecting, cold "let's chat" intros. For these:
+- **Move the message to a `Screened` folder** on that account (`microsoft email move --account X --id <id> --to-folder Screened`) so it leaves the inbox, and **drop the notification** (never surface it).
+- **Never delete** the Screened folder is a holding area the user can skim anytime; nothing real is lost.
+- **When unsure, leave it in the inbox** (conservative: a genuine warm intro, a real deal, or anything from a known contact stays and gets surfaced normally). Better to leave one cold email than misfile a real one.
+- **Repeat offenders → block the sender** (`microsoft email block --account X --sender ...`, Graph-only).
+- Create the `Screened` folder once per account (`microsoft folder create --account X --name Screened`). Newsletters and marketing are usually better left in the inbox unless the user asks to file those too.
+
 ### Scheduling Preferences
 [User's scheduling patterns. Fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
 
