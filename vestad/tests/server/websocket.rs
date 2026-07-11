@@ -1,39 +1,76 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, unique_agent};
+use vesta_tests::{inject_fake_token, unique_agent, TestAgent, SERVER};
 
 fn ws_base_url(url: &str) -> String {
-    url.replace("https://", "wss://").replace("http://", "ws://")
+    url.replace("https://", "wss://")
+        .replace("http://", "ws://")
 }
 
 fn make_ws_rustls_config(fingerprint: Option<String>) -> std::sync::Arc<rustls::ClientConfig> {
     use std::sync::Arc;
 
     #[derive(Debug)]
-    struct AcceptAll { expected: Option<String> }
+    struct AcceptAll {
+        expected: Option<String>,
+    }
 
     impl rustls::client::danger::ServerCertVerifier for AcceptAll {
-        fn verify_server_cert(&self, end_entity: &rustls::pki_types::CertificateDer<'_>, _: &[rustls::pki_types::CertificateDer<'_>], _: &rustls::pki_types::ServerName<'_>, _: &[u8], _: rustls::pki_types::UnixTime) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        fn verify_server_cert(
+            &self,
+            end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _: &[rustls::pki_types::CertificateDer<'_>],
+            _: &rustls::pki_types::ServerName<'_>,
+            _: &[u8],
+            _: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
             if let Some(ref expected) = self.expected {
                 let digest = ring::digest::digest(&ring::digest::SHA256, end_entity.as_ref());
-                let actual = format!("sha256:{}", digest.as_ref().iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(":"));
+                let actual = format!(
+                    "sha256:{}",
+                    digest
+                        .as_ref()
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                );
                 if actual != *expected {
                     return Err(rustls::Error::General("fingerprint mismatch".into()));
                 }
             }
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         }
-        fn verify_tls12_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
-        fn verify_tls13_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
         fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
         }
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
-    Arc::new(rustls::ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(AcceptAll { expected: fingerprint })).with_no_client_auth())
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAll {
+                expected: fingerprint,
+            }))
+            .with_no_client_auth(),
+    )
 }
 
 /// How long to poll the WS endpoint before requiring a proxy-level response.
@@ -62,9 +99,9 @@ async fn ws_connect_to_running_agent() {
         let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
 
-        let result = tokio_tungstenite::connect_async_tls_with_config(
-            &ws_url, None, false, Some(connector),
-        ).await;
+        let result =
+            tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
+                .await;
 
         match result {
             Ok((ws, _)) => {
@@ -97,9 +134,9 @@ async fn ws_rejected_without_auth() {
     let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
     let connector = tokio_tungstenite::Connector::Rustls(tls);
 
-    let result = tokio_tungstenite::connect_async_tls_with_config(
-        &ws_url, None, false, Some(connector),
-    ).await;
+    let result =
+        tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
+            .await;
 
     assert!(result.is_err(), "WS without auth should be rejected");
 }

@@ -3,13 +3,14 @@
 import pytest
 
 import core.models as vm
+import core.config as cfg
 from core.migrations import list_pending, pending_migration_turns
 
 
 @pytest.fixture
 def mig(tmp_path):
     """A config with an empty migrations dir on disk, plus a fresh State."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     migrations_dir = config.agent_dir / "core" / "migrations"
     migrations_dir.mkdir(parents=True)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -17,7 +18,7 @@ def mig(tmp_path):
 
 
 def test_no_migrations_dir_returns_empty(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     assert list_pending(state=vm.State(), config=config) == []
 

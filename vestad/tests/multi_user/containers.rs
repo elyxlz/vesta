@@ -1,5 +1,5 @@
 use super::common::start_pair;
-use vesta_tests::{TestAgent, unique_agent};
+use vesta_tests::{unique_agent, TestAgent};
 
 #[test]
 fn container_names_include_user() {
@@ -24,6 +24,12 @@ fn container_names_include_user() {
         .lines()
         .any(|n| n.contains(bob_user) && n.contains(&name));
 
-    assert!(has_alice_container, "expected a container with '{alice_user}' and '{name}' in name, got:\n{container_names}");
-    assert!(has_bob_container, "expected a container with '{bob_user}' and '{name}' in name, got:\n{container_names}");
+    assert!(
+        has_alice_container,
+        "expected a container with '{alice_user}' and '{name}' in name, got:\n{container_names}"
+    );
+    assert!(
+        has_bob_container,
+        "expected a container with '{bob_user}' and '{name}' in name, got:\n{container_names}"
+    );
 }

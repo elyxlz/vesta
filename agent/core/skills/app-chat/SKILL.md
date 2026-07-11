@@ -11,14 +11,20 @@ This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-
 uv tool install --editable ~/agent/core/skills/app-chat/cli
 ```
 
-**Background**: `screen -dmS app-chat app-chat serve`
+**Daemon**: `app-chat daemon start|stop|restart|status`. Start is idempotent (a running daemon is a
+no-op), stop marks the shutdown as intentional so it doesn't fire a `daemon_died` notification,
+and status reports the daemon process plus its WS connection state to the agent as JSON. Manage
+the daemon through these commands, not raw `screen`.
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-screen -dmS app-chat app-chat serve
+app-chat daemon start
 ```
+(The older `screen -dmS app-chat app-chat serve` line still works if a box hasn't picked up the
+new subcommand yet.)
 
 ## Quick Reference
 ```bash
+app-chat daemon status
 app-chat send --message 'Hello!'
 app-chat history --search 'query'
 app-chat history --limit 20

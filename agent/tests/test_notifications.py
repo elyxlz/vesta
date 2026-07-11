@@ -7,11 +7,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import core.models as vm
+import core.config as cfg
+from core.events import EventBus
+from core.helpers import clear_notifications
+from core.notification import Notification
 from core.loops import (
     _is_new_json,
     _load_notification_files,
     _notification_watcher,
-    delete_notification_files,
     format_notification_batch,
     greeting_turn,
     load_notifications,
@@ -84,7 +87,7 @@ VALID_NOTIF = json.dumps({"timestamp": "2025-01-01T00:00:00", "source": "test", 
 )
 @pytest.mark.anyio
 async def test_load_notifications_parsing(tmp_path, content, should_parse):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     (config.notifications_dir / "test.json").write_text(content)
 
@@ -99,7 +102,7 @@ async def test_load_notifications_parsing(tmp_path, content, should_parse):
 
 @pytest.mark.anyio
 async def test_load_notifications_deletes_bad_files(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     bad_file = config.notifications_dir / "bad.json"
     bad_file.write_text("not json")
@@ -112,7 +115,7 @@ async def test_load_notifications_deletes_bad_files(tmp_path):
 @pytest.mark.anyio
 async def test_load_notifications_partial_success(tmp_path):
     """Mix of valid and invalid files: valid ones parse, invalid ones are deleted."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     (config.notifications_dir / "good.json").write_text(VALID_NOTIF)
     bad_file = config.notifications_dir / "bad.json"
@@ -123,44 +126,47 @@ async def test_load_notifications_partial_success(tmp_path):
     assert not bad_file.exists()
 
 
-# --- delete_notification_files ---
+# --- clear_notifications ---
 
 
 @pytest.mark.anyio
-async def test_delete_notification_files(tmp_path):
-    f1 = tmp_path / "a.json"
-    f2 = tmp_path / "b.json"
-    f1.write_text("x")
-    f2.write_text("y")
+async def test_clear_notifications_unlinks_and_emits_cleared(tmp_path):
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        state = vm.State()
+        state.event_bus = bus
+        sub = bus.subscribe()
+        f1 = tmp_path / "a.json"
+        f2 = tmp_path / "b.json"
+        f1.write_text("x")
+        f2.write_text("y")
 
-    notifs = [
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f1)),
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f2)),
-    ]
-    await delete_notification_files(notifs)
+        clear_notifications(state, [str(f1), str(f2)])
 
-    assert not f1.exists()
-    assert not f2.exists()
-
-
-@pytest.mark.anyio
-async def test_delete_ignores_none_paths():
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m")
-    assert notif.file_path is None
-    await delete_notification_files([notif])  # should not raise
+        assert not f1.exists()
+        assert not f2.exists()
+        events = [sub.get_nowait() for _ in range(sub.qsize())]
+        assert [e["notif_id"] for e in events if e["type"] == "notification_cleared"] == ["a", "b"]
+    finally:
+        bus.close()
 
 
 @pytest.mark.anyio
-async def test_delete_handles_already_deleted(tmp_path):
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(tmp_path / "gone.json"))
-    await delete_notification_files([notif])  # missing_ok=True, should not raise
+async def test_clear_notifications_handles_already_deleted(tmp_path):
+    bus = EventBus(data_dir=tmp_path / "data")
+    try:
+        state = vm.State()
+        state.event_bus = bus
+        clear_notifications(state, [str(tmp_path / "gone.json")])  # missing_ok=True, should not raise
+    finally:
+        bus.close()
 
 
 # --- format_notification_batch ---
 
 
 def test_batch_single():
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
     formatted = format_notification_batch([notif])
     assert '<channel source="test" type="message"' in formatted
     assert formatted.rstrip().endswith("</channel>")
@@ -169,8 +175,8 @@ def test_batch_single():
 
 def test_batch_multiple():
     notifs = [
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message"),
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="alert"),
+        Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message"),
+        Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="alert"),
     ]
     formatted = format_notification_batch(notifs)
     assert formatted.count("<channel ") == 2
@@ -181,13 +187,13 @@ def test_batch_multiple():
 
 
 def test_batch_with_suffix():
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
     formatted = format_notification_batch([notif], suffix="Check later")
     assert "Check later" in formatted
 
 
 def test_notification_format_for_display():
-    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
+    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
     assert display.startswith('<channel source="email" type="message"')
     assert display.endswith("</channel>")
@@ -196,7 +202,7 @@ def test_notification_format_for_display():
 
 def test_format_for_display_drops_empty_and_false_fields():
     """Empty strings, False bools, empty lists, and None should not appear in context."""
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
             "source": "whatsapp",
@@ -224,7 +230,7 @@ def test_format_for_display_drops_empty_and_false_fields():
 
 def test_format_for_display_keeps_integer_zero():
     """Integer 0 is falsey but meaningful (e.g. minutes_until=0 for a reminder firing now)."""
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
             "source": "microsoft",
@@ -238,7 +244,7 @@ def test_format_for_display_keeps_integer_zero():
 
 
 def test_format_for_display_strips_timestamp_microseconds():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T12:34:56.123456+00:00",
             "source": "tasks",
@@ -281,20 +287,20 @@ def test_format_for_display_strips_timestamp_microseconds():
     ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
 )
 def test_batch_includes_reply_hint(payload, expected_substr):
-    notif = vm.Notification.model_validate(payload)
+    notif = Notification.model_validate(payload)
     formatted = format_notification_batch([notif])
     assert "Reply using" in formatted
     assert expected_substr in formatted
 
 
 def test_batch_no_hint_for_unknown_source():
-    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
+    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     formatted = format_notification_batch([notif])
     assert "Reply using" not in formatted
 
 
 def test_batch_no_hint_for_non_message_type():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
     )
     formatted = format_notification_batch([notif])
@@ -302,7 +308,7 @@ def test_batch_no_hint_for_non_message_type():
 
 
 def test_group_message_flagged_maybe_not_for_you():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
             "source": "whatsapp",
@@ -318,7 +324,7 @@ def test_group_message_flagged_maybe_not_for_you():
 
 
 def test_direct_message_not_flagged_as_group():
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"}
     )
     formatted = format_notification_batch([notif])
@@ -330,14 +336,14 @@ def test_direct_message_not_flagged_as_group():
 
 @pytest.mark.anyio
 async def test_process_batch_queues_prompt(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "n.json"
     f.write_text("x")
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
         await process_batch([notif], queue=queue, state=state, config=config)
@@ -350,7 +356,7 @@ async def test_process_batch_queues_prompt(tmp_path):
 
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -362,14 +368,14 @@ async def test_process_batch_empty_is_noop():
 async def test_process_batch_keeps_files_until_processing(tmp_path):
     """process_batch must NOT delete files at enqueue time; files stay on disk until the message
     is fully processed so that a mid-compaction restart can recover unprocessed notifications."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "to-keep.json"
     f.write_text("x")
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
         await process_batch([notif], queue=queue, state=state, config=config)
@@ -403,9 +409,12 @@ def test_is_new_json(change_val, path, expected):
 # --- monitor_loop routing ---
 
 
-def _passive_config(tmp_path):
-    """Config that disables proactive/dreamer side effects so monitor_loop only does notification routing."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+def _passive_config(tmp_path, monkeypatch):
+    """Config that disables proactive/dreamer side effects so monitor_loop only does notification routing.
+    AGENT_DIR drives agent_dir so the config field and config_store_path() agree (the monitor reads the
+    rules from the store path), mirroring the conftest config fixture."""
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = cfg.VestaConfig()
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.ephemeral = True  # no dreamer drops
     config.monitor_tick_interval = 1
@@ -416,7 +425,7 @@ def _passive_config(tmp_path):
 
 
 def _write_notif(directory, stem, *, source="test", type_="message"):
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type=type_, body="hi")
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type=type_, body="hi")
     path = directory / f"{stem}.json"
     path.write_text(notif.model_dump_json())
     return path
@@ -441,9 +450,9 @@ async def _run_monitor(queue, *, state, config):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
+async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatch):
     """A notification with no matching rule (default interrupt) is queued immediately even when the bus is not idle."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # explicitly NOT idle
@@ -464,9 +473,9 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
+async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, monkeypatch):
     """A pooled notification is held while the bus is not idle, then flushed exactly once on idle."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -500,9 +509,9 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
+async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path, monkeypatch):
     """A pooled file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -538,11 +547,64 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
+async def test_proactive_check_skipped_while_busy_fires_on_first_idle_tick(tmp_path, monkeypatch):
+    """A proactive check that lands while the processor is busy stays due and fires on the first idle
+    tick after the interval, instead of waiting another full interval; once fired the timer resets."""
+    config = _passive_config(tmp_path, monkeypatch)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.processor_busy = True
+    state.event_bus.set_state("thinking")  # hold the pooled proactive drop so the queue stays empty
+    queue: asyncio.Queue = asyncio.Queue()
+
+    t0 = dt.datetime(2025, 1, 1, 12, 0, 0)
+    clock = [t0]
+    ticks = [0]
+    real_load = load_notifications
+
+    async def counting_load(*, config):
+        ticks[0] += 1
+        return await real_load(config=config)
+
+    def proactive_files():
+        return list(config.notifications_dir.glob("proactive_check-*.json"))
+
+    with (
+        patch("core.loops._now", side_effect=lambda: clock[0]),
+        patch("core.loops.load_prompt", return_value="check in"),
+        patch("core.loops.load_notifications", counting_load),
+    ):
+        task = asyncio.create_task(monitor_loop(queue, state=state, config=config))
+        try:
+            # Let the loop take its baseline timestamp at t0 before jumping the clock.
+            await wait_for_condition(lambda: ticks[0] >= 1, message="monitor_loop never ticked")
+
+            # Cross the interval boundary while busy: the check must be skipped, not fired.
+            clock[0] = t0 + dt.timedelta(minutes=config.proactive_check_interval + 1)
+            seen = ticks[0]
+            await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick past the boundary")
+            assert proactive_files() == [], "proactive check must not fire while the processor is busy"
+
+            # Release busy: the still-due check fires on the next tick, not a full interval later.
+            state.processor_busy = False
+            await wait_for_condition(lambda: len(proactive_files()) == 1, message="proactive check never fired after busy released")
+
+            # Timer reset on fire: further ticks at the frozen clock drop nothing more.
+            seen = ticks[0]
+            await wait_for_condition(lambda: ticks[0] >= seen + 2, message="monitor_loop did not tick after the check fired")
+            assert len(proactive_files()) == 1, "exactly one proactive check fires per elapsed interval"
+        finally:
+            state.shutdown_event.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path, monkeypatch):
     """A persisted file re-read every tick must emit a single 'notification' event, not one
     per tick. Files kept on disk (e.g. deferred while unauthenticated) re-emitting every 2s
     tick was the notification storm: 16 kept files -> ~8 db rows/sec, 3.6M rows."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     config.monitor_tick_interval = 1
     _install_rule(config, action="pool")
     state = vm.State()
@@ -573,10 +635,10 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_monitor_loop_trash_rule_drops_file_and_creates_no_turn(tmp_path):
+async def test_monitor_loop_trash_rule_drops_file_and_creates_no_turn(tmp_path, monkeypatch):
     """A trash rule moves the notification into the trash dir, records it in history with decided='trash',
     and never queues a turn (even when the bus is idle, where a pooled notif would flush)."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, source="test", action="trash")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -641,10 +703,10 @@ async def test_notification_watcher_signals_then_stops_on_shutdown(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_pools_a_notification(tmp_path):
+async def test_policy_pools_a_notification(tmp_path, monkeypatch):
     """A rule with action=pool routes a would-otherwise-interrupt notif to the passive pool: while the
     bus is not idle it must NOT be queued."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -675,10 +737,10 @@ async def test_policy_pools_a_notification(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_interrupts_a_notification(tmp_path):
+async def test_policy_interrupts_a_notification(tmp_path, monkeypatch):
     """A rule with action=interrupt routes the notif as a preempt: it is queued immediately even while
     the bus is not idle."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="interrupt")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -698,10 +760,10 @@ async def test_policy_interrupts_a_notification(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_changes_take_effect_live_on_next_tick(tmp_path):
+async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatch):
     """Rules written mid-run apply on the next tick with no restart. A pool rule holds the notif while
     busy; changing it to an interrupt rule flips it to a preempt and queues it."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -725,11 +787,11 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path):
 
 @pytest.mark.anyio
 async def test_process_batch_defaults_to_notification_suffix(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
+    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
 
     with patch("core.loops.load_prompt", side_effect=lambda name, config: f"SUFFIX:{name}"):
         await process_batch([notif], queue=queue, state=state, config=config)
@@ -738,9 +800,9 @@ async def test_process_batch_defaults_to_notification_suffix(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_pool_not_flushed_while_thinking(tmp_path):
+async def test_pool_not_flushed_while_thinking(tmp_path, monkeypatch):
     """A pooled notif is never triaged while the bus is thinking (no idle window)."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -766,9 +828,9 @@ async def test_pool_not_flushed_while_thinking(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_pool_not_flushed_before_grace(tmp_path):
+async def test_pool_not_flushed_before_grace(tmp_path, monkeypatch):
     """Idle but within the grace window: no triage yet."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     config.notif_pool_idle_grace_seconds = 100.0  # longer than the test
     _install_rule(config, action="pool")
     state = vm.State()
@@ -795,9 +857,9 @@ async def test_pool_not_flushed_before_grace(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_pool_flushes_once_after_grace(tmp_path):
+async def test_pool_flushes_once_after_grace(tmp_path, monkeypatch):
     """After continuous idle >= grace, the pooled notifications are flushed once."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -819,9 +881,9 @@ async def test_pool_flushes_once_after_grace(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_emitted_notification_event_is_enriched(tmp_path):
+async def test_emitted_notification_event_is_enriched(tmp_path, monkeypatch):
     """The NotificationEvent on the bus carries structured facets + the effective disposition."""
-    config = _passive_config(tmp_path)
+    config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, source="whatsapp", action="pool")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -829,7 +891,7 @@ async def test_emitted_notification_event_is_enriched(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
     sub = state.event_bus.subscribe()
 
-    notif = vm.Notification.model_validate(
+    notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
             "source": "whatsapp",

@@ -46,7 +46,7 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="microsoft")
     group = parser.add_subparsers(dest="group", required=True)
 
@@ -105,6 +105,13 @@ def main():
     p_list_emails.add_argument("--account", required=True)
     p_list_emails.add_argument("--folder", default="inbox")
     p_list_emails.add_argument("--limit", type=int, default=10)
+    # A search query on `list` is an alias for `email search`: agents naturally reach for
+    # `email list --search "foo"`, and silently erroring on it caused a false negative
+    # (empty stdout under `2>/dev/null` read as "no results"). With a query set, `list`
+    # runs the exact same search path as `email search --query`.
+    p_list_emails.add_argument(
+        "--search", "--query", dest="search", default=None, help="Search instead of listing (alias for `email search --query`)."
+    )
     _add_format_flags(p_list_emails)
 
     p_get_email = email_sub.add_parser("get")
@@ -395,6 +402,11 @@ def main():
                 help="Path: auto (Graph then OWA-REST fallback), graph, or owa-rest (browser-captured token; requires auth owa-login).",
             )
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     config = Config()
 
@@ -519,6 +531,16 @@ def _dispatch_email(args, config, client):
         return _route(args, config, acct, graph_fn, rest_fn)
 
     if args.command == "list":
+        # `list --search/--query` is an alias for `email search`: run the identical search path.
+        if args.search is not None:
+            # Match `email search` semantics: default to searching all folders (folder=None)
+            # unless the caller explicitly narrowed it with --folder.
+            query: str = args.search
+            folder = args.folder if args.folder != "inbox" else None
+            return route(
+                lambda: email.search_emails(config, client, account_email=acct, query=query, limit=args.limit, folder=folder),
+                lambda: owa_rest_commands.search_emails(config, client, account_email=acct, query=query, limit=args.limit, folder=folder),
+            )
         kw = dict(account_email=acct, folder=args.folder, limit=args.limit)
         return route(lambda: email.list_emails(config, client, **kw), lambda: owa_rest_commands.list_emails(config, client, **kw))
     elif args.command == "get":
