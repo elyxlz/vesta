@@ -8,16 +8,20 @@ Usage: ./release.sh [patch|minor|major] "<message>"
 The message is required: user-facing "What's new" copy shown in the app and on
 the changelog. Style:
 
-  * Two or three short sentences in plain user language.
-  * Name the headline features with a little texture; drop minor items.
+  * Two to four short sentences in plain user language, one flowing paragraph;
+    no markdown or bullets (both surfaces render it as plain text).
+  * The first sentence carries the headline change; the website shows it alone
+    as the announcement pill, so it must stand on its own.
+  * Name each user-visible change with a little texture; sweep small fixes into
+    one closing sentence ("Plus more reliable updates and sharper email search.").
   * Describe only what actually changed: a fix or backend improvement reads as
     "more reliable" or "now works with X", never as a brand-new capability.
   * Refer to the agent as Vesta or they/them, never it. No dashes as separators.
   * Internal-only release: an honest one-liner like "Small fixes under the hood."
 
 Examples:
-  ./release.sh "Vesta can now shop online, and hand you their browser when a site needs your login."
-  ./release.sh minor "Any email account now works: full IMAP support with instant new-mail push."
+  ./release.sh "Vesta can now shop online, and hand you their browser when a site needs your login. Plus steadier updates on slow connections."
+  ./release.sh minor "Any email account now works: full IMAP support with instant new-mail push. Vesta also answers faster when you interrupt them mid-task."
 EOF
   exit 1
 }
