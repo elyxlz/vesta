@@ -1110,7 +1110,7 @@ fn print_update_available(latest: &str) {
 }
 
 fn print_welcome() {
-    println!("vesta: your personal AI assistant");
+    println!("vesta: your AI guardian angel");
     println!();
     println!("quick start:");
     println!("  vesta connect <link>   link this machine to your server (from vestad status)");

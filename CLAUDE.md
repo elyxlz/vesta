@@ -4,7 +4,7 @@ The single guide for Claude Code when working in this repository: how the system
 
 ## Project Overview
 
-Vesta is a personal AI assistant that runs as a persistent daemon in Docker, powered by Claude Code. Vesta monitors notifications, responds to messages, and handles tasks autonomously. The agent drives Claude through the official **Claude Agent SDK** (`claude-agent-sdk`): `core/client.py` builds a `ClaudeAgentOptions`, opens a `ClaudeSDKClient`, and streams response blocks back from the SDK message stream and its native hooks.
+Vesta is an AI guardian angel that runs as a persistent daemon in Docker, powered by Claude Code. Vesta monitors notifications, responds to messages, and handles tasks autonomously. The agent drives Claude through the official **Claude Agent SDK** (`claude-agent-sdk`): `core/client.py` builds a `ClaudeAgentOptions`, opens a `ClaudeSDKClient`, and streams response blocks back from the SDK message stream and its native hooks.
 
 > **cc_sdk is dormant, leave it alone.** `agent/core/cc_sdk/` is an in-repo SDK that drives the interactive `claude` CLI inside tmux and exposes the *same* `ClaudeSDKClient` surface. It is retained deliberately as a drop-in alternative driver in case CLI-driving is ever needed again (e.g. behavior the headless SDK can't reach); it is not imported by `core/` and not on the running agent's path. Do not delete it, tidy it, or wire it back into `core/` without an explicit ask. Its transport tests (`tests/test_cc_sdk.py`, `tests/test_e2e_transport.py`, `tests/test_stop_race.py`) keep it healthy; keep them green.
 
@@ -167,6 +167,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 ## Code conventions
 
 ### Brand voice
+- **Positioning (the single source of truth for Vesta's copy).** Vesta is an **AI guardian angel**. Not a "personal AI", not an "assistant", not a friend or companion. The canonical one-liner, used verbatim wherever a tagline is needed: **"an AI guardian angel that gives you back time and helps you achieve your goals."** Every user-facing surface (README, landing, app strings, prompts, emails, CLI output) draws its positioning from here; never reintroduce "personal AI"/"personal assistant" framing.
 - **Never use a pronoun for Vesta.** In all copy and prose, refer to the agent as **"Vesta"**, or **"they/them/their"** where a pronoun is unavoidable. Never "she/her" or "it/its". This holds across every surface: README, app/notification strings, agent prompts and skills, and the vesta-cloud site and emails. The product is a relationship, not a gadget; one consistent voice keeps each new email or prompt from re-litigating it. (This does not apply to pronouns for other nouns: the daemon, a container, the user, a config object.)
 - **No dashes as separators in prose.** In prose and copy (this file, SKILL.md bodies, prompts, app strings, PR descriptions, emails), never use spaced-hyphen or em-dash separators; use commas, periods, or colons instead.
 
