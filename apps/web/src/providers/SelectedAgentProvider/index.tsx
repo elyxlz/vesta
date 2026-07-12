@@ -33,7 +33,6 @@ export function SelectedAgentProvider({
   );
 
   const withOp = useAgentOps((s) => s.withOp);
-  const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
@@ -147,10 +146,13 @@ export function SelectedAgentProvider({
     );
   };
 
-  const remove = async () => {
-    await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
-    removeAgentOp(name);
-  };
+  // keepOnSuccess holds the "deleting" look after the API call resolves: the
+  // agent stays in the gateway list until the next agents push, and clearing
+  // early would flash the card back to the gray stopped orb for that gap.
+  const remove = () =>
+    withOp(name, "deleting", () => deleteAgent(name), "delete failed", {
+      keepOnSuccess: true,
+    });
 
   const value: SelectedAgentContextValue = {
     name,
