@@ -101,6 +101,9 @@ pub struct AppState {
     pub(crate) settings: RwLock<Settings>,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
+    /// status poll so they report `Rebuilding` and mutating handlers refuse to race it.
+    pub(crate) rebuilding: docker::RebuildTracker,
     pub(crate) https_port: u16,
     /// LAN exposure facts captured at startup (read-only; surfaced by /gateway/info).
     /// `expose_lan` mirrors the `--expose-lan` flag; `lan_url` is the advertised
@@ -148,6 +151,7 @@ impl AppState {
             settings: RwLock::new(settings),
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+            rebuilding: docker::RebuildTracker::default(),
             https_port,
             expose_lan,
             lan_url,

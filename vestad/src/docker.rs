@@ -196,6 +196,10 @@ pub enum AgentStatus {
     /// Reachable, but no provider is chosen yet (fresh agent, or signed out) — needs first sign-in,
     /// distinct from `NotAuthenticated` (a chosen provider whose credential is invalid/expired).
     Unprovisioned,
+    /// Container is being rebuilt (post-update reconcile, user rebuild, or a grant recreate).
+    /// The snapshot takes minutes and the container is briefly removed, so without this state
+    /// the agent would read as `Stopped`/gone and invite a manual restart mid-rebuild.
+    Rebuilding,
     Stopped,
     Dead,
     NotFound,
@@ -211,9 +215,65 @@ impl AgentStatus {
             AgentStatus::Starting => "starting",
             AgentStatus::NotAuthenticated => "not authenticated",
             AgentStatus::Unprovisioned => "unprovisioned",
+            AgentStatus::Rebuilding => "rebuilding",
             AgentStatus::Stopped => "stopped",
             AgentStatus::Dead => "dead",
             AgentStatus::NotFound => "not found",
+        }
+    }
+}
+
+/// Live registry of agents whose container is mid-rebuild (stop → snapshot → remove → create).
+/// `rebuild_agent` holds a mark for its duration and the boot reconcile pre-marks its whole
+/// batch, so status derivation reports `Rebuilding` instead of `Stopped`/`NotFound` and the
+/// mutating handlers can refuse to race the recreate. Marks are counted per agent, so the
+/// reconcile's batch mark and `rebuild_agent`'s own mark nest safely.
+#[derive(Debug, Clone, Default)]
+pub struct RebuildTracker(std::sync::Arc<std::sync::Mutex<HashMap<String, u32>>>);
+
+impl RebuildTracker {
+    pub fn mark(&self, name: &str) -> RebuildMark {
+        let mut counts = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        *counts.entry(name.to_string()).or_insert(0) += 1;
+        RebuildMark {
+            tracker: self.clone(),
+            name: name.to_string(),
+        }
+    }
+
+    pub fn is_rebuilding(&self, name: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(name)
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect()
+    }
+}
+
+/// RAII mark: dropping it (rebuild finished, failed, or abandoned) clears the agent's
+/// rebuilding state, so no error path can leave an agent stuck reporting `Rebuilding`.
+#[derive(Debug)]
+pub struct RebuildMark {
+    tracker: RebuildTracker,
+    name: String,
+}
+
+impl Drop for RebuildMark {
+    fn drop(&mut self) {
+        let mut counts = self.tracker.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = counts.get_mut(&self.name) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.name);
+            }
         }
     }
 }
@@ -1870,6 +1930,7 @@ pub async fn restart_agent(
     env_config: &AgentEnvConfig,
     user_mounts: &[crate::mounts::HostMount],
     reason: Option<String>,
+    rebuilding: &RebuildTracker,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1898,7 +1959,7 @@ pub async fn restart_agent(
             // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
             let effective =
                 crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
-            rebuild_agent(docker, name, env_config, user_mounts).await?;
+            rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
             // Written into the freshly created container AFTER the rebuild: a write before it
             // would survive a failed rebuild in the old container, claiming access that was
             // never applied (and would bake the reason into the rebuild snapshot).
@@ -1966,6 +2027,7 @@ pub async fn reconcile_containers(
     manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
+    rebuilding: &RebuildTracker,
 ) {
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
@@ -2022,8 +2084,22 @@ pub async fn reconcile_containers(
 
     // Phase 2: rebuild containers with wrong config (skipped when disk is critically full — see the
     // guard above). Uses container-derived mount topology (not settings) so a stale settings.json
-    // can't redirect the rebuild into wiping bind-mounted core code.
-    let mut agent_code_ok = false;
+    // can't redirect the rebuild into wiping bind-mounted core code. The whole batch is determined
+    // and marked as rebuilding up front: rebuilds run serially and take minutes each, so agents
+    // waiting their turn must already report `Rebuilding`, not `Stopped`.
+    struct PendingRebuild<'a> {
+        name: &'a str,
+        cname: &'a str,
+        raw: bollard::models::ContainerInspectResponse,
+        desired_mounts: Vec<crate::mounts::HostMount>,
+        has_core_mounts: bool,
+        // Held for the agent's place in the queue; a rebuilt agent's mark is kept until
+        // reconcile ends (phase 3 has started it), so it never dips back to `Stopped`
+        // while a later agent's rebuild runs. Dropped early only when the batch is
+        // abandoned, clearing the never-rebuilt agents' `Rebuilding` status truthfully.
+        mark: RebuildMark,
+    }
+    let mut pending = Vec::new();
     for ManagedAgent {
         cname,
         agent_name: name,
@@ -2056,7 +2132,19 @@ pub async fn reconcile_containers(
             continue;
         }
         tracing::info!(agent = %name, "rebuild needed");
-        if has_core_mounts && !agent_code_ok {
+        pending.push(PendingRebuild {
+            name,
+            cname,
+            raw,
+            desired_mounts,
+            has_core_mounts,
+            mark: rebuilding.mark(name),
+        });
+    }
+    let mut agent_code_ok = false;
+    let mut rebuilt_marks = Vec::new();
+    for item in pending {
+        if item.has_core_mounts && !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
                 Ok(_) => agent_code_ok = true,
                 Err(e) => {
@@ -2065,16 +2153,19 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(docker, name, env_config, &desired_mounts).await {
+        match rebuild_agent(docker, item.name, env_config, &item.desired_mounts, rebuilding).await {
             Ok(()) => {
-                tracing::info!(agent = %name, "rebuild complete");
+                tracing::info!(agent = %item.name, "rebuild complete");
                 // Grants can also land here (restart_agent defers to reconcile when disk is low or
                 // inspect fails); tell the agent about the delta, same as the restart path would.
-                let mount_reason =
-                    crate::mounts::mount_change_reason(&actual_user_mounts(&raw), &desired_mounts);
-                write_boot_reason(docker, name, cname, mount_reason).await;
+                let mount_reason = crate::mounts::mount_change_reason(
+                    &actual_user_mounts(&item.raw),
+                    &item.desired_mounts,
+                );
+                write_boot_reason(docker, item.name, item.cname, mount_reason).await;
+                rebuilt_marks.push(item.mark);
             }
-            Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
+            Err(e) => tracing::error!(agent = %item.name, error = %e, "rebuild failed"),
         }
     }
 
@@ -2336,8 +2427,10 @@ pub async fn rebuild_agent(
     name: &str,
     env_config: &AgentEnvConfig,
     user_mounts: &[crate::mounts::HostMount],
+    rebuilding: &RebuildTracker,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
+    let _mark = rebuilding.mark(name);
     let cname = container_name(name);
     let raw = docker
         .inspect_container(&cname, None)
@@ -2504,6 +2597,45 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rebuild_tracker_marks_agent_while_guard_held() {
+        let tracker = RebuildTracker::default();
+        assert!(!tracker.is_rebuilding("apollo"));
+        let mark = tracker.mark("apollo");
+        assert!(tracker.is_rebuilding("apollo"));
+        drop(mark);
+        assert!(!tracker.is_rebuilding("apollo"));
+    }
+
+    #[test]
+    fn rebuild_tracker_nested_marks_clear_only_when_all_dropped() {
+        let tracker = RebuildTracker::default();
+        let outer = tracker.mark("apollo");
+        let inner = tracker.mark("apollo");
+        drop(inner);
+        assert!(tracker.is_rebuilding("apollo"));
+        drop(outer);
+        assert!(!tracker.is_rebuilding("apollo"));
+    }
+
+    #[test]
+    fn rebuild_tracker_names_lists_each_marked_agent_once() {
+        let tracker = RebuildTracker::default();
+        let _a1 = tracker.mark("apollo");
+        let _a2 = tracker.mark("apollo");
+        let _b = tracker.mark("hera");
+        let mut names = tracker.names();
+        names.sort();
+        assert_eq!(names, vec!["apollo".to_string(), "hera".to_string()]);
+    }
+
+    #[test]
+    fn rebuilding_status_serializes_snake_case() {
+        let json = serde_json::to_string(&AgentStatus::Rebuilding).expect("serialize");
+        assert_eq!(json, "\"rebuilding\"");
+        assert_eq!(AgentStatus::Rebuilding.human_text(), "rebuilding");
+    }
 
     #[test]
     fn removable_snapshot_only_matches_our_throwaway_namespaces() {
