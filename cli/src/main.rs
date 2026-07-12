@@ -223,11 +223,6 @@ enum Command {
         /// Agent name
         name: String,
     },
-    /// Snapshot, destroy, recreate, restore auth
-    Rebuild {
-        /// Agent name
-        name: String,
-    },
     /// Wait for agent to become ready
     WaitReady {
         /// Agent name
@@ -1654,12 +1649,6 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             c.destroy_agent(&name).or_die();
             eprintln!("{name}: destroyed");
-        }
-
-        Command::Rebuild { name } => {
-            let c = get_client(host_ref, token_ref);
-            c.rebuild_agent(&name).or_die();
-            eprintln!("{name}: rebuilt and running");
         }
 
         Command::WaitReady { name, timeout } => {

@@ -18,7 +18,6 @@ export function ActionsCard() {
     start,
     stop,
     restart,
-    rebuild,
     backup,
   } = useSelectedAgent();
   const { handleOpenAuth, setDeleteDialogOpen } = useModals();
@@ -68,7 +67,6 @@ export function ActionsCard() {
           onToolCalls={() => setShowToolCalls((value) => !value)}
           onToggle={() => void (isRunning ? stop() : start())}
           onRestart={() => void restart()}
-          onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
           onDelete={() => setDeleteDialogOpen(true)}
         />
