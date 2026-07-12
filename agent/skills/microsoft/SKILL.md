@@ -16,7 +16,7 @@ Each area's detail lives in its own file, read it when you work in that area:
 - **Email**: read/send/reply/forward, search, organize (flag/categorize/move/archive), drafts, folders, block/unblock, attachments. See [references/email.md](references/email.md).
 - **Calendar**: list/create/update/respond to events and meetings. See [references/calendar.md](references/calendar.md).
 - **Teams**: chats, channels, presence (and Teams sign-in). See [references/teams.md](references/teams.md).
-- **Notifications**: new-mail folder watching + Teams chat alerts. See [references/notifications.md](references/notifications.md).
+- **Notifications**: new-mail folder watching + Teams chat alerts (plus non-interrupting Teams channel alerts where the account has channel access; degrades to chats-only otherwise). See [references/notifications.md](references/notifications.md).
 
 ## Shared flags
 
