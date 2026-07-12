@@ -26,6 +26,10 @@ profile can be reshaped without touching the dict (or use the
 
 from __future__ import annotations
 
+import os
+
+from thunderbird_client import resolve_google_client
+
 # Mozilla Thunderbird's published public OAuth client IDs. These are
 # baked into Thunderbird's source and are the canonical "open-source
 # mail client" choice for personal Microsoft and Google accounts.
@@ -204,16 +208,52 @@ def detect_provider(email: str) -> str | None:
     return None
 
 
+def gmail_oauth_client() -> tuple[str, str]:
+    """Resolve the Gmail OAuth client id/secret via the dynamic resolver.
+
+    Reads Thunderbird's current published Google client from the local cache
+    (populated by the daily health-probe / self-heal), falling back to the
+    hardcoded ``...t1hgqj`` constant when there is no cache yet. This is the
+    cache-only, no-network path so building a Gmail profile never blocks on the
+    network; the daily probe is what actually refreshes the cache from upstream.
+
+    Set ``EMAIL_CLIENT_NO_DYNAMIC_GOOGLE_CLIENT=1`` to pin the hardcoded constant
+    and skip the resolver entirely.
+    """
+    if os.environ.get("EMAIL_CLIENT_NO_DYNAMIC_GOOGLE_CLIENT"):
+        return THUNDERBIRD_GOOGLE_CLIENT_ID, THUNDERBIRD_GOOGLE_CLIENT_SECRET
+    try:
+        creds = resolve_google_client(
+            THUNDERBIRD_GOOGLE_CLIENT_ID,
+            THUNDERBIRD_GOOGLE_CLIENT_SECRET,
+            allow_fetch=False,
+        )
+        return creds["client_id"], creds["client_secret"]
+    except Exception:
+        # The resolver never raises by contract, but never let a Gmail profile
+        # fail to build over client resolution: the hardcoded constant is the floor.
+        return THUNDERBIRD_GOOGLE_CLIENT_ID, THUNDERBIRD_GOOGLE_CLIENT_SECRET
+
+
 def get_profile(name: str) -> dict:
     """Return a copy of the named provider profile.
 
     Raises ``KeyError`` if the profile name is unknown. Callers
     typically pass the result through :func:`apply_env_overrides` to
     let the user override defaults via environment variables.
+
+    For the Gmail profile the OAuth client id/secret are resolved through the
+    dynamic Thunderbird resolver (cache-only) so an upstream client rotation is
+    followed automatically; the hardcoded constants remain the fallback.
     """
     if name not in PROVIDERS:
         raise KeyError(f"unknown provider {name!r}; known: {sorted(PROVIDERS)}")
-    return dict(PROVIDERS[name])
+    profile = dict(PROVIDERS[name])
+    if name == "gmail":
+        client_id, client_secret = gmail_oauth_client()
+        profile["oauth_client_id"] = client_id
+        profile["oauth_client_secret"] = client_secret
+    return profile
 
 
 def apply_env_overrides(profile: dict, env: dict) -> dict:

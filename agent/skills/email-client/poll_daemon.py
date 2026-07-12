@@ -280,6 +280,16 @@ def main():
             if wanted != last_desired:
                 last_desired = wanted
                 log(f"watching: {sorted(wanted)}")
+            # Low-frequency (once/day) Google OAuth client health-probe. Runs off
+            # the supervisor thread so a dead upstream client is caught and
+            # self-healed without any user interaction. Never allowed to crash
+            # the daemon.
+            try:
+                import google_health
+
+                google_health.maybe_run_daily_probe(state_dir, log)
+            except Exception as e:
+                log(f"[google-health] probe skipped: {e}")
             for key in list(workers):
                 thread, _ = workers[key]
                 if not thread.is_alive():
