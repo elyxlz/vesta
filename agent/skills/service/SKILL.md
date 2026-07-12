@@ -33,3 +33,11 @@ vestad's API may still be coming up when the daemon block runs, so `register-ser
 until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
 exits non-zero with a stderr message and no port. Keep the `&&` between registration and start:
 a failed registration short-circuits the chain, so the daemon never launches portless.
+
+## Public URLs (how to reach a service from outside)
+
+vestad exposes registered services under the tunnel. The stable patterns:
+- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...` (a service registered `public: true` needs no auth; otherwise pass `X-Agent-Token`). A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`.
+- **User-facing web app**: `$VESTAD_TUNNEL/app`.
+
+`$VESTAD_TUNNEL` (and `$AGENT_NAME`, `$VESTAD_PORT`, `$AGENT_TOKEN`) are in `/run/vestad-env`. Reach for these instead of reverse-engineering the route when you need to hand the user a link.
