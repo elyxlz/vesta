@@ -2,7 +2,7 @@
 of MEMORY.md. It is bind-mounted read-only into the container, so the agent reads it
 but cannot edit it; these tests cover the prompt-assembly side."""
 
-import core.models as vm
+import core.config as cfg
 from core.client import build_client_options
 from core.config import ClaudeConfig
 
@@ -10,7 +10,7 @@ from core.config import ClaudeConfig
 def _config(tmp_path, **overrides):
     # build_client_options requires a chosen provider; default to Claude for these prompt-assembly tests.
     overrides.setdefault("provider", ClaudeConfig())
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", **overrides)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", **overrides)
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("my memory body")
     return config

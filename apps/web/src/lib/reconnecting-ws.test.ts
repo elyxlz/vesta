@@ -9,7 +9,9 @@ class FakeSocket {
   onerror: (() => void) | null = null;
   readyState = 0;
   closed = false;
-  constructor(public url: string) {
+  url: string;
+  constructor(url: string) {
+    this.url = url;
     FakeSocket.instances.push(this);
   }
   open() {

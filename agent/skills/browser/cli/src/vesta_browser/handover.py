@@ -110,6 +110,18 @@ def _free_port(start: int) -> int:
     raise RuntimeError(f"no free port in range {start}-{start + 200}")
 
 
+def _free_display(start: int = 99) -> str:
+    """A display number with no X server yet, so handover always provisions its OWN Xvfb.
+
+    Reusing the ambient DISPLAY breaks on a real desktop seat: x11vnc cannot X_GetImage a live
+    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
+    grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
+    for n in range(start, start + 100):
+        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+            return f":{n}"
+    raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
+
+
 def _alive(pid: int | None) -> bool:
     if pid is None:
         return False
@@ -202,12 +214,13 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     for lock in ("lock", ".parentlock"):
         (profile / lock).unlink(missing_ok=True)
 
-    # Pin the display so x11vnc mirrors the exact screen Camoufox renders on. On a Wayland host,
-    # x11vnc and Firefox both prefer the ambient Wayland session over our Xvfb X11 display (x11vnc
-    # 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto X11 with
-    # MOZ_ENABLE_WAYLAND=0: handover owns a dedicated X11 display. Harmless where WAYLAND_DISPLAY
-    # is unset (e.g. the container).
-    display = os.environ["DISPLAY"] if "DISPLAY" in os.environ else ":99"
+    # Handover owns a dedicated Xvfb display, never the ambient one: x11vnc can grab a fresh Xvfb
+    # but not a live desktop seat (a real :0 fails X_GetImage BadMatch, hanging noVNC), and a
+    # desktop's DISPLAY=:0 would also render the headed browser onto the user's own monitor. On a
+    # Wayland host x11vnc and Firefox both prefer the ambient Wayland session over our X11 display
+    # (x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto
+    # X11 with MOZ_ENABLE_WAYLAND=0. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
+    display = _free_display()
     os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"
@@ -328,7 +341,8 @@ _PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<!-- pinch-zoom left enabled (no maximum-scale, no scaling lock) so a phone user can zoom into a login field -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vesta's browser</title>
 <style>
   @font-face { font-family: "Public Sans"; src: url("./fonts/public-sans.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
@@ -368,6 +382,31 @@ _PAGE_TEMPLATE = """<!doctype html>
   .engraving { position: absolute; left: 0; right: 0; top: 88%; text-align: center; z-index: 2; pointer-events: none;
     font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
+
+  /* Hidden textarea used only to summon the phone's soft keyboard: focusing it raises the
+     on-screen keyboard, and its input events are forwarded to the remote session (see script).
+     Kept in the DOM but off-screen and inert on desktop. */
+  #kbdinput { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; padding: 0; margin: 0;
+    border: 0; outline: 0; opacity: 0; background: transparent; color: transparent; resize: none;
+    z-index: -1; pointer-events: none; }
+  /* Floating "keyboard" affordance, shown only on touch/small screens (see media query below). */
+  #kbd-button { position: fixed; right: max(14px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom));
+    z-index: 10; display: none; align-items: center; gap: 6px; padding: 11px 15px; border: none; border-radius: 999px;
+    font-family: inherit; font-size: 15px; font-weight: 600; color: #fff; background: var(--ok);
+    box-shadow: 0 3px 12px rgba(0,0,0,0.32); cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  #kbd-button.active { background: var(--label); }
+  #kbd-button .glyph { font-size: 18px; line-height: 1; }
+
+  /* Phone / portrait / touch: drop the decorative MacBook photo frame entirely and let the live
+     screen fill the viewport edge to edge, so login fields are tap-sized instead of a letterboxed
+     strip inside a shrunken laptop. Desktop keeps the frame (this block does not apply there). */
+  @media (max-width: 820px), (pointer: coarse) {
+    body { padding: 0; }
+    .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; }
+    .frame, .engraving { display: none; }
+    #stage { left: 0; top: 0; width: 100%; height: 100%; }
+    #kbd-button { display: flex; }
+  }
 </style>
 </head>
 <body>
@@ -384,8 +423,13 @@ _PAGE_TEMPLATE = """<!doctype html>
     <img class="frame" src="./macbook.png" alt="" draggable="false">
     <div class="engraving">vesta</div>
   </div>
+  <textarea id="kbdinput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+  <button id="kbd-button" type="button" aria-label="Show keyboard"><span class="glyph">⌨</span>Keyboard</button>
   <script type="module">
     import RFB from './core/rfb.js';
+    import Keyboard from './core/input/keyboard.js';
+    import KeyTable from './core/input/keysym.js';
+    import keysyms from './core/input/keysymdef.js';
     const overlay = document.getElementById('overlay');
     const base = location.pathname.replace(/[^/]*$/, '');
     const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + base + 'websockify';
@@ -451,6 +495,79 @@ _PAGE_TEMPLATE = """<!doctype html>
       rfb.sendKey(0xffe3, 'ControlLeft', false);
     }, true);
     connect();
+
+    // ── Mobile soft keyboard ──────────────────────────────────────────────────
+    // The VNC canvas is not an editable element, so tapping it on a phone never raises the
+    // on-screen keyboard and there is no way to type. Mirror noVNC's own proven technique: a
+    // hidden <textarea> that we focus on demand to summon the soft keyboard. Two input paths run
+    // in tandem so a normal login (email, password, 6-digit code, Enter/Backspace) works on both
+    // platforms: a real noVNC Keyboard attached to the textarea catches Enter/Backspace and the
+    // keydown-based keys iOS reports, while an input-diff fallback recovers the printable
+    // characters Android IME keyboards insert without usable key codes. iOS keydowns call
+    // preventDefault (so the textarea never changes and the diff path stays silent); Android IME
+    // input ignores preventDefault (so only the diff path fires) — the two never double up.
+    const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+    if (isTouch) {
+      const kbdInput = document.getElementById('kbdinput');
+      const kbdButton = document.getElementById('kbd-button');
+      const PAD = 100;              // padding so backspace always has text to delete against
+      let last = '';
+      function reset() { kbdInput.value = new Array(PAD).join('_'); last = kbdInput.value; }
+
+      const touchKeyboard = new Keyboard(kbdInput);
+      touchKeyboard.onkeyevent = (keysym, code, down) => { if (rfb) rfb.sendKey(keysym, code, down); };
+      touchKeyboard.grab();
+
+      // Android on-screen keyboards omit key codes; recover typed/deleted characters by diffing
+      // the textarea value against its previous state (verbatim from noVNC's keyInput handler).
+      kbdInput.addEventListener('input', (event) => {
+        if (!rfb) return;
+        const newValue = event.target.value;
+        if (!last) reset();
+        const oldValue = last;
+        let newLen;
+        try { newLen = Math.max(event.target.selectionStart, newValue.length); }
+        catch (err) { newLen = newValue.length; }
+        const oldLen = oldValue.length;
+        let inputs = newLen - oldLen;
+        let backspaces = inputs < 0 ? -inputs : 0;
+        for (let i = 0; i < Math.min(oldLen, newLen); i++) {
+          if (newValue.charAt(i) != oldValue.charAt(i)) { inputs = newLen - i; backspaces = oldLen - i; break; }
+        }
+        for (let i = 0; i < backspaces; i++) rfb.sendKey(KeyTable.XK_BackSpace, 'Backspace');
+        for (let i = newLen - inputs; i < newLen; i++) rfb.sendKey(keysyms.lookup(newValue.charCodeAt(i)));
+        if (newLen > 2 * PAD) { reset(); }
+        else if (newLen < 1) { reset(); event.target.blur(); setTimeout(() => event.target.focus(), 0); }
+        else { last = newValue; }
+      });
+
+      // While the soft keyboard is up, stop RFB from stealing focus back to the canvas on each tap
+      // (focusOnClick=false) so tapping between login fields keeps the keyboard open; the tap still
+      // clicks the remote field, it just doesn't move browser focus off the textarea.
+      function showKeyboard() {
+        reset();
+        kbdInput.style.pointerEvents = 'auto';
+        kbdInput.focus();
+        try { const l = kbdInput.value.length; kbdInput.setSelectionRange(l, l); } catch (e) {}
+        if (rfb) rfb.focusOnClick = false;
+        kbdButton.classList.add('active');
+      }
+      function hideKeyboard() {
+        kbdInput.blur();
+        kbdInput.style.pointerEvents = 'none';
+        if (rfb) rfb.focusOnClick = true;
+        kbdButton.classList.remove('active');
+      }
+      kbdInput.addEventListener('blur', () => {
+        kbdInput.style.pointerEvents = 'none';
+        if (rfb) rfb.focusOnClick = true;
+        kbdButton.classList.remove('active');
+      });
+      kbdButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (kbdButton.classList.contains('active')) hideKeyboard(); else showKeyboard();
+      });
+    }
   </script>
 </body>
 </html>

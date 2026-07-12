@@ -6,12 +6,12 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 # Telegram - CLI: telegram
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications`
+**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and defaults `--notifications-dir` to `~/agent/notifications`; stop/restart quit the watchdog first so it cannot race a manual restart into two daemons, then restart brings it back; status reports daemon, watchdog, and auth state in one place. Manage the daemon only through these commands, never raw `screen` or signals.
 
 ## Quick Reference
 ```bash
 telegram send '<contact_name>' 'Hello!'
-telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # avoid shell-escaping
+telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # prefer --message-file when the body has apostrophes, quotes, backticks, $(...), or multiple lines: an inline string lets the shell mangle or even evaluate it
 telegram send '<contact_name>' 'reply' --reply-to '<message_id>'          # quote a message
 telegram send '<contact_name>' '<a brief or list they asked for>' --longform  # bypass short-bubble lint
 telegram chats

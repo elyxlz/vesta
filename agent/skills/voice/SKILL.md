@@ -1,12 +1,14 @@
 ---
 name: voice
 description: Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json.
-serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT screen -dmS voice voice-server
+serve: voice-keys daemon start
 ---
 
 # Voice setup (STT/TTS)
 
 Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
+
+This skill is also your one voice backend: it owns the STT/TTS providers, keys, and chosen voice, so anything that speaks or listens on your behalf uses the same voice. Other capabilities reach it as consumers rather than configuring speech themselves; setting it up here is what turns them on.
 
 Once configured, the user can manage voice settings directly from the **agent settings page** in the app, including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
 
@@ -35,14 +37,16 @@ Once configured, the user can manage voice settings directly from the **agent se
    voice-keys set-voice --id <voice_id>
    ```
    Let them know they can browse all voices and listen to previews in the app settings later.
-6. **Ensure the voice server is running.** The app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
+6. **Ensure the voice server is running.** The app fetches config from it.
    ```bash
-   PORT=$(~/agent/skills/service/scripts/register-service voice)
-   SKILL_PORT=$PORT screen -dmS voice voice-server
+   voice-keys daemon start
    ```
+   Idempotent (a running daemon is a no-op) and owns the register-service call, so this is the only command needed. Check with `voice-keys daemon status`.
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
+
+**Daemon**: `voice-keys daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; status reports the port plus each domain's provider and enabled state. Manage the daemon only through these commands, never raw `screen`.
 
 ```bash
 # See current state

@@ -4,8 +4,12 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "upstream-sync",
+    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock snapshot. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+  },
+  {
     "name": "workspace-sync",
-    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+    "description": "Renamed to upstream-sync. Read ~/agent/core/skills/upstream-sync/SKILL.md instead."
   },
   {
     "name": "agentmail",
@@ -28,8 +32,16 @@
     "description": "The people Vesta knows, a living address book and CRM. Who they are, how they communicate, what you know about them, and the history. Use whenever a person comes up, someone new appears, or you learn something about anyone in the user's world. Read a contact before reaching out to them; update it after."
   },
   {
+    "name": "cooking-hacks",
+    "description": "Hands-on kitchen and cooking technique hacks across prep and tools, produce and herbs, eggs, sauces and stocks, meat, fish, baking and pastry, and frying. Use when the user wants a cooking tip, a better way to do a kitchen task, or how a technique works."
+  },
+  {
     "name": "dashboard",
-    "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
+    "description": "Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it."
+  },
+  {
+    "name": "discord",
+    "description": "\"Discord: send/receive server messages and DMs; reply to source=discord notifications. Requires daemon.\""
   },
   {
     "name": "dream",
@@ -37,7 +49,7 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications."
   },
   {
     "name": "enable-banking",
@@ -81,7 +93,7 @@
   },
   {
     "name": "microsoft",
-    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, and new-mail paging. Requires daemon."
+    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon."
   },
   {
     "name": "nap",
@@ -140,6 +152,10 @@
     "description": "Discover and install new capabilities from the GitHub skill registry."
   },
   {
+    "name": "slack",
+    "description": "\"Slack: send/receive workspace messages, DMs, threads; reply to source=slack notifications. Requires daemon.\""
+  },
+  {
     "name": "spotify",
     "description": "Spotify: music, playlists, tracks, playback, queue, library management."
   },
@@ -193,7 +209,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon."
+    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon."
   },
   {
     "name": "whisper",

@@ -7,9 +7,99 @@ use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
-use crate::serve::ServiceEntry;
+use crate::settings::ServiceEntry;
 
 const POLL_INTERVAL_SECS: u64 = 3;
+
+// --- High-level status queries (used by serve.rs handlers and the poll task) ---
+
+pub async fn get_status(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    name: &str,
+    agents_dir: &std::path::Path,
+) -> Result<docker::StatusJson, docker::DockerError> {
+    docker::validate_name(name)?;
+    let cname = docker::container_name(name);
+    let info = docker::inspect_container(docker, &cname, Some(agents_dir)).await;
+
+    Ok(docker::StatusJson {
+        name: name.to_string(),
+        status: combined_status(http_client, agents_dir, &cname, &info).await,
+        id: info.id,
+        ws_port: info.port.unwrap_or(0),
+    })
+}
+
+pub async fn list_agents(
+    docker: &Docker,
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+) -> Vec<ListEntry> {
+    let agents = docker::list_managed_agents(docker).await;
+    let mut entries = Vec::new();
+    for docker::ManagedAgent { cname, agent_name } in &agents {
+        let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
+        entries.push(ListEntry {
+            name: agent_name.clone(),
+            status: combined_status(http_client, agents_dir, cname, &info).await,
+            ws_port: info.port.unwrap_or(0),
+            started_at: info.started_at.clone(),
+        });
+    }
+    entries
+}
+
+async fn combined_status(
+    http_client: &reqwest::Client,
+    agents_dir: &std::path::Path,
+    cname: &str,
+    info: &docker::ContainerInfo,
+) -> docker::AgentStatus {
+    match info.status {
+        docker::ContainerStatus::Running => {
+            // WS port not yet bound → agent still booting.
+            if !info.port.is_some_and(is_agent_ready) {
+                return docker::AgentStatus::Starting;
+            }
+            // Agent's own GET /config is the source of truth for provider auth.
+            // If the WS server is up but /config isn't responding yet (transient
+            // mid-boot state), treat as Starting; the next ~3s poll will resolve.
+            let agent_name = docker::name_from_cname(cname);
+            let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            match provider.status().await {
+                Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
+                Err(_) => docker::AgentStatus::Starting,
+            }
+        }
+        docker::ContainerStatus::Dead => docker::AgentStatus::Dead,
+        docker::ContainerStatus::Stopped => docker::AgentStatus::Stopped,
+        docker::ContainerStatus::NotFound => docker::AgentStatus::NotFound,
+    }
+}
+
+/// Map the agent's `GET /status` readiness slice to its `AgentStatus`. An authenticated agent is
+/// `SettingUp` until first-start finishes, then `Alive`; a not-authenticated agent is `Unprovisioned`
+/// when it has no provider chosen at all, else `NotAuthenticated` (a chosen credential is invalid).
+fn status_from_readiness(authed: bool, setup_complete: bool, provider_configured: bool) -> docker::AgentStatus {
+    match (authed, setup_complete, provider_configured) {
+        (true, true, _) => docker::AgentStatus::Alive,
+        (true, false, _) => docker::AgentStatus::SettingUp,
+        (false, _, true) => docker::AgentStatus::NotAuthenticated,
+        (false, _, false) => docker::AgentStatus::Unprovisioned,
+    }
+}
+
+/// The agent binds its WS port only once it's ready to serve requests.
+const AGENT_READY_TIMEOUT_MS: u64 = 200;
+
+fn is_agent_ready(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
+    )
+    .is_ok()
+}
 
 /// Invoked with the fresh agent list whenever the polled list actually changes
 /// (the daemon persists it into `status.json` for the `vestad status` banner).
@@ -59,7 +149,9 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
-    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
+    pub fn subscribe_services(
+        &self,
+    ) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
         self.services_rx.clone()
     }
 
@@ -114,7 +206,7 @@ pub fn spawn_agent_status_task(
 
         loop {
             // Poll agent list via async bollard
-            let agents = docker::list_agents(&docker, &http_client, &agents_dir).await;
+            let agents = list_agents(&docker, &http_client, &agents_dir).await;
 
             // Update the agents watch channel (only notifies if changed)
             let changed = cache.agents_tx.send_if_modified(|current| {
@@ -264,6 +356,16 @@ async fn agent_activity_listener(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {
+        use docker::AgentStatus::*;
+        // (authed, setup_complete, provider_configured) -> AgentStatus
+        assert_eq!(status_from_readiness(true, true, true), Alive);
+        assert_eq!(status_from_readiness(true, false, true), SettingUp);
+        assert_eq!(status_from_readiness(false, false, true), NotAuthenticated);
+        assert_eq!(status_from_readiness(false, false, false), Unprovisioned);
+    }
 
     #[test]
     fn invalidate_bumps_rev() {

@@ -23,12 +23,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vesta_tests::{
-    docker_cmd, download_released_vestad, dump_agent_diagnostics, exec_in_container, find_vestad, previous_released_tag,
-    TestServerBuilder,
+    docker_cmd, download_released_vestad, dump_agent_diagnostics, exec_in_container, find_vestad,
+    previous_released_tag, TestServerBuilder,
 };
 
 use super::common::{
-    create_file_request, host_credentials_path, provision_and_settle, wait_for_file_contains, wait_until_alive_or_die, write_notification,
+    create_file_request, host_credentials_path, provision_and_settle, wait_for_file_contains,
+    wait_until_alive_or_die, write_notification,
 };
 
 const AGENT_NAME: &str = "upgrade";
@@ -44,7 +45,9 @@ const UPGRADE_PROBE_MARKER: &str = "/root/agent/e2e-test/upgrade-ok.txt";
 #[test]
 fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() {
     if host_credentials_path().is_none() {
-        eprintln!("skipping upgrade e2e: CLAUDE_CREDENTIALS not set (no ~/.claude/.credentials.json)");
+        eprintln!(
+            "skipping upgrade e2e: CLAUDE_CREDENTIALS not set (no ~/.claude/.credentials.json)"
+        );
         return;
     }
 
@@ -102,7 +105,8 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     // home under the cargo target tmpdir (not /tmp) and a user containing neither `-t<digit>` nor
     // `test-e2e-`. We do our own cleanup instead.
     remove_stale_upgrade_containers();
-    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
+    let home =
+        tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
     let user = format!("upgrade-e2e-{}", std::process::id());
 
     // The downloaded old binary's path is the "installed" vestad: the update replaces this exact
@@ -122,7 +126,9 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
         .expect("start old vestad");
 
     let old_client = old_server.client();
-    let agent_name = old_client.create_agent(AGENT_NAME).expect("create agent on old vestad");
+    let agent_name = old_client
+        .create_agent(AGENT_NAME)
+        .expect("create agent on old vestad");
     // Address the agent by its stable container NAME, never the id from agent_status: reconcile
     // may REBUILD the container on the update (snapshot + recreate -> new id), and migration
     // prompts restart it, so any cached id goes stale. The name survives restarts and rebuilds.
@@ -133,7 +139,10 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
 
     provision_and_settle(&old_client, &agent_name, &container);
     let pre_applied = applied_migrations(&container);
-    eprintln!("upgrade e2e: setup complete on {previous_tag}; {} migration(s) pre-applied", pre_applied.len());
+    eprintln!(
+        "upgrade e2e: setup complete on {previous_tag}; {} migration(s) pre-applied",
+        pre_applied.len()
+    );
 
     // Seed the credential-loss precondition a fresh agent lacks (tracked .claude + an untracked
     // sentinel in ~/.claude), so the upgrade boot's reapply would delete it absent the fix.
@@ -165,7 +174,10 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     // from the host agent-code the new vestad extracted at startup (stable; the container is
     // mid-rebuild and answers nothing). wait_for_migrations_applied polls through the whole rebuild.
     let expected = host_core_migrations(home.path());
-    assert!(!expected.is_empty(), "new core ships no migrations — host agent-code path is wrong");
+    assert!(
+        !expected.is_empty(),
+        "new core ships no migrations — host agent-code path is wrong"
+    );
     wait_for_migrations_applied(home.path(), &container, &expected);
     wait_until_alive_or_die(&new_client, &agent_name, &container);
 
@@ -176,7 +188,12 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
         false,
     )
     .expect("send post-update probe");
-    if let Err(e) = wait_for_file_contains(&container, UPGRADE_PROBE_MARKER, "UPGRADED", MIGRATION_CONVERGE_TIMEOUT) {
+    if let Err(e) = wait_for_file_contains(
+        &container,
+        UPGRADE_PROBE_MARKER,
+        "UPGRADED",
+        MIGRATION_CONVERGE_TIMEOUT,
+    ) {
         dump_agent_diagnostics(&agent_name);
         panic!("agent did not process work after update: {e}");
     }
@@ -230,7 +247,8 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
 fn install_vestad_binary(src: &Path, dst: &Path) {
     let staged = dst.with_extension("incoming");
     fs::copy(src, &staged).expect("stage new vestad binary");
-    fs::set_permissions(&staged, fs::Permissions::from_mode(0o755)).expect("make staged vestad executable");
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
+        .expect("make staged vestad executable");
     fs::rename(&staged, dst).expect("replace installed vestad binary");
 }
 
@@ -265,7 +283,10 @@ impl AgentLogStream {
                 std::thread::sleep(LOG_STREAM_POLL);
             }
         });
-        Self { stop, handle: Some(handle) }
+        Self {
+            stop,
+            handle: Some(handle),
+        }
     }
 }
 
@@ -282,7 +303,14 @@ impl Drop for AgentLogStream {
 /// name that the shared harness orphan cleanup deliberately ignores, so the upgrade test owns
 /// its own hygiene.
 fn remove_stale_upgrade_containers() {
-    let Ok(list) = docker_cmd(&["ps", "-aq", "--filter", "name=vesta-upgrade-e2e-", "--format", "{{.Names}}"]) else {
+    let Ok(list) = docker_cmd(&[
+        "ps",
+        "-aq",
+        "--filter",
+        "name=vesta-upgrade-e2e-",
+        "--format",
+        "{{.Names}}",
+    ]) else {
         return;
     };
     for name in list.lines().map(str::trim).filter(|name| !name.is_empty()) {
@@ -310,7 +338,10 @@ fn host_core_migrations(home: &Path) -> Vec<String> {
 
 /// Read a non-empty env override as a release tag (e.g. `VESTA_UPGRADE_FROM=v0.1.158`).
 fn env_tag(key: &str) -> Option<String> {
-    std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Poll `state.json` until every expected migration is recorded as applied. Real Claude drives
@@ -336,7 +367,12 @@ fn wait_for_migrations_applied(home: &Path, container: &str, expected: &[String]
 /// here), the container's state, and what the new core mount actually contains.
 fn dump_upgrade_diagnostics(home: &Path, container_name: &str) {
     eprintln!("\n===== UPGRADE DIAGNOSTICS =====");
-    match docker_cmd(&["inspect", container_name, "--format", "status={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}"]) {
+    match docker_cmd(&[
+        "inspect",
+        container_name,
+        "--format",
+        "status={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}",
+    ]) {
         Ok(state) => eprintln!("container {container_name}: {state}"),
         Err(e) => eprintln!("container {container_name}: inspect failed ({e})"),
     }
@@ -352,15 +388,33 @@ fn dump_upgrade_diagnostics(home: &Path, container_name: &str) {
     }
     // Reconcile/rebuild decisions go to vestad's tracing on stdout; the banner is on stderr. Surface
     // the relevant lines from both so a failed rebuild (e.g. "[3/4] removing", a rebuild error) shows.
-    for (label, file) in [("stdout", "vestad-stdout.log"), ("stderr", "vestad-stderr.log")] {
+    for (label, file) in [
+        ("stdout", "vestad-stdout.log"),
+        ("stderr", "vestad-stderr.log"),
+    ] {
         match fs::read_to_string(home.join(file)) {
             Ok(content) => {
                 let relevant: Vec<&str> = content
                     .lines()
                     .filter(|l| {
-                        ["reconcile", "rebuild", "[1/4]", "[2/4]", "[3/4]", "[4/4]", "restart", "agent code", "stopped", "starting", "still present", "error", "ERROR", "WARN"]
-                            .iter()
-                            .any(|k| l.contains(k))
+                        [
+                            "reconcile",
+                            "rebuild",
+                            "[1/4]",
+                            "[2/4]",
+                            "[3/4]",
+                            "[4/4]",
+                            "restart",
+                            "agent code",
+                            "stopped",
+                            "starting",
+                            "still present",
+                            "error",
+                            "ERROR",
+                            "WARN",
+                        ]
+                        .iter()
+                        .any(|k| l.contains(k))
                     })
                     .collect();
                 if !relevant.is_empty() {
@@ -413,29 +467,46 @@ fn seed_tracked_claude_precondition(container: &str) {
 /// True iff the sentinel untracked file in ~/.claude still exists — i.e. an upgrade-boot reapply
 /// did not delete untracked files under .claude (the credential-loss regression).
 fn claude_sentinel_survives(container: &str) -> bool {
-    exec_in_container(container, &format!("test -f {CLAUDE_SENTINEL} && echo yes || echo no"))
-        .map(|out| out.trim() == "yes")
-        .unwrap_or(false)
+    exec_in_container(
+        container,
+        &format!("test -f {CLAUDE_SENTINEL} && echo yes || echo no"),
+    )
+    .map(|out| out.trim() == "yes")
+    .unwrap_or(false)
 }
 
 /// The `applied_migrations` list from the agent's persisted state (empty when state.json or the
 /// field is absent — both mean "nothing applied yet").
 fn applied_migrations(container: &str) -> Vec<String> {
-    let raw = exec_in_container(container, "cat /root/agent/data/state.json 2>/dev/null || echo '{}'")
-        .unwrap_or_else(|_| "{}".to_string());
-    let value: serde_json::Value = serde_json::from_str(raw.trim()).unwrap_or(serde_json::Value::Null);
+    let raw = exec_in_container(
+        container,
+        "cat /root/agent/data/state.json 2>/dev/null || echo '{}'",
+    )
+    .unwrap_or_else(|_| "{}".to_string());
+    let value: serde_json::Value =
+        serde_json::from_str(raw.trim()).unwrap_or(serde_json::Value::Null);
     value
         .get("applied_migrations")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// Count of undelivered migration notification files. Nonzero after a settled boot means a
 /// migration re-fired even though it was already applied.
 fn pending_migration_notifications(container: &str) -> usize {
-    docker_cmd(&["exec", container, "bash", "-lc", "ls /root/agent/notifications/migration-*.json 2>/dev/null | wc -l"])
-        .ok()
-        .and_then(|out| out.trim().parse().ok())
-        .unwrap_or(0)
+    docker_cmd(&[
+        "exec",
+        container,
+        "bash",
+        "-lc",
+        "ls /root/agent/notifications/migration-*.json 2>/dev/null | wc -l",
+    ])
+    .ok()
+    .and_then(|out| out.trim().parse().ok())
+    .unwrap_or(0)
 }
