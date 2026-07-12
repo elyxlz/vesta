@@ -5,6 +5,7 @@ export type AgentStatus =
   | "not_authenticated"
   | "unprovisioned"
   | "restarting"
+  | "rebuilding"
   | "stopped"
   | "dead"
   | "not_found";
