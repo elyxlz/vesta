@@ -266,11 +266,6 @@ impl Client {
         Ok(())
     }
 
-    pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/rebuild", name))?;
-        Ok(())
-    }
-
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
         let resp = self.patch_json(&format!("/agents/{}", name), &body)?;

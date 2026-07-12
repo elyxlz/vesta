@@ -25,14 +25,14 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 
-// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// Agent create builds/pulls the image (minutes on a cold cache), which the 120s control
 // deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
 const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild", "auth", "logs", "tree", "file", "backups",
+    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups",
     "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
@@ -682,37 +682,6 @@ async fn destroy_agent_handler(
         save_settings(&settings);
     }
 
-    Ok(ok_json())
-}
-
-async fn rebuild_agent_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "rebuilding agent");
-    ensure_not_rebuilding(&state.rebuilding, &name)?;
-    let _guard = agent_write_guard(&state, &name).await;
-
-    let user_mounts = {
-        let settings = state.settings.read().await;
-        settings.agent_mounts(&name)
-    };
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts, &state.rebuilding)
-        .await
-        .map_err(map_docker_err)?;
-    // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
-    {
-        let mut settings = state.settings.write().await;
-        settings
-            .agents
-            .entry(name.clone())
-            .or_default()
-            .user_desired = UserDesired::Running;
-        save_settings(&settings);
-    }
-    docker::start_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -2335,10 +2304,9 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
+    // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2400,7 +2368,7 @@ pub fn build_router(state: SharedState) -> Router {
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
     // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
     // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
-    // so it rides the longrun timeout like the rebuild route, not the control tier.
+    // so it rides the longrun timeout like the create route, not the control tier.
     let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .layer(control_timeout_layer())
@@ -3046,7 +3014,7 @@ mod tests {
     #[tokio::test]
     async fn longrun_layer_allows_a_request_past_the_control_deadline() {
         // A handler slower than a control-class deadline must survive under the longrun layer —
-        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        // the mechanism that keeps agent create (a multi-minute image build) from 408ing.
         let slow = || async {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             "ok"
