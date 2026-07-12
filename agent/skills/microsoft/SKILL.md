@@ -30,6 +30,21 @@ Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-
 
 ## Personalization
 
+## Threaded reply DRAFT (leave unsent for the user to send)
+
+`email reply` ALWAYS sends and `email draft --reply-to` overwrites the quoted history. To leave a
+threaded reply(-all) draft the user reviews + sends themselves, use `email reply-draft`
+(createReply/createReplyAll + body placed above the preserved quote + attach, no /send):
+
+```bash
+microsoft email reply-draft --account user@example.com --id '<latest-msg-id-in-thread>' --body "draft answer for review"
+microsoft email reply-draft --account user@example.com --id '<email_id>' --body "thanks all" --reply-all --attachments /path/file.pdf
+```
+
+`--body` is plain text (`- ` lines become bullets), placed above the quoted thread. On a re-edit
+pass `--replace-draft <old_id>` (the `id` printed by the prior run) so repeated tweaks leave
+exactly one draft, not a pile. Graph-only.
+
 ### Contact Communication Styles
 [How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
