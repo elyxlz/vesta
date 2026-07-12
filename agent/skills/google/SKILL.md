@@ -3,10 +3,10 @@ name: google
 description: Gmail and Google Calendar: email, events, scheduling. Requires daemon.
 ---
 
-# Google - CLI: google
+# Google, CLI: google
 
 Gmail runs on the Gmail REST API; Google Calendar runs on **CalDAV** (the REST
-Calendar API is disabled for the shared sign-in client - see SETUP.md). Every
+Calendar API is disabled for the shared sign-in client, see SETUP.md). Every
 command prints JSON to stdout.
 
 **Setup**: See [SETUP.md](SETUP.md)
@@ -46,17 +46,17 @@ Meet is **not available** under the shared sign-in. Standalone Meet spaces need 
 restricted scope the client is not verified for, and the calendar `conferenceData`
 path needs the Calendar REST API, which is disabled for this client. Creating an
 event does not attach a Meet link. (A separately-verified own Google Cloud app via
-`~/.google/credentials.json` would be required to add Meet back - not wired up.)
+`~/.google/credentials.json` would be required to add Meet back, not wired up.)
 
 ## Sign-in (zero bring-your-own-app)
 
-Default sign-in reuses **Thunderbird's published public OAuth client** - no Google
+Default sign-in reuses **Thunderbird's published public OAuth client**, no Google
 Cloud project, no `credentials.json`. It is a loopback OAuth flow (prints a consent
 URL, listens on `127.0.0.1`, does not auto-open a browser). One verified consent
 grants `https://mail.google.com/` (Gmail) + `.../auth/calendar` (used by CalDAV).
 Drop a `~/.google/credentials.json` to use your own app instead (optional). A daily
 daemon probe self-heals a dead upstream client automatically and only bothers you
-as a last resort - run `google auth probe` to check health on demand. See
+as a last resort, run `google auth probe` to check health on demand. See
 [SETUP.md](SETUP.md) for the full self-heal ladder.
 
 ## Draft-only mode
