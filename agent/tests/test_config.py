@@ -182,10 +182,16 @@ def test_unreadable_store_aborts_update(agentdir, monkeypatch):
     assert config_store_path().read_text() == before
 
 
+def test_load_rules_coerces_legacy_pool_action(agentdir):
+    # LEGACY: stores written before the rename carry action="pool"; they must load as "snooze".
+    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
+    assert [rule.action for rule in load_notification_rules()] == ["snooze"]
+
+
 def test_unreadable_store_does_not_crash_rules_load(agentdir, monkeypatch):
     # load_notification_rules runs on monitor_loop's per-tick hot path; an unreadable store must
     # yield no rules, never an exception that kills notification processing.
-    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
+    update_config_store({"notification_rules": [{"id": "a", "source": "twitter", "action": "snooze"}]})
     monkeypatch.setattr(pl.Path, "read_text", _deny_read_text)
     assert load_notification_rules() == []
 
@@ -280,8 +286,8 @@ def test_migrate_policy_translates_defaults_into_trailing_rules(agentdir):
     rules = load_notification_rules()
     assert [(rule.source, rule.type, rule.action) for rule in rules] == [
         ("twitter", None, "interrupt"),
-        ("outlook", None, "pool"),
-        ("calendar", "reminder", "pool"),
+        ("outlook", None, "snooze"),
+        ("calendar", "reminder", "snooze"),
     ]
     assert all(rule.id for rule in rules)
 
@@ -292,7 +298,7 @@ def test_migrate_policy_no_file_is_a_noop(agentdir):
 
 
 def test_migrate_policy_does_not_overwrite_existing_rules(agentdir):
-    update_config_store({"notification_rules": [{"id": "keep", "source": "existing", "action": "pool"}]})
+    update_config_store({"notification_rules": [{"id": "keep", "source": "existing", "action": "snooze"}]})
     _write_legacy_policy(agentdir, {"rules": [{"source": "twitter", "action": "interrupt"}]})
     migrate_notification_policy_file()
     assert [rule.source for rule in load_notification_rules()] == ["existing"]

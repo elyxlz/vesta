@@ -338,15 +338,14 @@ def test_direct_message_not_flagged_as_group():
 async def test_process_batch_queues_prompt(tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "n.json"
     f.write_text("x")
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
-    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
-        await process_batch([notif], queue=queue, state=state, config=config)
+    with patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=queue, config=config)
 
     assert not queue.empty()
     prompt, is_user, file_paths, _, _ = await queue.get()
@@ -357,10 +356,9 @@ async def test_process_batch_queues_prompt(tmp_path):
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
     config = cfg.VestaConfig()
-    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await process_batch([], queue=queue, state=state, config=config)
+    await process_batch([], queue=queue, config=config)
     assert queue.empty()
 
 
@@ -370,7 +368,6 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     is fully processed so that a mid-compaction restart can recover unprocessed notifications."""
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
     f = tmp_path / "to-keep.json"
@@ -378,7 +375,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, state=state, config=config)
+        await process_batch([notif], queue=queue, config=config)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths, _, _ = await queue.get()
@@ -418,9 +415,9 @@ def _passive_config(tmp_path, monkeypatch):
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     config.ephemeral = True  # no dreamer drops
     config.monitor_tick_interval = 1
-    # Tiny grace makes the triage pass fire promptly once idle, so passive-flush tests stay fast and
+    # Tiny grace makes the flush fire promptly once idle, so passive-flush tests stay fast and
     # deterministic.
-    config.notif_pool_idle_grace_seconds = 0.01
+    config.notif_snooze_idle_grace_seconds = 0.01
     return config
 
 
@@ -431,7 +428,7 @@ def _write_notif(directory, stem, *, source="test", type_="message"):
     return path
 
 
-def _install_rule(config, *, source="test", action="pool"):
+def _install_rule(config, *, source="test", action="snooze"):
     """Write a single interrupt rule into the config store the monitor reads each tick."""
     config.data_dir.mkdir(parents=True, exist_ok=True)
     (config.data_dir / "config.json").write_text(json.dumps({"notification_rules": [{"id": "r", "source": source, "action": action}]}))
@@ -474,9 +471,9 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatc
 
 @pytest.mark.anyio
 async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, monkeypatch):
-    """A pooled notification is held while the bus is not idle, then flushed exactly once on idle."""
+    """A snoozed notification is held while the bus is not idle, then flushed exactly once on idle."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # held while busy
@@ -503,16 +500,16 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, 
         # Exactly once: file stays on disk (deleted only after processing), but nothing re-queues.
         await asyncio.sleep(0.05)
         assert queue.empty(), "passive batch must flush exactly once"
-        assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
+        assert path.exists(), "file stays on disk until _run_messages_with_preempts deletes it after processing"
     finally:
         await runner.aclose()
 
 
 @pytest.mark.anyio
 async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path, monkeypatch):
-    """A pooled file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
+    """A snoozed file seen on one tick is not re-queued on a later tick (queued_paths dedup)."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # keep passive batch pending across ticks
@@ -541,7 +538,7 @@ async def test_monitor_loop_passive_not_double_queued_across_ticks(tmp_path, mon
             # Despite being observed on multiple ticks, the file produces a single queued batch.
             # File stays on disk (deleted only after processing), but queued_paths dedup prevents re-queueing.
             assert queue.qsize() == 1, f"passive file must be queued once, got {queue.qsize()}"
-            assert path.exists(), "file stays on disk until _run_messages_with_interrupts deletes it after processing"
+            assert path.exists(), "file stays on disk until _run_messages_with_preempts deletes it after processing"
     finally:
         await runner.aclose()
 
@@ -554,7 +551,7 @@ async def test_proactive_check_skipped_while_busy_fires_on_first_idle_tick(tmp_p
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.processor_busy = True
-    state.event_bus.set_state("thinking")  # hold the pooled proactive drop so the queue stays empty
+    state.event_bus.set_state("thinking")  # hold the snoozed proactive drop so the queue stays empty
     queue: asyncio.Queue = asyncio.Queue()
 
     t0 = dt.datetime(2025, 1, 1, 12, 0, 0)
@@ -606,7 +603,7 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path, 
     tick was the notification storm: 16 kept files -> ~8 db rows/sec, 3.6M rows."""
     config = _passive_config(tmp_path, monkeypatch)
     config.monitor_tick_interval = 1
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")  # hold the passive file on disk across ticks
@@ -637,7 +634,7 @@ async def test_monitor_loop_emits_each_notification_once_across_ticks(tmp_path, 
 @pytest.mark.anyio
 async def test_monitor_loop_trash_rule_drops_file_and_creates_no_turn(tmp_path, monkeypatch):
     """A trash rule moves the notification into the trash dir, records it in history with decided='trash',
-    and never queues a turn (even when the bus is idle, where a pooled notif would flush)."""
+    and never queues a turn (even when the bus is idle, where a snoozed notif would flush)."""
     config = _passive_config(tmp_path, monkeypatch)
     _install_rule(config, source="test", action="trash")
     state = vm.State()
@@ -703,14 +700,14 @@ async def test_notification_watcher_signals_then_stops_on_shutdown(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_policy_pools_a_notification(tmp_path, monkeypatch):
-    """A rule with action=pool routes a would-otherwise-interrupt notif to the passive pool: while the
+async def test_policy_snoozes_a_notification(tmp_path, monkeypatch):
+    """A rule with action=snooze routes a would-otherwise-interrupt notif to the snoozed batch: while the
     bus is not idle it must NOT be queued."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
-    state.event_bus.set_state("thinking")  # not idle: a pooled notif stays held
+    state.event_bus.set_state("thinking")  # not idle: a snoozed notif stays held
     queue: asyncio.Queue = asyncio.Queue()
     sub = state.event_bus.subscribe()
 
@@ -730,8 +727,8 @@ async def test_policy_pools_a_notification(tmp_path, monkeypatch):
 
         await wait_for_condition(_notification_emitted, message="monitor tick never emitted a notification event")
 
-        assert queue.empty(), "pool rule must keep the notif out of the queue while busy"
-        assert path.exists(), "pooled file stays on disk until the batch flushes at idle"
+        assert queue.empty(), "snooze rule must keep the notif out of the queue while busy"
+        assert path.exists(), "snoozed file stays on disk until the batch flushes at idle"
     finally:
         await runner.aclose()
 
@@ -761,10 +758,10 @@ async def test_policy_interrupts_a_notification(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatch):
-    """Rules written mid-run apply on the next tick with no restart. A pool rule holds the notif while
+    """Rules written mid-run apply on the next tick with no restart. A snooze rule holds the notif while
     busy; changing it to an interrupt rule flips it to a preempt and queues it."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")
@@ -774,9 +771,9 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatc
     await runner.__anext__()
     try:
         _write_notif(config.notifications_dir, "later-urgent")
-        # With the pool rule, the notif is held while busy.
+        # With the snooze rule, the notif is held while busy.
         await asyncio.sleep(0.05)
-        assert queue.empty(), "pooled notif should be held while the pool rule is in effect"
+        assert queue.empty(), "snoozed notif should be held while the snooze rule is in effect"
 
         # Change the rule live; the next tick must pick it up and queue the notif.
         _install_rule(config, action="interrupt")
@@ -789,21 +786,20 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatc
 async def test_process_batch_defaults_to_notification_suffix(tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
 
     with patch("core.loops.load_prompt", side_effect=lambda name, config: f"SUFFIX:{name}"):
-        await process_batch([notif], queue=queue, state=state, config=config)
+        await process_batch([notif], queue=queue, config=config)
     prompt, _, _, _, _ = await queue.get()
     assert "SUFFIX:notification_suffix" in prompt
 
 
 @pytest.mark.anyio
-async def test_pool_not_flushed_while_thinking(tmp_path, monkeypatch):
-    """A pooled notif is never triaged while the bus is thinking (no idle window)."""
+async def test_snooze_not_flushed_while_thinking(tmp_path, monkeypatch):
+    """A snoozed notif is never flushed while the bus is thinking (no idle window)."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("thinking")
@@ -828,11 +824,11 @@ async def test_pool_not_flushed_while_thinking(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_pool_not_flushed_before_grace(tmp_path, monkeypatch):
-    """Idle but within the grace window: no triage yet."""
+async def test_snooze_not_flushed_before_grace(tmp_path, monkeypatch):
+    """Idle but within the grace window: no flush yet."""
     config = _passive_config(tmp_path, monkeypatch)
-    config.notif_pool_idle_grace_seconds = 100.0  # longer than the test
-    _install_rule(config, action="pool")
+    config.notif_snooze_idle_grace_seconds = 100.0  # longer than the test
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("idle")
@@ -857,10 +853,10 @@ async def test_pool_not_flushed_before_grace(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_pool_flushes_once_after_grace(tmp_path, monkeypatch):
-    """After continuous idle >= grace, the pooled notifications are flushed once."""
+async def test_snooze_flushes_once_after_grace(tmp_path, monkeypatch):
+    """After continuous idle >= grace, the snoozed notifications are flushed once."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, action="pool")
+    _install_rule(config, action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     state.event_bus.set_state("idle")
@@ -871,7 +867,7 @@ async def test_pool_flushes_once_after_grace(tmp_path, monkeypatch):
         await runner.__anext__()
         try:
             _write_notif(config.notifications_dir, "p")
-            await wait_for_condition(lambda: pb.call_count >= 1, message="pool was never flushed after idle+grace")
+            await wait_for_condition(lambda: pb.call_count >= 1, message="snoozed batch was never flushed after idle+grace")
             (batch,), _ = pb.call_args
             assert len(batch) == 1
             await asyncio.sleep(0.1)
@@ -884,10 +880,10 @@ async def test_pool_flushes_once_after_grace(tmp_path, monkeypatch):
 async def test_emitted_notification_event_is_enriched(tmp_path, monkeypatch):
     """The NotificationEvent on the bus carries structured facets + the effective disposition."""
     config = _passive_config(tmp_path, monkeypatch)
-    _install_rule(config, source="whatsapp", action="pool")
+    _install_rule(config, source="whatsapp", action="snooze")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
-    state.event_bus.set_state("thinking")  # keep it pooled, just exercise the emit
+    state.event_bus.set_state("thinking")  # keep it snoozed, just exercise the emit
     queue: asyncio.Queue = asyncio.Queue()
     sub = state.event_bus.subscribe()
 
@@ -913,7 +909,7 @@ async def test_emitted_notification_event_is_enriched(tmp_path, monkeypatch):
         assert e["source"] == "whatsapp"
         assert e["notif_type"] == "message"
         assert e["sender"] == "Alice"
-        assert e["decided"] == "pool"  # the whatsapp->pool rule applied
+        assert e["decided"] == "snooze"  # the whatsapp->snooze rule applied
         assert e["notif_id"] == "n"  # the file stem, for pending/cleared correlation
     finally:
         await runner.aclose()

@@ -101,7 +101,7 @@
   },
   {
     "name": "notifications",
-    "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage vs. get dropped entirely. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when the user wants a kind of notification ignored/trashed outright so it never reaches you (\"stop showing me WhatsApp status updates\", \"always ignore X\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications."
+    "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. snooze until you're free vs. get dropped entirely. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when the user wants a kind of notification ignored/trashed outright so it never reaches you (\"stop showing me WhatsApp status updates\", \"always ignore X\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when working through snoozed notifications."
   },
   {
     "name": "onboard",

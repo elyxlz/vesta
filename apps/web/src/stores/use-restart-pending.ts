@@ -22,12 +22,7 @@ import type { AgentInfo } from "@/lib/types";
 // (clearReason matches an identical key, so the store owns the spelling) and the runtime allowlist
 // migrate narrows untrusted persisted data against; RestartReason derives from it so the two never
 // drift. "settings" only labels flags migrated from the un-keyed v0 store.
-const ALL_REASONS = [
-  "host-access",
-  "files",
-  "preempt-mode",
-  "settings",
-] as const;
+const ALL_REASONS = ["host-access", "files", "settings"] as const;
 export type RestartReason = (typeof ALL_REASONS)[number];
 
 // Reasons reconcile must not clear on a boot-time change — they need a container recreate, not a
