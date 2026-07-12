@@ -14,6 +14,7 @@ import {
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
@@ -146,13 +147,20 @@ export function SelectedAgentProvider({
     );
   };
 
-  // keepOnSuccess holds the "deleting" look after the API call resolves: the
-  // agent stays in the gateway list until the next agents push, and clearing
-  // early would flash the card back to the gray stopped orb for that gap.
-  const remove = () =>
-    withOp(name, "deleting", () => deleteAgent(name), "delete failed", {
-      keepOnSuccess: true,
-    });
+  // Delete is terminal: unlike the other ops it hands off to the agent's
+  // disappearance, not to a new status. So it holds "deleting" on success and
+  // lets reconcile drop the op when the agent leaves the list, rather than
+  // clearing to idle and flashing the card back to the gray stopped orb.
+  const remove = async () => {
+    const ops = useAgentOps.getState();
+    if (ops.getOp(name).operation !== "idle") return;
+    ops.setOp(name, "deleting");
+    try {
+      await deleteAgent(name);
+    } catch (e) {
+      ops.setOp(name, "idle", errorMessage(e, "delete failed"));
+    }
+  };
 
   const value: SelectedAgentContextValue = {
     name,

@@ -173,7 +173,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               setAgentsFetched(true);
               // Clear any "restart to apply" flag whose agent has since restarted (by any path).
               useRestartPending.getState().reconcile(agents);
-              // Drop op state for agents that no longer exist (ends a delete's kept op).
+              // Drop op state for agents that are gone (ends a delete's "deleting" orb).
               useAgentOps.getState().reconcile(agents);
               break;
             }

@@ -28,7 +28,6 @@ interface AgentOpsStore {
     op: AgentOperation,
     fn: () => Promise<void>,
     fallback: string,
-    opts?: { keepOnSuccess?: boolean },
   ) => Promise<void>;
 }
 
@@ -57,9 +56,9 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       states: { ...s.states, [name]: { operation: "idle", error: "" } },
     })),
 
-  // Drop op state for agents that no longer exist, on each gateway agents push.
-  // This is what ends a delete's kept op (see withOp): the entry outlives the
-  // agent by exactly one push.
+  // An op only lives as long as its agent: on each gateway agents push, drop op
+  // state for agents that are gone. This is what ends a delete's "deleting" orb,
+  // so the card never flashes back to idle while the deleted agent lingers.
   reconcile: (agents) =>
     set((s) => {
       const alive = new Set(agents.map((a) => a.name));
@@ -70,17 +69,14 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       return { states };
     }),
 
-  withOp: async (name, op, fn, fallback, opts) => {
+  withOp: async (name, op, fn, fallback) => {
     const store = get();
     if (store.getOp(name).operation !== "idle") return;
     store.setError(name, "");
     store.setOp(name, op);
     try {
       await fn();
-      // keepOnSuccess: a successful delete leaves the agent in the gateway
-      // list until the next agents push; clearing now would flash the card
-      // back to the plain stopped look. reconcile drops the entry instead.
-      if (!opts?.keepOnSuccess) get().clearOp(name);
+      get().clearOp(name);
     } catch (e: unknown) {
       const msg = errorMessage(e, fallback);
       set((s) => ({
