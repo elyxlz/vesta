@@ -31,7 +31,7 @@ import urllib.request
 
 # Mozilla Thunderbird's published public Google OAuth client. Desktop-app OAuth
 # clients are public by design (the binary ships both id and secret), so the
-# "secret" below is NOT a credential to protect — it is baked into every
+# "secret" below is NOT a credential to protect - it is baked into every
 # Thunderbird release. Google's token endpoint still requires it in the
 # authorization-code and refresh-token exchanges for this client. Registered
 # under Mozilla's Google Cloud project (number 406964657835) whose verified
@@ -154,7 +154,7 @@ def resolve_google_client(
         "fetched"     freshly pulled from comm-central this call
         "fallback"    hardcoded constant (no usable cache, fetch off or failed)
 
-    ``allow_fetch=False`` guarantees no network access — callers on the hot path
+    ``allow_fetch=False`` guarantees no network access - callers on the hot path
     (building the auth flow) use this so normal commands stay fast and
     offline-safe. The daily probe and self-heal call with ``allow_fetch=True``
     (and ``force_refresh=True`` for self-heal) to actually track upstream.

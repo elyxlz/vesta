@@ -1,4 +1,4 @@
-"""Unit tests for monitor.clamp_catchup_start — bounding the first-run catch-up window."""
+"""Unit tests for monitor.clamp_catchup_start - bounding the first-run catch-up window."""
 
 from datetime import datetime, timedelta, UTC
 

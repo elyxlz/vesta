@@ -176,7 +176,7 @@ def probe_config(config, *, post=None) -> dict:
     """Probe the account's Google client health via a stored-token refresh.
 
     Skips (never a false dead-client) when there is no stored refresh token yet
-    (brand-new user). Tests the client id/secret stored in token.json — the exact
+    (brand-new user). Tests the client id/secret stored in token.json - the exact
     values a live refresh uses. Does no self-heal; see :func:`run_self_heal_cycle`.
     """
     tok = _load_token(config)
@@ -274,7 +274,7 @@ def write_agent_heal_request(notif_dir: pathlib.Path, result: dict) -> pathlib.P
             "client from comm-central did NOT yield a working client. Find or patch "
             "a fresh verified public desktop client, test it against the token "
             "endpoint, swap it into thunderbird_client.py / the resolver cache, and "
-            "upstream the fix. Do NOT surface this to the user yet — it is an "
+            "upstream the fix. Do NOT surface this to the user yet - it is an "
             "engineering task for you."
         ),
         "detail": {
@@ -299,7 +299,7 @@ def write_user_dead_client_notification(notif_dir: pathlib.Path, result: dict) -
             "Gmail and Google Calendar stopped working: the shared Google sign-in "
             "client was removed upstream and automatic recovery did not succeed, so "
             "Google access is down until a new verified sign-in client is put in "
-            "place. This is not a problem with your account or password — nothing "
+            "place. This is not a problem with your account or password - nothing "
             "you did, and re-entering your password will not fix it."
         ),
         "detail": {
@@ -354,7 +354,7 @@ def run_self_heal_cycle(
     status = result["status"]
 
     if status != DEAD_CLIENT:
-        # Healthy again (or bad-token / skipped) — recovery resets the ladder.
+        # Healthy again (or bad-token / skipped) - recovery resets the ladder.
         if status == HEALTHY:
             _clear_markers(config)
         return result

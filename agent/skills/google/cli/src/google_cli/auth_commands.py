@@ -3,7 +3,7 @@ from . import auth
 
 
 def authenticate_account(config: Config) -> dict:
-    # Zero-BYO by default: no credentials.json needed — we reuse Thunderbird's
+    # Zero-BYO by default: no credentials.json needed - we reuse Thunderbird's
     # published public client. If credentials.json IS present it transparently
     # takes over (advanced own-app path); its absence is not an error.
     flow_data = auth.start_auth_flow(config.credentials_file, config.scopes)
@@ -12,7 +12,7 @@ def authenticate_account(config: Config) -> dict:
         "auth_url": flow_data["auth_url"],
         "message": (
             "Open the URL above in a browser and authorize.\n"
-            "The browser will redirect to a local URL — copy the 'code' parameter from the URL.\n"
+            "The browser will redirect to a local URL - copy the 'code' parameter from the URL.\n"
             "Then run: google auth complete --code <code>"
         ),
     }

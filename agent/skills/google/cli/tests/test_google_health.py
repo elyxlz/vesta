@@ -3,7 +3,7 @@
 The classifier must separate a DEAD CLIENT (deleted_client / invalid_client /
 "not found") from a BAD USER TOKEN (invalid_grant) from a HEALTHY refresh. The
 ladder must produce: silent-swap (Level 1) vs agent-request (Level 2) vs
-user-notify (Level 3) correctly. Everything is mocked — no network: the token
+user-notify (Level 3) correctly. Everything is mocked - no network: the token
 endpoint (`post`) and the comm-central resolver are injected/monkeypatched.
 """
 

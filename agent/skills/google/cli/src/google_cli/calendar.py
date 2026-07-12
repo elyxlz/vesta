@@ -2,23 +2,23 @@
 """Google Calendar on CalDAV.
 
 The Calendar REST API (``calendar/v3``) is unusable under this skill's reused
-Thunderbird OAuth client — its Cloud project has the Calendar API disabled, so
+Thunderbird OAuth client - its Cloud project has the Calendar API disabled, so
 every REST call 403s with ``accessNotConfigured``. This module reimplements the
 whole calendar command surface (list / calendars / get / create / update /
 delete / respond) on **CalDAV** against
 ``https://apidata.googleusercontent.com/caldav/v2/{email}/`` using the OAuth
-Bearer token from this skill's token store — the same path Thunderbird uses.
+Bearer token from this skill's token store - the same path Thunderbird uses.
 
 The HTTP/DAV plumbing lives in :mod:`caldav_client`; here we build CalDAV
 REPORT/PUT bodies, parse and emit iCalendar via the ``icalendar`` library, and
 expand recurring events into concrete occurrences with ``recurring_ical_events``
 (mirroring REST's ``singleEvents=True``). Event dicts are shaped to match the old
 REST output (``start``/``end`` objects, ``attendees``, ``organizer``,
-``recurrence``) so existing callers — the CLI and the daemon monitor — keep
+``recurrence``) so existing callers - the CLI and the daemon monitor - keep
 working unchanged: only the backend moved.
 
 NOTE ON INVITES: creating/updating/deleting an event with attendees causes Google
-to email calendar invites/updates to them — a real outward send. The
+to email calendar invites/updates to them - a real outward send. The
 EMAIL_DRAFT_ONLY guard covers email sending only and does NOT block calendar
 writes; use judgment before writing events with attendees.
 """
@@ -519,7 +519,7 @@ def respond_event(
 
     raw = master.get("ATTENDEE")
     if raw is None:
-        raise ValueError(f"Event {event_id} has no attendees — cannot set a response")
+        raise ValueError(f"Event {event_id} has no attendees - cannot set a response")
     items = raw if isinstance(raw, list) else [raw]
 
     user_email = caldav_client.account_email(config)

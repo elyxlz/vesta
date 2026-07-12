@@ -6,7 +6,7 @@ and **no `credentials.json` to download**. Just install, start the daemon, and
 sign in.
 
 **What works under this client:** Gmail (via the Gmail REST API) and Google
-Calendar (via **CalDAV** — the same path Thunderbird uses). The Calendar *REST*
+Calendar (via **CalDAV** - the same path Thunderbird uses). The Calendar *REST*
 API and Google Meet are **disabled** for this client's Cloud project and cannot be
 used; calendar therefore runs entirely over CalDAV, which needs only the
 `.../auth/calendar` scope granted at sign-in.
@@ -22,7 +22,7 @@ used; calendar therefore runs entirely over CalDAV, which needs only the
 
 Sign-in is a **loopback OAuth** flow: it prints a consent URL and runs a
 `127.0.0.1:<port>` listener for the redirect. It does **not** auto-open a browser
-on this host — the sign-in happens in a separately-driven handover browser.
+on this host - the sign-in happens in a separately-driven handover browser.
 
 ```bash
 google auth login                   # Start OAuth flow - prints a consent URL to visit
@@ -33,7 +33,7 @@ google auth probe                   # Check the OAuth client's health + attempt 
 ```
 
 Requested scopes: `https://mail.google.com/` (full Gmail) and
-`https://www.googleapis.com/auth/calendar` (used by CalDAV) — one verified
+`https://www.googleapis.com/auth/calendar` (used by CalDAV) - one verified
 Thunderbird consent screen grants both.
 
 ### Advanced: bring your own Google Cloud app (optional)
@@ -44,7 +44,7 @@ OAuth client in https://console.cloud.google.com/ (enable the Gmail API, and the
 Calendar / Meet REST APIs if you want them), download the client JSON, and place
 it at `~/.google/credentials.json`. If that file exists it transparently takes
 over; its absence is **not** an error. (Note: the calendar backend in this skill
-is CalDAV either way — a bring-your-own app is not needed for calendar to work.)
+is CalDAV either way - a bring-your-own app is not needed for calendar to work.)
 
 ### Google Meet
 
@@ -72,7 +72,7 @@ refresh and runs an automatic escalation ladder:
   This is the only path that ever reaches the user.
 
 Run `google auth probe` any time to check health and trigger a silent self-heal
-attempt manually (it never files an agent/user notification — that is the daemon's
+attempt manually (it never files an agent/user notification - that is the daemon's
 job).
 
 ## First Use: Data Gathering

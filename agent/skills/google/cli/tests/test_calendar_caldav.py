@@ -1,7 +1,7 @@
 """CalDAV calendar backend: iCalendar parse (list/get) and emit (create/update/respond).
 
 All network I/O funnels through caldav_client.request, so these tests monkeypatch
-that single choke point and feed real iCalendar bodies — no live calls.
+that single choke point and feed real iCalendar bodies - no live calls.
 """
 
 import icalendar

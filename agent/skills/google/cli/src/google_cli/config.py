@@ -12,7 +12,7 @@ GMAIL_SCOPES = [
 CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
 ]
-# Documented constant only — NOT wired into any command. Google Meet cannot work
+# Documented constant only - NOT wired into any command. Google Meet cannot work
 # under the reused Thunderbird client: the standalone Meet API needs this
 # "restricted" scope the client is not verified for, and the calendar
 # conferenceData path needs the Calendar REST API, which is disabled on that

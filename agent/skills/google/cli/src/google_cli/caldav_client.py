@@ -3,7 +3,7 @@
 
 The google skill rides Mozilla Thunderbird's published public OAuth client. That
 client's Google Cloud project has the **Calendar REST API disabled**, so every
-``calendar/v3`` call 403s with ``accessNotConfigured`` — we do not own that
+``calendar/v3`` call 403s with ``accessNotConfigured`` - we do not own that
 project and cannot enable it. CalDAV is the way out: it is how Thunderbird itself
 talks to Google Calendar, it rides the SAME ``.../auth/calendar`` OAuth scope, and
 it bypasses the disabled REST API entirely (verified: a Bearer-token PROPFIND to
@@ -102,7 +102,7 @@ def request(
     """Issue one CalDAV request and return ``(http_status, response_text)``.
 
     Single choke point for all calendar traffic. Raises :class:`CalDavError` with
-    an actionable message on failure — 401/403 point the caller at re-auth.
+    an actionable message on failure - 401/403 point the caller at re-auth.
     """
     creds = _credentials(config)
     headers = {"Authorization": f"Bearer {creds.token}"}
