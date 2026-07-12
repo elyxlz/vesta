@@ -26,8 +26,12 @@ git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running 
 bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh   # cone covers your tracked dirs
 ```
 
-- Conflicts: edit each conflicted file so both sides survive, `git add <file>`, then
-  `git rebase --continue`. `git rebase --abort` restores exactly the pre-sync state.
+- Conflicts: ALWAYS resolve by hand, and the default is to keep BOTH sides, your change
+  AND the stock change, not pick a winner. Do NOT reflexively `git checkout --ours/--theirs`
+  or blanket-take one side: that silently drops real work. Even a file you upstreamed comes
+  back genericized, so take stock's form and re-apply your local specifics on top rather
+  than discarding either. Edit each conflicted file so both sides survive, `git add <file>`,
+  then `git rebase --continue`. `git rebase --abort` restores exactly the pre-sync state.
 - Paused but `git diff --diff-filter=U` lists no files? Not a conflict: the rebase stopped
   on a commit that's now empty (its changes are already in the new stock) or mode-only.
   Run `git add -A` then `git rebase --continue`; if git says the commit is empty, run
