@@ -73,7 +73,7 @@
   },
   {
     "name": "google",
-    "description": "Gmail, Google Calendar, Meet: email, events, scheduling. Requires daemon."
+    "description": "Gmail and Google Calendar: email, events, scheduling. Requires daemon."
   },
   {
     "name": "growth",

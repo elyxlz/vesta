@@ -1,26 +1,79 @@
 # Google Setup
 
-1. Go to https://console.cloud.google.com/ and create a project (or use an existing one)
-2. Enable the **Gmail API**, **Google Calendar API**, and **Google Meet REST API** under "APIs & Services" > "Library"
-3. Go to "APIs & Services" > "Credentials" > "Create Credentials" > "OAuth client ID"
-   - Application type: **Desktop app**
-   - Download the JSON file
-4. Place the credentials file at `~/.google/credentials.json`
-5. Install: `uv tool install --editable ~/agent/skills/google/cli`
-6. Start background daemon: `screen -dmS google google serve`
-7. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
+**Zero bring-your-own-app.** The default sign-in reuses **Mozilla Thunderbird's
+published public OAuth client**, so there is **no Google Cloud project to create**
+and **no `credentials.json` to download**. Just install, start the daemon, and
+sign in.
+
+**What works under this client:** Gmail (via the Gmail REST API) and Google
+Calendar (via **CalDAV**, the same path Thunderbird uses). The Calendar *REST*
+API and Google Meet are **disabled** for this client's Cloud project and cannot be
+used; calendar therefore runs entirely over CalDAV, which needs only the
+`.../auth/calendar` scope granted at sign-in.
+
+1. Install: `uv tool install --editable ~/agent/skills/google/cli`
+2. Start background daemon: `screen -dmS google google serve`
+3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
    ```
    screen -dmS google google serve --notifications-dir ~/agent/notifications
    ```
 
 ## Authentication
 
+Sign-in is a **loopback OAuth** flow: it prints a consent URL and runs a
+`127.0.0.1:<port>` listener for the redirect. It does **not** auto-open a browser
+on this host, the sign-in happens in a separately-driven handover browser.
+
 ```bash
-google auth login                   # Start OAuth flow - gives you a URL to visit
+google auth login                   # Start OAuth flow, prints a consent URL to visit
 google auth complete --code <code>  # Complete after authorizing and pasting the code from redirect URL
-google auth login-local             # Alternative: runs local server to handle redirect automatically
+google auth login-local             # Alternative: runs the local loopback server to capture the redirect automatically
 google auth list                    # Show authenticated account
+google auth probe                   # Check the OAuth client's health + attempt a silent self-heal
 ```
+
+Requested scopes: `https://mail.google.com/` (full Gmail) and
+`https://www.googleapis.com/auth/calendar` (used by CalDAV), one verified
+Thunderbird consent screen grants both.
+
+### Advanced: bring your own Google Cloud app (optional)
+
+If you prefer to run your own OAuth client (e.g. to raise quotas, to use the
+Calendar REST API instead of CalDAV, or to enable Meet), create a **Desktop app**
+OAuth client in https://console.cloud.google.com/ (enable the Gmail API, and the
+Calendar / Meet REST APIs if you want them), download the client JSON, and place
+it at `~/.google/credentials.json`. If that file exists it transparently takes
+over; its absence is **not** an error. (Note: the calendar backend in this skill
+is CalDAV either way, a bring-your-own app is not needed for calendar to work.)
+
+### Google Meet
+
+Meet is unavailable under the default sign-in. Standalone Meet spaces need a
+restricted scope the shared client is not verified for, and the calendar
+`conferenceData` route needs the Calendar REST API, which is disabled for this
+client. There is no `meet` command. A separately-verified own app
+(`credentials.json`) with the Meet/Calendar REST APIs enabled would be required to
+add it back; that is not wired up here.
+
+### Self-healing sign-in client
+
+The shared Thunderbird client is a commons Google can rotate or delete upstream.
+A low-frequency (≤ once/day) daemon probe detects a dead client via a stored-token
+refresh and runs an automatic escalation ladder:
+
+- **Level 1 (silent):** re-fetch Thunderbird's current client from comm-central,
+  swap it in, re-test. If healthy again → fixed silently (cache + token updated,
+  info log only, **no notification**).
+- **Level 2 (wake the agent):** if the freshly-fetched client is also dead → write
+  an agent-actionable `google_client_heal_request` notification (find/patch a new
+  verified client, test, upstream). A marker prevents repeats.
+- **Level 3 (user, last resort):** if the heal-request marker already exists from a
+  previous cycle and the client is still dead → a plain-English user notification.
+  This is the only path that ever reaches the user.
+
+Run `google auth probe` any time to check health and trigger a silent self-heal
+attempt manually (it never files an agent/user notification, that is the daemon's
+job).
 
 ## First Use: Data Gathering
 
