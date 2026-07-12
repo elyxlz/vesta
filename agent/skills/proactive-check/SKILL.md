@@ -7,6 +7,10 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
+## Preflight: daemon liveness (do this first, every tick)
+
+Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op). Tell for `tasks`: an empty `tasks remind list` / `tasks list` is the sign its daemon is down.
+
 ## Two questions every tick
 
 Resolve two separate questions each tick:
