@@ -570,17 +570,6 @@ impl Client {
         Ok(())
     }
 
-    pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
-        // A rebuild may pull a fresh agent image before responding, same as create_agent.
-        let request = self
-            .authorized(self.agent.post(self.url(&format!("/agents/{name}/rebuild"))))
-            .config()
-            .timeout_recv_response(None)
-            .build();
-        self.finish(request.send_empty())?;
-        Ok(())
-    }
-
     /// Poll until status is `alive`, `not_authenticated`, or `unprovisioned`. Used right after
     /// `create_agent` to know the agent's HTTP server is up and ready to accept
     /// `PUT /agents/{name}/config` — a brand-new empty agent reports `unprovisioned`
