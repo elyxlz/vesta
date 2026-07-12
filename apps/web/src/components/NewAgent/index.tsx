@@ -9,6 +9,11 @@ import {
 } from "@/api/agents";
 import { stepTransition } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
+import {
+  loadOnboarding,
+  saveOnboarding,
+  clearOnboarding,
+} from "@/lib/onboarding-progress";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
 import { ProviderPicker } from "@/components/ProviderPicker";
@@ -22,22 +27,35 @@ const START_TIMEOUT_MS = 10 * 60 * 1000;
 export function NewAgent() {
   const step = useOnboarding((s) => s.step);
   const setStep = useOnboarding((s) => s.setStep);
-  const [agentName, setAgentName] = useState("");
-  const [personality, setPersonality] = useState<string | null>(null);
+  // Refreshing mid-onboarding restores the name and personality (never the credentials, which
+  // stay in memory only); a resumed run re-collects the provider and skips whatever it already has.
+  const [agentName, setAgentName] = useState(
+    () => loadOnboarding()?.agentName ?? "",
+  );
+  const [personality, setPersonality] = useState<string | null>(
+    () => loadOnboarding()?.personality ?? null,
+  );
   // The full provider result from the picker — credentials/key plus the default
   // model and context window, all forwarded verbatim to setProvider.
   const [providerResult, setProviderResult] = useState<ProviderResult | null>(
     null,
   );
   const [createError, setCreateError] = useState<string | null>(null);
-  // Pipeline runs for the current name; a retry treats createAgent's 409 as
-  // phase 1 already done (the failed attempt made the container).
-  const attemptRef = useRef(0);
+  // Pipeline runs for the current name; a retry treats createAgent's 409 as phase 1 already done
+  // (the failed attempt made the container). A resumed refresh is such a retry, since the container
+  // may already exist, so seed the count when the name was restored.
+  const attemptRef = useRef(agentName ? 1 : 0);
 
   useEffect(() => {
-    setStep("name");
+    // No credentials survive a refresh, so a restored name resumes at the provider step; the
+    // pipeline then skips any personality already collected. A fresh visit starts at the name.
+    setStep(agentName ? "provider" : "name");
     return () => setStep(null);
   }, []);
+
+  useEffect(() => {
+    if (agentName) saveOnboarding({ agentName, personality });
+  }, [agentName, personality]);
 
   useEffect(() => {
     if (step !== "creating" || createError !== null) return;
@@ -95,6 +113,7 @@ export function NewAgent() {
         await waitUntilAlive(agentName, START_TIMEOUT_MS);
         if (cancelled) return;
 
+        clearOnboarding();
         setStep("done");
       } catch (e) {
         // Transient failure: stay here with everything collected intact; the
