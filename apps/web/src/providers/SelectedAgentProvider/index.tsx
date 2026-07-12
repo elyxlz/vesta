@@ -3,7 +3,6 @@ import {
   startAgent,
   stopAgent,
   restartAgent,
-  rebuildAgent,
   createBackup,
   listBackups,
   restoreBackup,
@@ -59,7 +58,7 @@ export function SelectedAgentProvider({
 
   const start = op("starting", () => startAgent(name), "start failed");
   const stop = op("stopping", () => stopAgent(name), "stop failed");
-  // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
+  // A restart applies any pending saved changes, so clear the "restart to apply" reminder on
   // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
   // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
   // restart by any path — and this optimistic clear only hides the ~3s status-poll latency so the
@@ -84,12 +83,6 @@ export function SelectedAgentProvider({
     () => restartAgent(name),
     "restart failed",
   );
-  const rebuild = applyPending(
-    "rebuilding",
-    () => rebuildAgent(name),
-    "rebuild failed",
-  );
-
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
   const refreshBackups = async () => {
@@ -163,7 +156,6 @@ export function SelectedAgentProvider({
     start,
     stop,
     restart,
-    rebuild,
     backup,
     backups,
     refreshBackups,

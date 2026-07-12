@@ -10,7 +10,6 @@ export interface MenuState {
   onAppSettings: () => void;
   onAgentSettings: () => void;
   onRestart: () => void;
-  onRebuild: () => void;
   onBackup: () => void;
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;

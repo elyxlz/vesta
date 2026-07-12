@@ -20,7 +20,7 @@ import { DesktopMenu } from "./DesktopMenu";
 
 export function AgentMenu() {
   const navigate = useNavigate();
-  const { name, agent, isBusy, start, stop, restart, rebuild, backup } =
+  const { name, agent, isBusy, start, stop, restart, backup } =
     useSelectedAgent();
   const { setDeleteDialogOpen, handleOpenAuth } = useModals();
   const { showToolCalls, setShowToolCalls } = useAgentSocket();
@@ -49,7 +49,6 @@ export function AgentMenu() {
     onAgentSettings: () =>
       navigate(`/agent/${encodeURIComponent(name)}/settings`),
     onRestart: () => void restart(),
-    onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
     onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
     isAuthenticated: Boolean(

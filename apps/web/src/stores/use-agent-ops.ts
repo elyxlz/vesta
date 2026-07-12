@@ -7,7 +7,6 @@ export type AgentOperation =
   | "starting"
   | "authenticating"
   | "deleting"
-  | "rebuilding"
   | "backing-up"
   | "restoring";
 
@@ -87,8 +86,6 @@ export function getOpLabel(op: AgentOperation): string {
       return "stopping...";
     case "deleting":
       return "deleting...";
-    case "rebuilding":
-      return "rebuilding...";
     case "backing-up":
       return "backing up...";
     case "restoring":

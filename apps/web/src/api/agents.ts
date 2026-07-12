@@ -257,12 +257,6 @@ export async function deleteAgent(name: string): Promise<void> {
   });
 }
 
-export async function rebuildAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/rebuild`, {
-    method: "POST",
-  });
-}
-
 export interface BackupInfo {
   id: string;
   agent_name: string;
