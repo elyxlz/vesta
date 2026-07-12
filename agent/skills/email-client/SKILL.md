@@ -1,6 +1,6 @@
 ---
 name: email-client
-description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications.
+description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications.
 ---
 
 # Email Client
@@ -11,7 +11,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-Do not use it when the user wants the full Gmail API surface (use the `google` skill), calendar/contacts/Graph or an M365 *work* account with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Google Calendar is also available here for Gmail accounts (see "Calendar" below): one Gmail sign-in grants both mail and calendar, so a lightweight calendar surface lives in this skill. Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 
@@ -174,6 +174,26 @@ A draft does not contact SMTP and does not flag the original `\Answered` (nothin
 ### Draft-only mode
 
 Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset/empty means today's behavior, no change.
+
+## Calendar (Gmail accounts only)
+
+Google Calendar rides the same Gmail sign-in: one consent grants mail and calendar together (the reused verified Thunderbird client bundles `https://www.googleapis.com/auth/calendar`), so there is no separate Google app, no verification, and no CASA. These commands reuse the account's stored Google token (with the same transparent refresh as mail) and call the Google Calendar REST API v3. They only work on Google accounts; on any other provider they exit with a clear "only supported for Google accounts" error.
+
+```bash
+email-client calendar list-calendars --account personal
+email-client calendar list --account personal --days-ahead 14 --days-back 1
+email-client calendar get --account personal --id <eventId>
+email-client calendar create --account personal --subject "Design sync" --start 2026-07-20T15:00:00 --end 2026-07-20T16:00:00 --attendees a@x.com,b@y.com --location "Room 1" --timezone Europe/London
+email-client calendar update --account personal --id <eventId> --start 2026-07-20T16:00:00 --end 2026-07-20T17:00:00 --timezone Europe/London
+email-client calendar delete --account personal --id <eventId>
+email-client calendar respond --account personal --id <eventId> --response accept   # accept|decline|tentative
+```
+
+`--calendar` defaults to `primary` on every command; pass a calendar id (from `list-calendars`) to target a shared or secondary calendar. `list` returns a JSON array of `{id, summary, start, end, location, attendees, status}` over the window (default: next 7 days). `create` defaults `--end` to one hour after `--start` for timed events, or the next day for all-day events (a date with no `T`); `--timezone` defaults to UTC. `--attendees` accepts a comma-separated list and is repeatable. `update` requires `--timezone` whenever you change `--start` or `--end`.
+
+**Invites are a real send.** Creating or updating an event that has attendees makes Google email them a calendar invite or update (and `delete` sends a cancellation). That is an outward action just like sending mail, so treat it with the same care. Note that `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
+
+**Re-auth for existing accounts.** Any Gmail account added before this feature must re-auth once to grant the calendar scope (and to move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. Freshly added accounts get mail and calendar in one sign-in. A calendar command that reports a scope error means the token predates calendar support: re-auth as above.
 
 ## Account management
 
