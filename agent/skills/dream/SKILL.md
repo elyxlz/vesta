@@ -61,6 +61,8 @@ Prefer the simplest, most reliable change that addresses the root cause. For a g
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
 
+Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead. When a rule gets revised a second time for the same breach, the rule form has failed: escalate to a runtime trigger, do not re-word it.
+
 If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. Escalate by recurrence: first time, a memory rule or skill note is fine; if the same failure repeats, move it to a runtime trigger that fires on its own. Don't answer a repeat failure with the same kind of fix that already failed.
 
 You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
@@ -85,10 +87,11 @@ Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill i
 
 ### 6. Recurrence sweep
 
-One lens, two targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
+One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
 
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
 - **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a pool rule via the `notifications` skill so it stops breaking your focus. Pooling defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat pooled when it should have reached you fast, propose an interrupt rule.
+- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): twice is the limit. On the third arrival it is a producer bug, not background weather; fix the producer (stop emitting a state you already know about) or pool it. Expectedness is a reason to fix it, not a reason to keep being woken by it.
 
 ## Personality
 
@@ -140,6 +143,8 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 - Social dynamics: who responds well to what, who doesn't
 - Lessons learned, framed as rules not stories
 - Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
+
+Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
