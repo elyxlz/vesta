@@ -12,14 +12,10 @@ def gmail_service(config: Config):
     return build("gmail", "v1", credentials=creds)
 
 
-def calendar_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
-    return build("calendar", "v3", credentials=creds)
-
-
-def meet_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
-    return build("meet", "v2", credentials=creds)
+# NOTE: there is deliberately no calendar_service / meet_service here. The reused
+# Thunderbird OAuth client's Cloud project has the Calendar and Meet REST APIs
+# disabled (accessNotConfigured), so those REST paths are dead. Calendar now runs
+# on CalDAV (see calendar.py / caldav_client.py); Gmail REST still works.
 
 
 def retry(func, *, max_retries: int = 3):
