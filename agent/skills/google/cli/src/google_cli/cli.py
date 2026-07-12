@@ -193,7 +193,17 @@ def _dispatch_auth(args, config):
         return auth_commands.complete_authentication(config, code=args.code)
 
 
+_TRANSMIT_EMAIL_COMMANDS = {"send", "reply", "forward"}
+
+
+def _draft_only_enabled():
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _dispatch_email(args, config):
+    if args.command in _TRANSMIT_EMAIL_COMMANDS and _draft_only_enabled():
+        raise RuntimeError("draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (email draft ...).")
     if args.command == "list":
         return gmail.list_emails(config, label=args.label, limit=args.limit)
     elif args.command == "get":
