@@ -22,7 +22,7 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("loads existing rules on mount", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     render(<NotificationInterruptRulesCard />);
     expect(await screen.findByText(/twitter/)).toBeTruthy();
@@ -34,7 +34,7 @@ describe("NotificationInterruptRulesCard", () => {
         id: "a",
         source: "whatsapp",
         match: [{ field: "chat_name", op: "contains", value: "Bride squad" }],
-        action: "pool",
+        action: "snooze",
       },
     ]);
     render(<NotificationInterruptRulesCard />);
@@ -53,13 +53,13 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("cycles snooze -> trash only after confirming the destructive drop", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
       .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    // pool renders as "snooze"; stepping into trash is destructive, so it must confirm first.
+    // snooze steps into trash next; stepping into trash is destructive, so it must confirm first.
     await userEvent.click(
       await screen.findByRole("button", { name: /action: snooze/i }),
     );
@@ -74,7 +74,7 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("does not trash when the confirm is cancelled", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -107,7 +107,7 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("deletes a rule and auto-saves", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -120,7 +120,7 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("flushes a pending debounced save on unmount", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -134,8 +134,8 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("reorders rules by drag and persists the new order", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
-      { id: "b", source: "whatsapp", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
+      { id: "b", source: "whatsapp", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
@@ -159,7 +159,7 @@ describe("NotificationInterruptRulesCard", () => {
 
   it("rolls a rejected change back", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     vi.spyOn(api, "setNotificationInterruptRules").mockRejectedValue(
       new Error("invalid rules"),

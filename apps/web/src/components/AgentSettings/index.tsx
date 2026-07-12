@@ -3,7 +3,6 @@ import { SettingsScrollArea } from "@/components/SettingsScrollArea";
 import { ActionsCard } from "./ActionsCard";
 import { NotificationInterruptRulesCard } from "./NotificationInterruptRulesCard";
 import { NotificationsCard } from "./NotificationsCard";
-import { PreemptModeCard } from "./PreemptModeCard";
 import { FilesTab } from "./FilesTab";
 import { LogsTab } from "./LogsTab";
 import { ProviderCard } from "./ProviderCard";
@@ -41,7 +40,6 @@ export function AgentSettings() {
           <div className="mx-auto grid max-w-7xl gap-4 xl:grid-cols-[24rem_minmax(0,1fr)] xl:items-start">
             <div className="flex flex-col gap-4 xl:sticky xl:top-0">
               <NotificationInterruptRulesCard />
-              <PreemptModeCard />
             </div>
             <NotificationsCard />
           </div>

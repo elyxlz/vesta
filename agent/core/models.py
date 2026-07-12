@@ -107,10 +107,6 @@ class State:
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
-    # preempt_mode="interrupt" only: per-turn event the queue-watcher sets so converse
-    # fires the SDK interrupt. Dormant (never set) in the default "message" mode, where
-    # preemption is the producer's priority:"now" pre-send (client.send_preempt).
-    interrupt_event: asyncio.Event | None = None
     # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet (send_preempt
     # increments, converse(pre_sent=True) decrements at open), and the results of pre-sent
     # turns that finished before their Vesta turn opened (banked by the stream consumer,
@@ -121,9 +117,9 @@ class State:
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None
     compacting: bool = False
-    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt (and, in
-    # interrupt mode, process_batch) consults this, so a concurrent interrupting
-    # notification queues and waits rather than preempting the boot turn mid-stream.
+    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt consults
+    # this, so a concurrent interrupting notification queues and waits rather than preempting the
+    # boot turn mid-stream.
     noninterruptible_turn_active: bool = False
     # File paths of the notification the current turn is handling (empty for user-message turns).
     # The message loop clears these after the turn; the restart/stop tools clear them first when an

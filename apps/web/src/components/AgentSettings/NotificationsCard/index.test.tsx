@@ -52,7 +52,7 @@ describe("NotificationsCard", () => {
             '<notification source="twitter" type="tweet">a new tweet</notification>',
           notif_type: "tweet",
           sender: "@bob",
-          decided: "pool",
+          decided: "snooze",
           ts: new Date().toISOString(),
         },
       ],
@@ -62,7 +62,7 @@ describe("NotificationsCard", () => {
 
     expect(await screen.findByText("twitter")).toBeTruthy();
     expect(screen.getByText("a new tweet")).toBeTruthy();
-    // decided=pool renders the "snooze" disposition badge.
+    // decided=snooze renders the "snooze" disposition badge.
     expect(screen.getByText("snooze")).toBeTruthy();
   });
 

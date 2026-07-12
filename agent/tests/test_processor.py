@@ -422,7 +422,7 @@ async def test_message_deferred_when_provider_not_authenticated(tmp_path):
     full retry budget) AND must not delete the notification file — it has to re-run after re-auth."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
@@ -439,7 +439,7 @@ async def test_message_deferred_when_provider_not_authenticated(tmp_path):
     notif_file.write_text("{}")
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("migration notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("migration notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert drove_claude is False
     assert notif_file.exists(), "deferred notification file must survive for re-run after re-auth"
@@ -451,7 +451,7 @@ async def test_notification_file_kept_when_auth_lost_mid_turn(tmp_path):
     converse), that message's notification file must be kept so it re-runs after re-auth."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
@@ -467,7 +467,7 @@ async def test_notification_file_kept_when_auth_lost_mid_turn(tmp_path):
     notif_file.write_text("{}")
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert notif_file.exists(), "file for the turn that lost auth must survive for re-run after re-auth"
 
@@ -477,7 +477,7 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
     """Sanity: an authenticated, normally-processed notification still has its file deleted."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
@@ -492,7 +492,7 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
     sub = state.event_bus.subscribe()
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert not notif_file.exists(), "normally-processed notification file should be deleted"
     # The clear must also be announced on the stream, so live clients flip the row from pending to
@@ -509,7 +509,7 @@ async def test_cancellation_triggers_restart(tmp_path):
     Regression test for a silent-death bug: CancelledError used to propagate uncaught,
     bypassing the restart trigger and leaving the agent wedged until backup SIGTERM hours later.
     """
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -521,7 +521,7 @@ async def test_cancellation_triggers_restart(tmp_path):
 
     with patch("core.loops.process_message", side_effect=cancel_side_effect):
         with pytest.raises(asyncio.CancelledError):
-            await _run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
+            await _run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: a turn was cancelled unexpectedly"
@@ -532,7 +532,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
     """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must NOT log 'cancelled unexpectedly' or override restart_reason.
 
     Regression for a silent-death bug where shutdown-driven cancels were treated as crashes."""
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -553,7 +553,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
         task.cancel()
 
     with patch("core.loops.process_message", hang):
-        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config))
         canceller = asyncio.create_task(shutdown_and_cancel(task))
         with pytest.raises(asyncio.CancelledError):
             await task
