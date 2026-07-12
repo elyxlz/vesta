@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProviderStep } from "@/components/ProviderPicker/ProviderStep";
 import { ClaudeLogo } from "@/components/ProviderPicker/logos";
-import { openExternalUrl } from "@/lib/open-external-url";
 import { errorMessage } from "@/lib/utils";
 
 interface AuthFlowProps {
@@ -26,12 +25,6 @@ export function AuthFlow({
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-
-  // Open the sign-in link for the user as soon as it's ready. Best-effort: a popup blocker or a
-  // non-user-gesture context can stop it, so the copyable link below stays as the fallback.
-  useEffect(() => {
-    if (authUrl) openExternalUrl(authUrl).catch(() => {});
-  }, [authUrl]);
 
   const copyAuthUrl = async () => {
     try {
