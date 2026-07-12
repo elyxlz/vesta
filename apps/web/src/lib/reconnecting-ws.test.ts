@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectReconnectingWs } from "./reconnecting-ws";
 
@@ -122,6 +123,44 @@ describe("connectReconnectingWs", () => {
       onMessage: () => {},
     });
     await vi.runAllTimersAsync();
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("reconnects immediately on regaining visibility, consuming the pending backoff", () => {
+    connectReconnectingWs({
+      url: () => "ws://host/a",
+      onMessage: () => {},
+      baseDelayMs: 1000,
+    });
+    const socket = FakeSocket.instances[0];
+    socket.open();
+    // Mobile OS drops the socket while the tab is backgrounded; the deferred
+    // close lands on return and schedules a backoff reconnect.
+    socket.drop();
+    expect(FakeSocket.instances).toHaveLength(1);
+    // Regaining visibility reconnects now instead of waiting out the backoff.
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeSocket.instances).toHaveLength(2);
+    // The pending backoff timer was cleared, so it never spawns a duplicate.
+    vi.advanceTimersByTime(30000);
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
+  it("leaves a healthy socket untouched when the tab becomes visible", () => {
+    connectReconnectingWs({ url: () => "ws://host/a", onMessage: () => {} });
+    FakeSocket.instances[0].open();
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("stops listening for visibility once closed", () => {
+    const handle = connectReconnectingWs({
+      url: () => "ws://host/a",
+      onMessage: () => {},
+    });
+    FakeSocket.instances[0].open();
+    handle.close();
+    document.dispatchEvent(new Event("visibilitychange"));
     expect(FakeSocket.instances).toHaveLength(1);
   });
 
