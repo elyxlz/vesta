@@ -845,6 +845,28 @@ def cmd_auth_remove(args):
     print(f"removed account {name}")
 
 
+def cmd_auth_probe(args):
+    """Health-probe the Google OAuth client for one or all Gmail accounts.
+
+    Exits non-zero if any account's client is found dead and could not be
+    self-healed, so it is scriptable as a monitor.
+    """
+    import google_health
+
+    notify = not args.no_notify
+    if args.account:
+        acc = resolve_account(args.account)
+        results = [google_health.run_probe(acc, notify=notify)]
+    else:
+        results = google_health.run_probe_all(notify=notify)
+        if not results:
+            print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}, indent=2))
+            return
+    print(json.dumps(results if len(results) != 1 else results[0], indent=2))
+    if any(r.get("status") == google_health.DEAD_CLIENT for r in results):
+        sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="email-client")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1020,6 +1042,20 @@ def main():
     asub.add_parser("list", help="show registered accounts")
     pa_rm = asub.add_parser("remove", help="delete an account dir")
     pa_rm.add_argument("--account", required=True)
+    pa_probe = asub.add_parser(
+        "probe",
+        help="health-check a Gmail account's OAuth client (no user interaction); self-heals + alerts on a dead client",
+    )
+    pa_probe.add_argument(
+        "--account",
+        default=None,
+        help="Gmail account to probe; omit to probe every registered Gmail account",
+    )
+    pa_probe.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="do not write a notification even if the client is found dead",
+    )
 
     pd = sub.add_parser("daemon", help="manage the poll daemon: start|stop|restart|status")
     dsub = pd.add_subparsers(dest="daemon_cmd", required=True)
@@ -1063,6 +1099,9 @@ def main():
             return
         if args.auth_cmd == "remove":
             cmd_auth_remove(args)
+            return
+        if args.auth_cmd == "probe":
+            cmd_auth_probe(args)
             return
 
     if args.cmd == "folder":
