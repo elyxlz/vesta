@@ -1,7 +1,8 @@
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { type MotionValue } from "motion/react";
-import { useMatch, useNavigate } from "react-router-dom";
+import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import {
+  ArrowLeft,
   Home,
   KeyRound,
   LayoutDashboard,
@@ -41,6 +42,7 @@ export function AgentNavbar({
   const { name, agent, restart } = useSelectedAgent();
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const restartPending = useRestartPending((s) =>
@@ -71,9 +73,18 @@ export function AgentNavbar({
 
   const showMobileNavbar = isMobile && (!!agentDashboardMatch || !!chatMatch);
   const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
-  const showDashboardBack = isMobile
-    ? !!logsMatch || !!settingsMatch
-    : !!chatMatch || !!logsMatch || !!settingsMatch;
+  // Subpages go back to wherever they were opened from (chat or dashboard); a
+  // deep link has no in-app history (location.key === "default"), so fall back
+  // to the dashboard.
+  const showBack = !!logsMatch || !!settingsMatch;
+  const showDashboardBack = !isMobile && !!chatMatch;
+  const goBack = () => {
+    if (location.key === "default") {
+      navigate(`/agent/${encodeURIComponent(name)}`);
+    } else {
+      navigate(-1);
+    }
+  };
   const showChatButton =
     connected &&
     agentDashboardMatch &&
@@ -85,34 +96,20 @@ export function AgentNavbar({
     <>
       <Navbar
         leading={
-          showDashboardBack ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label="dashboard"
-                  onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
-                >
-                  <LayoutDashboard />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>dashboard</TooltipContent>
-            </Tooltip>
+          showBack ? (
+            <LeadingButton label="back" icon={<ArrowLeft />} onClick={goBack} />
+          ) : showDashboardBack ? (
+            <LeadingButton
+              label="dashboard"
+              icon={<LayoutDashboard />}
+              onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
+            />
           ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label="home"
-                  onClick={() => navigate("/")}
-                >
-                  <Home />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>home</TooltipContent>
-            </Tooltip>
+            <LeadingButton
+              label="home"
+              icon={<Home />}
+              onClick={() => navigate("/")}
+            />
           )
         }
         center={<AgentIsland />}
@@ -167,5 +164,31 @@ export function AgentNavbar({
         <MobileNavbar progress={swipeProgress} />
       )}
     </>
+  );
+}
+
+function LeadingButton({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="outline"
+          size="icon-lg"
+          aria-label={label}
+          onClick={onClick}
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
