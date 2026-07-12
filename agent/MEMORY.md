@@ -158,7 +158,7 @@ The first time a new type of notification comes up (a mailing list, a recurring 
 [Things the user wants/doesn't want to be notified about]
 
 ### Rules
-- **Confirm a limitation before reporting or acting on it.** When any claim feels like "I don't have / I can't / that's blocked / that doesn't exist", whether you're answering the user or writing your own night notes, first run the single cheapest command that would disprove it and keep its output next to the claim. Search first: ~/agent/data → task metadata → WhatsApp history (500+ deep) → conversation DB → session logs (`~/.claude/projects/` JSONL, grep for tokens/paths/commands) → /tmp → all available skill storage. For a CLI feature, read its SKILL.md and `--help` output. Only report the limitation once source code, help text, and docs all confirm it
+- **Confirm a limitation before reporting or acting on it.** When any claim feels like "I don't have / I can't / that's blocked / that doesn't exist", whether you're answering the user or writing your own night notes, first run the single cheapest command that would disprove it and keep its output next to the claim. Search first: ~/agent/data → task metadata → past conversations via the `recall` skill (full-text over all history, instead of grepping WhatsApp history or JSONL session logs by hand) → /tmp → all available skill storage. For a CLI feature, read its SKILL.md and `--help` output. Only report the limitation once source code, help text, and docs all confirm it
 
 ### Outbound Messaging
 - Before messaging anyone (not the user): check contacts for relationship, then read ~1 week of chat history with them to get tone/context. Never re-introduce yourself if there are messages, they already know you
