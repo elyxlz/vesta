@@ -18,10 +18,6 @@ desktop:
 - changed-files:
   - any-glob-to-any-file: ['apps/desktop/**']
 
-mobile:
-- changed-files:
-  - any-glob-to-any-file: ['apps/mobile/**']
-
 vestad:
 - changed-files:
   - any-glob-to-any-file: ['vestad/**']

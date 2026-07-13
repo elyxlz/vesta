@@ -107,9 +107,6 @@ jobs:
           DESKTOP_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
           DESKTOP_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
-          MOBILE_CONF=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          MOBILE_CARGO=$(grep '^version = ' apps/mobile/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
-          MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
           echo "agent:         $AGENT"
@@ -119,13 +116,10 @@ jobs:
           echo "desktop.conf:  $DESKTOP_CONF"
           echo "desktop cargo: $DESKTOP_CARGO"
           echo "desktop pkg:   $DESKTOP_PKG"
-          echo "mobile.conf:   $MOBILE_CONF"
-          echo "mobile cargo:  $MOBILE_CARGO"
-          echo "mobile pkg:    $MOBILE_PKG"
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "mobile.conf:$MOBILE_CONF" "mobile-cargo:$MOBILE_CARGO" "mobile-pkg:$MOBILE_PKG" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -960,277 +954,6 @@ jobs:
           name: tauri-x86_64-pc-windows-msvc
           path: tauri-out/*
 
-  # ── Build Tauri app (Android APK) ────────────────────────────────────
-  build-tauri-android:
-    needs: [test-frontend, detect-changes]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 100
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/mobile/src-tauri
-          key: android
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
-      # sdkmanager streams the NDK zip with no internal retry, so a single
-      # corrupted download ("Error reading Zip content from a SeekableByteChannel")
-      # fails the whole job. Retry the download instead of one-shotting it.
-      - name: Install Android NDK
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: sdkmanager "ndk;27.0.12077973"
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install frontend deps
-        working-directory: apps
-        run: npm install
-
-      - name: Initialize Android project
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: cd apps/mobile && npx tauri android init
-
-      # Tauri's AndroidManifest template only declares INTERNET. Add the
-      # microphone permissions the web app's getUserMedia call needs.
-      - name: Add runtime permissions to AndroidManifest
-        run: python3 scripts/android-add-permissions.py apps/mobile/src-tauri/gen/android/app/src/main/AndroidManifest.xml
-
-      # Set up release signing if the ANDROID_KEYSTORE_BASE64 secret is configured.
-      # If the secret is missing, the next step falls back to a debug-signed APK
-      # so CI doesn't break (debug APKs install on-device but can't be used for
-      # real Play Store updates because Android tracks signing certs per app).
-      - name: Set up release signing
-        id: signing
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — building debug-signed APK (not suitable for Play Store updates)"
-            exit 0
-          fi
-          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-          cat > apps/mobile/src-tauri/gen/android/keystore.properties <<EOF
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyPassword=$ANDROID_KEY_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          storeFile=$KEYSTORE_PATH
-          EOF
-          python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      # Retry: Gradle bootstraps from GitHub on first run, and resolves Kotlin/
-      # Android deps from Maven Central + plugins.gradle.org, which intermittently
-      # 403/502. retry_wait_seconds backs off so a transient block clears between
-      # attempts instead of all 3 retries hitting it back-to-back.
-      - name: Build Android APK
-        uses: nick-fields/retry@v4
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: |
-            cd apps/mobile
-            if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
-              npx tauri android build --apk
-            else
-              npx tauri android build --apk --debug
-            fi
-
-      - name: Collect artifacts
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p tauri-out
-          find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          SUFFIX=""
-          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
-            SUFFIX="-debug"
-          fi
-          for f in tauri-out/*.apk; do
-            mv "$f" "tauri-out/Vesta_${VERSION}${SUFFIX}.apk"
-          done
-          ls -lh tauri-out/
-
-      - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
-        with:
-          name: tauri-android
-          path: tauri-out/*
-
-  # ── Build Tauri app (iOS) ────────────────────────────────────────────
-  build-tauri-ios:
-    needs: [test-frontend, detect-changes]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    runs-on: macos-latest
-    timeout-minutes: 150
-    steps:
-      - name: Check for Apple signing secrets
-        env:
-          HAS_SECRETS: ${{ secrets.APPLE_CERTIFICATE != '' }}
-        run: |
-          if [ "$HAS_SECRETS" != "true" ]; then
-            echo "::warning::Apple signing secrets not configured — skipping iOS build"
-            echo "SKIP_IOS=true" >> $GITHUB_ENV
-          fi
-
-      - uses: actions/checkout@v7
-        if: env.SKIP_IOS != 'true'
-
-      - name: Install Rust
-        if: env.SKIP_IOS != 'true'
-        uses: ./.github/actions/install-rust
-        with:
-          targets: aarch64-apple-ios
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        if: env.SKIP_IOS != 'true'
-        with:
-          workspaces: apps/mobile/src-tauri
-          key: ios
-
-      - name: Setup Node
-        if: env.SKIP_IOS != 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install Apple certificate and provisioning profile
-        if: env.SKIP_IOS != 'true'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$APPLE_PROVISIONING_PROFILE" | base64 --decode -o $PROFILE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PROFILE_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
-
-      - name: Install frontend deps
-        if: env.SKIP_IOS != 'true'
-        working-directory: apps
-        run: npm install
-
-      - name: Initialize iOS project
-        if: env.SKIP_IOS != 'true'
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: cd apps/mobile && npx tauri ios init
-
-      - name: Build iOS
-        if: env.SKIP_IOS != 'true'
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 45
-          max_attempts: 3
-          shell: bash
-          command: cd apps/mobile && npx tauri ios build --export-method app-store-connect
-
-      - name: Collect artifacts
-        if: env.SKIP_IOS != 'true'
-        run: |
-          mkdir -p tauri-out
-          find apps/mobile/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          for f in tauri-out/*.ipa; do
-            mv "$f" "tauri-out/Vesta_${VERSION}.ipa"
-          done
-          ls -lh tauri-out/
-
-      - name: Upload to TestFlight
-        if: env.SKIP_IOS != 'true' && github.event_name == 'release'
-        env:
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo -n "$APPLE_API_KEY" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8
-          xcrun altool --upload-app \
-            --type ios \
-            --file tauri-out/Vesta_*.ipa \
-            --apiKey "$APPLE_API_KEY_ID" \
-            --apiIssuer "$APPLE_API_ISSUER_ID"
-
-      - uses: actions/upload-artifact@v7
-        if: env.SKIP_IOS != 'true'
-        with:
-          name: tauri-ios
-          path: tauri-out/*
-
-      - name: Clean up keychain
-        if: env.SKIP_IOS != 'true'
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
-
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-ci:
     if: always()
@@ -1251,8 +974,6 @@ jobs:
       - build-tauri-macos
       - build-tauri-linux
       - build-tauri-windows
-      - build-tauri-android
-      - build-tauri-ios
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1301,7 +1022,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1336,7 +1057,6 @@ jobs:
             -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
             -name '*.nsis.zip' -o \
-            -name '*.apk' -o -name '*.ipa' -o \
             -name '*.sig' \
           \) -exec cp {} release/ \;
           ls -lh release/
@@ -1408,7 +1128,7 @@ jobs:
   # bumped version with no release, and the next ./release.sh skips to the next
   # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, push-image, release]
     if: ${{ failure() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

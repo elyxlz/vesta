@@ -32,14 +32,6 @@ updates:
       tauri-deps:
         patterns: ["*"]
 
-  - package-ecosystem: cargo
-    directory: /apps/mobile/src-tauri
-    schedule:
-      interval: weekly
-    groups:
-      mobile-tauri-deps:
-        patterns: ["*"]
-
   - package-ecosystem: npm
     directory: /apps
     schedule:

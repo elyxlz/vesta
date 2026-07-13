@@ -34,11 +34,6 @@ async function updateApp(gatewayVersion: string) {
   // releases/latest endpoint which never resolves a prerelease.
   const { detectPlatform } = await import("@/lib/platform");
   const platform = detectPlatform();
-  // Mobile can't self-update (store-gated); the build comes from the App Store /
-  // TestFlight (or Play), so surface that instead of invoking a missing command.
-  if (platform === "ios" || platform === "android") {
-    throw new Error("update vesta from the App Store or TestFlight");
-  }
   const { invoke } = await import("@tauri-apps/api/core");
   const command = platform === "linux" ? "install_update" : "run_update";
   await invoke(command, { version: gatewayVersion });

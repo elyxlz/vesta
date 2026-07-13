@@ -19,7 +19,7 @@
 // `startNativeLogin` and the `vesta-app` native client in the control plane's
 // functions/api/oauth.ts.
 
-import { isTauri, buildPlatform } from "./env";
+import { isTauri } from "./env";
 import { setConnection } from "./connection";
 
 const VERIFIER_KEY = "vesta-pkce-verifier";
@@ -65,8 +65,8 @@ export function tenantIdentity(): { apexOrigin: string; subdomain: string } {
  * browser leaves this page.
  */
 export async function startHostedLogin(): Promise<void> {
-  // Native apps can't redirect to their own origin — hand off to the loopback
-  // flow instead (desktop) or the in-app secure tab (mobile, not yet wired).
+  // The desktop app can't redirect to its own origin — hand off to the
+  // loopback flow instead.
   if (isTauri) return startNativeLogin();
 
   const { apexOrigin, subdomain } = tenantIdentity();
@@ -132,16 +132,8 @@ export async function completeHostedLogin(
  *     ← { access_token, url }                       (url = this user's box)
  *     → POST <url>/auth/exchange  (Bearer access_token)
  *     ← { access_token, refresh_token, expires_in } (rotating, on-box)
- *
- * Mobile (ios/android) needs an in-app secure tab (ASWebAuthenticationSession /
- * Custom Tabs via tauri-plugin-web-auth); not wired yet — fail with a clear note
- * rather than spawning a loopback server that the OS sandbox would block.
  */
 export async function startNativeLogin(): Promise<void> {
-  if (buildPlatform === "ios" || buildPlatform === "android") {
-    throw new Error("mobile sign-in is coming soon, use the web app for now");
-  }
-
   const { start, onUrl, cancel } =
     await import("@fabianlars/tauri-plugin-oauth");
   const { openUrl } = await import("@tauri-apps/plugin-opener");
