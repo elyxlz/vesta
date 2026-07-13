@@ -19,6 +19,13 @@ pub struct TunnelConfig {
     pub dns_record_id: Option<String>,
 }
 
+impl TunnelConfig {
+    /// The public https URL this tunnel serves.
+    pub fn url(&self) -> String {
+        format!("https://{}", self.hostname)
+    }
+}
+
 /// Self-hosted (BYOK) Cloudflare credentials, persisted to `cloudflare.json`.
 ///
 /// The public vestad binary ships **no** Cloudflare token — a self-hoster brings
@@ -60,6 +67,12 @@ pub fn has_declined_tunnel(config_dir: &Path) -> bool {
 /// supervisor recreates one until `vestad connect` clears it.
 pub fn decline_tunnel(config_dir: &Path) -> Result<(), String> {
     write_secret_file(&no_tunnel_marker_path(config_dir), "", "no-tunnel preference")
+}
+
+/// Clear the declined-tunnel preference: a successful `vestad connect` means
+/// the user wants a tunnel again.
+fn clear_declined_tunnel(config_dir: &Path) {
+    std::fs::remove_file(no_tunnel_marker_path(config_dir)).ok();
 }
 
 /// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
@@ -159,11 +172,7 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
     let domain =
         prompt("  your domain (press enter to skip, local network only): ")?.to_lowercase();
     if domain.is_empty() {
-        write_secret_file(
-            &no_tunnel_marker_path(config_dir),
-            "",
-            "no-tunnel preference",
-        )?;
+        decline_tunnel(config_dir)?;
         eprintln!();
         eprintln!(
             "  no public URL yet. your agent works on this machine and your LAN. \
@@ -208,7 +217,7 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
             zone_id,
         },
     )?;
-    std::fs::remove_file(no_tunnel_marker_path(config_dir)).ok();
+    clear_declined_tunnel(config_dir);
     eprintln!("  \x1b[32m✓\x1b[0m connected to {}", domain);
     eprintln!();
     Ok(())
@@ -918,58 +927,51 @@ pub fn supervise_tunnel(
             // it. The Cloudflare API call goes through blocking curl, so it
             // runs off the async runtime.
             let ensure_dir = config_dir.clone();
-            let established = tokio::task::spawn_blocking(move || establish_tunnel(&ensure_dir))
+            let attempt = match tokio::task::spawn_blocking(move || establish_tunnel(&ensure_dir))
                 .await
-                .unwrap_or_else(|join_err| Err(format!("establish_tunnel task failed: {join_err}")));
-            match established {
-                Err(e) => {
-                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
-                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel not establishable: {e}");
-                }
-                Ok(_) => match start_tunnel(&config_dir, port).await {
-                    Ok((mut child, metrics_port)) => {
-                        let (reason, registered) = tokio::select! {
-                            _ = shutdown_rx.changed() => {
-                                child.kill().await.ok();
-                                return;
-                            }
-                            outcome = run_until_unhealthy(
-                                &mut child,
-                                probe_client.as_ref(),
-                                metrics_port,
-                                on_tunnel_up.as_ref(),
-                                &mut reported,
-                                &mut last_registered,
-                            ) => outcome,
-                        };
-                        child.kill().await.ok();
-                        respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
-                        tracing::warn!(
-                            delay_secs = respawn_delay_secs,
-                            "tunnel unhealthy ({reason}), restarting cloudflared"
-                        );
-                        if registered {
-                            repaired_since_registered = false;
+                .unwrap_or_else(|join_err| Err(format!("establish_tunnel task failed: {join_err}")))
+            {
+                Ok(_) => start_tunnel(&config_dir, port).await,
+                Err(e) => Err(e),
+            };
+            match attempt {
+                Ok((mut child, metrics_port)) => {
+                    let (reason, registered) = tokio::select! {
+                        _ = shutdown_rx.changed() => {
+                            child.kill().await.ok();
+                            return;
                         }
+                        outcome = run_until_unhealthy(
+                            &mut child,
+                            probe_client.as_ref(),
+                            metrics_port,
+                            on_tunnel_up.as_ref(),
+                            &mut reported,
+                            &mut last_registered,
+                        ) => outcome,
+                    };
+                    child.kill().await.ok();
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
+                    tracing::warn!(
+                        delay_secs = respawn_delay_secs,
+                        "tunnel unhealthy ({reason}), restarting cloudflared"
+                    );
+                    if registered {
+                        repaired_since_registered = false;
                     }
-                    Err(e) => {
-                        // start_tunnel never reached the edge, so this counts as a run
-                        // that did not register — back off.
-                        respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
-                        tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
-                    }
-                },
+                }
+                Err(e) => {
+                    // Establish or start never reached the edge, so this counts
+                    // as a run that did not register — back off.
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel not up: {e}");
+                }
             }
             // A cycle that ends without a registered edge (fast cloudflared
             // exit, establish or start failure) never reaches a probe tick, so
-            // evaluate the sustained window here too. edge_report latches via
-            // `reported`, so this fires at most once per sustained outage.
-            let sustained_down = last_registered.elapsed()
-                >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
-            if let Some(report) = edge_report(reported, false, sustained_down) {
-                on_tunnel_up(report);
-                reported = Some(report);
-            }
+            // evaluate the sustained window here too; the report latches via
+            // `reported`, firing at most once per sustained outage.
+            report_sustained_edge(&mut reported, false, last_registered, on_tunnel_up.as_ref());
             if should_attempt_repair(reported, has_cf_creds(&config_dir), repaired_since_registered)
                 && repair_tunnel(&config_dir).await
             {
@@ -1040,12 +1042,7 @@ async fn run_until_unhealthy(
                 }
                 // Mirror health into status.json on sustained edges only: "up" the
                 // moment it registers, "down" only after a sustained outage.
-                let sustained_down = last_registered.elapsed()
-                    >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
-                if let Some(report) = edge_report(*reported, ok, sustained_down) {
-                    on_tunnel_up(report);
-                    *reported = Some(report);
-                }
+                report_sustained_edge(reported, ok, *last_registered, on_tunnel_up);
                 let (failures, restart) = record_probe(consecutive_failures, ok);
                 consecutive_failures = failures;
                 if !ok {
@@ -1077,6 +1074,23 @@ fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     }
     let failures = consecutive_failures + 1;
     (failures, failures >= READY_PROBE_MAX_FAILURES)
+}
+
+/// Evaluate one health observation against the sustained-down window and report
+/// a debounced edge transition at most once (see `edge_report`), latching what
+/// was reported into `reported`.
+fn report_sustained_edge(
+    reported: &mut Option<bool>,
+    ok: bool,
+    last_registered: tokio::time::Instant,
+    on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
+) {
+    let sustained_down =
+        last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
+    if let Some(report) = edge_report(*reported, ok, sustained_down) {
+        on_tunnel_up(report);
+        *reported = Some(report);
+    }
 }
 
 /// Pure edge accounting for status.json: which sustained transition (if any) to

@@ -428,11 +428,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             // reconcile a changed pinned subdomain, so agent env files, /info,
             // and the banner get the right identity URL on first boot. Failure
             // is fine here; the supervisor keeps converging after boot.
-            if !no_tunnel
-                && !is_cloud_managed()
-                && tunnel::has_cf_creds(&config)
-                && !tunnel::has_declined_tunnel(&config)
-            {
+            let byok_tunnel_wanted =
+                tunnel::has_cf_creds(&config) && !tunnel::has_declined_tunnel(&config);
+            if !no_tunnel && !is_cloud_managed() && byok_tunnel_wanted {
                 if let Err(e) = tunnel::ensure_tunnel(&config) {
                     tracing::warn!("boot tunnel converge failed (supervisor will retry): {e}");
                 }
@@ -441,17 +439,12 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             // Boot renders no verdict on tunnel health: the supervisor owns
             // establish/verify/repair and mirrors sustained state into
             // status.json via on_tunnel_up. Boot only decides whether a tunnel
-            // is intended and advertises the identity URL from tunnel.json.
-            let tunnel_intended = !no_tunnel
-                && (is_cloud_managed()
-                    || tunnel::get_tunnel_config(&config).is_some()
-                    || (tunnel::has_cf_creds(&config) && !tunnel::has_declined_tunnel(&config)));
-            let tunnel_url = tunnel_intended
-                .then(|| {
-                    tunnel::get_tunnel_config(&config)
-                        .map(|tc| format!("https://{}", tc.hostname))
-                })
-                .flatten();
+            // is intended and advertises the identity URL from tunnel.json
+            // (read after the converge above, which may have just created it).
+            let saved_url = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
+            let tunnel_intended =
+                !no_tunnel && (is_cloud_managed() || saved_url.is_some() || byok_tunnel_wanted);
+            let tunnel_url = if tunnel_intended { saved_url } else { None };
             let tunnel_status = if no_tunnel {
                 TunnelStatus::Disabled
             } else if tunnel_intended {
@@ -515,7 +508,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 std::sync::Arc::new(move |up: bool| {
                     let next = if up {
                         match tunnel::get_tunnel_config(&config)
-                            .map(|tc| format!("https://{}", tc.hostname))
+                            .map(|tc| tc.url())
                             .or_else(|| tunnel_url.clone())
                         {
                             Some(url) => TunnelStatus::Active(url),
@@ -844,8 +837,7 @@ fn main() {
                         eprintln!("creating agent '{}'...", name);
                         let config = config_dir();
                         let vestad_port = read_port_file(&config).unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config)
-                            .map(|tc| format!("https://{}", tc.hostname));
+                        let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
                         let env_config = docker::AgentEnvConfig {
                             config_dir: config.clone(),
                             agents_dir: config.join("agents"),
