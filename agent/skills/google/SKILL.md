@@ -42,7 +42,9 @@ Event ids are **Calendar API event ids** (the `id` field the API returns, e.g.
 `abc123def456`), not iCalendar UIDs; ids from before the REST switch do not
 resolve, re-list to get current ones. Recurring events are expanded into
 concrete occurrences in the query window (`singleEvents`), returned sorted by
-start time.
+start time. `update` and `delete` on an occurrence id apply to the **whole
+series** (the id resolves to the series master). `respond` never emails the
+guest list; only create/update/delete send attendee notifications.
 
 ## Google Meet
 
@@ -54,12 +56,13 @@ Google Cloud project and wire it up if the user asks.
 ## Sign-in (bring your own OAuth client)
 
 Sign-in requires your own Google Cloud **Desktop app** OAuth client JSON at
-`~/.google/credentials.json`; without it every auth command fails with a pointer
-at [SETUP.md](SETUP.md). The flow is loopback OAuth (prints a consent URL,
+`~/.google/credentials.json`; without it sign-in fails with a pointer at
+[SETUP.md](SETUP.md). The flow is loopback OAuth (prints a consent URL,
 listens on `127.0.0.1`, does not auto-open a browser). One consent grants
-`https://mail.google.com/` (Gmail) + `.../auth/calendar` (Calendar). If
-credentials.json ever changes to a different client, stored tokens cannot
-refresh: re-run `google auth login` after placing the new file.
+`https://mail.google.com/` (Gmail) + `.../auth/calendar` (Calendar). A stored
+token stays tied to the client that minted it: a token from another client (e.g.
+the old shared Thunderbird client) keeps refreshing and Gmail keeps working, but
+calendar 403s until you re-run `google auth login` under your own client.
 
 ## Draft-only mode
 

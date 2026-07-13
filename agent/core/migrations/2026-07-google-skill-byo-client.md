@@ -1,12 +1,14 @@
 The `google` skill no longer signs in through Thunderbird's shared public OAuth
 client, and its calendar commands moved from CalDAV to the official Google
-Calendar REST API. It now requires the user's **own** Google Cloud OAuth client
-(Desktop app type) at `~/.google/credentials.json`; without that file every
-`google` command fails, and a token minted under the old shared client cannot
-refresh even after the file appears (a fresh `google auth login` is needed).
-For everyday Gmail mail and calendar the `email-client` skill is the right home:
-zero-setup sign-in, no Google Cloud project. Safe to run more than once: every
-step checks before acting and no-ops when already converged.
+Calendar REST API. New sign-ins require the user's **own** Google Cloud OAuth
+client (Desktop app type) at `~/.google/credentials.json`. An existing token
+minted under the shared client keeps refreshing, so **Gmail keeps working for
+now**, but **calendar is broken**: the Calendar REST API is disabled on the
+shared client's Cloud project, so every calendar command 403s until the user
+either completes the bring-your-own-client setup and signs in again, or moves to
+the `email-client` skill. For everyday Gmail mail and calendar `email-client` is
+the right home: zero-setup sign-in, no Google Cloud project. Safe to run more
+than once: every step checks before acting and no-ops when already converged.
 
 ### 1. Check whether this applies to you
 
@@ -20,9 +22,12 @@ resolve); skip to the final step.
 
 ### 2. Talk to the user and pick a path
 
-Otherwise your google sign-in ran on the removed shared client and will stop
-working. Tell the user, in your own words: the google skill now requires their
-own Google Cloud OAuth client, and for ordinary Gmail mail and calendar the
+Otherwise your google sign-in ran on the shared Thunderbird client. Tell the
+user, in your own words: Gmail through the google skill keeps working for now
+(the old token still refreshes), but its calendar commands are broken because
+the Calendar REST API is disabled on the shared client's Cloud project, there is
+no longer any self-heal if that shared client dies, and new sign-ins require
+their own Google Cloud OAuth client. For ordinary Gmail mail and calendar the
 `email-client` skill does the same job with zero-setup sign-in
 (`email-client auth add`). Recommend email-client unless they genuinely need
 Google-native APIs. Offer the two paths and follow their choice:
@@ -43,8 +48,9 @@ Google-native APIs. Offer the two paths and follow their choice:
 - **Keep the google skill (they need Google-native APIs).** Walk them through
   creating a Desktop app OAuth client per `~/agent/skills/google/SETUP.md`
   (create a Google Cloud project, enable the Gmail and Calendar APIs, download
-  the client JSON to `~/.google/credentials.json`), then re-authenticate with
-  `google auth login`; the old token cannot refresh under their new client.
+  the client JSON to `~/.google/credentials.json`), then sign in again with
+  `google auth login`: the old token stays tied to the shared client, so calendar
+  only starts working once a fresh token is minted under their own client.
 
 If the user does not respond right now, leave it with them and continue; the
 google CLI's own errors point at SETUP.md, and this migration is still marked

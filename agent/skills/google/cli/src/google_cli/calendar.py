@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 """Google Calendar on the official REST API (calendar/v3).
 
-Talks to the Calendar API directly over stdlib ``urllib`` with the OAuth Bearer
-token from this skill's token store. The user's own Google Cloud project (see
-SETUP.md) must have the Google Calendar API enabled. Event ids are Calendar API
-event ids. All API traffic funnels through :func:`_http` so tests can
-monkeypatch a single choke point.
+Drives the API through google-api-python-client (``build("calendar", "v3")``,
+same as the Gmail side in :mod:`api`), which owns auth refresh and the HTTP
+plumbing. The user's own Google Cloud project (see SETUP.md) must have the
+Google Calendar API enabled. Event ids are Calendar API event ids. Each command
+builds one service (one credential resolution) and funnels every request through
+:func:`_execute`, the single choke point for tests and for mapping API errors to
+actionable messages.
 
 NOTE ON INVITES: creating/updating/deleting an event with attendees causes Google
 to email calendar invites/updates to them, a real outward send. The
 EMAIL_DRAFT_ONLY guard covers email sending only and does NOT block calendar
-writes; use judgment before writing events with attendees.
+writes; use judgment before writing events with attendees. ``respond`` is the
+exception: an RSVP never fans out to the guest list.
 """
 
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import auth
+from googleapiclient.errors import HttpError
+
+from . import api
 from .config import Config
 
-CAL_API_BASE = "https://www.googleapis.com/calendar/v3"
-HTTP_TIMEOUT_SECS = 30
 LIST_MAX_RESULTS = 250
 
 RECURRENCE_MAP = {
@@ -42,6 +42,27 @@ RESPONSE_TO_STATUS = {
     "tentative": "tentative",
 }
 
+RATE_LIMIT_REASONS = {"rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"}
+
+ACCESS_NOT_CONFIGURED_MESSAGE = (
+    "Google Calendar refused the request (HTTP {code}): the Calendar API is not enabled on the Cloud project "
+    "of the OAuth client this token was minted under. If you signed in before the bring-your-own-client switch, "
+    "the token belongs to the shared Thunderbird client, whose project has the Calendar API permanently disabled: "
+    "place your own client JSON at ~/.google/credentials.json (see SETUP.md) and run 'google auth login' to "
+    "re-authenticate under it. If you already signed in with your own client, enable the Calendar API at "
+    "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com and retry. (details: {detail})"
+)
+
+REAUTH_MESSAGE = (
+    "Google Calendar refused the request (HTTP {code}). The stored token is missing scopes or no longer valid; "
+    "run 'google auth login' to sign in again (requires ~/.google/credentials.json, see SETUP.md). "
+    "(details: {detail})"
+)
+
+
+class CalendarAuthError(RuntimeError):
+    """The Calendar API rejected the credentials; user action (re-auth or API enablement) is needed."""
+
 
 def _validate_timezone(timezone: str) -> None:
     try:
@@ -50,55 +71,43 @@ def _validate_timezone(timezone: str) -> None:
         raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
 
-# -- HTTP layer (single choke point) -------------------------------------
+# -- request execution (single choke point) --------------------------------
 
 
-def _bearer(config: Config) -> str:
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
-    return creds.token
-
-
-def _http(config: Config, method: str, path: str, *, params: dict | None = None, body: dict | None = None) -> dict:
-    """Make one Calendar API request and return parsed JSON ({} if empty)."""
-    url = CAL_API_BASE + path
-    if params:
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url += "?" + urllib.parse.urlencode(clean)
-    data = json.dumps(body).encode() if body is not None else None
-    headers = {"Authorization": f"Bearer {_bearer(config)}"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+def _error_reason(detail: str) -> str:
+    """Extract the first ``errors[].reason`` from a Calendar API error body."""
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECS) as resp:
-            raw = resp.read().decode()
-            return json.loads(raw) if raw.strip() else {}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")
-        if "accessNotConfigured" in detail or "has not been used in project" in detail:
-            raise RuntimeError(
-                f"The Google Calendar API is not enabled on your Google Cloud project (HTTP {e.code}). "
-                f"Enable it at https://console.cloud.google.com/apis/library/calendar-json.googleapis.com "
-                f"and retry. (details: {detail[:300]})"
-            )
-        if e.code in (401, 403):
-            raise RuntimeError(
-                f"Google Calendar refused the request (HTTP {e.code}). The stored token is missing scopes "
-                "or was minted under a different OAuth client; run 'google auth login' to sign in again. "
-                f"(details: {detail[:300]})"
-            )
-        raise RuntimeError(f"Google Calendar API error {e.code}: {detail[:500]}")
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Google Calendar {method} could not reach Google: {e.reason}")
+        parsed = json.loads(detail)
+    except ValueError:
+        return ""
+    if not isinstance(parsed, dict) or "error" not in parsed or not isinstance(parsed["error"], dict):
+        return ""
+    error = parsed["error"]
+    errors = error["errors"] if "errors" in error else []
+    if isinstance(errors, list) and errors and isinstance(errors[0], dict) and "reason" in errors[0]:
+        return str(errors[0]["reason"])
+    return ""
 
 
-def _events_path(calendar_id: str) -> str:
-    return f"/calendars/{urllib.parse.quote(calendar_id, safe='')}/events"
+def _api_error(code: int, detail: str) -> RuntimeError:
+    reason = _error_reason(detail)
+    if reason in RATE_LIMIT_REASONS:
+        return RuntimeError(f"Google Calendar rate/quota limit hit (HTTP {code}, {reason}); retry later. (details: {detail[:300]})")
+    if reason == "accessNotConfigured" or "accessNotConfigured" in detail or "has not been used in project" in detail:
+        return CalendarAuthError(ACCESS_NOT_CONFIGURED_MESSAGE.format(code=code, detail=detail[:300]))
+    if code in (401, 403):
+        return CalendarAuthError(REAUTH_MESSAGE.format(code=code, detail=detail[:300]))
+    return RuntimeError(f"Google Calendar API error {code}: {detail[:500]}")
 
 
-def _event_path(calendar_id: str, event_id: str) -> str:
-    return _events_path(calendar_id) + "/" + urllib.parse.quote(event_id, safe="")
+def _execute(request) -> dict:
+    """Run one Calendar API request, mapping HttpError to an actionable message."""
+    try:
+        result = request.execute()
+    except HttpError as e:
+        detail = e.content.decode(errors="replace") if isinstance(e.content, bytes) else str(e.content)
+        raise _api_error(e.resp.status, detail)
+    return result if isinstance(result, dict) else {}
 
 
 # -- shaping --------------------------------------------------------------
@@ -137,6 +146,14 @@ def _time_field(value: str, timezone: str) -> dict:
     return {"date": value}
 
 
+def _patch_time_field(value: str, timezone: str) -> dict:
+    """Time field for PATCH: explicitly null the sibling key, since patch semantics
+    keep an omitted subfield and the value type could not flip between timed and all-day."""
+    if "T" in value:
+        return {"dateTime": value, "timeZone": timezone, "date": None}
+    return {"date": value, "dateTime": None, "timeZone": None}
+
+
 # -- commands -------------------------------------------------------------
 
 
@@ -150,21 +167,34 @@ def list_events_between(
     user_timezone: str | None = None,
     limit: int | None = None,
 ) -> list[dict]:
-    """Return events overlapping ``[start, end)``, recurring ones expanded (singleEvents)."""
+    """Return events overlapping ``[start, end)``, recurring ones expanded (singleEvents), all pages."""
     if user_timezone:
         _validate_timezone(user_timezone)
-    params = {
-        "timeMin": _rfc3339(start),
-        "timeMax": _rfc3339(end),
-        "singleEvents": "true",
-        "orderBy": "startTime",
-        "maxResults": min(limit, LIST_MAX_RESULTS) if limit is not None else LIST_MAX_RESULTS,
-        "timeZone": user_timezone,
-    }
-    result = _http(config, "GET", _events_path(calendar_id), params=params)
-    items = result["items"] if "items" in result else []
-    if limit is not None:
-        items = items[:limit]
+    service = api.calendar_service(config)
+    page_size = min(limit, LIST_MAX_RESULTS) if limit is not None else LIST_MAX_RESULTS
+    items: list[dict] = []
+    page_token: str | None = None
+    while True:
+        params: dict = {
+            "calendarId": calendar_id,
+            "timeMin": _rfc3339(start),
+            "timeMax": _rfc3339(end),
+            "singleEvents": True,
+            "orderBy": "startTime",
+            "maxResults": page_size,
+        }
+        if user_timezone:
+            params["timeZone"] = user_timezone
+        if page_token:
+            params["pageToken"] = page_token
+        result = _execute(service.events().list(**params))
+        items.extend(result["items"] if "items" in result else [])
+        if limit is not None and len(items) >= limit:
+            items = items[:limit]
+            break
+        page_token = result["nextPageToken"] if "nextPageToken" in result else None
+        if not page_token:
+            break
     return [_event_to_dict(e, include_details=include_details) for e in items]
 
 
@@ -178,6 +208,8 @@ def list_events(
     user_timezone: str | None = None,
     limit: int | None = None,
 ) -> list[dict]:
+    if user_timezone:
+        _validate_timezone(user_timezone)
     tz = ZoneInfo(user_timezone) if user_timezone else UTC
     now_local = datetime.now(tz)
     start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -195,7 +227,7 @@ def list_events(
 
 
 def list_calendars(config: Config) -> list[dict]:
-    result = _http(config, "GET", "/users/me/calendarList")
+    result = _execute(api.calendar_service(config).calendarList().list())
     items = result["items"] if "items" in result else []
     return [
         {
@@ -209,16 +241,21 @@ def list_calendars(config: Config) -> list[dict]:
 
 
 def get_event(config: Config, *, calendar_id: str = "primary", event_id: str) -> dict:
-    return _http(config, "GET", _event_path(calendar_id, event_id))
+    event = _execute(api.calendar_service(config).events().get(calendarId=calendar_id, eventId=event_id))
+    return _event_to_dict(event, include_details=True)
 
 
-def _build_rrule(recurrence: str, recurrence_end_date: str | None) -> str:
+def _build_rrule(recurrence: str, recurrence_end_date: str | None, *, all_day: bool) -> str:
     freq = RECURRENCE_MAP[recurrence] if recurrence in RECURRENCE_MAP else recurrence.upper()
     rule = f"RRULE:FREQ={freq}"
     if recurrence_end_date:
         date_only = recurrence_end_date.split("T")[0]
-        until = datetime.fromisoformat(date_only).replace(tzinfo=UTC, hour=23, minute=59, second=59)
-        rule += ";UNTIL=" + until.strftime("%Y%m%dT%H%M%SZ")
+        # RFC 5545: UNTIL's value type must match DTSTART's (DATE for all-day, DATE-TIME otherwise).
+        if all_day:
+            rule += ";UNTIL=" + date_only.replace("-", "")
+        else:
+            until = datetime.fromisoformat(date_only).replace(tzinfo=UTC, hour=23, minute=59, second=59)
+            rule += ";UNTIL=" + until.strftime("%Y%m%dT%H%M%SZ")
     return rule
 
 
@@ -238,6 +275,9 @@ def create_event(
     recurrence_end_date: str | None = None,
 ) -> dict:
     _validate_timezone(timezone)
+    # A date-only start is an all-day event even without --all-day; a mixed
+    # date/dateTime start-end pair would be rejected by the API.
+    all_day = all_day or "T" not in start
 
     if all_day:
         start_date = date.fromisoformat(start.split("T")[0])
@@ -267,10 +307,22 @@ def create_event(
     if attendees:
         event["attendees"] = [{"email": a} for a in attendees]
     if recurrence:
-        event["recurrence"] = [_build_rrule(recurrence, recurrence_end_date)]
+        event["recurrence"] = [_build_rrule(recurrence, recurrence_end_date, all_day=all_day)]
 
-    created = _http(config, "POST", _events_path(calendar_id), params={"sendUpdates": "all"}, body=event)
+    created = _execute(api.calendar_service(config).events().insert(calendarId=calendar_id, body=event, sendUpdates="all"))
     return {"status": "created", "id": created["id"] if "id" in created else None, "calendar": calendar_id}
+
+
+def _resolve_series(service, calendar_id: str, event_id: str) -> tuple[str, dict]:
+    """Fetch the event; an occurrence id (singleEvents expansion) resolves to its series master.
+
+    Returns ``(target_event_id, fetched_event)`` so update/delete address the whole
+    series, matching how a listed recurring event behaves elsewhere in this skill.
+    """
+    event = _execute(service.events().get(calendarId=calendar_id, eventId=event_id))
+    if "recurringEventId" in event:
+        return event["recurringEventId"], event
+    return event_id, event
 
 
 def update_event(
@@ -285,27 +337,38 @@ def update_event(
     body: str | None = None,
     timezone: str | None = None,
 ) -> dict:
-    if (start is not None or end is not None) and timezone is None:
-        raise ValueError("--timezone is required when updating start or end")
-    if timezone is not None:
-        _validate_timezone(timezone)
     if all(v is None for v in (subject, start, end, location, body)):
         raise ValueError("Must specify at least one field to update")
 
     updates: dict = {}
     if subject is not None:
         updates["summary"] = subject
-    if start is not None:
-        updates["start"] = _time_field(start, timezone or "UTC")
-    if end is not None:
-        updates["end"] = _time_field(end, timezone or "UTC")
     if location is not None:
         updates["location"] = location
     if body is not None:
         updates["description"] = body
+    if start is not None or end is not None:
+        if timezone is None:
+            raise ValueError("--timezone is required when updating start or end")
+        _validate_timezone(timezone)
+        if start is not None:
+            updates["start"] = _patch_time_field(start, timezone)
+        if end is not None:
+            updates["end"] = _patch_time_field(end, timezone)
 
-    _http(config, "PATCH", _event_path(calendar_id, event_id), params={"sendUpdates": "all"}, body=updates)
-    return {"status": "updated", "id": event_id, "calendar": calendar_id}
+    service = api.calendar_service(config)
+    target_id, existing = _resolve_series(service, calendar_id, event_id)
+
+    # Keep start/end value types matched: patching one side to a different type
+    # than the other (date vs dateTime) is rejected by the API.
+    if (start is None) != (end is None):
+        provided = start if start is not None else end
+        other = existing["end"] if start is not None else existing["start"]
+        if provided is not None and ("T" not in provided) != ("date" in other):
+            raise ValueError("start and end must both be all-day dates or both be timed dateTimes; pass both --start and --end")
+
+    _execute(service.events().patch(calendarId=calendar_id, eventId=target_id, body=updates, sendUpdates="all"))
+    return {"status": "updated", "id": target_id, "calendar": calendar_id}
 
 
 def delete_event(
@@ -315,8 +378,10 @@ def delete_event(
     event_id: str,
     send_updates: str = "all",
 ) -> dict:
-    _http(config, "DELETE", _event_path(calendar_id, event_id), params={"sendUpdates": send_updates})
-    return {"status": "deleted", "event_id": event_id}
+    service = api.calendar_service(config)
+    target_id, _existing = _resolve_series(service, calendar_id, event_id)
+    _execute(service.events().delete(calendarId=calendar_id, eventId=target_id, sendUpdates=send_updates))
+    return {"status": "deleted", "event_id": target_id}
 
 
 def respond_event(
@@ -328,7 +393,8 @@ def respond_event(
     message: str | None = None,
 ) -> dict:
     status = RESPONSE_TO_STATUS[response]
-    event = _http(config, "GET", _event_path(calendar_id, event_id))
+    service = api.calendar_service(config)
+    event = _execute(service.events().get(calendarId=calendar_id, eventId=event_id))
     attendees = event["attendees"] if "attendees" in event else []
     if not attendees:
         raise ValueError(f"Event {event_id} has no attendees - cannot set a response")
@@ -345,5 +411,7 @@ def respond_event(
     if not found:
         raise ValueError("You are not an attendee of this event")
 
-    _http(config, "PATCH", _event_path(calendar_id, event_id), params={"sendUpdates": "all"}, body={"attendees": attendees})
+    # sendUpdates=none: an RSVP must not email the whole guest list; the
+    # organizer sees the response on their own calendar copy.
+    _execute(service.events().patch(calendarId=calendar_id, eventId=event_id, body={"attendees": attendees}, sendUpdates="none"))
     return {"status": status, "event_id": event_id}

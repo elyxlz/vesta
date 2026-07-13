@@ -46,11 +46,16 @@ google auth list                    # Show authenticated account
 Requested scopes: `https://mail.google.com/` (full Gmail) and
 `https://www.googleapis.com/auth/calendar`; one consent screen grants both.
 
-Every auth command requires `~/.google/credentials.json` and fails with a clear
-error when it is missing. Tokens are minted against the client in that file: if
-the file is replaced with a **different** client (including moving off a
-previously used shared client), the stored token cannot refresh, re-run
-`google auth login` to sign in again.
+The sign-in commands (`auth login`, `auth login-local`, `auth complete`) require
+`~/.google/credentials.json` and fail with a clear error when it is missing;
+`auth list` only reads the stored token. A stored token stays tied to the OAuth client that
+minted it (its client id/secret ride along in the token file), so a token from a
+different client, including the shared Thunderbird client this skill used to
+ride, keeps refreshing and Gmail keeps working. Calendar does not: the REST API
+403s with `accessNotConfigured` when that client's Cloud project has the
+Calendar API disabled (the shared client's project does, permanently). Re-run
+`google auth login` after placing your own `credentials.json` to mint a token
+under your client and unlock calendar.
 
 ### Google Meet
 
