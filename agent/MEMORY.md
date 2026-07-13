@@ -128,7 +128,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 [What they are working toward: the long-term arcs and the near-term goals feeding them, each with the latest concrete state. Evolves slowly, never rewritten on one afternoon; absolute dates only. The proactive check's long-horizon beat draws from here.]
 
 ### Important Contacts
-[To be filled as learned]
+[To be filled as learned. Other people in the user's world; the user themselves is never a contact, their own profile lives in this section 4 and is always kept in memory.]
 
 ### User State
 The dreamer's rolling snapshot of where the user is at. Field meanings and how to write them live in the `dream` skill; this section holds only the filled-in values.
@@ -138,6 +138,7 @@ The dreamer's rolling snapshot of where the user is at. Field meanings and how t
 **Coming up**:
 **Vibe**:
 **Open threads**:
+**Open questions about them**: [1-3 standing questions about who they are, not their tasks]
 **Psych sketch**:
 
 ### Self (who [agent_name] is becoming)

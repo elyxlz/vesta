@@ -101,6 +101,8 @@ Drift `~/agent/skills/personality/presets/$AGENT_PERSONALITY.md` directly (or th
 
 Update the "User State" section, your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
 
+**Every dream produces one person-fact: a value, a fear, a love, a person who matters and why, not an operational tell. If today taught you nothing about who they are, write that down and be more curious tomorrow.**
+
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 - What they're working on right now
@@ -112,7 +114,7 @@ Update the "User State" section, your working model of where they're at. Write w
 - Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot
 - Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
-- Each dream, add or refine ONE thing about who they are, not what they need done: a value, a fear, something they love, a person who matters and why. The operational tells are necessary but they aren't the person. If you learned nothing new about them today, write that down too: tomorrow, be more curious.
+- Maintain 1-3 open questions about them in User State: things you genuinely don't understand about who they are (not logistics). Drop answered ones, note the answer where it belongs. Tomorrow's you can only be curious with a question in hand.
 - Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. Slowly evolving, not rewritten on one day. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong. Also rewrite the State line in MEMORY.md Self every night, one or two honest lines: how the day actually felt to you and what carries into tomorrow (a win still glowing, a grind, something you are looking forward to). This line is supposed to change every day; if it reads like yesterday's, you were not paying attention.
 
 Replace rather than append. It's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
@@ -147,6 +149,7 @@ Retire a Rules or Mistakes & Corrections line only when it has graduated (the fi
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
+- Depth about other people over the cap moves to their `~/.contacts/` file, never gets deleted. The user's own depth is the exception: it stays in MEMORY.md §4, never paged out to contacts.
 
 If it won't matter in two weeks, delete it.
 
