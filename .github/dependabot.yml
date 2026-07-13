@@ -24,14 +24,6 @@ updates:
       vestad-deps:
         patterns: ["*"]
 
-  - package-ecosystem: cargo
-    directory: /apps/desktop/src-tauri
-    schedule:
-      interval: weekly
-    groups:
-      tauri-deps:
-        patterns: ["*"]
-
   - package-ecosystem: npm
     directory: /apps
     schedule:

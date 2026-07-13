@@ -12,7 +12,6 @@
     "web:lint": "npm -w @vesta/web run lint",
     "web:test": "npm -w @vesta/web run test",
     "desktop:dev": "npm -w @vesta/desktop run dev",
-    "desktop:build": "npm -w @vesta/desktop run build",
-    "tauri": "npm -w @vesta/desktop run tauri"
+    "desktop:build": "npm -w @vesta/desktop run build"
   }
 }

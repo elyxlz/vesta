@@ -4,10 +4,3 @@ dist/
 
 # Electron build artifacts
 desktop/dist-electron/
-
-# Tauri build artifacts
-desktop/src-tauri/gen/
-desktop/src-tauri/target/
-desktop/src-tauri/binaries/vesta-*
-desktop/src-tauri/resources/*.tar.gz
-desktop/src-tauri/resources/vestad

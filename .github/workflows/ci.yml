@@ -21,7 +21,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  NSIS_VERSION: "3.11"
   # Harden cargo against transient crates.io registry flakes (sporadic
   # "curl failed" / partial downloads). Retry network ops well past the
   # default of 3, and disable HTTP/2 multiplexing, whose connection reuse is
@@ -104,8 +103,6 @@ jobs:
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-          DESKTOP_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-          DESKTOP_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
@@ -113,13 +110,11 @@ jobs:
           echo "vestad:        $VESTAD"
           echo "cli:           $CLI"
           echo "tests:         $TESTS"
-          echo "desktop.conf:  $DESKTOP_CONF"
-          echo "desktop cargo: $DESKTOP_CARGO"
           echo "desktop pkg:   $DESKTOP_PKG"
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -699,8 +694,64 @@ jobs:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
 
-  # ── Build Tauri app (macOS) ───────────────────────────────────────────
-  build-tauri-macos:
+  # ── Build Electron app (macOS, universal) ────────────────────────────
+  build-electron-macos:
+    needs: [test-frontend, detect-changes]
+    if: >-
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install frontend deps
+        working-directory: apps
+        run: npm install
+
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      # Signing/notarization env is empty on PRs; electron-builder then skips
+      # both and produces unsigned artifacts, which is exactly what PR
+      # validation needs.
+      - name: Build Electron app
+        working-directory: apps/desktop
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npx tsc
+          npx electron-builder --mac dmg zip --universal --publish never
+
+      - name: Collect artifacts
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.dmg apps/desktop/dist/*.zip apps/desktop/dist/*.blockmap apps/desktop/dist/latest-mac.yml electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: electron-darwin-universal
+          path: electron-out/*
+
+  # ── Build Electron app (Linux) ────────────────────────────────────────
+  build-electron-linux:
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -713,166 +764,52 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            bundles: dmg
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            bundles: dmg
+          - os: ubuntu-latest
+            arch: x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 100
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: ${{ matrix.target }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - name: Install frontend deps
-        working-directory: apps
-        run: npm install
-
-      # Retry: bundle_dmg.sh occasionally fails on macos-latest runners when the
-      # window server is unresponsive to the AppleScript-driven Finder layout step.
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-
-      - name: Collect artifacts
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p tauri-out
-          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
-            -exec cp {} tauri-out/ \;
-          ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
-          for f in tauri-out/Vesta.app.tar.gz*; do
-            [ -f "$f" ] && mv "$f" "${f/Vesta.app/Vesta_${ARCH_PREFIX}.app}"
-          done
-          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
-
-      - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
-        with:
-          name: tauri-${{ matrix.target }}
-          path: tauri-out/*
-
-  # ── Build Tauri app (Linux — needs vestad bundled) ──────────────────
-  build-tauri-linux:
-    needs: [test-frontend, detect-changes, build-vestad]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            bundles: deb,rpm
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            bundles: deb,rpm
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 100
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: ${{ matrix.target }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
-
-      - name: Bundle vestad
-        uses: actions/download-artifact@v8
-        with:
-          name: vestad-${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
-          path: /tmp/vestad-artifact
-
-      - name: Install vestad into resources
-        run: |
-          tar -xzf /tmp/vestad-artifact/vestad-*.tar.gz -C /tmp/vestad-artifact/
-          mkdir -p apps/desktop/src-tauri/resources
-          cp /tmp/vestad-artifact/vestad apps/desktop/src-tauri/resources/vestad
-          chmod +x apps/desktop/src-tauri/resources/vestad
+      - name: Install packaging deps
+        run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Install frontend deps
         working-directory: apps
         run: npm install
 
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      - name: Build Electron app
+        working-directory: apps/desktop
+        run: |
+          npx tsc
+          npx electron-builder --linux deb rpm --${{ matrix.arch }} --publish never
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
         run: |
-          mkdir -p tauri-out
-          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*.sig' \) \
-            -exec cp {} tauri-out/ \;
-          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: tauri-${{ matrix.target }}
-          path: tauri-out/*
+          name: electron-linux-${{ matrix.arch }}
+          path: electron-out/*
 
-  # ── Build Tauri app (Windows) ─────────────────────────────────────────
-  build-tauri-windows:
+  # ── Build Electron app (Windows) ──────────────────────────────────────
+  build-electron-windows:
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -881,78 +818,43 @@ jobs:
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: windows-latest
-    timeout-minutes: 100
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: x86_64-pc-windows-msvc
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - name: Cache NSIS
-        id: cache-nsis
-        uses: actions/cache@v6
-        with:
-          path: ~\AppData\Local\tauri\NSIS
-          key: nsis-${{ env.NSIS_VERSION }}
-
-      - name: Pre-install NSIS
-        if: steps.cache-nsis.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
-          mkdir -p "$NSIS_DIR"
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-            -o /tmp/nsis.zip \
-            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
-          unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
-          rm /tmp/nsis.zip
-
       - name: Install frontend deps
         working-directory: apps
         run: npm install
 
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          shell: bash
-          command: cd apps/desktop && npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      - name: Build Electron app
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          npx tsc
+          npx electron-builder --win nsis --x64 --publish never
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          mkdir -p tauri-out
-          cp apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
-          # The updater artifact (.nsis.zip) is what the updater plugin downloads;
-          # without it, the release manifest signature is empty and Windows fails
-          # with "update failed". createUpdaterArtifacts in tauri.conf.json enables it.
-          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle \
-            -type f \( -name '*.nsis.zip' -o -name '*.sig' \) -exec cp {} tauri-out/ \;
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.exe apps/desktop/dist/*.blockmap apps/desktop/dist/latest.yml electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: tauri-x86_64-pc-windows-msvc
-          path: tauri-out/*
+          name: electron-win32-x64
+          path: electron-out/*
 
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-ci:
@@ -971,9 +873,9 @@ jobs:
       - test-linux
       - check-windows
       - build-windows
-      - build-tauri-macos
-      - build-tauri-linux
-      - build-tauri-windows
+      - build-electron-macos
+      - build-electron-linux
+      - build-electron-windows
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1022,7 +924,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-electron-macos, build-electron-linux, build-electron-windows, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1052,59 +954,21 @@ jobs:
       - name: Collect release assets
         run: |
           mkdir release
+          # latest*.yml + *.blockmap are electron-updater's feed metadata and
+          # differential-download indexes; the app's exact-version feed reads
+          # them from the release's download URL.
           find artifacts -type f \( \
             -name '*.tar.gz' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
-            -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
-            -name '*.nsis.zip' -o \
-            -name '*.sig' \
+            -name '*.exe' -o -name '*.blockmap' -o \
+            -name 'latest*.yml' \
           \) -exec cp {} release/ \;
           ls -lh release/
-
-      - name: Generate updater manifest
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          REPO="elyxlz/vesta"
-          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
-          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          read_sig() {
-            local f="release/$1"
-            if [ -f "$f" ]; then cat "$f"; else echo ""; fi
-          }
-
-          # Tauri updater platform keys: {os}-{arch}
-          # macOS uses .app.tar.gz, Windows uses .nsis.zip
-          # Linux uses script-based self-update (not Tauri updater)
-          cat > release/latest.json << MANIFEST
-          {
-            "version": "${VERSION}",
-            "pub_date": "${DATE}",
-            "platforms": {
-              "darwin-aarch64": {
-                "url": "${BASE}/Vesta_aarch64.app.tar.gz",
-                "signature": "$(read_sig Vesta_aarch64.app.tar.gz.sig)"
-              },
-              "darwin-x86_64": {
-                "url": "${BASE}/Vesta_x86_64.app.tar.gz",
-                "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
-              },
-              "windows-x86_64": {
-                "url": "${BASE}/Vesta_${VERSION}_x64-setup.nsis.zip",
-                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.nsis.zip.sig)"
-              }
-            }
-          }
-          MANIFEST
-          sed -i 's/^          //' release/latest.json
-          echo "Generated latest.json:"
-          cat release/latest.json
 
       - name: Generate checksums
         run: |
           cd release
-          sha256sum $(ls | grep -v '\.sig$\|\.json$') > checksums.txt
+          sha256sum $(ls | grep -v '\.yml$\|\.blockmap$') > checksums.txt
 
       # Beta publish: upload assets to the release but leave it a prerelease. Only
       # opted-in beta clients follow prereleases; stable stays put until promote.yml
@@ -1128,7 +992,7 @@ jobs:
   # bumped version with no release, and the next ./release.sh skips to the next
   # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, push-image, release]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-electron-macos, build-electron-linux, build-electron-windows, push-image, release]
     if: ${{ failure() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
