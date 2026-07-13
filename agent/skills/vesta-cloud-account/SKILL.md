@@ -21,13 +21,9 @@ only. The `api_key` itself never reaches you.
 So:
 
 - **Reading the plan is free.** `vesta-cloud-account plan` just works on a hosted box.
-- **Changes are facilitated, never automatic.** You cannot upgrade, cancel, or
-  move money yourself. `vesta-cloud-account manage` returns a **Stripe-hosted link**; the
-  owner opens it and confirms the change in Stripe's own UI. You *initiate*, the
-  human *authorizes*.
-
-This is deliberate. You are an AI, so you must never be able to silently change
-someone's bill or cancel their account. The worst you can do is hand over a link.
+- **Changes are facilitated, never automatic.** `vesta-cloud-account manage` returns a
+  **Stripe-hosted link**; the owner opens it and confirms the change in Stripe's
+  own UI.
 
 ## Trigger
 
@@ -45,10 +41,10 @@ Self-hosted boxes have no plan (`vesta-cloud-account plan` says so). Buying a ve
 ## Commands
 
 ```
-vesta-cloud-account plan          # this box's plan, price, status, renewal date (a read)
+vesta-cloud-account plan          # this box's plan, price, status, renewal date
 vesta-cloud-account manage        # a secure Stripe link to upgrade / cancel / change payment
 vesta-cloud-account referral      # this box's referral code, credit earned, invites completed
-vesta-cloud-account set-referral  # set/clear the code the onboard skill uses
+vesta-cloud-account set-referral  # set/clear the stored code
 ```
 
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}`

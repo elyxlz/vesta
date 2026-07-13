@@ -86,13 +86,9 @@ Mirror the mood the user described. They shouldn't have to know hex.
 
 ## Troubleshooting
 
-**Connection refused / no response.** Bridge IP probably changed (DHCP). Re-discover via mDNS (see Setup) and update `HUE_BRIDGE_IP`. Reserve a static lease to avoid this.
+**Connection refused / no response.** Bridge IP probably changed (DHCP). Re-discover via mDNS (see Setup) and update `HUE_BRIDGE_IP`.
 
 **`unauthorized user`.** API key is invalid or was wiped (factory reset, deleted from the app). Re-run the Setup curl to mint a fresh key.
-
-**`link button not pressed`.** You missed the ~30s window after pressing the bridge button. Press it again and retry the curl immediately.
-
-**Cert errors on direct curl.** The bridge serves a self-signed cert; pass `-k`. The `hue` wrapper handles this for you.
 
 **Room or scene not matching.** Fuzzy match is case-insensitive substring. Run `hue rooms` or `hue scenes` to see exact names; if multiple match, the first wins.
 

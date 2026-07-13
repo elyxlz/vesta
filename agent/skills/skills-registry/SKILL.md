@@ -5,7 +5,7 @@ description: Discover and install new capabilities from the GitHub skill registr
 
 # Skills Manager
 
-Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search for new skills and install them on demand. Installed skills are activated on the next restart.
+Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search for new skills and install them on demand.
 
 ## Search the registry
 

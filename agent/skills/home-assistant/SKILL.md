@@ -5,35 +5,19 @@ description: Home Assistant: energy, temperature, cameras, alarms, devices, sens
 
 # Home Assistant - CLI: ha
 
-## Quick Reference
+## Commands
 ```bash
-ha state sensor.temperature          # get entity state (compact)
-ha state sensor.temperature --full   # with all attributes
-ha states --domain sensor            # list all sensors
-ha states --search kitchen           # search by name
-ha history sensor.power --hours 6    # state history
-ha weather                           # forecast + sun times
-ha service switch turn_on --entity-id switch.my_switch  # call service
-ha ping                              # check API connectivity
+ha state sensor.temperature          # get entity state (compact); --full for all attributes
+ha states --domain sensor            # list entities by domain
+ha states --search kitchen           # search entities by name
+ha history sensor.power --hours 6    # state history (default 24h)
+ha weather                           # condition, temperature, humidity, wind, sunrise/sunset
+ha service switch turn_on --entity-id switch.my_switch  # call any HA service
+ha service light turn_on --entity-id light.desk --data '{"brightness": 128}'  # with JSON payload
+ha ping                              # verify API connectivity
 ```
 
-## Commands
-
-### Entity Commands
-- `ha state <entity_id>` - get current state (compact). Add `--full` for all attributes
-- `ha states` - list all entities. Filter with `--domain <domain>` or `--search <query>`
-- `ha history <entity_id>` - state history. Default 24h, override with `--hours N`
-
-### Weather
-- `ha weather` - condition, temperature, humidity, wind, sunrise/sunset
-
-### Service Commands
-- `ha service <domain> <service>` - call any HA service
-  - `--entity-id <id>` - target entity
-  - `--data '{"key": "value"}'`. JSON payload
-
-### Connectivity
-- `ha ping` - verify API connection
+Discover entities with `ha states --domain <domain>` or `--search <query>`; common domains: `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `alarm_control_panel`, `person`, `weather`, `camera`, `todo`. Once you know the entity IDs, read with `ha state` and control with `ha service`.
 
 ## Setup
 ```bash
@@ -43,9 +27,3 @@ ha ping                              # check API connectivity
 source /etc/environment
 uv tool install --editable ~/agent/skills/home-assistant/cli
 ```
-
-## Usage Tips
-
-Use `ha states --domain <domain>` and `ha states --search <query>` to discover entities in the user's HA instance. Common domains: `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `alarm_control_panel`, `person`, `weather`, `camera`, `todo`.
-
-Once you know the entity IDs, use `ha state <entity_id>` to read values and `ha service <domain> <action>` to control devices.

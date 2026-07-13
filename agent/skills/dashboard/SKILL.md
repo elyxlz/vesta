@@ -25,31 +25,8 @@ Create a task per item and work them in order:
 
 **Exception, dreamer auto-builds.** During a dream pass you may add widgets without asking: compose the spec yourself and dispatch the builder. See the `dream` skill.
 
-## Process flow
-
-```dot
-digraph dashboard {
-    "Explore the dashboard" [shape=box];
-    "Clear enough to design?" [shape=diamond];
-    "Ask one intent question" [shape=box];
-    "Design the change" [shape=box];
-    "Write the spec" [shape=box];
-    "Dispatch dashboard-builder" [shape=box];
-    "Verify it serves" [shape=doublecircle];
-
-    "Explore the dashboard" -> "Clear enough to design?";
-    "Clear enough to design?" -> "Ask one intent question" [label="no"];
-    "Ask one intent question" -> "Clear enough to design?";
-    "Clear enough to design?" -> "Design the change" [label="yes"];
-    "Design the change" -> "Write the spec";
-    "Write the spec" -> "Dispatch dashboard-builder";
-    "Dispatch dashboard-builder" -> "Verify it serves";
-}
-```
-
 ## Understanding intent
 
-- Read the current dashboard first (`config.tsx`, pages, widgets) and build on it rather than duplicating.
 - The user tells you what they care about, not how to build it. Ask only to resolve real ambiguity: what they want to see, what a number should mean to them, whether something is view only or interactive. One question per message, multiple choice when you can.
 - Do not ask about implementation (files, components, styling). Those decisions are yours.
 
@@ -96,11 +73,3 @@ Dispatch a general-purpose subagent, filling the template at [dashboard-builder.
 ## Verify and relay
 
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
-
-## Key principles
-
-- **You hold the design.** The user gives intent; you make the calls.
-- **One question at a time**, and only to resolve real ambiguity.
-- **YAGNI**: the smallest change that satisfies the intent.
-- **Build on what exists**: extend pages and widgets rather than duplicating.
-- **Verify before done**: confirm it serves, don't assume.

@@ -80,9 +80,9 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `clear-all-chats` - destructive; wipes local message DB
 
 **Auth / daemon** (see SETUP.md for details)
-- `daemon start|stop|restart|status` - manage the background daemon; `stop`/`restart` refuse during the 5-minute post-link sync window (`--force` overrides, at the cost of a re-pair)
+- `daemon start|stop|restart|status` - manage the background daemon; `stop`/`restart` refuse during the 5-minute post-link sync window because restarting there logs the device out (`--force` overrides, at the cost of a re-pair)
 - `link` - link an account: serves a self-refreshing public QR page and prints its URL; `--phone '+E.164'` for a pairing code instead. Rate-limited to 2 attempts/hour (`--acknowledge-ban-risk` overrides)
-- `serve` - runs the daemon in the foreground (what `daemon start` and `link` launch under the hood); `--notifications-dir` defaults to `~/agent/notifications`
+- `serve` - runs the daemon in the foreground (what `daemon start` and `link` launch under the hood); flags below
 - `authenticate` - prints auth status
 
 ### `serve` flags
@@ -104,7 +104,7 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 - **Send one tool call at a time. Never batch WhatsApp sends (or `say` lines) in a single parallel tool-call block.**
   *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees. For `say`, parallel lines also race to play over each other.
 
-- **Manage the daemon only through `whatsapp daemon ...`** (never raw `screen` or signals). `stop`/`restart` refuse during the post-link sync window because restarting there logs the device out.
+- **Manage the daemon only through `whatsapp daemon ...`** (never raw `screen` or signals).
 
 - **Never re-link / re-pair without the user's explicit go-ahead.** Pairing is rate-limited because repeated attempts get WhatsApp numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
 
@@ -122,15 +122,7 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 
 ## Developing & Testing Changes
 
-The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. The `whatsapp` command is a launcher (the `whatsapp` script in this skill directory) that compiles from source on every invocation, so there is no rebuild step and never a static binary to manage:
-
-1. **Restart daemon**: The running daemon is still the old build. Restart it to pick up source changes:
-   ```bash
-   whatsapp daemon restart
-   ```
-2. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 1.
-
-**Common mistake**: editing source and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be restarted to run the new code.
+The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. The launcher compiles from source on every invocation (see Rules), but the daemon keeps running the old build until `whatsapp daemon restart`; restart it, then send a message to verify the new behavior.
 
 **If the daemon won't start after a change** (screen session dies immediately), run any foreground command, e.g. `whatsapp --help`: the launcher recompiles and the compile error prints to your terminal. A daemon start also pulls the latest whatsmeow first, so an upstream breaking change surfaces the same way; fix the source against the new API rather than pinning back.
 

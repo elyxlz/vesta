@@ -31,14 +31,6 @@ They should paste the full output (one line starting with `ssh-ed25519` or `ssh-
 ~/vesta/skills/ssh/scripts/start.sh "ssh-ed25519 AAAA... user@laptop"
 ```
 
-This will:
-1. Install `openssh-server` if not already present
-2. Generate SSH host keys if missing
-3. Start sshd on a free port (dynamically allocated, no conflicts between containers)
-4. Add the provided public key to `~/.ssh/authorized_keys`
-5. Download `bore` if not already installed
-6. Open a public bore.pub tunnel and print the connection command
-
 Running `start.sh` again with a different key adds it without removing existing ones (idempotent).
 
 ## Connect from the other machine

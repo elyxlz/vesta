@@ -32,7 +32,6 @@ app-chat history --limit 20
 
 ## How it works
 - When the app user sends a message, the agent receives it and writes the notification itself
-- You receive the notification and reply with `app-chat send`
 - The daemon holds a `/ws` connection so `app-chat send` can deliver your replies to the app
 
 ## Notes

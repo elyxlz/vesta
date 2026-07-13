@@ -9,7 +9,7 @@ Serve a directory of files over HTTP and hand someone a link. Use when the user 
 
 ## Serve a file and get a shareable link (on vesta)
 
-The server binds to localhost, so it needs a public route. Register a public vestad service, then bind the server to the port it returns. The shareable URL is the tunnel route for that service.
+The server binds to localhost, so it needs a public route.
 
 ```bash
 # 1. drop the file(s) into the served directory
@@ -36,4 +36,4 @@ Off vesta, bind any port with `serve.py --port N` and expose it with your own tu
 
 - **Public means public.** Anything in the served directory is reachable by anyone with the URL (the route has no auth). Never host secrets, credentials, or sensitive personal documents unless the user explicitly asked you to share that exact file, and use an unguessable filename when sharing anything personal.
 - **Clean up.** Remove files from the served directory once the user has them, and stop the screen (`screen -S file-host -X quit`) when no longer needed.
-- **Persist it** by adding the serve command to the `restart` skill's service list if you want it always available.
+- **Persist it** by adding the serve command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` if you want it always available.

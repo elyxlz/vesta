@@ -20,7 +20,7 @@ tasks update <id> --title "Updated title" --priority high
 tasks get <id>
 tasks get <id> --field status              # just the status, no envelope
 tasks get <id> --field notes --field title # several fields, tab-separated
-tasks delete <id>                          # CASCADE: linked reminders are deleted too
+tasks delete <id>                          # cascades
 ```
 
 ### Task Options
@@ -64,9 +64,8 @@ tasks remind update <id> --message "New message"
 
 ### Reminder Options
 - `--in-minutes`, `--in-hours`, `--in-days`: relative timing
-- `--at` + `--tz`: absolute datetime (both required together)
+- `--at` + `--tz`: absolute datetime
 - `--recurring`: hourly | daily | weekly | monthly | yearly
-  - hourly needs no datetime; others require `--at` + `--tz`
 - `--cron "<expr>"`: standard 5-field cron (`min hour day-of-month month day-of-week`) for schedules the presets can't express. Supports `*`, ranges (`1-5`), lists (`1,3,5`), steps (`*/15`), and day-of-week names (`mon-fri`). Day-of-week uses **standard cron numbering** (`0` or `7` = Sunday, `1` = Monday), so `--cron "0 9 * * 1-5"` fires 9am Mon-Fri as expected. Requires `--tz`; cannot combine with `--recurring`/`--at`/`--in-*`.
   - Both `--recurring` and `--cron` schedules are DST-aware: they store your IANA timezone and keep firing at the same wall-clock time across clock changes.
 - Always use the user's timezone from MEMORY.md section 4, not UTC
@@ -74,7 +73,7 @@ tasks remind update <id> --message "New message"
 - `--message`: alternative to positional message argument
 
 ### Recurring Automations
-Recurring reminders double as scheduled automations (see the `--recurring` examples above): the message is delivered as a notification, so when one fires, treat the message as an instruction and act on it.
+Recurring reminders double as scheduled automations: when one fires, treat the message as an instruction and act on it.
 
 ## Behavior
 
@@ -104,17 +103,7 @@ uv tool install --editable ~/agent/skills/tasks/cli
 
 ## Background Daemon
 
-Register with vestad to get a port (see [vestad](../vestad/SKILL.md)), then start:
-```bash
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-screen -dmS tasks tasks serve --port $PORT
-```
-
-`--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.
-
-One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
-
-**Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+One daemon handles everything, both task due-date monitoring and reminder scheduling. Register with vestad to get a port (see [vestad](../vestad/SKILL.md)) and add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
 ```
