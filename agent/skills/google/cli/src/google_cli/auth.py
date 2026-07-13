@@ -3,51 +3,33 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-
-from .thunderbird_client import resolve_thunderbird_client
 
 LOOPBACK_PORT = 8097
 REDIRECT_URI = f"http://127.0.0.1:{LOOPBACK_PORT}"
 VERIFIER_FILE = Path(tempfile.gettempdir()) / "google_auth_verifier.txt"
 
-GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+MISSING_CREDENTIALS_MESSAGE = (
+    "Missing {path}: this skill requires your own Google Cloud OAuth client (Desktop app type). "
+    "Create one, download its client JSON to that path, then run 'google auth login'. "
+    "See SETUP.md in the google skill for the walkthrough. For everyday Gmail mail and "
+    "calendar without a Google Cloud project, use the email-client skill instead."
+)
 
-
-def build_client_config() -> dict:
-    """In-memory OAuth client config reusing Thunderbird's published public client.
-
-    This is the zero-BYO default: no ``credentials.json`` and no Google Cloud
-    project required. The id/secret come from the dynamic Thunderbird resolver
-    (cache-only, hardcoded constant as floor) so an upstream client rotation is
-    followed automatically by the daily self-heal.
-    """
-    client_id, client_secret = resolve_thunderbird_client()
-    return {
-        "installed": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "auth_uri": GOOGLE_AUTH_URI,
-            "token_uri": GOOGLE_TOKEN_URI,
-            "redirect_uris": ["http://127.0.0.1", "http://localhost"],
-        }
-    }
+REFRESH_FAILED_MESSAGE = (
+    "Token refresh failed. If credentials.json changed (a different OAuth client), tokens minted "
+    "under the old client cannot refresh; run 'google auth login' to sign in again."
+)
 
 
 def _make_flow(credentials_file: Path, scopes: list[str]) -> InstalledAppFlow:
-    """Build the OAuth flow.
-
-    Default: reuse Thunderbird's published public client (no BYO app needed).
-    Optional advanced override: if ``credentials_file`` exists it wins, so a user
-    running their own verified Google Cloud app can drop its client JSON in and
-    keep using it. Absence of the file is NOT an error.
-    """
-    if credentials_file.exists():
-        return InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
-    return InstalledAppFlow.from_client_config(build_client_config(), scopes)
+    """Build the OAuth flow from the user's own client at ``credentials_file``."""
+    if not credentials_file.exists():
+        raise ValueError(MISSING_CREDENTIALS_MESSAGE.format(path=credentials_file))
+    return InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
 
 
 def start_auth_flow(credentials_file: Path, scopes: list[str]) -> dict:
@@ -93,7 +75,10 @@ def get_credentials(token_file: Path, credentials_file: Path, scopes: list[str])
     # (expiry unknown, e.g. a token saved before expiry was persisted). Relying on
     # creds.valid alone silently reuses a stale token whose expiry is None.
     if creds.refresh_token and (creds.expiry is None or not creds.valid):
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError as e:
+            raise ValueError(f"{REFRESH_FAILED_MESSAGE} (details: {e})")
         _save_token(token_file, creds)
         return creds
 

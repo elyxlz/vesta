@@ -73,7 +73,7 @@
   },
   {
     "name": "google",
-    "description": "Gmail and Google Calendar: email, events, scheduling. Requires daemon."
+    "description": "Google-native REST APIs (Gmail, Google Calendar) for users who bring their own Google Cloud OAuth client (~/.google/credentials.json required). For everyday email and calendar prefer the email-client skill, which needs no Google Cloud project. Requires daemon."
   },
   {
     "name": "growth",
