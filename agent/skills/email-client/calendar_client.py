@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Google Calendar commands for the email-client skill.
+"""Calendar commands for the email-client skill, over CalDAV.
 
-email-client is a provider-agnostic IMAP/SMTP client, but calendar is
-Google-specific. These commands are gated to Google (Gmail) accounts and
-reuse the account's STORED Google OAuth token (the same token cache the
-mail side keeps, with transparent refresh via ``imap_client``). They talk
-to the Google Calendar REST API v3 directly over ``urllib`` to match the
-stdlib-only style of the rest of the skill.
+Works across providers with the account's existing mail credential: Google
+(OAuth Bearer; the Calendar REST API is disabled on the reused Thunderbird
+Cloud project, but CalDAV rides the same ``.../auth/calendar`` scope and is
+the path Thunderbird itself uses), iCloud and Fastmail (HTTP Basic with the
+stored app password), and any generic IMAP provider that also runs a CalDAV
+server (per-account ``caldav_url`` in config.json). Microsoft accounts have
+no CalDAV; those get a clear pointer to the microsoft skill.
 
-Because one Gmail sign-in now also grants the calendar scope (see
-``providers.py``), no separate calendar auth is needed: a freshly added
-account gets mail + calendar in one consent. Accounts authed before the
-calendar scope was added must re-run:
-
-    email-client auth add --account <name> --provider gmail --reauth
+The CalDAV protocol (auth, discovery, verbs, UID lookup) lives in
+``caldav_client``; iCalendar parse/emit and recurrence expansion live in
+``ics``. Event ids are iCalendar UIDs, and recurring events expand into
+concrete occurrences in the query window.
 
 Commands (dispatched from ``email-client calendar ...``):
 
-    list-calendars   the account's calendar list
+    list-calendars   the account's calendar collections
     list             upcoming events (--days-ahead / --days-back window)
     get              a single event by id
     create           create an event (with attendees, invites go out)
@@ -25,11 +24,12 @@ Commands (dispatched from ``email-client calendar ...``):
     delete           delete an event
     respond          accept / decline / tentatively accept an invite
 
-NOTE ON INVITES: creating or updating an event that has attendees causes
-Google to email calendar invites/updates to those attendees. That is a
-real outward "send", exactly like sending mail. The EMAIL_DRAFT_ONLY guard
-is for email sending only and does NOT block calendar writes; use judgment
-before creating/updating events with attendees.
+NOTE ON INVITES: creating or updating an event that has attendees makes the
+server email calendar invites/updates to those attendees (CalDAV scheduling;
+Google, iCloud, and Fastmail all do this). That is a real outward "send",
+exactly like sending mail. The EMAIL_DRAFT_ONLY guard is for email sending
+only and does NOT block calendar writes; use judgment before creating or
+updating events with attendees.
 """
 
 from __future__ import annotations
@@ -37,299 +37,314 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
+import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import imap_client
+import caldav_client
+import ics
 
-CAL_API_BASE = "https://www.googleapis.com/calendar/v3"
-CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+RESPONSE_TO_PARTSTAT = {
+    "accept": "ACCEPTED",
+    "decline": "DECLINED",
+    "tentative": "TENTATIVE",
+}
 
-RESPONSE_MAP = {
-    "accept": "accepted",
-    "decline": "declined",
-    "tentative": "tentativelyAccepted",
+PARTSTAT_TO_RESPONSE = {
+    "ACCEPTED": "accepted",
+    "DECLINED": "declined",
+    "TENTATIVE": "tentative",
+    "NEEDS-ACTION": "needsAction",
+    "DELEGATED": "delegated",
 }
 
 
-# -- account gating + token ----------------------------------------
+# -- time helpers ----------------------------------------------------------
 
 
-def _reauth_hint(account: str) -> str:
-    return f"email-client auth add --account {account} --provider gmail --reauth"
-
-
-def google_account_token(account: str | None) -> tuple[str, str]:
-    """Resolve a Google account and return ``(account_name, access_token)``.
-
-    Exits with a clear error if the account is not a Google account, or if
-    its stored token predates calendar support (lacks the calendar scope).
-    """
-    acc = imap_client.resolve_account(account)
-    name, profile = imap_client.account_profile(acc)
-    # In this skill, Google is the only loopback-oauth provider. Microsoft is
-    # device-flow; Yahoo/iCloud/Fastmail/generic are app-password. Gate here so
-    # non-Google accounts get a clear error instead of a confusing API failure.
-    if profile.get("auth_strategy") != "loopback-oauth":
-        sys.exit(
-            f"calendar is only supported for Google accounts; account {acc!r} "
-            f"uses provider {name!r}. Add or select a Gmail account to use calendar."
-        )
-    tok = imap_client.load_token(acc)
-    if tok is None:
-        sys.exit(f"no token for account {acc!r}; run 'email-client auth add --account {acc}' first")
-    # Google returns the granted scopes in the token response. If we can see
-    # them and calendar isn't among them, this is an old mail-only auth: tell
-    # the user to re-auth rather than making a call that will 403.
-    scope = tok.get("scope")
-    if scope and CALENDAR_SCOPE not in scope.split():
-        sys.exit(
-            f"account {acc!r} was authorized before calendar support (its token "
-            f"lacks the calendar scope). Re-auth to grant it:\n  {_reauth_hint(acc)}"
-        )
-    token = imap_client.get_access_token(acc)
-    return acc, token
-
-
-# -- HTTP layer (single choke point so tests can mock it) ----------
-
-
-def _http(method: str, url: str, token: str, body: dict | None = None) -> dict:
-    """Make one Calendar API request and return parsed JSON ({} if empty).
-
-    All calendar API traffic funnels through here so tests can monkeypatch a
-    single function and assert on ``(method, url, body)``.
-    """
-    data = json.dumps(body).encode() if body is not None else None
-    headers = {"Authorization": f"Bearer {token}"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            raw = r.read().decode()
-            return json.loads(raw) if raw.strip() else {}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace") if hasattr(e, "read") else str(e)
-        if e.code in (401, 403) and ("insufficient" in detail.lower() or "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in detail):
-            sys.exit(
-                "Google Calendar refused the request: this account's token lacks "
-                "the calendar scope (old mail-only auth). Re-auth to grant it:\n"
-                f"  email-client auth add --account <name> --provider gmail --reauth\n"
-                f"(details: {detail})"
-            )
-        sys.exit(f"Google Calendar API error {e.code}: {detail}")
-
-
-def _url(path: str, params: dict | None = None) -> str:
-    url = CAL_API_BASE + path
-    if params:
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url += "?" + urllib.parse.urlencode(clean)
-    return url
-
-
-# -- time helpers --------------------------------------------------
-
-
-def _time_window(days_ahead: int, days_back: int) -> tuple[str, str]:
-    """Return (timeMin, timeMax) RFC3339 UTC timestamps for the query window."""
+def _window(days_ahead: int, days_back: int) -> tuple[dt.datetime, dt.datetime]:
     now = dt.datetime.now(dt.UTC)
     start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    time_min = start_of_today - dt.timedelta(days=days_back)
-    time_max = start_of_today + dt.timedelta(days=days_ahead + 1)
-    return time_min.isoformat().replace("+00:00", "Z"), time_max.isoformat().replace("+00:00", "Z")
+    return start_of_today - dt.timedelta(days=days_back), start_of_today + dt.timedelta(days=days_ahead + 1)
 
 
-def _time_field(value: str, timezone: str) -> dict:
-    """Build a Calendar API start/end object.
+def _zone(timezone: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, KeyError, ValueError):
+        sys.exit(f"invalid timezone {timezone!r}; use IANA names like 'Europe/London' or 'America/New_York'")
 
-    A value containing ``T`` is a timed dateTime; otherwise it is an all-day
-    date. ``timeZone`` is attached to dateTime values.
-    """
+
+def _parse_local(value: str, tz: ZoneInfo) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        sys.exit(f"could not parse {value!r} as an ISO datetime")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed
+
+
+def _set_time_prop(vevent: ics.Component, name: str, value: str, tz: ZoneInfo) -> None:
+    """Set DTSTART/DTEND from a CLI value: 'T' means timed (stored as a UTC instant,
+    so no VTIMEZONE component is needed), a bare date means all-day."""
     if "T" in value:
-        return {"dateTime": value, "timeZone": timezone}
-    return {"date": value}
+        ics.set_prop(vevent, name, ics.format_utc(_parse_local(value, tz)))
+    else:
+        ics.set_prop(vevent, name, ics.format_date(dt.date.fromisoformat(value)), params={"VALUE": "DATE"})
 
 
-# -- commands ------------------------------------------------------
+# -- event -> JSON -----------------------------------------------------------
+
+
+def _time_json(value: ics.Instant) -> dict[str, str]:
+    if isinstance(value, dt.datetime):
+        zone = value.tzinfo.key if isinstance(value.tzinfo, ZoneInfo) else "UTC"
+        return {"dateTime": value.isoformat(), "timeZone": zone}
+    return {"date": value.isoformat()}
+
+
+def _text(vevent: ics.Component, name: str) -> str:
+    prop = ics.first_prop(vevent, name)
+    return ics.unescape_text(prop.value) if prop is not None else ""
+
+
+def _clean_addr(value: str) -> str:
+    return re.sub(r"^mailto:", "", value, flags=re.IGNORECASE)
+
+
+def _summary_json(occ: ics.Occurrence) -> dict:
+    vevent = occ.vevent
+    return {
+        "id": _text(vevent, "UID"),
+        "summary": _text(vevent, "SUMMARY"),
+        "start": _time_json(occ.start),
+        "end": _time_json(occ.end),
+        "location": _text(vevent, "LOCATION") or None,
+        "attendees": [_clean_addr(prop.value) for prop in ics.all_props(vevent, "ATTENDEE")],
+        "status": _text(vevent, "STATUS").lower() or None,
+    }
+
+
+def _attendee_json(prop: ics.Prop) -> dict:
+    partstat = prop.params["PARTSTAT"].upper() if "PARTSTAT" in prop.params else ""
+    if partstat in PARTSTAT_TO_RESPONSE:
+        response = PARTSTAT_TO_RESPONSE[partstat]
+    else:
+        response = partstat.lower() or None
+    return {
+        "email": _clean_addr(prop.value),
+        "displayName": prop.params["CN"].strip('"') if "CN" in prop.params else None,
+        "responseStatus": response,
+    }
+
+
+def _detail_json(vevent: ics.Component) -> dict:
+    start_prop = ics.first_prop(vevent, "DTSTART")
+    end_prop = ics.first_prop(vevent, "DTEND")
+    organizer = ics.first_prop(vevent, "ORGANIZER")
+    return {
+        "id": _text(vevent, "UID"),
+        "summary": _text(vevent, "SUMMARY"),
+        "start": _time_json(ics.prop_instant(start_prop)) if start_prop is not None else {},
+        "end": _time_json(ics.prop_instant(end_prop)) if end_prop is not None else {},
+        "location": _text(vevent, "LOCATION") or None,
+        "description": _text(vevent, "DESCRIPTION") or None,
+        "status": _text(vevent, "STATUS").lower() or None,
+        "organizer": _clean_addr(organizer.value) if organizer is not None else None,
+        "attendees": [_attendee_json(prop) for prop in ics.all_props(vevent, "ATTENDEE")],
+        "recurrence": [f"RRULE:{prop.value}" for prop in ics.all_props(vevent, "RRULE")] or None,
+    }
+
+
+def _master_vevent(vcal: ics.Component, uid: str) -> ics.Component:
+    """The master VEVENT (no RECURRENCE-ID) matching ``uid``, with fallbacks."""
+    events = ics.vevents(vcal)
+    for vevent in events:
+        uid_prop = ics.first_prop(vevent, "UID")
+        if uid_prop is not None and uid_prop.value == uid and ics.first_prop(vevent, "RECURRENCE-ID") is None:
+            return vevent
+    for vevent in events:
+        if ics.first_prop(vevent, "RECURRENCE-ID") is None:
+            return vevent
+    if events:
+        return events[0]
+    sys.exit(f"event {uid!r} not found")
+
+
+# -- commands -----------------------------------------------------------------
 
 
 def cmd_list_calendars(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
-    result = _http("GET", _url("/users/me/calendarList"), token)
-    items = result.get("items", [])
-    out = [
-        {
-            "id": c.get("id"),
-            "summary": c.get("summary", ""),
-            "primary": c.get("primary", False),
-            "accessRole": c.get("accessRole", ""),
-        }
-        for c in items
-    ]
+    ctx = caldav_client.caldav_account(args.account)
+    out = [{"id": info.id, "summary": info.name, "primary": info.primary} for info in caldav_client.list_calendars(ctx)]
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 def cmd_list(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
-    time_min, time_max = _time_window(args.days_ahead, args.days_back)
-    url = _url(
-        f"/calendars/{urllib.parse.quote(args.calendar, safe='')}/events",
-        {
-            "timeMin": time_min,
-            "timeMax": time_max,
-            "singleEvents": "true",
-            "orderBy": "startTime",
-            "maxResults": 250,
-        },
-    )
-    result = _http("GET", url, token)
-    events = result.get("items", [])
-    out = [
-        {
-            "id": e.get("id"),
-            "summary": e.get("summary", ""),
-            "start": e.get("start", {}),
-            "end": e.get("end", {}),
-            "location": e.get("location"),
-            "attendees": [a.get("email") for a in e.get("attendees", [])],
-            "status": e.get("status"),
-        }
-        for e in events
-    ]
-    print(json.dumps(out, indent=2, ensure_ascii=False))
+    ctx = caldav_client.caldav_account(args.account)
+    start, end = _window(args.days_ahead, args.days_back)
+    occurrences: list[ics.Occurrence] = []
+    for calendar_data in caldav_client.report_events(ctx, args.calendar, start, end):
+        try:
+            vcal = ics.parse_calendar(calendar_data)
+        except ValueError:
+            continue
+        occurrences.extend(ics.expand(vcal, start, end))
+    occurrences.sort(key=lambda occ: ics.as_utc(occ.start))
+    print(json.dumps([_summary_json(occ) for occ in occurrences], indent=2, ensure_ascii=False))
 
 
 def cmd_get(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
-    url = _url(f"/calendars/{urllib.parse.quote(args.calendar, safe='')}/events/{urllib.parse.quote(args.id, safe='')}")
-    print(json.dumps(_http("GET", url, token), indent=2, ensure_ascii=False))
+    ctx = caldav_client.caldav_account(args.account)
+    url, text = caldav_client.find_event(ctx, args.calendar, args.id)
+    result = _detail_json(_master_vevent(ics.parse_calendar(text), args.id))
+    result["ics_href"] = url
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 def _split_attendees(raw: list[str] | None) -> list[str]:
     """Flatten repeated --attendees values, each possibly comma-separated."""
     out: list[str] = []
     for chunk in raw or []:
-        out.extend(a.strip() for a in chunk.split(",") if a.strip())
+        out.extend(addr.strip() for addr in chunk.split(",") if addr.strip())
     return out
 
 
+def _attendee_prop(email: str) -> ics.Prop:
+    return ics.Prop(
+        name="ATTENDEE",
+        params={"ROLE": "REQ-PARTICIPANT", "PARTSTAT": "NEEDS-ACTION", "RSVP": "TRUE"},
+        value=f"mailto:{email}",
+    )
+
+
 def cmd_create(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
-    timezone = args.timezone or "UTC"
+    ctx = caldav_client.caldav_account(args.account)
+    tz = _zone(args.timezone or "UTC")
 
     start = args.start
     end = args.end
     if not end:
         if "T" in start:
-            try:
-                end = (dt.datetime.fromisoformat(start) + dt.timedelta(hours=1)).isoformat()
-            except ValueError:
-                sys.exit(f"could not parse --start {start!r} as ISO datetime; pass --end explicitly")
+            end = (_parse_local(start, tz) + dt.timedelta(hours=1)).isoformat()
         else:
             end = (dt.date.fromisoformat(start) + dt.timedelta(days=1)).isoformat()
-
-    event: dict = {
-        "summary": args.subject,
-        "start": _time_field(start, timezone),
-        "end": _time_field(end, timezone),
-    }
     # All-day events use an exclusive end date; bump a same-day end by one day.
-    if "date" in event["start"] and "date" in event["end"] and event["start"]["date"] == event["end"]["date"]:
-        event["end"]["date"] = (dt.date.fromisoformat(event["end"]["date"]) + dt.timedelta(days=1)).isoformat()
+    if "T" not in start and "T" not in end and end == start:
+        end = (dt.date.fromisoformat(start) + dt.timedelta(days=1)).isoformat()
 
+    uid = f"{uuid.uuid4().hex}@email-client"
+    vevent = ics.Component(name="VEVENT", props=[], children=[])
+    ics.set_prop(vevent, "UID", uid)
+    ics.set_prop(vevent, "DTSTAMP", ics.format_utc(dt.datetime.now(dt.UTC)))
+    ics.set_prop(vevent, "SUMMARY", ics.escape_text(args.subject))
+    _set_time_prop(vevent, "DTSTART", start, tz)
+    _set_time_prop(vevent, "DTEND", end, tz)
     if args.location:
-        event["location"] = args.location
+        ics.set_prop(vevent, "LOCATION", ics.escape_text(args.location))
     if args.body:
-        event["description"] = args.body
+        ics.set_prop(vevent, "DESCRIPTION", ics.escape_text(args.body))
     attendees = _split_attendees(args.attendees)
     if attendees:
-        event["attendees"] = [{"email": a} for a in attendees]
+        vevent.props.extend(_attendee_prop(addr) for addr in attendees)
+        ics.set_prop(vevent, "ORGANIZER", f"mailto:{ctx.user}")
 
-    # sendUpdates=all so attendees actually receive the invite (outward send).
-    url = _url(
-        f"/calendars/{urllib.parse.quote(args.calendar, safe='')}/events",
-        {"sendUpdates": "all"},
+    vcal = ics.Component(
+        name="VCALENDAR",
+        props=[ics.Prop("PRODID", {}, "-//Vesta//email-client//EN"), ics.Prop("VERSION", {}, "2.0")],
+        children=[vevent],
     )
-    print(json.dumps(_http("POST", url, token, event), indent=2, ensure_ascii=False))
+    url = caldav_client.collection_url(ctx, args.calendar) + urllib.parse.quote(uid, safe="") + ".ics"
+    # If-None-Match: never clobber an existing event of the same id.
+    caldav_client.request(
+        ctx,
+        "PUT",
+        url,
+        body=ics.serialize(vcal),
+        content_type="text/calendar; charset=utf-8",
+        extra_headers={"If-None-Match": "*"},
+    )
+    print(json.dumps({"status": "created", "id": uid, "calendar": args.calendar}, indent=2))
 
 
 def cmd_update(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
     if (args.start is not None or args.end is not None) and not args.timezone:
         sys.exit("--timezone is required when updating --start or --end")
-    timezone = args.timezone or "UTC"
-
-    updates: dict = {}
-    if args.subject is not None:
-        updates["summary"] = args.subject
-    if args.start is not None:
-        updates["start"] = _time_field(args.start, timezone)
-    if args.end is not None:
-        updates["end"] = _time_field(args.end, timezone)
-    if args.location is not None:
-        updates["location"] = args.location
-    if args.body is not None:
-        updates["description"] = args.body
     attendees = _split_attendees(args.attendees)
-    if attendees:
-        updates["attendees"] = [{"email": a} for a in attendees]
-    if not updates:
+    if all(value is None for value in (args.subject, args.start, args.end, args.location, args.body)) and not attendees:
         sys.exit("nothing to update; pass at least one of --subject/--start/--end/--location/--body/--attendees")
+    ctx = caldav_client.caldav_account(args.account)
+    tz = _zone(args.timezone or "UTC")
 
-    url = _url(
-        f"/calendars/{urllib.parse.quote(args.calendar, safe='')}/events/{urllib.parse.quote(args.id, safe='')}",
-        {"sendUpdates": "all"},
-    )
-    print(json.dumps(_http("PATCH", url, token, updates), indent=2, ensure_ascii=False))
+    url, text = caldav_client.find_event(ctx, args.calendar, args.id)
+    vcal = ics.parse_calendar(text)
+    vevent = _master_vevent(vcal, args.id)
+
+    if args.subject is not None:
+        ics.set_prop(vevent, "SUMMARY", ics.escape_text(args.subject))
+    if args.start is not None:
+        _set_time_prop(vevent, "DTSTART", args.start, tz)
+    if args.end is not None:
+        _set_time_prop(vevent, "DTEND", args.end, tz)
+    if args.location is not None:
+        ics.set_prop(vevent, "LOCATION", ics.escape_text(args.location))
+    if args.body is not None:
+        ics.set_prop(vevent, "DESCRIPTION", ics.escape_text(args.body))
+    if attendees:
+        ics.remove_props(vevent, "ATTENDEE")
+        vevent.props.extend(_attendee_prop(addr) for addr in attendees)
+        if ics.first_prop(vevent, "ORGANIZER") is None:
+            ics.set_prop(vevent, "ORGANIZER", f"mailto:{ctx.user}")
+
+    sequence_prop = ics.first_prop(vevent, "SEQUENCE")
+    try:
+        sequence = int(sequence_prop.value) if sequence_prop is not None else 0
+    except ValueError:
+        sequence = 0
+    ics.set_prop(vevent, "SEQUENCE", str(sequence + 1))
+    ics.set_prop(vevent, "DTSTAMP", ics.format_utc(dt.datetime.now(dt.UTC)))
+
+    caldav_client.request(ctx, "PUT", url, body=ics.serialize(vcal), content_type="text/calendar; charset=utf-8")
+    print(json.dumps({"status": "updated", "id": args.id, "calendar": args.calendar}, indent=2))
 
 
 def cmd_delete(args) -> None:
-    _, token = google_account_token(getattr(args, "account", None))
-    url = _url(
-        f"/calendars/{urllib.parse.quote(args.calendar, safe='')}/events/{urllib.parse.quote(args.id, safe='')}",
-        {"sendUpdates": "all"},
-    )
-    _http("DELETE", url, token)
+    ctx = caldav_client.caldav_account(args.account)
+    url, _ = caldav_client.find_event(ctx, args.calendar, args.id)
+    caldav_client.request(ctx, "DELETE", url)
     print(json.dumps({"status": "deleted", "id": args.id}, indent=2))
 
 
 def cmd_respond(args) -> None:
-    acc, token = google_account_token(getattr(args, "account", None))
-    status = RESPONSE_MAP[args.response]
-    cal = urllib.parse.quote(args.calendar, safe="")
-    eid = urllib.parse.quote(args.id, safe="")
+    ctx = caldav_client.caldav_account(args.account)
+    partstat = RESPONSE_TO_PARTSTAT[args.response]
 
-    event = _http("GET", _url(f"/calendars/{cal}/events/{eid}"), token)
-    attendees = event.get("attendees", [])
-    if not attendees:
+    url, text = caldav_client.find_event(ctx, args.calendar, args.id)
+    vcal = ics.parse_calendar(text)
+    vevent = _master_vevent(vcal, args.id)
+
+    attendee_props = ics.all_props(vevent, "ATTENDEE")
+    if not attendee_props:
         sys.exit(f"event {args.id!r} has no attendees; nothing to respond to")
+    me = next((prop for prop in attendee_props if _clean_addr(prop.value).lower() == ctx.user.lower()), None)
+    if me is None:
+        sys.exit(f"you ({ctx.user}) are not an attendee of event {args.id!r}")
+    me.params["PARTSTAT"] = partstat
+    ics.set_prop(vevent, "DTSTAMP", ics.format_utc(dt.datetime.now(dt.UTC)))
 
-    user_email = imap_client.account_user(acc)
-    found = False
-    for a in attendees:
-        if a.get("self") or a.get("email", "").lower() == user_email.lower():
-            a["responseStatus"] = status
-            found = True
-            break
-    if not found:
-        sys.exit(f"you ({user_email}) are not an attendee of event {args.id!r}")
-
-    url = _url(f"/calendars/{cal}/events/{eid}", {"sendUpdates": "all"})
-    _http("PATCH", url, token, {"attendees": attendees})
-    print(json.dumps({"status": status, "id": args.id}, indent=2))
+    caldav_client.request(ctx, "PUT", url, body=ics.serialize(vcal), content_type="text/calendar; charset=utf-8")
+    print(json.dumps({"status": PARTSTAT_TO_RESPONSE[partstat], "id": args.id}, indent=2))
 
 
-# -- parser + dispatch ---------------------------------------------
+# -- parser + dispatch ---------------------------------------------------------
 
 
 def build_parser(sub) -> None:
     """Attach the ``calendar`` subcommand tree to an argparse subparsers obj."""
-    pc = sub.add_parser("calendar", help="Google Calendar (Gmail accounts only)")
+    pc = sub.add_parser("calendar", help="calendar over CalDAV (Google, iCloud, Fastmail, any CalDAV server)")
     csub = pc.add_subparsers(dest="calendar_cmd", required=True)
 
     def _acct(p):
@@ -348,7 +363,7 @@ def build_parser(sub) -> None:
     _acct(c_l)
 
     c_g = csub.add_parser("get", help="get one event by id")
-    c_g.add_argument("--id", required=True, help="event id")
+    c_g.add_argument("--id", required=True, help="event id (iCalendar UID)")
     _cal(c_g)
     _acct(c_g)
 
@@ -364,7 +379,7 @@ def build_parser(sub) -> None:
     _acct(c_c)
 
     c_u = csub.add_parser("update", help="patch an event (attendees get updates)")
-    c_u.add_argument("--id", required=True, help="event id")
+    c_u.add_argument("--id", required=True, help="event id (iCalendar UID)")
     c_u.add_argument("--subject", default=None)
     c_u.add_argument("--start", default=None, help="ISO start (requires --timezone)")
     c_u.add_argument("--end", default=None, help="ISO end (requires --timezone)")
@@ -376,12 +391,12 @@ def build_parser(sub) -> None:
     _acct(c_u)
 
     c_d = csub.add_parser("delete", help="delete an event (attendees get cancellations)")
-    c_d.add_argument("--id", required=True, help="event id")
+    c_d.add_argument("--id", required=True, help="event id (iCalendar UID)")
     _cal(c_d)
     _acct(c_d)
 
     c_r = csub.add_parser("respond", help="respond to an invite")
-    c_r.add_argument("--id", required=True, help="event id")
+    c_r.add_argument("--id", required=True, help="event id (iCalendar UID)")
     c_r.add_argument("--response", required=True, choices=["accept", "decline", "tentative"])
     _cal(c_r)
     _acct(c_r)

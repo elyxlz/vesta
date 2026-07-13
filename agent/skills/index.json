@@ -49,7 +49,7 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Calendar over CalDAV with the same credential (Gmail, iCloud, Fastmail, any CalDAV server): list/create/update/delete/respond to events. Requires the poll daemon for notifications."
   },
   {
     "name": "enable-banking",
