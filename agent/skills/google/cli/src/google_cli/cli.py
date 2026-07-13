@@ -49,7 +49,6 @@ def main():
     p_complete = auth_sub.add_parser("complete")
     p_complete.add_argument("--code", required=True)
     auth_sub.add_parser("list")
-    auth_sub.add_parser("probe")
 
     # email
     email_parser = group.add_parser("email")
@@ -186,10 +185,6 @@ def _dispatch_auth(args, config):
         return auth_commands.run_local_auth(config)
     elif args.command == "complete":
         return auth_commands.complete_authentication(config, code=args.code)
-    elif args.command == "probe":
-        from . import google_health
-
-        return google_health.run_probe_once(config)
 
 
 _TRANSMIT_EMAIL_COMMANDS = {"send", "reply", "forward"}

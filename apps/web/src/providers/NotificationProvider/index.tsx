@@ -5,7 +5,7 @@ import {
   connectReconnectingWs,
   type ReconnectingWsHandle,
 } from "@/lib/reconnecting-ws";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
@@ -34,15 +34,10 @@ async function ensurePermission(): Promise<boolean> {
 }
 
 async function focusAndNavigate(agentName: string): Promise<void> {
-  if (isTauri) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("focus_window");
-    } catch {
-      /* ignore */
-    }
-  } else {
-    window.focus();
+  try {
+    await native.focusWindow();
+  } catch {
+    /* ignore */
   }
   router.navigate(`/agent/${encodeURIComponent(agentName)}`);
 }
