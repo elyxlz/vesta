@@ -133,8 +133,11 @@ export function ChatMessageArea({
   }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
   // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
-  // the user scrolls up. Recomputed on scroll and on content resize (see below).
+  // the user scrolls up. Recomputed on scroll and on any resize (see below).
   const [atBottom, setAtBottom] = useState(true);
+  // Mirror of atBottom for resize handling: once the container has shrunk, the DOM already
+  // reads as scrolled-away, so re-pinning needs the pre-resize answer.
+  const pinnedRef = useRef(true);
 
   const getItemKey = useCallback(
     (index: number) => decorated[index].key,
@@ -202,6 +205,7 @@ export function ChatMessageArea({
     const atEnd =
       el.scrollHeight - el.scrollTop - el.clientHeight <=
       AT_BOTTOM_THRESHOLD_PX;
+    pinnedRef.current = atEnd;
     setAtBottom(atEnd);
     if (hasMore && !loadingMore && !atEnd && el.scrollTop < LOAD_OLDER_TOP_PX) {
       loadMore();
@@ -211,20 +215,27 @@ export function ChatMessageArea({
   // "At bottom" depends on content height, not just scroll position: after the first paint the
   // virtualizer measures real row heights (vs. the estimates scrollToEnd used), which moves the
   // end without firing a scroll event. Recompute on every content resize so the button doesn't
-  // get stuck showing when we're actually pinned to the latest message.
+  // get stuck showing when we're actually pinned to the latest message. And when the container
+  // itself resizes while pinned (mobile keyboard opening, composer growing a line, window
+  // resize), stay pinned to the latest message instead of letting the bottom slide out of view.
   useLayoutEffect(() => {
     const el = parentRef.current;
     const content = el?.firstElementChild;
     if (!el || !content) return;
-    const ro = new ResizeObserver(() => {
-      setAtBottom(
+    const ro = new ResizeObserver((entries) => {
+      if (pinnedRef.current && entries.some((entry) => entry.target === el)) {
+        virtualizer.scrollToEnd();
+      }
+      const atEnd =
         el.scrollHeight - el.scrollTop - el.clientHeight <=
-          AT_BOTTOM_THRESHOLD_PX,
-      );
+        AT_BOTTOM_THRESHOLD_PX;
+      pinnedRef.current = atEnd;
+      setAtBottom(atEnd);
     });
+    ro.observe(el);
     ro.observe(content);
     return () => ro.disconnect();
-  }, []);
+  }, [virtualizer]);
 
   const items = virtualizer.getVirtualItems();
   const topPad = fullscreen ? navbarHeight + 16 : 32;

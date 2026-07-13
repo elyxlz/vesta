@@ -42,27 +42,33 @@ export function useChatKeyboardFocus(
       const viewportHeight = viewport.height;
       const baselineHeight = viewportHeightRef.current;
 
+      let focused = false;
       if (!isTextareaActive) {
         viewportHeightRef.current =
           baselineHeight === null
             ? viewportHeight
             : Math.max(baselineHeight, viewportHeight);
-        writeFocused(false);
-        return;
-      }
-
-      if (baselineHeight === null || viewportHeight > baselineHeight) {
+      } else if (baselineHeight === null || viewportHeight > baselineHeight) {
         viewportHeightRef.current = viewportHeight;
-        writeFocused(false);
-        return;
+      } else {
+        focused = baselineHeight - viewportHeight > 120;
       }
 
-      writeFocused(baselineHeight - viewportHeight > 120);
+      writeFocused(focused);
+      // Browsers that ignore interactive-widget=resizes-content (iOS Safari) keep the
+      // layout viewport under the keyboard and pan it to reveal the caret, a pan that
+      // any reflow while typing resets, hiding the composer. While the keyboard is up,
+      // fit the app to the visual viewport instead so nothing ever needs panning.
+      document.documentElement.style.height = focused
+        ? `${viewportHeight}px`
+        : "";
+      if (focused) window.scrollTo(0, 0);
     };
 
     viewport.addEventListener("resize", syncKeyboardFocus);
     return () => {
       viewport.removeEventListener("resize", syncKeyboardFocus);
+      document.documentElement.style.height = "";
     };
   }, [isMobile, setChatKeyboardFocused, textareaRef]);
 }
