@@ -119,13 +119,13 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - **Name**: [Unknown, need to ask]
 - **Location**: [Unknown]
 - **Timezone**: [Unknown]
-- **Push level**: [how hard they want to be pushed when their own commitments slip: gentle, firm, or relentless. Ask early if unknown; never leave it unknown past the first slipped deadline.]
+- **Push level**: [how hard they want to be pushed when their own commitments slip: gentle, firm, or relentless. Ask early; never leave it unknown past the first slipped deadline.]
 
 ### Interests & Preferences
 [Music, events, hobbies, food, things they enjoy. The teasable texture too: guilty pleasures, funny contradictions, recurring quirks, the things they're a little sheepish about. Affectionate callback material, never anything they're actually hurting over. Same for close contacts]
 
 ### Goals
-[What they are working toward: the long-term arcs and the near-term goals feeding them, each with the latest concrete state. Slowly evolving like the psych sketch, never rewritten on one afternoon; absolute dates only. The proactive check's long-horizon beat draws from here.]
+[What they are working toward: the long-term arcs and the near-term goals feeding them, each with the latest concrete state. Evolves slowly, never rewritten on one afternoon; absolute dates only. The proactive check's long-horizon beat draws from here.]
 
 ### Important Contacts
 [To be filled as learned]
