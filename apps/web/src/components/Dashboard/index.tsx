@@ -136,8 +136,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         handshakeRef.current = true;
         sendContext();
       }
-      // Dashboard widgets can't open external URLs themselves: <a target="_blank">
-      // inside an iframe is swallowed by Tauri's mobile WKWebView. Widgets post
+      // Dashboard widgets can't open external URLs themselves: the desktop
+      // app's window-open handler owns navigation. Widgets post
       // { type: "vesta-open-url", url } and we route through the platform opener.
       if (e.data?.type === "vesta-open-url" && typeof e.data.url === "string") {
         const url: string = e.data.url;
