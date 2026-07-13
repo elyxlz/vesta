@@ -5,6 +5,12 @@ const CLOUDFLARED_DOWNLOAD_BASE: &str =
     "https://github.com/cloudflare/cloudflared/releases/latest/download";
 const CF_API_BASE: &str = "https://api.cloudflare.com/client/v4";
 
+/// Bound every Cloudflare API curl so a stalled connection can never wedge the
+/// caller: the tunnel supervisor runs these calls in its loop and vestad's
+/// shutdown awaits that loop.
+const CF_API_CONNECT_TIMEOUT_SECS: u64 = 10;
+const CF_API_MAX_TIME_SECS: u64 = 60;
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TunnelConfig {
     pub tunnel_id: String,
@@ -208,6 +214,10 @@ fn cf_request(
 ) -> Result<serde_json::Value, String> {
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
+        .arg("--connect-timeout")
+        .arg(CF_API_CONNECT_TIMEOUT_SECS.to_string())
+        .arg("--max-time")
+        .arg(CF_API_MAX_TIME_SECS.to_string())
         .arg("-H")
         .arg(format!("Authorization: Bearer {}", api_token))
         .arg("-H")
