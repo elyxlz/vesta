@@ -4,7 +4,7 @@ from app_chat_cli.bubblelint import bubble_lint_reason, count_sentences
 
 
 def test_bubble_lint_passes():
-    # Short bubbles, one or two sentences, and protected spans (urls, decimals,
+    # Short bubbles, one sentence, and protected spans (urls, decimals,
     # initialisms, abbreviations) whose dots must not read as sentence breaks.
     for msg in [
         "nope, nothing",
@@ -16,13 +16,14 @@ def test_bubble_lint_passes():
         "the W.A.S.T.E. system is down",
         "see https://example.com/a.b.c for the details",
         "call Dr. Smith back today",
-        "done. anything else?",
+        "done, anything else?",
     ]:
         assert bubble_lint_reason(msg) == "", msg
 
 
 def test_bubble_lint_blocks():
     for msg in [
+        "done. anything else?",
         "i checked the first folder. then the second one. nothing in either.",
         (
             "so the thing about the deploy is that it kept timing out on the build step "
