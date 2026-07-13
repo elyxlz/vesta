@@ -391,158 +391,6 @@ async fn bind_http_atomically(
     unreachable!()
 }
 
-/// How many times startup tries to bring the tunnel up before giving up and
-/// starting anyway (with the failure shown in the banner). Absorbs a tunnel that
-/// is slow to register right after boot (DNS-readiness is handled separately by
-/// wait_for_dns_ready, so these retries are for a slow first registration).
-const TUNNEL_STARTUP_ATTEMPTS: u32 = 3;
-const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
-
-/// A stable Cloudflare host whose resolution signals the local resolver is
-/// actually serving. Right after boot systemd-resolved can be up-but-not-ready
-/// and answer "server misbehaving"; cloudflared's edge discovery then fails
-/// fast and burns every tunnel retry in seconds. Waiting for one successful
-/// lookup first removes that race at its source.
-const DNS_READY_HOST: &str = "api.cloudflare.com:443";
-/// Bounded so a genuinely-offline box still finishes booting — the tunnel
-/// supervisor keeps retrying afterward — yet long enough to outlast a slow boot.
-const DNS_READY_MAX_WAIT_SECS: u64 = 60;
-const DNS_READY_POLL_SECS: u64 = 2;
-
-/// Wait (bounded) for DNS to resolve before the tunnel attempts. Returns as soon
-/// as a lookup succeeds, or after DNS_READY_MAX_WAIT_SECS regardless (the tunnel
-/// attempt and its supervisor handle a still-down resolver from there).
-async fn wait_for_dns_ready() {
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(DNS_READY_MAX_WAIT_SECS);
-    loop {
-        if let Ok(mut addrs) = tokio::net::lookup_host(DNS_READY_HOST).await {
-            if addrs.next().is_some() {
-                return;
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            tracing::warn!("DNS still not resolving after {DNS_READY_MAX_WAIT_SECS}s; attempting tunnel anyway");
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(DNS_READY_POLL_SECS)).await;
-    }
-}
-
-/// Bring the tunnel up at startup, retrying before giving up. On success the
-/// banner advertises the live URL and the supervisor keeps it alive; if every
-/// attempt fails, vestad starts ANYWAY (local access + agents) with the error
-/// surfaced in the banner — a broken tunnel must not block the rest of the box.
-///
-/// The /ready pre-flight is credential-free, so this works even on a box that
-/// can't reach the Cloudflare API. Managed (vesta.run) boxes are exempt: the
-/// control plane owns the tunnel, so we trust the seeded config and let the
-/// supervisor (re)connect rather than pre-flighting.
-///
-/// Whether a failed boot setup should discard the saved `tunnel.json`. Only
-/// forget when the box could rebuild it — i.e. it holds its own Cloudflare creds
-/// (the same predicate that gates the recreate path in `try_establish_tunnel`).
-/// Forgetting a config the box CANNOT rebuild turns a transient boot failure into
-/// a permanent outage. Managed boxes never forget (the control plane owns it).
-fn should_forget_failed_tunnel(failed: bool, managed: bool, has_creds: bool) -> bool {
-    failed && !managed && has_creds
-}
-
-async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
-    // Managed boxes don't pre-flight cloudflared at boot (they trust the seeded
-    // config), so only the self-hosted pre-flight path needs a ready resolver.
-    if !is_cloud_managed() {
-        wait_for_dns_ready().await;
-    }
-    let status = retry_tunnel(
-        TUNNEL_STARTUP_ATTEMPTS,
-        std::time::Duration::from_secs(TUNNEL_STARTUP_RETRY_DELAY_SECS),
-        |attempt| async move {
-            let result = try_establish_tunnel(config, port).await;
-            if let Err(reason) = &result {
-                tracing::warn!(
-                    attempt,
-                    attempts = TUNNEL_STARTUP_ATTEMPTS,
-                    "tunnel not up: {reason}"
-                );
-            }
-            result
-        },
-    )
-    .await;
-
-    // Gave up. Drop the saved config ONLY when this box could recreate it (has its
-    // own Cloudflare creds). On a creds-less box (e.g. a legacy vesta.run tunnel) a
-    // merely-transient boot failure — DNS not ready yet — would otherwise orphan a
-    // still-valid tunnel forever AND suppress the supervisor, which keys off
-    // tunnel.json existing. Keeping the config lets the supervisor respawn
-    // cloudflared and self-heal once DNS is up; a genuinely revoked tunnel just
-    // loops with its reason in `vestad logs` (recovery is `vestad connect`).
-    if should_forget_failed_tunnel(
-        matches!(status, TunnelStatus::Failed(_)),
-        is_cloud_managed(),
-        tunnel::has_cf_creds(config),
-    ) {
-        tunnel::forget_tunnel(config);
-    }
-    status
-}
-
-/// Retry an async tunnel attempt up to `attempts` times, sleeping `delay` between
-/// tries. Returns `Active` with the first URL that comes up, or `Failed` carrying
-/// the last error once every attempt has failed.
-async fn retry_tunnel<F, Fut>(
-    attempts: u32,
-    delay: std::time::Duration,
-    mut attempt: F,
-) -> TunnelStatus
-where
-    F: FnMut(u32) -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
-    let mut reason = "tunnel could not be established".to_string();
-    for n in 1..=attempts {
-        match attempt(n).await {
-            Ok(url) => return TunnelStatus::Active(url),
-            Err(e) => {
-                reason = e;
-                if n < attempts {
-                    tokio::time::sleep(delay).await;
-                }
-            }
-        }
-    }
-    TunnelStatus::Failed(reason)
-}
-
-/// One attempt to bring up and verify the tunnel. `Ok(url)` once it registers an
-/// edge connection; `Err(reason)` describes why this attempt failed.
-async fn try_establish_tunnel(config: &std::path::Path, port: u16) -> Result<String, String> {
-    let tc = tunnel::ensure_cloudflared(config).and_then(|_| tunnel::ensure_tunnel(config))?;
-
-    if is_cloud_managed() {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-
-    if tunnel::preflight_tunnel(config, port).await {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-    tracing::warn!(hostname = %tc.hostname, "saved tunnel failed to register");
-
-    // With our own creds the tunnel may be fixable — recreate it from scratch
-    // (new tunnel + token + DNS) and re-verify.
-    if tunnel::has_cf_creds(config) {
-        let subdomain = tc.hostname.split('.').next().unwrap_or("");
-        let fresh = tunnel::setup_tunnel(config, subdomain)?;
-        if tunnel::preflight_tunnel(config, port).await {
-            tracing::info!(hostname = %fresh.hostname, "tunnel recreated and registered");
-            return Ok(format!("https://{}", fresh.hostname));
-        }
-        return Err("recreated tunnel still could not register".to_string());
-    }
-    Err("saved tunnel could not register".to_string())
-}
-
 fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     let config = config_dir();
 
@@ -575,12 +423,29 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
+            // Boot renders no verdict on tunnel health: the supervisor owns
+            // establish/verify/repair and mirrors sustained state into
+            // status.json via on_tunnel_up. Boot only decides whether a tunnel
+            // is intended and advertises the identity URL from tunnel.json.
+            let tunnel_intended = !no_tunnel
+                && (is_cloud_managed()
+                    || tunnel::get_tunnel_config(&config).is_some()
+                    || tunnel::has_cf_creds(&config));
+            let tunnel_url = tunnel_intended
+                .then(|| {
+                    tunnel::get_tunnel_config(&config)
+                        .map(|tc| format!("https://{}", tc.hostname))
+                })
+                .flatten();
             let tunnel_status = if no_tunnel {
                 TunnelStatus::Disabled
+            } else if tunnel_intended {
+                TunnelStatus::Connecting(tunnel_url.clone())
             } else {
-                setup_and_verify_tunnel(&config, port).await
+                TunnelStatus::Failed(
+                    "no tunnel configured: run `vestad connect` to connect a domain".to_string(),
+                )
             };
-            let tunnel_url = tunnel_status.url().map(str::to_string);
 
             docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             // Only advertise a LAN address when the API is actually bound to the
@@ -615,15 +480,6 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             );
             status.persist(&config);
             status.print_banner(&api_key);
-
-            // Supervise whenever a tunnel is INTENDED, not only when boot-time
-            // setup succeeded: a managed box whose tunnel.json the control plane
-            // is still seeding, or a transient ensure_tunnel failure, must not
-            // leave the daemon tunnel-less until a manual restart. The supervisor
-            // re-reads tunnel.json on every respawn, so late config is picked up.
-            let tunnel_intended = tunnel_url.is_some()
-                || (!no_tunnel
-                    && (is_cloud_managed() || tunnel::get_tunnel_config(&config).is_some()));
 
             // Keep status.json honest: on a SUSTAINED tunnel outage the supervisor
             // flips the tunnel field to an error and back to enabled on recovery.
@@ -1126,66 +982,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn forget_failed_tunnel_only_when_the_box_can_recreate_it() {
-        // Transient boot failure on a creds-less box: keep the config so the
-        // supervisor can self-heal. Forgetting would permanently orphan it.
-        assert!(!should_forget_failed_tunnel(true, false, false));
-        // Failed WITH own creds: the recreate path already tried and failed, so
-        // dropping the dead config is safe — a fresh boot / connect rebuilds it.
-        assert!(should_forget_failed_tunnel(true, false, true));
-        // Managed boxes never forget — the control plane owns tunnel.json.
-        assert!(!should_forget_failed_tunnel(true, true, true));
-        // A tunnel that came up is never forgotten.
-        assert!(!should_forget_failed_tunnel(false, false, true));
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |_| {
-            calls.set(calls.get() + 1);
-            async { Ok::<String, String>("https://host".to_string()) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://host"));
-        assert_eq!(calls.get(), 1, "should not retry once an attempt succeeds");
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_retries_until_an_attempt_succeeds() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move {
-                if attempt < 3 {
-                    Err(format!("not up yet (attempt {attempt})"))
-                } else {
-                    Ok("https://up".to_string())
-                }
-            }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://up"));
-        assert_eq!(calls.get(), 3);
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_gives_up_with_the_last_error_after_all_attempts() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move { Err::<String, String>(format!("boom {attempt}")) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
-        assert_eq!(
-            calls.get(),
-            3,
-            "should try exactly `attempts` times before giving up"
-        );
-    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {

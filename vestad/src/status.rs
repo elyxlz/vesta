@@ -281,13 +281,6 @@ pub enum TunnelStatus {
 }
 
 impl TunnelStatus {
-    pub fn url(&self) -> Option<&str> {
-        match self {
-            TunnelStatus::Active(url) => Some(url),
-            _ => None,
-        }
-    }
-
     /// The URL worth advertising to a human: a verified Active URL, or the
     /// identity URL of a tunnel the supervisor is still connecting (live within
     /// seconds on a healthy network, so the banner shows it rather than hiding
