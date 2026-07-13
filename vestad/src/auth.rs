@@ -85,6 +85,42 @@ pub async fn auth_middleware_api_or_agent_token(
     unauthorized()
 }
 
+/// Accepts either the API key or a valid `X-Agent-Token` belonging to any agent on this
+/// host. Gateway-scoped routes (`/version`, `/gateway/...`) have no agent name in the
+/// path to scope a token to: the token proves the caller is one of this host's agents,
+/// the right tier for host-global reads and the self-update action.
+pub async fn auth_middleware_api_or_any_agent_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
+        return next.run(request).await;
+    }
+
+    if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
+        if any_agent_token_matches(provided, &state.env_config.agents_dir) {
+            return next.run(request).await;
+        }
+    }
+    let path = request.uri().path().to_string();
+    tracing::warn!(path = %path, "client auth failed (neither api-key nor any agent-token accepted)");
+    unauthorized()
+}
+
+/// True when the provided token matches the `AGENT_TOKEN` of any agent env file on this host.
+fn any_agent_token_matches(provided: &str, agents_dir: &std::path::Path) -> bool {
+    crate::docker::env_file_names(agents_dir).iter().any(|name| {
+        let (_, expected) = crate::docker::read_agent_port_and_token(name, agents_dir);
+        expected.is_some_and(|expected| expected == provided)
+    })
+}
+
 fn check_agent_token(
     headers: &HeaderMap,
     agent_name: &str,
@@ -475,5 +511,44 @@ mod verify_token_tests {
     #[test]
     fn same_length_non_matching_key_does_not_verify() {
         assert!(!verify_token("the-api-kex", "the-api-key"));
+    }
+}
+
+#[cfg(test)]
+mod any_agent_token_tests {
+    use super::any_agent_token_matches;
+
+    #[test]
+    fn matches_the_token_of_any_agent_env_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            tmp.path().join("alpha.env"),
+            "WS_PORT=4001\nAGENT_TOKEN=tok-alpha\n",
+        )
+        .expect("write alpha env");
+        std::fs::write(
+            tmp.path().join("beta.env"),
+            "export WS_PORT=4002\nexport AGENT_TOKEN=tok-beta\n",
+        )
+        .expect("write beta env");
+        assert!(any_agent_token_matches("tok-alpha", tmp.path()));
+        assert!(any_agent_token_matches("tok-beta", tmp.path()));
+    }
+
+    #[test]
+    fn rejects_an_unknown_token() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            tmp.path().join("alpha.env"),
+            "WS_PORT=4001\nAGENT_TOKEN=tok-alpha\n",
+        )
+        .expect("write alpha env");
+        assert!(!any_agent_token_matches("tok-other", tmp.path()));
+    }
+
+    #[test]
+    fn rejects_when_no_agents_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(!any_agent_token_matches("tok-alpha", tmp.path()));
     }
 }

@@ -2220,9 +2220,6 @@ pub fn build_router(state: SharedState) -> Router {
         // for a registered, rotating refresh token — so the box never mints a
         // refresh token for an unauthenticated caller.
         .route("/auth/exchange", post(auth::exchange_session_handler))
-        .route("/version", get(version))
-        .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
         .route(
@@ -2396,17 +2393,34 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
-    // Gateway logs: accepts either API key or the agent's token (agent self-diagnosis)
+    // Gateway self-update surface, shared with agents: the agent reads /version to see
+    // whether an update exists and POSTs /gateway/update to apply it (the vestad skill's
+    // flow). These paths carry no agent name, so the middleware accepts any of this
+    // host's agent tokens. Update is host-global: it restarts vestad, which stops and
+    // restarts every agent on the host, the caller included.
+    let gateway_agent_shared = Router::new()
+        .route("/version", get(version))
+        .route("/version/check", post(version_check))
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Gateway logs: accepts either API key or any agent's token (agent self-diagnosis;
+    // no agent name in the path, so the self-scoped middleware cannot apply here)
     let gateway_logs = Router::new()
         .route("/gateway/logs", get(gateway_logs_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth::auth_middleware_api_or_agent_token,
+            auth::auth_middleware_api_or_any_agent_token,
         ))
         .with_state(state.clone());
 
     Router::new()
         .merge(vestad_public)
+        .merge(gateway_agent_shared)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
