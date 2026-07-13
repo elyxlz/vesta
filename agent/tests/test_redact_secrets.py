@@ -102,17 +102,19 @@ def test_scan_skips_scrubbed_values(event_bus, db_conn, known_file):
     assert redact.scan(db_conn) == []
 
 
-def test_main_delete_purges_flagged_events(tmp_path, event_bus, db_conn, known_file, monkeypatch, capsys):
+def test_main_reports_candidates_and_scrubs_known(tmp_path, event_bus, db_conn, known_file, monkeypatch, capsys):
     event_bus.emit(ChatEvent(type="chat", text="my key is AKIAABCDEFGHIJKLMNOP"))
-    event_bus.emit(ChatEvent(type="chat", text="nothing sensitive here"))
+    event_bus.emit(ChatEvent(type="chat", text=f"and the password {SECRET} too"))
+    known_file.write_text(f"{SECRET}\n")
     monkeypatch.setattr(redact, "DB", str(tmp_path / "events.db"))
-    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--delete"])
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
 
     assert redact.main() == 0
 
     out = capsys.readouterr().out
+    assert "Scrubbed 1 events" in out
     assert "Found 1 events" in out
-    assert "Deleted 1 events." in out
-    remaining = [row[0] for row in db_conn.execute("SELECT data FROM events")]
-    assert len(remaining) == 1
-    assert "nothing sensitive" in remaining[0]
+    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
+    assert len(rows) == 2
+    assert all(SECRET not in data for data in rows)
+    assert any("AKIAABCDEFGHIJKLMNOP" in data for data in rows)

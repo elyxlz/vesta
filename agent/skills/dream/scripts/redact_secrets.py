@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan events DB for secrets and scrub known-leaked literals. Usage: redact_secrets.py [--delete]"""
+"""Scan events DB for secrets and scrub known-leaked literals. Usage: redact_secrets.py"""
 
 import os
 import re
@@ -89,7 +89,6 @@ def main() -> int:
         print(f"No database at {DB}")
         return 1
 
-    delete = "--delete" in sys.argv[1:]
     conn = sqlite3.connect(DB)
     try:
         scrubbed = scrub_known(conn)
@@ -104,20 +103,9 @@ def main() -> int:
         return 0
 
     ids = sorted({row_id for row_id, _ in matches})
-    print(f"Found {len(ids)} events with potential secrets:")
+    print(f"Found {len(ids)} events with potential secrets. Add each real leak to {KNOWN_FILE} and rerun to scrub it in place:")
     for row_id, snippet in matches[:20]:
         print(f"{row_id}|{snippet}")
-
-    if delete:
-        conn = sqlite3.connect(DB)
-        try:
-            placeholders = ",".join("?" * len(ids))
-            conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", ids)
-            conn.commit()
-        finally:
-            conn.close()
-        print(f"Deleted {len(ids)} events.")
-
     return 0
 
 
