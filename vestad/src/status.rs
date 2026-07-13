@@ -274,7 +274,9 @@ fn agent_rows(agents: &[AgentEntry]) -> Vec<BoxRow> {
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub enum TunnelStatus {
     Disabled,       // --no-tunnel
-    Active(String), // reachable https URL
+    Active(String), // reachable https URL, verified by the supervisor's edge probe
+    // supervisor still converging; identity URL from tunnel.json when one exists
+    Connecting(Option<String>),
     Failed(String), // wanted, but couldn't be established — concise reason
 }
 
@@ -282,6 +284,18 @@ impl TunnelStatus {
     pub fn url(&self) -> Option<&str> {
         match self {
             TunnelStatus::Active(url) => Some(url),
+            _ => None,
+        }
+    }
+
+    /// The URL worth advertising to a human: a verified Active URL, or the
+    /// identity URL of a tunnel the supervisor is still connecting (live within
+    /// seconds on a healthy network, so the banner shows it rather than hiding
+    /// the address).
+    pub fn advertised_url(&self) -> Option<&str> {
+        match self {
+            TunnelStatus::Active(url) => Some(url),
+            TunnelStatus::Connecting(Some(url)) => Some(url),
             _ => None,
         }
     }
@@ -400,12 +414,14 @@ impl Status {
     /// in rather than persisted, so the secret never lands in `status.json`.
     pub fn print_banner(&self, api_key: &str) {
         let local_url = format!("http://localhost:{}", self.port + 1);
-        let tunnel_url = self.tunnel.url();
+        let tunnel_url = self.tunnel.advertised_url();
 
-        // enabled = tunnel up; disabled = --no-tunnel; error: <reason> = a tunnel
-        // was wanted but couldn't be established (no creds, dead tunnel, API error).
+        // enabled = tunnel verified up; connecting… = supervisor converging;
+        // disabled = --no-tunnel; error: <reason> = a tunnel was wanted but
+        // couldn't be established (no creds, dead tunnel, API error).
         let tunnel_desc = match &self.tunnel {
             TunnelStatus::Active(_) => "enabled".to_string(),
+            TunnelStatus::Connecting(_) => "connecting…".to_string(),
             TunnelStatus::Disabled => "disabled".to_string(),
             TunnelStatus::Failed(reason) => format!("error: {}", first_line_truncated(reason, 100)),
         };
@@ -590,6 +606,8 @@ mod tests {
         for tunnel in [
             TunnelStatus::Disabled,
             TunnelStatus::Active("https://host.example/".into()),
+            TunnelStatus::Connecting(Some("https://host.example/".into())),
+            TunnelStatus::Connecting(None),
             TunnelStatus::Failed("invalid token".into()),
         ] {
             let status = Status::new(
@@ -635,6 +653,25 @@ mod tests {
         let json = serde_json::to_string(&status).expect("serialize");
         let back: Status = serde_json::from_str(&json).expect("deserialize");
         assert!(back.agents == agents);
+    }
+
+    #[test]
+    fn advertised_url_covers_active_and_connecting_with_url() {
+        let url = "https://fox.example";
+        assert_eq!(
+            TunnelStatus::Active(url.into()).advertised_url(),
+            Some(url)
+        );
+        assert_eq!(
+            TunnelStatus::Connecting(Some(url.into())).advertised_url(),
+            Some(url)
+        );
+        assert_eq!(TunnelStatus::Connecting(None).advertised_url(), None);
+        assert_eq!(TunnelStatus::Disabled.advertised_url(), None);
+        assert_eq!(
+            TunnelStatus::Failed("x".into()).advertised_url(),
+            None
+        );
     }
 
     #[test]
