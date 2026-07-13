@@ -30,6 +30,11 @@ class UpdateTaskBody(BaseModel):
     status: Literal["pending", "done"] | None = None
     title: str | None = None
     priority: str | int | None = None
+    due_datetime: str | None = None
+    timezone: str | None = None
+    due_in_minutes: int | None = None
+    due_in_hours: int | None = None
+    due_in_days: int | None = None
 
 
 class SetReminderBody(BaseModel):
@@ -41,10 +46,20 @@ class SetReminderBody(BaseModel):
     in_hours: int | None = None
     in_days: int | None = None
     recurring: Literal["hourly", "daily", "weekly", "monthly", "yearly"] | None = None
+    cron: str | None = None
+    fuzz_minutes: int | None = None
 
 
 class UpdateReminderBody(BaseModel):
     message: str
+
+
+class SnoozeReminderBody(BaseModel):
+    in_minutes: int | None = None
+    in_hours: int | None = None
+    in_days: int | None = None
+    at: str | None = None
+    tz: str | None = None
 
 
 # --- App factory ---
@@ -87,7 +102,18 @@ def _create_app(config: Config) -> FastAPI:
 
     @app.patch("/tasks/{task_id}")
     def update_task(task_id: str, body: UpdateTaskBody):
-        return commands.update_task(config, task_id=task_id, status=body.status, title=body.title, priority=body.priority)
+        return commands.update_task(
+            config,
+            task_id=task_id,
+            status=body.status,
+            title=body.title,
+            priority=body.priority,
+            due_datetime=body.due_datetime,
+            timezone=body.timezone,
+            due_in_minutes=body.due_in_minutes,
+            due_in_hours=body.due_in_hours,
+            due_in_days=body.due_in_days,
+        )
 
     @app.delete("/tasks/{task_id}")
     def delete_task(task_id: str):
@@ -111,11 +137,25 @@ def _create_app(config: Config) -> FastAPI:
             in_hours=body.in_hours,
             in_days=body.in_days,
             recurring=body.recurring,
+            cron=body.cron,
+            fuzz_minutes=body.fuzz_minutes,
         )
 
     @app.patch("/reminders/{reminder_id}")
     def update_reminder(reminder_id: str, body: UpdateReminderBody):
         return commands.remind_update(config, reminder_id=reminder_id, message=body.message)
+
+    @app.post("/reminders/{reminder_id}/snooze")
+    def snooze_reminder(reminder_id: str, body: SnoozeReminderBody):
+        return commands.remind_snooze(
+            config,
+            reminder_id=reminder_id,
+            in_minutes=body.in_minutes,
+            in_hours=body.in_hours,
+            in_days=body.in_days,
+            at=body.at,
+            tz=body.tz,
+        )
 
     @app.delete("/reminders/{reminder_id}")
     def delete_reminder(reminder_id: str):

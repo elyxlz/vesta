@@ -21,10 +21,7 @@ def create_scheduler() -> BackgroundScheduler:
     )
 
 
-_REARM_HINT = (
-    "Tip: if no action is taken on this reminder, rearm it for a later date"
-    " via `tasks remind delete {rid}` followed by a new `tasks remind ... --at ...`."
-)
+_SNOOZE_HINT = "Not actionable right now? Push it back: `tasks remind snooze {rid} --in-hours N`."
 
 
 def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:
@@ -50,10 +47,12 @@ def write_reminder_notification(
     *,
     task_id: str | None = None,
     extra: dict | None = None,
+    snooze_hint: bool = False,
 ):
-    """Write a reminder notification JSON file."""
+    """Write a reminder notification JSON file. `snooze_hint` appends the snooze tip; set it for
+    one-shot user reminders only (recurring ones fire again anyway, auto ones carry their own menu)."""
     if not reminder_id or not message:
         raise ValueError("reminder_id and message required")
 
-    full_message = f"{message}\n{_REARM_HINT.format(rid=reminder_id)}"
+    full_message = f"{message}\n{_SNOOZE_HINT.format(rid=reminder_id)}" if snooze_hint else message
     write_notification(notif_dir, "reminder", message=full_message, reminder_id=reminder_id, task_id=task_id, **(extra or {}))

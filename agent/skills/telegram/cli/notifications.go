@@ -26,6 +26,7 @@ type messageNotif struct {
 	Timestamp      string `json:"timestamp"`
 	MessageID      int64  `json:"message_id,omitempty"`
 	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+	ReplyHint      string `json:"reply_hint,omitempty"`
 }
 
 type reactionNotif struct {
@@ -119,9 +120,11 @@ func WriteNotification(
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ContactUnknown: !contactSaved,
+		ReplyHint:      "reply with a short message, and think about how you can best show your personality",
 	}
 	if !isDirectChat {
 		notif.ChatName = chatName
+		notif.ReplyHint = "reply with a short message, and think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
 		if sender != chatName {
 			notif.Sender = sender
 		}

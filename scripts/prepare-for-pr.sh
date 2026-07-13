@@ -123,8 +123,8 @@ section "agent-tests"
 if [ "${SKIP_AGENT:-0}" = "1" ]; then
   skip "agent-tests"
 else
-  run_in agent "ruff check"          uv run ruff check
-  run_in agent "ruff format --check" uv run ruff format --check
+  run_in . "ruff check (repo-wide)"          uv run --project agent/core ruff check .
+  run_in . "ruff format --check (repo-wide)" uv run --project agent/core ruff format --check .
   run_in agent "ty check"            uv run ty check
   run_in agent "pytest"              uv run pytest tests/ --ignore=tests/test_e2e.py -q
 fi
