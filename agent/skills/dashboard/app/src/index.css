@@ -90,22 +90,14 @@ html[data-platform="android"] {
   --sidebar-accent: oklch(0.268 0.008 80 / 50%);
 }
 
-[data-platform="linux"].vibrancy {
-  --background: oklch(0.995 0.005 80 / 92.5%);
-  --card: oklch(0.995 0.005 80 / 92.5%);
-  --muted: oklch(0.97 0.006 80 / 95%);
-  --accent: oklch(0.97 0.006 80 / 92.5%);
-  --sidebar: oklch(0.985 0.006 80 / 92.5%);
-  --sidebar-accent: oklch(0.97 0.006 80 / 92.5%);
+/* Frameless desktop-app drag regions; interactive children stay clickable. */
+.desktop [data-drag-region] {
+  -webkit-app-region: drag;
 }
-
-[data-platform="linux"].vibrancy.dark {
-  --background: oklch(0.147 0.005 80 / 92.5%);
-  --card: oklch(0.216 0.007 80 / 92.5%);
-  --muted: oklch(0.19 0.007 80 / 95%);
-  --accent: oklch(0.268 0.008 80 / 92.5%);
-  --sidebar: oklch(0.216 0.007 80 / 92.5%);
-  --sidebar-accent: oklch(0.268 0.008 80 / 92.5%);
+.desktop [data-drag-region] button,
+.desktop [data-drag-region] a,
+.desktop [data-drag-region] input {
+  -webkit-app-region: no-drag;
 }
 
 .dark {

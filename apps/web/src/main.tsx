@@ -4,16 +4,16 @@ import "./index.css";
 import App from "./App.tsx";
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { KeybindProvider } from "@/providers/KeybindProvider";
-import { isTauri } from "@/lib/env";
-import { detectPlatform } from "@/lib/platform";
+import { native } from "@/lib/native";
 
-const platform = detectPlatform();
+const { runtime, platform } = native;
+const isDesktopApp = runtime === "electron";
 const d = document.documentElement;
 d.dataset.platform = platform;
 
-if (isTauri) {
-  d.classList.add("tauri");
-  if (platform === "macos" || platform === "windows" || platform === "linux") {
+if (isDesktopApp) {
+  d.classList.add("desktop");
+  if (platform === "macos" || platform === "windows") {
     d.classList.add("vibrancy");
   }
   if (import.meta.env.PROD) {
@@ -21,9 +21,9 @@ if (isTauri) {
   }
 }
 
-const isMacTauri = isTauri && platform === "macos";
-d.style.setProperty("--titlebar-center-mt", isMacTauri ? "-0.75rem" : "0px");
-d.style.setProperty("--titlebar-pt", isMacTauri ? "1.1rem" : "0rem");
+const isMacDesktop = isDesktopApp && platform === "macos";
+d.style.setProperty("--titlebar-center-mt", isMacDesktop ? "-0.75rem" : "0px");
+d.style.setProperty("--titlebar-pt", isMacDesktop ? "1.1rem" : "0rem");
 
 await Promise.all([
   document.fonts.load("normal 400 16px 'Public Sans Variable'"),
@@ -34,7 +34,7 @@ const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("missing #root element");
 
 createRoot(rootElement).render(
-  <ThemeProvider defaultTheme={isTauri ? "light" : "system"}>
+  <ThemeProvider defaultTheme={isDesktopApp ? "light" : "system"}>
     <KeybindProvider>
       <App />
     </KeybindProvider>
