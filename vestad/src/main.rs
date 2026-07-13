@@ -499,11 +499,10 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                             None => return, // can't name the URL; leave the field as-is
                         }
                     } else {
-                        // Fired only after TUNNEL_DOWN_SUSTAINED_SECS with a live
-                        // cloudflared whose edge stayed unregistered (a wedged
-                        // connector). A revoked/deleted tunnel exits too fast to
-                        // reach this path and keeps its boot-time failure reason,
-                        // so this is a general recovery hint, not revoked-specific.
+                        // Fired once the tunnel has been unregistered for
+                        // TUNNEL_DOWN_SUSTAINED_SECS, whatever the failure mode
+                        // (wedged connector, fast-exiting cloudflared, dead
+                        // config): a general recovery hint, not revoked-specific.
                         TunnelStatus::Failed(
                             "tunnel down 2+ min — if it persists, run vestad connect".to_string(),
                         )

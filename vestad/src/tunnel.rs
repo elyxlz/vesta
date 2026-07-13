@@ -483,6 +483,15 @@ pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
     ensure_tunnel(config_dir)
 }
 
+/// The subdomain this box wants: VESTA_SUBDOMAIN when set, else <animal>-<hostname>.
+fn preferred_subdomain() -> String {
+    std::env::var("VESTA_SUBDOMAIN")
+        .ok()
+        .map(|s| sanitize(&s))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| generate_subdomain(0))
+}
+
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // Managed (vesta.run) VMs: the control plane creates the tunnel + DNS and
     // SEEDS tunnel.json into the config dir. vestad holds no Cloudflare account
@@ -498,11 +507,7 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
     // set; otherwise keep the generated <animal>-<hostname>. Creation uses the
     // BYOK creds in cloudflare.json (see cf_env / setup_cf_creds_interactive).
-    let preferred = std::env::var("VESTA_SUBDOMAIN")
-        .ok()
-        .map(|s| sanitize(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| generate_subdomain(0));
+    let preferred = preferred_subdomain();
 
     // Reuse existing tunnel if it matches our preferred subdomain
     if let Some(tc) = get_tunnel_config(config_dir) {
@@ -522,6 +527,22 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // different animal.
     tracing::info!(subdomain = %preferred, "creating tunnel");
     setup_tunnel(config_dir, &preferred)
+}
+
+/// Supervisor establish: converge tunnel.json without ever rewriting an
+/// existing config. An existing config is authoritative here, whatever its
+/// subdomain (reconciling a changed subdomain belongs to `vestad connect`);
+/// a missing one is created from BYOK creds, and a managed box keeps
+/// erroring until the control plane seeds it.
+fn establish_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
+    if crate::is_cloud_managed() {
+        return get_tunnel_config(config_dir)
+            .ok_or_else(|| "managed mode: no tunnel.json seeded by the control plane".to_string());
+    }
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        return Ok(saved);
+    }
+    setup_tunnel(config_dir, &preferred_subdomain())
 }
 
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
@@ -784,7 +805,8 @@ fn alloc_loopback_port() -> Result<u16, String> {
 // incident) with a wedged connector and kill a healthy tunnel — dropping every
 // live session through it. /ready measures exactly the thing a restart fixes.
 // The supervisor owns the whole lifecycle: it converges tunnel.json before each
-// run (ensure_tunnel: create from BYOK creds, or wait for the managed seed), and
+// run (establish_tunnel: an existing config is used as-is, one is created from
+// BYOK creds when missing, or it waits for the managed seed), and
 // after a run that never registered it recreates the tunnel from scratch on a
 // BYOK box (repair_tunnel), so config-level death (tunnel deleted server-side,
 // token revoked) self-heals when the box holds creds. A creds-less box keeps
@@ -861,16 +883,21 @@ pub fn supervise_tunnel(
         let mut reported: Option<bool> = None;
         let mut last_registered = tokio::time::Instant::now();
         let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+        // Latches once a repair (tunnel recreated from scratch) succeeds, so a
+        // sustained API-reachable/edge-unreachable incident doesn't recreate the
+        // tunnel + DNS every cycle; a run that registers clears it.
+        let mut repaired_since_registered = false;
         loop {
-            // Establish before each run: converge tunnel.json. Idempotent when
-            // the saved config already matches; created from BYOK creds when
-            // missing; a managed box keeps erroring here until the control
-            // plane seeds it. The Cloudflare API call goes through blocking
-            // curl, so it runs off the async runtime.
+            // Establish before each run: an existing tunnel.json is used as-is
+            // (subdomain reconciliation is `vestad connect`'s job, never the
+            // supervisor's); a missing one is created from BYOK creds; a
+            // managed box keeps erroring here until the control plane seeds
+            // it. The Cloudflare API call goes through blocking curl, so it
+            // runs off the async runtime.
             let ensure_dir = config_dir.clone();
-            let established = tokio::task::spawn_blocking(move || ensure_tunnel(&ensure_dir))
+            let established = tokio::task::spawn_blocking(move || establish_tunnel(&ensure_dir))
                 .await
-                .unwrap_or_else(|join_err| Err(format!("ensure_tunnel task failed: {join_err}")));
+                .unwrap_or_else(|join_err| Err(format!("establish_tunnel task failed: {join_err}")));
             match established {
                 Err(e) => {
                     respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
@@ -898,8 +925,13 @@ pub fn supervise_tunnel(
                             delay_secs = respawn_delay_secs,
                             "tunnel unhealthy ({reason}), restarting cloudflared"
                         );
-                        if should_attempt_repair(registered, has_cf_creds(&config_dir)) {
-                            repair_tunnel(&config_dir).await;
+                        if registered {
+                            repaired_since_registered = false;
+                        }
+                        if should_attempt_repair(registered, has_cf_creds(&config_dir), repaired_since_registered)
+                            && repair_tunnel(&config_dir).await
+                        {
+                            repaired_since_registered = true;
                         }
                     }
                     Err(e) => {
@@ -909,6 +941,16 @@ pub fn supervise_tunnel(
                         tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
                     }
                 },
+            }
+            // A cycle that ends without a registered edge (fast cloudflared
+            // exit, establish or start failure) never reaches a probe tick, so
+            // evaluate the sustained window here too. edge_report latches via
+            // `reported`, so this fires at most once per sustained outage.
+            let sustained_down = last_registered.elapsed()
+                >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
+            if let Some(report) = edge_report(reported, false, sustained_down) {
+                on_tunnel_up(report);
+                reported = Some(report);
             }
             tokio::select! {
                 _ = shutdown_rx.changed() => return,
@@ -1025,30 +1067,40 @@ fn edge_report(reported: Option<bool>, ok: bool, sustained_down: bool) -> Option
     None
 }
 
-/// Whether a finished run warrants recreating the tunnel from scratch: only when
-/// it never registered an edge connection (a run that registered failed
-/// transiently and a plain respawn recovers it) and the box holds its own
-/// Cloudflare creds to rebuild with.
-fn should_attempt_repair(registered: bool, has_creds: bool) -> bool {
-    !registered && has_creds
+/// Whether a finished run warrants recreating the tunnel from scratch: only
+/// when it never registered an edge connection (a run that registered failed
+/// transiently and a plain respawn recovers it), the box holds its own
+/// Cloudflare creds to rebuild with, and no recreate has already succeeded in
+/// this down-period (a run that registers clears the latch).
+fn should_attempt_repair(registered: bool, has_creds: bool, repaired_since_registered: bool) -> bool {
+    !registered && has_creds && !repaired_since_registered
 }
 
 /// Recreate the saved tunnel from scratch (same subdomain, fresh tunnel + token +
 /// DNS record) after a run that never registered. During a network outage the
 /// API call fails fast and changes nothing; with a live network and a revoked or
 /// deleted tunnel this restores it. Never deletes the saved config on failure.
-async fn repair_tunnel(config_dir: &Path) {
+/// Returns true only on a successful recreate, so the caller can latch and stop
+/// repairing until a run registers again.
+async fn repair_tunnel(config_dir: &Path) -> bool {
     let Some(saved) = get_tunnel_config(config_dir) else {
-        return; // nothing saved yet; the establish step owns creation
+        return false; // nothing saved yet; the establish step owns creation
     };
     let subdomain = saved.hostname.split('.').next().unwrap_or("").to_string();
     let repair_dir = config_dir.to_path_buf();
     match tokio::task::spawn_blocking(move || setup_tunnel(&repair_dir, &subdomain)).await {
         Ok(Ok(fresh)) => {
-            tracing::info!(hostname = %fresh.hostname, "tunnel recreated after a run that never registered")
+            tracing::info!(hostname = %fresh.hostname, "tunnel recreated after a run that never registered");
+            true
         }
-        Ok(Err(e)) => tracing::warn!("tunnel repair failed: {e}"),
-        Err(join_err) => tracing::warn!("tunnel repair task failed: {join_err}"),
+        Ok(Err(e)) => {
+            tracing::warn!("tunnel repair failed: {e}");
+            false
+        }
+        Err(join_err) => {
+            tracing::warn!("tunnel repair task failed: {join_err}");
+            false
+        }
     }
 }
 
@@ -1140,13 +1192,20 @@ mod tests {
 
     #[test]
     fn repair_runs_only_for_unregistered_runs_on_byok_boxes() {
-        // A run that never registered, on a box holding its own creds: repair.
-        assert!(should_attempt_repair(false, true));
+        // A run that never registered, on a box holding its own creds, no prior
+        // repair this down-period: repair.
+        assert!(should_attempt_repair(false, true, false));
         // A run that registered failed transiently; the tunnel itself is fine.
-        assert!(!should_attempt_repair(true, true));
+        assert!(!should_attempt_repair(true, true, false));
         // No creds (managed / legacy): nothing to rebuild with.
-        assert!(!should_attempt_repair(false, false));
-        assert!(!should_attempt_repair(true, false));
+        assert!(!should_attempt_repair(false, false, false));
+        assert!(!should_attempt_repair(true, false, false));
+        // A repair already succeeded this down-period: don't recreate again
+        // every cycle while the outage continues.
+        assert!(!should_attempt_repair(false, true, true));
+        assert!(!should_attempt_repair(true, true, true));
+        assert!(!should_attempt_repair(false, false, true));
+        assert!(!should_attempt_repair(true, false, true));
     }
 
     #[test]
@@ -1182,5 +1241,34 @@ mod tests {
     fn alloc_loopback_port_returns_a_usable_port() {
         let port = alloc_loopback_port().expect("allocation succeeds");
         assert_ne!(port, 0);
+    }
+
+    #[test]
+    fn supervisor_establish_never_rewrites_an_existing_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A saved config whose subdomain does NOT match preferred_subdomain()
+        // (simulates legacy creds-less box / hostname drift): the supervisor
+        // must use it as-is, never destroy or recreate it.
+        let mismatched = TunnelConfig {
+            tunnel_id: "existing-tunnel-id".to_string(),
+            tunnel_token: "existing-token".to_string(),
+            hostname: "definitely-not-preferred.example.com".to_string(),
+            dns_record_id: Some("existing-record-id".to_string()),
+        };
+        let path = tunnel_config_path(dir.path());
+        std::fs::write(&path, serde_json::to_string_pretty(&mismatched).unwrap())
+            .expect("write tunnel.json");
+        let original_contents = std::fs::read_to_string(&path).expect("read back");
+
+        let result = establish_tunnel(dir.path()).expect("establish succeeds from saved config");
+
+        assert_eq!(result.hostname, mismatched.hostname);
+        assert_eq!(result.tunnel_id, mismatched.tunnel_id);
+        assert!(path.exists(), "tunnel.json must still exist");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back after establish"),
+            original_contents,
+            "tunnel.json content must be unchanged"
+        );
     }
 }
