@@ -118,14 +118,15 @@ agent/skills/ + agent/core/skills/  # skills (SKILL.md + scripts)
 CI runs these exact subcommands, so passing locally means passing CI:
 
 ```bash
-./check.sh agent          # ruff check + ruff format --check + ty check + pytest (incl. cc_sdk transport tests; needs tmux)
+./check.sh agent          # ty check + pytest (incl. cc_sdk transport tests; needs tmux)
+./check.sh guards         # repo-wide ruff check + format, skills index, uv.lock, dashboard-sync freshness
 ./check.sh cli            # cargo clippy -D warnings + cargo test
 ./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
 ./check.sh web            # eslint + prettier --check + tsc + vitest
 ./check.sh integration    # vestad integration tests (needs Docker)
 ./check.sh live           # live agent e2e (Docker + CLAUDE_CREDENTIALS; real Claude)
-./check.sh all            # agent + cli + vestad + web
+./check.sh all            # guards + agent + cli + vestad + web
 ```
 
 ### Finer-grained commands
