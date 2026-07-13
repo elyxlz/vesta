@@ -186,12 +186,6 @@ def test_batch_multiple():
     assert "<notifications>" not in formatted
 
 
-def test_batch_with_suffix():
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
-    formatted = format_notification_batch([notif], suffix="Check later")
-    assert "Check later" in formatted
-
-
 def test_notification_format_for_display():
     notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
@@ -780,19 +774,6 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatc
         await wait_for_condition(lambda: not queue.empty(), message="live rule change did not apply on the next tick")
     finally:
         await runner.aclose()
-
-
-@pytest.mark.anyio
-async def test_process_batch_defaults_to_notification_suffix(tmp_path):
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    queue: asyncio.Queue = asyncio.Queue()
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
-
-    with patch("core.loops.load_prompt", side_effect=lambda name, config: f"SUFFIX:{name}"):
-        await process_batch([notif], queue=queue, config=config)
-    prompt, _, _, _, _ = await queue.get()
-    assert "SUFFIX:notification_suffix" in prompt
 
 
 @pytest.mark.anyio

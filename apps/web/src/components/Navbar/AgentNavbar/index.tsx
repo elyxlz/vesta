@@ -75,12 +75,12 @@ export function AgentNavbar({
   const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
   // Subpages go back to wherever they were opened from (chat or dashboard); a
   // deep link has no in-app history (location.key === "default"), so fall back
-  // to the dashboard.
+  // to the dashboard, replacing the entry so browser back still exits the app.
   const showBack = !!logsMatch || !!settingsMatch;
   const showDashboardBack = !isMobile && !!chatMatch;
   const goBack = () => {
     if (location.key === "default") {
-      navigate(`/agent/${encodeURIComponent(name)}`);
+      navigate(`/agent/${encodeURIComponent(name)}`, { replace: true });
     } else {
       navigate(-1);
     }

@@ -63,6 +63,13 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
+              # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
+              # agent-only changes can break check-vesta and must trigger it on PRs.
+              - 'agent/core/**'
+              - 'agent/skills/**'
+              - 'agent/MEMORY.md'
+              - 'agent/.gitignore'
+              - 'agent/ruff.toml'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             app:

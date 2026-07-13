@@ -5,7 +5,7 @@ description: Determine the day of the week for any date, always do this whenever
 
 # What Day
 
-Use whenever working with a date, to avoid mistakes about which weekday it falls on and prevent scheduling errors.
+Run this whenever a date's weekday matters, so scheduling and planning never rest on a guessed day of the week.
 
 ## Setup
 
@@ -29,13 +29,6 @@ Output:
   "today": "December 18, 2025 (Thursday)"
 }
 ```
-
-## When to Use
-
-- A date is mentioned in conversation
-- Planning or scheduling events, deadlines, appointments
-- Comparing dates or calculating intervals
-- Verifying day-of-week for any date reference
 
 ## Learned Patterns
 

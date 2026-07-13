@@ -13,6 +13,7 @@ import {
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
@@ -32,7 +33,6 @@ export function SelectedAgentProvider({
   );
 
   const withOp = useAgentOps((s) => s.withOp);
-  const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
@@ -138,9 +138,19 @@ export function SelectedAgentProvider({
     );
   };
 
+  // Delete is terminal: unlike the other ops it hands off to the agent's
+  // disappearance, not to a new status. So it holds "deleting" on success and
+  // lets reconcile drop the op when the agent leaves the list, rather than
+  // clearing to idle and flashing the card back to the gray stopped orb.
   const remove = async () => {
-    await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
-    removeAgentOp(name);
+    const ops = useAgentOps.getState();
+    if (ops.getOp(name).operation !== "idle") return;
+    ops.setOp(name, "deleting");
+    try {
+      await deleteAgent(name);
+    } catch (e) {
+      ops.setOp(name, "idle", errorMessage(e, "delete failed"));
+    }
   };
 
   const value: SelectedAgentContextValue = {

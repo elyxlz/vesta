@@ -70,7 +70,7 @@ To add a new tracker, create `plugins/<name>/` with a qBittorrent `.py` plugin a
 
 ## Adding a local .torrent
 
-`qb add` does not upload local files. When a per-plugin `search` script downloads a `.torrent` to the server (typically `/tmp/`), upload it directly via the qBittorrent API:
+When a per-plugin `search` script downloads a `.torrent` to the server (typically `/tmp/`), upload it directly via the qBittorrent API:
 
 ```bash
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \

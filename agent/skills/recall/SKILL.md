@@ -5,7 +5,7 @@ description: Recall past conversations from long-term memory. Use to look up spe
 
 # Recall
 
-Full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what's in context now. Reach for it whenever the user refers to something from before that you don't currently remember: a past decision, a name, a number, "what did we say about X".
+Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now.
 
 ## Setup
 
