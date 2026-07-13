@@ -10,14 +10,13 @@ Vesta is an AI guardian angel that runs as a persistent daemon in Docker, powere
 
 ## Architecture
 
-Client/server: the `vestad` daemon runs on the host (manages Docker containers, serves the HTTP+WS API); the `vesta` CLI and Tauri apps connect to it. On Linux the CLI/app bootstraps vestad locally via systemd; on macOS/Windows users connect to a remote vestad via `vesta connect`. The Python agent runs inside the container.
+Client/server: the `vestad` daemon runs on the host (manages Docker containers, serves the HTTP+WS API); the `vesta` CLI and the desktop app connect to it. On Linux the CLI/app bootstraps vestad locally via systemd; on macOS/Windows users connect to a remote vestad via `vesta connect`. The Python agent runs inside the container.
 
 - **Agent** (`agent/core/`): async Python. Entry point `main.py`, core loop in `core/loops.py` (message processing, notification monitoring), WebSocket server in `api.py`.
 - **CLI** (`cli/`): standalone Rust crate, the `vesta` client binary. Connects to vestad over HTTPS.
 - **Server** (`vestad/`): standalone Rust crate, the `vestad` daemon. Manages Docker containers, serves the API. Contains `vestad/tests-integration/` (crate `vesta-tests`, a workspace member) with end-to-end tests against a real vestad + client (requires Docker).
-- **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in both Tauri wrappers. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
-- **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web` for macOS/Windows/Linux; only `src-tauri/` plus a thin `package.json`, no frontend code of its own.
-- **Mobile App** (`apps/mobile/`): separate self-contained Tauri wrapper around `@vesta/web` for iOS/Android: independent Cargo crate (`vesta-mobile`), bundle id `com.vestarun.mobile`, no shared Rust code with desktop.
+- **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in the desktop app. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`. Runtime detection and every native capability live in one bridge (`apps/web/src/lib/native/`) with `electron` and `browser` implementations; phones use the vestad-served SPA in a browser (a React Native app may come later).
+- **Desktop App** (`apps/desktop/`): Electron wrapper around `@vesta/web` for macOS/Windows/Linux; a TypeScript main process (`src/`: window chrome, preload bridge, connection store, PKCE loopback, exact-version updater), no frontend code of its own. The app is a client of vestad and always conforms to the gateway's exact version (updating itself up or down to match, via the exact-version updater); updating the gateway is a separate, deliberate action (the UpdatePill). On a version mismatch the whole app is replaced by `VersionMismatchScreen`, which updates the app to the gateway version.
 - **Skills** (`agent/skills/` + `agent/core/skills/`): each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-ins shipped with the agent (e.g. `app-chat`, `upstream-sync`); `agent/skills/` holds the rest. On a box, skills are installed via the sparse-checkout cone of the local workspace checkout (`skills-install` = `git sparse-checkout add`, `skills-remove` drops the cone entry; instant and offline, content comes from local branch history). Skills are plain directories, not MCP servers; the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed in-process via the SDK's `create_sdk_mcp_server`.
 
 ### Key Flows
@@ -57,7 +56,7 @@ Reconciled rubric for this system. Where canonical architecture advice fights Ve
 - **Minimize stack depth.** Deep modules, shallow stacks: no pass-through wrappers or layers that only forward arguments. Every level between an entry point and its effect must make a real decision; inline the ones that don't.
 - **Confine IO to edge modules.** Docker in `vestad/src/docker.rs`, restic in `restic.rs`, the claude driver behind the `claude_agent_sdk` client surface, SQLite + FTS5 in `agent/core/events.py`. No raw shellouts, HTTP calls, or SQL strings scattered into `loops.py`, `client.py`, or request handlers.
 - **One owner per decision.** Notification format, the `agents/{name}.env` config contract, the SDK option/hook mapping (`core/client.py` builds `ClaudeAgentOptions`, `core/sdk_parsing.py` owns the hook wiring): each lives in exactly one module. A constant or format appearing in two modules moves to its owner.
-- **No shared crate between `cli` and `vestad`.** The JSON/WS wire contract, Tauri `invoke()` command strings, and the `X-Agent-Token` header are the only coupling. Duplicate small DTO shapes per crate rather than sharing a library.
+- **No shared crate between `cli` and `vestad`.** The JSON/WS wire contract, the `window.vestaNative` preload API, and the `X-Agent-Token` header are the only coupling. Duplicate small DTO shapes per crate rather than sharing a library.
 - **Python stays functional.** Pure functions plus dataclasses/TypedDicts/pydantic models, no classes-with-methods. Pass `State` and `VestaConfig` as explicit keyword arguments (the functional stand-in for dependency injection).
 - **Minimize global state.** No module-level mutable state or singletons: state lives in explicit objects (`State`, `VestaConfig`) built at the entry point and passed down as arguments.
 - **Type everything as precisely as possible.** No loose-typing escape hatches in any language: no `Any`/`object` stand-ins in Python (see the Python conventions), no `any` in TypeScript, no stringly-typed errors in Rust. Model shapes concretely and parse at the boundary so everything downstream is fully typed.
@@ -104,8 +103,7 @@ agent/        # async Python agent (uv), entry point core/main.py
 cli/          # vesta client (standalone Rust crate)
 vestad/       # vestad daemon (standalone Rust crate) + tests-integration/
 apps/web/     # React + TypeScript SPA (@vesta/web)
-apps/desktop/ # Tauri wrapper (macOS/Windows/Linux)
-apps/mobile/  # Tauri wrapper (iOS/Android)
+apps/desktop/ # Electron wrapper (macOS/Windows/Linux)
 agent/skills/ + agent/core/skills/  # skills (SKILL.md + scripts)
 ```
 
@@ -147,11 +145,9 @@ cd vestad && cargo test -p vesta-tests --test server  # Single integration suite
 
 # Frontend (run from apps/)
 npm install                                # Installs workspace deps (one-time / after package.json changes)
-npm -w @vesta/desktop run tauri -- <args>  # Run the desktop Tauri CLI (dev, build, etc.)
-npm -w @vesta/mobile run ios:build         # Build signed iOS .ipa (also ios:dev, android:build, android:dev)
+npm -w @vesta/desktop run dev              # Desktop dev: vite dev server + electron window with hot reload
+npm -w @vesta/desktop run build            # Package the desktop app (electron-builder, artifacts in apps/desktop/dist)
 ```
-
-On iOS, install the resulting .ipa to a paired device without the Xcode GUI: `xcrun devicectl device install app --device <udid> apps/mobile/src-tauri/gen/apple/build/arm64/Vesta.ipa`. Never press the run button in the generated Xcode project: the "Build Rust Code" phase depends on `npm` on PATH, and Xcode launched from Finder doesn't inherit nvm.
 
 ### Releasing
 
@@ -199,7 +195,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ### Frontend (apps/web/src/)
 - **"Agent" terminology everywhere**, never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`.
-- **Tauri invoke() names must match the Rust backend**: the invoke command strings are the contract, don't rename them.
+- **The `window.vestaNative` preload API is the desktop wire contract**: `apps/desktop/src/preload.ts` and `apps/web/src/lib/native/types.ts` declare it twice and must stay field-for-field identical, don't rename fields on one side.
 - **Hook placement**: hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`); `hooks/` is reserved for hooks shared across components/providers.
 - **Components in folders**: each component gets a folder with `index.tsx` and optionally `styles.ts`.
 - **No dividers inside cards**: never separate sections within a card with a divider line (`border-t`/`border-b`, `<Separator>`, `<hr>`); group with spacing (`gap`, padding). A hard preference, not case-by-case.
@@ -247,11 +243,11 @@ If the skill ships a CLI, put it in a `cli/` subdirectory as its **own standalon
 
 ## CI
 
-One workflow (`ci.yml`) runs on push to `master`, PRs, and releases; jobs are path-filtered on PRs. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, the desktop and mobile `Cargo.toml`/`tauri.conf.json`/`package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest (incl. cc_sdk e2e transport tests under tmux), `uv.lock` freshness. The single required branch-protection check is `merge-gate-ci`.
+One workflow (`ci.yml`) runs on push to `master`, PRs, and releases; jobs are path-filtered on PRs. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest (incl. cc_sdk e2e transport tests under tmux), `uv.lock` freshness. The single required branch-protection check is `merge-gate-ci`.
 
 Docker-based jobs (integration tests, vestad Docker unit tests, live tests) build the agent image **from the checkout** (GHA layer cache) and run with `VESTAD_AGENT_IMAGE=vesta:local`, so PRs are validated against their own agent code and Dockerfile, never the previously released image.
 
-A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` OAuth secret **only on the release event** (not PRs; it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Mobile builds from `apps/mobile`, desktop from `apps/desktop`; they share no Rust code.
+A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` OAuth secret **only on the release event** (not PRs; it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Desktop builds from `apps/desktop` (Electron, no Rust): a universal signed + notarized dmg/zip on macOS, deb/rpm on Linux, NSIS on Windows, plus the `latest*.yml` manifests electron-updater reads.
 
 ## Pull requests
 
