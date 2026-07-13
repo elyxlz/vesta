@@ -34,8 +34,15 @@ That is usually the path shown; if the skill has moved, find where it lives now
 uv tool install --editable --force --reinstall <source-dir>
 ```
 
-This is transactional: a failed rebuild leaves the existing tool exactly as it
-was, so you cannot break a working tool by trying.
+The reinstall is transactional (a failed rebuild leaves the existing tool
+untouched), but check for one side effect after each one. You run with the engine
+venv active (`VIRTUAL_ENV=~/agent/.venv`), and an editable install can leak a copy
+of the command's console script into `~/agent/.venv/bin/<command>`. That directory
+sits ahead of `~/.local/bin` on PATH, so the stray **shadows** the real tool and
+usually cannot import its own package, which breaks the command and its daemon.
+So for each command you reinstalled, confirm it still resolves to `~/.local/bin`
+and actually runs. If one resolves into `~/agent/.venv/bin` instead, or fails to
+import its package, a stray leaked: clear it so the canonical tool takes over.
 
 ### Compiled tools (Go, Rust, and similar)
 
@@ -46,8 +53,9 @@ If one of your compiled skills is a build-once binary, switch it to its launcher
 
 ### Confirm
 
-You are done when every skill tool resolves to live source: re-run the Python
-check above and it prints nothing, and each compiled tool is a launcher rather
-than a build-once binary. A running daemon keeps its old code until its next
-restart, which happens on the next container restart, so you do not need to
-restart anything by hand.
+You are done when every skill tool resolves to live source and runs: re-run the
+Python check above and it prints nothing, each reinstalled command resolves to
+`~/.local/bin` (no engine-venv stray shadowing it), and each compiled tool is a
+launcher rather than a build-once binary. A running daemon keeps its old code
+until its next restart, which happens on the next container restart, so you do
+not need to restart anything by hand.
