@@ -44,13 +44,13 @@ type RuleAction = NotificationInterruptRule["action"];
 // The action badge cycles on click. interrupt/snooze only change *timing*; trash is different in kind:
 // it drops the notification entirely (it never reaches the agent), so it reads as destructive.
 const ACTION_CYCLE: Record<RuleAction, RuleAction> = {
-  interrupt: "pool",
-  pool: "trash",
+  interrupt: "snooze",
+  snooze: "trash",
   trash: "interrupt",
 };
 const ACTION_LABEL: Record<RuleAction, string> = {
   interrupt: "interrupt",
-  pool: "snooze",
+  snooze: "snooze",
   trash: "trash",
 };
 const ACTION_BADGE_VARIANT: Record<
@@ -58,7 +58,7 @@ const ACTION_BADGE_VARIANT: Record<
   "default" | "outline" | "destructive"
 > = {
   interrupt: "default",
-  pool: "outline",
+  snooze: "outline",
   trash: "destructive",
 };
 

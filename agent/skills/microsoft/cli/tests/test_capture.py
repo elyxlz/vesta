@@ -103,14 +103,31 @@ def _fake_app(flow=None, result=None):
     return app
 
 
-def test_setup_start_returns_device_code(monkeypatch, tmp_path):
+def test_setup_start_personal_returns_device_code(monkeypatch, tmp_path):
     cfg = Config(data_dir=tmp_path)
     app = _fake_app(flow={"user_code": "ABC123", "verification_uri": "https://ms/device", "expires_in": 900})
     monkeypatch.setattr(auth_commands.auth, "get_app", lambda *a, **k: app)
-    out = auth_commands.auth_setup(cfg, account_email="a@x.com")
+    out = auth_commands.auth_setup(cfg, account_email="a@outlook.com")
     assert out["status"] == "device_code"
     assert out["code"] == "ABC123"
     assert "_flow_cache" in out
+
+
+def test_setup_start_work_domain_defaults_to_browser(monkeypatch, tmp_path):
+    cfg = Config(data_dir=tmp_path)
+    monkeypatch.setattr(auth_commands.capture, "begin_interactive", lambda config, acct: "http://localhost:6080/handover.html")
+    out = auth_commands.auth_setup(cfg, account_email="a@somecompany.com")
+    assert out["status"] == "sign_in"  # custom domain skips the device-code round-trip
+    assert out["user_url"].endswith("handover.html")
+
+
+def test_setup_work_domain_force_device_returns_device_code(monkeypatch, tmp_path):
+    cfg = Config(data_dir=tmp_path)
+    app = _fake_app(flow={"user_code": "ABC123", "verification_uri": "https://ms/device", "expires_in": 900})
+    monkeypatch.setattr(auth_commands.auth, "get_app", lambda *a, **k: app)
+    out = auth_commands.auth_setup(cfg, account_email="a@somecompany.com", force_device=True)
+    assert out["status"] == "device_code"
+    assert out["code"] == "ABC123"
 
 
 def test_setup_browser_flag_starts_handover(monkeypatch, tmp_path):

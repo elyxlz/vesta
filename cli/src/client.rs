@@ -176,7 +176,6 @@ pub struct SettingsUpdate<'a> {
     pub model: Option<&'a str>,
     pub max_context_tokens: Option<u64>,
     pub timezone: Option<&'a str>,
-    pub preempt_mode: Option<&'a str>,
 }
 
 fn require_bool(value: &serde_json::Value, field: &str) -> Result<bool, String> {
@@ -483,7 +482,7 @@ impl Client {
     /// don't restart on their own, so a fresh agent gets its provider in a single race-free restart.
     /// No-op (no restart) if nothing is set.
     pub fn update_settings(&self, name: &str, update: SettingsUpdate) -> Result<(), String> {
-        let SettingsUpdate { auth, model, max_context_tokens, timezone, preempt_mode } = update;
+        let SettingsUpdate { auth, model, max_context_tokens, timezone } = update;
         let mut changed = false;
         if let Some(mut signin) = auth {
             // Pre-flight: fail fast on a malformed Claude credentials blob locally, rather than after a
@@ -516,10 +515,6 @@ impl Client {
             self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "timezone": tz }))?;
             changed = true;
         }
-        if let Some(mode) = preempt_mode {
-            self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "preempt_mode": mode }))?;
-            changed = true;
-        }
         if changed { self.restart_agent(name) } else { Ok(()) }
     }
 
@@ -539,10 +534,6 @@ impl Client {
         read_json(self.get(&format!("/agents/{name}/settings"))?)
     }
 
-    /// The agent's own config prefs (GET /config, proxied) — timezone, preempt_mode, etc.
-    pub fn get_agent_config(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/config"))?)
-    }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
         self.post(&format!("/agents/{name}/start"))?;
@@ -576,17 +567,6 @@ impl Client {
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
         self.delete_req(&format!("/agents/{name}"))?;
-        Ok(())
-    }
-
-    pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
-        // A rebuild may pull a fresh agent image before responding, same as create_agent.
-        let request = self
-            .authorized(self.agent.post(self.url(&format!("/agents/{name}/rebuild"))))
-            .config()
-            .timeout_recv_response(None)
-            .build();
-        self.finish(request.send_empty())?;
         Ok(())
     }
 

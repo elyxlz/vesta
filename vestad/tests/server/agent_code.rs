@@ -1,6 +1,5 @@
 use vesta_tests::{
-    agent_container_name, docker_cmd, inject_fake_token, mark_first_start_done, unique_agent,
-    TestAgent, SERVER,
+    agent_container_name, docker_cmd, mark_first_start_done, unique_agent, TestAgent, SERVER,
 };
 
 fn assert_agent_core_paths_permissions(
@@ -56,30 +55,4 @@ fn manage_agent_code_false_reaches_ready() {
     let container = agent_container_name(&agent.name);
     assert_agent_core_paths_permissions(&container, false)
         .expect("core paths should be writable from image");
-}
-
-#[test]
-fn rebuild_preserves_auth() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("rebuild")).unwrap();
-    inject_fake_token(&c, &agent.name);
-    c.start_agent(&agent.name).unwrap();
-
-    c.rebuild_agent(&agent.name).unwrap();
-
-    // A rebuild must not wipe the user's credentials. Assert the credentials file
-    // itself survives — not the agent's auth *status*: a fake token's first upstream
-    // call 401s and flips the status to not_authenticated even though the file is
-    // intact, so status is no longer a reliable proxy for "auth preserved".
-    c.wait_until_running(&agent.name, 180)
-        .expect("agent should come up after rebuild");
-    let container = agent_container_name(&agent.name);
-    docker_cmd(&[
-        "exec",
-        &container,
-        "test",
-        "-f",
-        "/root/.claude/.credentials.json",
-    ])
-    .expect("credentials file should survive rebuild");
 }

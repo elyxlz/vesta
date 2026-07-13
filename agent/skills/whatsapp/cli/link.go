@@ -38,7 +38,7 @@ func linkPageURL(tunnel, agentName, serviceName string, port int) string {
 
 // registerVestadService registers a public service with vestad over the
 // loopback (agent-token auth, self-signed TLS so verification is skipped, same
-// trust model as the service skill's register-service curl -k) and returns the
+// trust model as the vestad skill's register-service curl -k) and returns the
 // assigned port. Idempotent on vestad's side: same name, same port.
 func registerVestadService(name string) (int, error) {
 	vestadPort := os.Getenv("VESTAD_PORT")

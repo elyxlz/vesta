@@ -23,7 +23,7 @@ running() {
 
 # Port registered with vestad; empty when vestad is unreachable.
 service_port() {
-  ~/agent/skills/service/scripts/register-service dashboard --public 2>/dev/null || true
+  ~/agent/skills/vestad/scripts/register-service dashboard --public 2>/dev/null || true
 }
 
 # True iff the dashboard answers a 200 on port $1.

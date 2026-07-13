@@ -24,4 +24,6 @@ Then, with them, in this order:
 
 As you learn them, fill in MEMORY.md §4: name, location, timezone, important people, preferences, what they're working toward (their goals, near and long-term), and how hard they want to be pushed when something slips (gentle, or relentless until done; ask if it doesn't surface). Timezone lives in config and `$TZ` reflects it; if it's already right leave it, otherwise set it with the `timezone` skill.
 
+Before the restart, set the hook: schedule your first morning brief with the `tasks` skill on their channel for tomorrow morning (their timezone), built from whatever you now know (calendar, inbox, their goals), and tell them plainly: tomorrow morning I text you first.
+
 When the basics are in place and you're useful, tell them you'll be right back and use the `restart` skill, so the timezone and any new services take effect.

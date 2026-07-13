@@ -47,19 +47,31 @@ async def test_get_returns_empty_rules_when_unset(tmp_path, monkeypatch):
 async def test_put_then_get_round_trip_and_applies(tmp_path, monkeypatch):
     client, config = await _client(tmp_path, monkeypatch)
     try:
-        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "snooze"}]})
         assert resp.status == 200
 
         resp = await client.get("/config")
         rules = (await resp.json())["notification_rules"]
         assert rules[0]["source"] == "twitter"
-        assert rules[0]["action"] == "pool"
+        assert rules[0]["action"] == "snooze"
         assert rules[0]["id"], "PUT must assign ids"
 
         # Persisted to the store for the loop to read, and it drives the decision.
         loaded = cfg.load_notification_rules()
         assert loaded[0].source == "twitter"
-        assert npn.notif_disposition(_notif(), loaded) == "pool"
+        assert npn.notif_disposition(_notif(), loaded) == "snooze"
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_put_legacy_pool_action_is_stored_as_snooze(tmp_path, monkeypatch):
+    # LEGACY: pre-rename clients still send action="pool"; it validates and persists as "snooze".
+    client, _ = await _client(tmp_path, monkeypatch)
+    try:
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        assert resp.status == 200
+        assert cfg.load_notification_rules()[0].action == "snooze"
     finally:
         await client.close()
 
@@ -79,7 +91,7 @@ async def test_put_invalid_action_is_400(tmp_path, monkeypatch):
 async def test_put_rejects_core_source(tmp_path, monkeypatch):
     client, config = await _client(tmp_path, monkeypatch)
     try:
-        resp = await client.put("/config", json={"notification_rules": [{"source": "core", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "core", "action": "snooze"}]})
         assert resp.status == 400
         assert cfg.load_notification_rules() == []
     finally:
@@ -90,7 +102,7 @@ async def test_put_rejects_core_source(tmp_path, monkeypatch):
 async def test_put_invalid_regex_predicate_is_400(tmp_path, monkeypatch):
     client, config = await _client(tmp_path, monkeypatch)
     try:
-        rule = {"match": [{"field": "x", "op": "regex", "value": "(unclosed"}], "action": "pool"}
+        rule = {"match": [{"field": "x", "op": "regex", "value": "(unclosed"}], "action": "snooze"}
         resp = await client.put("/config", json={"notification_rules": [rule]})
         assert resp.status == 400
         assert cfg.load_notification_rules() == []
@@ -105,7 +117,7 @@ async def test_rules_put_after_prefs_put_keeps_both(tmp_path, monkeypatch):
         resp = await client.put("/config", json={"agent_personality": "warm"})
         assert resp.status == 200
         # A rules-only write must not wipe the personality pref saved above (store merge).
-        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "snooze"}]})
         assert resp.status == 200
 
         assert cfg.read_config_store()["agent_personality"] == "warm"

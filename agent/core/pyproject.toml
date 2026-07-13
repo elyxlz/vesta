@@ -1,7 +1,7 @@
 [project]
 name = "vesta"
-version = "0.1.174"
-description = "Personal assistant agent that works autonomously on your behalf"
+version = "0.1.175"
+description = "AI guardian angel that works autonomously on your behalf"
 license = "MIT"
 authors = [
     { name = "elyxlz" }

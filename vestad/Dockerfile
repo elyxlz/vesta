@@ -16,7 +16,7 @@ RUN bash /build/build-whisper.sh /opt/whisper.cpp
 FROM debian:trixie-slim
 
 LABEL org.opencontainers.image.title="Vesta" \
-      org.opencontainers.image.description="Personal assistant agent that works autonomously on your behalf" \
+      org.opencontainers.image.description="AI guardian angel that works autonomously on your behalf" \
       org.opencontainers.image.source="https://github.com/elyxlz/vesta" \
       org.opencontainers.image.licenses="MIT"
 

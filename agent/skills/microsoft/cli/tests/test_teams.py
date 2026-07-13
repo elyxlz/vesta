@@ -463,6 +463,135 @@ def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
     assert list((tmp_path / "notif").glob("*.json")) == []
 
 
+# ---------------------------------------------------------------------------
+# Monitor: Teams CHANNEL message notification emit + graceful degrade
+# ---------------------------------------------------------------------------
+
+
+def _teams_channels_ctx(tmp_path, monkeypatch, *, teams_list, channels=None, messages=None, list_teams_exc=None):
+    """Wire a MicrosoftContext with the channel Graph calls mocked. Pass list_teams_exc to make
+    team enumeration raise (the graceful-degrade path)."""
+    from microsoft_cli.context import MicrosoftContext
+    import logging
+
+    monkeypatch.setattr(teams, "resolve_token", lambda cfg, acct: "tok")
+    monkeypatch.setattr(teams, "_my_id", lambda client, token: "me-guid")
+    if list_teams_exc is not None:
+
+        def _raise(client, token):
+            raise list_teams_exc
+
+        monkeypatch.setattr(teams, "list_teams", _raise)
+    else:
+        monkeypatch.setattr(teams, "list_teams", lambda client, token: teams_list)
+    monkeypatch.setattr(teams, "list_channels", lambda client, token, team_id: channels or [])
+    monkeypatch.setattr(teams, "list_channel_messages", lambda client, token, team_id, channel_id, limit: messages or [])
+    return MicrosoftContext(
+        cache_file=tmp_path / "cache.bin",
+        http_client=MagicMock(),
+        log_dir=tmp_path,
+        notif_dir=tmp_path / "notif",
+        monitor_base_dir=tmp_path,
+        monitor_state_file=tmp_path / "state.txt",
+        monitor_log_file=tmp_path / "m.log",
+        monitor_logger=logging.getLogger("test.teams.channels"),
+        monitor_stop_event=MagicMock(),
+        scopes=[],
+        base_url="",
+        upload_chunk_size=1,
+        folders={},
+    )
+
+
+def test_poll_teams_channels_emits_non_interrupt_notification(tmp_path, monkeypatch):
+    from datetime import datetime, UTC
+    from microsoft_cli import monitor
+
+    teams_list = [{"id": "team-1", "displayName": "Engineering"}]
+    channels = [{"id": "chan-1", "displayName": "General"}]
+    messages = [
+        {
+            "id": "msg-1",
+            "createdDateTime": "2026-07-10T12:00:00Z",
+            "from": {"user": {"id": "other-guid", "displayName": "Bob"}},
+            "body": {"content": "<p>ship it</p>"},
+        }
+    ]
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["type"] == "teams"
+    assert notif["sender"] == "Bob"
+    assert notif["topic"] == "Engineering / General"
+    assert notif["team_id"] == "team-1"
+    assert notif["channel_id"] == "chan-1"
+    assert "ship it" in notif["preview"]
+    # Channel messages are broadcast — they pool rather than interrupt.
+    assert "interrupt" not in notif or notif["interrupt"] is False
+
+
+def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
+    from datetime import datetime, UTC
+    from microsoft_cli import monitor
+
+    teams_list = [{"id": "team-1", "displayName": "Engineering"}]
+    channels = [{"id": "chan-1", "displayName": "General"}]
+    messages = [
+        {
+            "id": "msg-1",
+            "createdDateTime": "2026-07-10T12:00:00Z",
+            "from": {"user": {"id": "me-guid", "displayName": "Me"}},
+            "body": {"content": "my own post"},
+        }
+    ]
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
+def test_poll_teams_channels_skips_old_message(tmp_path, monkeypatch):
+    from datetime import datetime, UTC
+    from microsoft_cli import monitor
+
+    teams_list = [{"id": "team-1", "displayName": "Engineering"}]
+    channels = [{"id": "chan-1", "displayName": "General"}]
+    messages = [
+        {
+            "id": "msg-1",
+            "createdDateTime": "2026-07-10T10:00:00Z",
+            "from": {"user": {"id": "other-guid", "displayName": "Bob"}},
+            "body": {"content": "old news"},
+        }
+    ]
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
+def test_poll_teams_channels_degrades_gracefully_on_permission_error(tmp_path, monkeypatch):
+    """When the account lacks channel access (403 / TeamsError), the poller returns cleanly with no
+    notification and no exception, leaving chats-only behaviour intact."""
+    from datetime import datetime, UTC
+    from microsoft_cli import monitor
+
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=[], list_teams_exc=_http_error(403))
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    # Must not raise.
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+    # A raised TeamsError degrades the same way.
+    ctx2 = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=[], list_teams_exc=teams.TeamsError("nope"))
+    monitor._poll_teams_channels_account(ctx2, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
 def test_poll_teams_skips_old_message(tmp_path, monkeypatch):
     from datetime import datetime, UTC
     from microsoft_cli import monitor

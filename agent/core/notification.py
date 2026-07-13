@@ -16,8 +16,8 @@ TYPE_PROACTIVE_CHECK = "proactive_check"
 TYPE_NIGHTLY_DREAM = "nightly_dream"
 TYPE_COMPACTION_FOLLOWUP = "compaction_followup"
 
-# Types listed here pool (wait for idle); every other core type interrupts.
-CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
+# Types listed here snooze (wait for idle); every other core type interrupts.
+CORE_SNOOZE_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
 
 
 # Fields promoted to the <channel> element's inner body (the message), in priority order.
@@ -34,7 +34,7 @@ class Notification(pyd.BaseModel):
     source: str
     type: str
     # The producing skill's default disposition, used when no user rule matches (True -> interrupt,
-    # False -> pool). See notification_interrupt_policy.notif_disposition.
+    # False -> snooze). See notification_interrupt_policy.notif_disposition.
     interrupt: bool = True
     body: str | None = None
     file_path: str | None = pyd.Field(default=None, exclude=True)

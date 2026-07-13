@@ -7,10 +7,15 @@
    curl -fsSL "https://go.dev/dl/$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1).linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
    export PATH="/usr/local/go/bin:$PATH"
    ```
-2. Build the Telegram CLI (CGO required for SQLite with FTS5):
+2. Install the launcher on PATH. It compiles `cli/` from source on every invocation, so no
+   stale binary can ever drift (the send-message handler and its bubble lint run inside the
+   daemon; a static binary left the daemon executing weeks-old code after the source changed).
+   CGO/FTS5 build flags live in `cli/cgo-env.sh`, sourced by the launcher.
    ```bash
-   cd ~/agent/skills/telegram/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/telegram .
+   mkdir -p ~/.local/bin && ln -sf ~/agent/skills/telegram/telegram ~/.local/bin/telegram
+   telegram --help >/dev/null   # warm the build cache; a compile error surfaces HERE, loudly
    ```
+   Never `go build` a static binary onto PATH; the launcher is the only entry point.
 3. Create a Telegram bot and authenticate:
    - Tell the user to message [@BotFather](https://t.me/BotFather) on Telegram
    - Send `/newbot` and follow the prompts to create a bot
@@ -24,7 +29,7 @@
    telegram daemon start
    ```
    Idempotent (a running daemon is a no-op) and defaults `--notifications-dir` to `~/agent/notifications`. Check with `telegram daemon status`.
-5. **Important**: The user must `/start` the bot from their Telegram account before Vesta can send them messages. After that first interaction, Vesta can message them anytime (including autonomously, e.g., morning reports).
+5. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
 6. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
    running telegram || { telegram daemon start; sleep 1; }
@@ -35,6 +40,9 @@
    busy or mid-restart. It is rate-limited (backs off after repeated restarts) and drops a
    notification when it acts. Especially important when Telegram is the primary/only channel.
 
-   **Deploying a new binary:** build it, then `telegram daemon restart`. The restart quits the
-   watchdog first, restarts the daemon, and brings the watchdog back, so the watchdog can never
-   race you into two daemons (two pollers, Telegram 409 Conflict).
+   **Deploying source changes:** there is no build step. The launcher recompiles `cli/` from
+   source on every invocation (Go's build cache keeps an unchanged rebuild well under a second),
+   so an edit is picked up by the next invocation. For the daemon (which holds the running
+   process), `telegram daemon restart` bounces it onto the fresh build; the restart quits the
+   watchdog first and brings it back after, so the watchdog can never race you into two daemons
+   (two pollers, Telegram 409 Conflict).

@@ -7,6 +7,10 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
+## Preflight: daemon liveness (do this first, every tick)
+
+Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op). Tell for `tasks`: an empty `tasks remind list` / `tasks list` is the sign its daemon is down.
+
 ## Two questions every tick
 
 Resolve two separate questions each tick:
@@ -32,11 +36,15 @@ A goal blocked on the user for more than one wake window can be nudged, not held
 
 Nudging is one tool, not the whole job, and it's the one they'll always ask for more of. Cap it at one task-nudge thread per check. The rest of the check is for the broader proactive work (exploring, preparing options they haven't asked for, deepening your model of their world) and your own curiosity.
 
+## Committing together
+
+Every few days, when nothing is urgent, sweep the dormant backburner (tasks with no due date, stalled goals in MEMORY.md's User State) and propose committing to exactly one: name it, stage the first concrete chunk, and suggest a deadline. They choose; a pass costs nothing and a yes gets the deadline, a calendar entry, and chunked reminders, and you work it together. Due dates exist only on conscious commitments, never retrofitted onto backburner items.
+
 ## When to reach out
 
-Reach out if you found something good, something needs attention, or you just have something to say. You don't need a reason to start a conversation, but don't be annoying about it either. If there's nothing worth saying, stay quiet. Background action beats a message that wastes their attention.
+Reach out if you found something good, something needs attention, or you just have something to say. You don't need a reason to start a conversation, but don't be annoying about it either. Background action beats a message that wastes their attention.
 
 ## How to decide
 
 - Read MEMORY.md's user state and the recent conversation before acting
-- Check the `tasks` skill for anything overdue or upcoming
+- Check for anything overdue or upcoming: `tasks list` and `tasks remind list`

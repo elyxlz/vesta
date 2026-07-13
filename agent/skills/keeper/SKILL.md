@@ -114,3 +114,10 @@ keeper "generate -dr 6"                  # diceware passphrase (6 words)
 
 ### Vault Organization
 [How the user organizes folders and records]
+
+## Cleanup / standardization gotchas
+Doing a vault cleanup pass, a few CLI edges to know:
+- **Legacy records can't be renamed**: `record-update` on a `type=general` (legacy) record errors "Legacy record type is not supported." Fix: `record-add` a fresh `login`-type copy (login/password/url), `get <uid> --unmask` to VERIFY the password copied, `mv` to the folder, then `rm <old> -f`. Verify BEFORE deleting the original.
+- **Special-char passwords** (with `$` or `!`) break single-quoting in the `record-add` command string ("No closing quotation"). Use double-quotes and escape the dollar sign, e.g. `password="p@ss\$w!rd"`. Verify after.
+- **Dash-prefixed UIDs** (e.g. `-KomRZ...`): `rm` parses the leading `-` as a flag. Use `rm -f -- <uid>` (the `--` ends flag parsing).
+- **Duplicates**: `find-duplicate`. Often one copy holds the real creds and the other is an empty shell (just a URL) check both with `--unmask` before deleting; NEVER delete the one with a unique password.

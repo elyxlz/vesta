@@ -343,8 +343,8 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
 
     # monitor_loop calls process_batch on the interrupt notification.
     # process_batch queues the message and keeps the file on disk until processing completes.
-    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
-        await process_batch([notif], queue=dying_queue, state=state, config=config)
+    with patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=dying_queue, config=config)
 
     # File is preserved on disk until after the message is fully processed (the fix).
     assert notif_file.exists(), "process_batch must not delete the file before processing completes"

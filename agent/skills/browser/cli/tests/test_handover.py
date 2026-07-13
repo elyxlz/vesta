@@ -54,6 +54,19 @@ def test_page_connects_to_relative_websockify_path():
     assert "base + 'websockify'" in page
 
 
+def test_page_is_mobile_usable():
+    # On a phone the decorative MacBook frame is dropped and the live screen fills the viewport,
+    # and a soft-keyboard affordance is present so the user can type email/password/MFA. Guard the
+    # pieces that make touch sign-in work; desktop still keeps the frame.
+    page = handover.render_page()
+    assert "@media (max-width: 820px), (pointer: coarse)" in page  # responsive breakpoint
+    assert ".frame, .engraving { display: none; }" in page  # frame dropped on mobile
+    assert 'id="kbd-button"' in page and 'id="kbdinput"' in page  # keyboard button + hidden input
+    assert "import Keyboard from './core/input/keyboard.js'" in page  # noVNC keyboard wiring
+    assert "keysyms.lookup" in page  # Android input-diff -> keysym fallback
+    assert "user-scalable=no" not in page  # pinch-zoom must stay enabled on touch
+
+
 # ── web-root assembly ─────────────────────────────────────────
 
 

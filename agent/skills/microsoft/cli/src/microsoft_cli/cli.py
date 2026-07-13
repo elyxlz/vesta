@@ -15,6 +15,17 @@ from . import backend, owa_rest, owa_rest_commands, teams
 from .context import MicrosoftContext
 
 
+# Commands whose effect is to actually transmit mail. In draft-only mode these are
+# refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
+_TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+
+
+def _draft_only_enabled() -> bool:
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _write_pid(config):
     (config.data_dir / "serve.pid").write_text(str(os.getpid()))
 
@@ -83,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_setup.add_argument("--account", required=True)
     p_setup.add_argument("--browser", action="store_true", help="Skip device code and capture from the browser (locked work/school tenant).")
+    p_setup.add_argument("--device", action="store_true", help="Force device-code sign-in even for a work/school domain (permissive tenants).")
     p_setup.add_argument("--flow-cache", default=None, help="Finish a device-code sign-in started by a prior `auth setup`.")
     p_setup.add_argument("--capture", action="store_true", help="Finish after signing in through the browser handover.")
 
@@ -149,6 +161,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
+
+    p_reply_draft = email_sub.add_parser("reply-draft")
+    p_reply_draft.add_argument("--account", required=True)
+    p_reply_draft.add_argument("--id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
+    p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
+    p_reply_draft.add_argument("--attachments", nargs="+", default=None)
+    p_reply_draft.add_argument("--reply-all", action="store_true")
+    p_reply_draft.add_argument("--replace-draft", dest="replace_draft", default=None, help="Delete this draft id first (for re-edits)")
 
     p_forward = email_sub.add_parser("forward")
     p_forward.add_argument("--account", required=True)
@@ -480,7 +500,12 @@ def _dispatch_auth(args, config):
         return auth_commands.list_accounts(config)
     elif args.command == "setup":
         return auth_commands.auth_setup(
-            config, account_email=args.account, use_browser=args.browser, flow_cache=args.flow_cache, do_capture=args.capture
+            config,
+            account_email=args.account,
+            use_browser=args.browser,
+            flow_cache=args.flow_cache,
+            do_capture=args.capture,
+            force_device=args.device,
         )
     elif args.command == "login":
         return auth_commands.authenticate_account(config)
@@ -526,6 +551,11 @@ def _route(args, config, account_email, graph_fn, rest_fn):
 
 def _dispatch_email(args, config, client):
     acct = args.account
+
+    # Hard draft-only guard: refuse any transmitting command before it can reach
+    # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
+    if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
+        raise RuntimeError(_DRAFT_ONLY_MESSAGE)
 
     def route(graph_fn, rest_fn):
         return _route(args, config, acct, graph_fn, rest_fn)
@@ -576,6 +606,19 @@ def _dispatch_email(args, config, client):
             account_email=acct, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all, html=args.html
         )
         return route(lambda: email.reply_to_email(config, client, **kw), lambda: owa_rest_commands.reply_to_email(config, client, **kw))
+    elif args.command == "reply-draft":
+        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
+        # has no OWA REST counterpart, so this bypasses the backend router.
+        return email.reply_draft(
+            config,
+            client,
+            account_email=acct,
+            email_id=args.email_id,
+            body=args.body,
+            attachments=args.attachments,
+            reply_all=args.reply_all,
+            replace_draft=args.replace_draft,
+        )
     elif args.command == "forward":
         kw = dict(
             account_email=acct, email_id=args.email_id, to=args.to, body=args.body, cc=args.cc, attachments=args.attachments, html=args.html

@@ -1,9 +1,9 @@
 ---
 name: tricount
-description: Tricount shared-expense / bill-splitting CLI. List tricounts, view expenses and balances, add expenses. No official API — uses reverse-engineered Tricount (bunq) REST API.
+description: Tricount shared-expense / bill-splitting CLI. List tricounts, view expenses and balances, add expenses. No official API: uses the reverse-engineered Tricount (bunq) REST API.
 ---
 
-# Tricount — CLI: tricount
+# Tricount (CLI: tricount)
 
 Manage shared expenses via Tricount (bunq). List your tricounts, view expenses and balances, add new expenses.
 
@@ -13,7 +13,7 @@ See [SETUP.md](SETUP.md) for installation.
 
 ## Auth
 
-Tricount uses **anonymous device registration** — no Tricount account or password needed. The CLI generates an RSA key pair and registers as an anonymous device, receiving an auth token that persists across sessions.
+Tricount uses **anonymous device registration**: no Tricount account or password needed. The CLI generates an RSA key pair and registers as an anonymous device, receiving an auth token that persists across sessions.
 
 ```bash
 # Register this device (one-time, no account needed)
@@ -89,11 +89,11 @@ tricount add-expense <tricount> \
 ```
 
 Options:
-- `--description` / `-d` — expense label (required)
-- `--amount` / `-a` — positive total amount in the tricount's currency (required)
-- `--payer` / `-p` — name (or UUID) of the member who paid (required)
-- `--split` / `-s` — comma-separated names/UUIDs to split among; omit for equal split among all
-- `--date` — date string `YYYY-MM-DD HH:MM:SS.000000`; defaults to now
+- `--description` / `-d`: expense label (required)
+- `--amount` / `-a`: positive total amount in the tricount's currency (required)
+- `--payer` / `-p`: name (or UUID) of the member who paid (required)
+- `--split` / `-s`: comma-separated names/UUIDs to split among; omit for equal split among all
+- `--date`: date string `YYYY-MM-DD HH:MM:SS.000000`; defaults to now
 
 ## Watcher daemon (notifications)
 
@@ -132,4 +132,4 @@ screen -dmS tricount tricount serve --notifications-dir ~/agent/notifications
 - Install via: `uv tool install --editable <path-to-skill>/cli`
 - The Tricount API is unofficial (reverse-engineered from the Android app). It may change without notice.
 - Balances are computed client-side (no dedicated balance endpoint).
-- Any device with the sharing token can read and write expenses — access is trust-based.
+- Any device with the sharing token can read and write expenses: access is trust-based.

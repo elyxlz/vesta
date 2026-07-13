@@ -83,9 +83,8 @@ async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason:
     """Hard-abort the current turn via the SDK's interrupt control request.
 
     In headless mode the CLI's handler for this request also kills every running backgrounded
-    subagent/workflow task (issue #982), so routine preemption defaults to send_preempt instead;
-    this fires only on failure paths (silence/query timeout, provider auth lost) and in
-    preempt_mode="interrupt", which trades that teardown for immediate mid-tool preemption."""
+    subagent/workflow task (issue #982), so routine preemption is send_preempt instead; this
+    fires only on failure paths (silence/query timeout, provider auth lost)."""
     client = state.client
     if not client:
         return False
@@ -160,12 +159,6 @@ async def persist_session_id(session_id: str, *, state: vm.State, config: cfg.Ve
 
 
 _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
-
-# preempt_mode="interrupt" only: post-interrupt wait for the interrupted turn's
-# ResultMessage. Purely a labeling nicety so the next turn usually opens against a clean stream;
-# when the CLI's wind-down outlives it, the consumer still receives everything and the late
-# result is dropped as advisory (issue #958).
-_INTERRUPT_TURN_END_GRACE_S = 5.0
 
 
 async def cancel_task(task: asyncio.Task[tp.Any]) -> None:
@@ -332,7 +325,6 @@ async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.Asyn
                 finally:
                     await cancel_task(consumer_task)
                     state.client = None
-                    state.interrupt_event = None
                     state.compacting = False
                     state.turn = None
                     logger.client("Client session closed")
@@ -364,8 +356,7 @@ class QueryNotDelivered(Exception):
 async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
     """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
     wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
-    this turn as an ordinary ResultMessage. preempt_mode="interrupt" only: the
-    queue-watcher sets `state.interrupt_event` and this loop fires the SDK interrupt itself."""
+    this turn as an ordinary ResultMessage."""
     assert state.client is not None
     client = state.client
 
@@ -395,14 +386,7 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
             raise QueryNotDelivered(str(e) or type(e).__name__) from e
     diagnostics.touch_activity(state, "query_sent")
 
-    interrupt_task: asyncio.Task[tp.Any] | None = None
-    if state.interrupt_event and not state.interrupt_event.is_set():
-        interrupt_task = asyncio.create_task(state.interrupt_event.wait())
-
     done_task = asyncio.create_task(turn.done.wait())
-    waitables: set[asyncio.Task[tp.Any]] = {done_task}
-    if interrupt_task:
-        waitables.add(interrupt_task)
 
     try:
         while True:
@@ -411,7 +395,7 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
             # Wake at least every _SILENCE_POLL_S so long thinking gets liveness notes.
             silence_budget = config.response_timeout - (time.monotonic() - turn.last_message_at)
             wait_timeout = max(min(silence_budget, _SILENCE_POLL_S), 0)
-            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout)
+            done, _ = await asyncio.wait({done_task}, timeout=wait_timeout)
 
             if not done:
                 if time.monotonic() - turn.last_message_at >= config.response_timeout:
@@ -420,26 +404,13 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
                 diagnostics.note_turn_liveness(state, turn=turn)
                 continue
 
-            if done_task in done:
-                if turn.error is not None:
-                    raise turn.error
-                break
-
-            await attempt_interrupt(state, config=config, reason="New message interrupt")
-            # Give the wind-down a bounded window to deliver its ResultMessage so the next turn
-            # usually opens clean; on expiry the consumer still receives everything (emitted live,
-            # late result dropped), so nothing jams or leaks — the issue #958 failure mode.
-            try:
-                await asyncio.wait_for(turn.done.wait(), timeout=_INTERRUPT_TURN_END_GRACE_S)
-            except TimeoutError:
-                pass
+            if turn.error is not None:
+                raise turn.error
             break
     finally:
         state.compacting = False
         _close_turn(state, turn)
         await cancel_task(done_task)
-        if interrupt_task and not interrupt_task.done():
-            await cancel_task(interrupt_task)
 
     return turn.texts
 

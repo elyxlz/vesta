@@ -11,7 +11,11 @@ Run this once and the daemon and both binaries share the same per-account token 
 - **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
 - **Yahoo / iCloud / Fastmail / generic IMAP**: **app password**.
 
-Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com`). These are public, not secrets, and are the canonical open-source-mail-client choice. The reason: Microsoft killed basic-auth IMAP for personal accounts in late 2024 and deprecated tenantless Azure app registrations mid-2025, so reusing a published client ID is the only OAuth path that doesn't require the user to register an Azure tenant. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, which the skill captures via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600).
+Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop-app secret `kSmqreRr0qwBWJgbf5Y-PjSU`). These are public, not secrets, and are the canonical open-source-mail-client choice. The reason: Microsoft killed basic-auth IMAP for personal accounts in late 2024 and deprecated tenantless Azure app registrations mid-2025, so reusing a published client ID is the only OAuth path that doesn't require the user to register an Azure tenant. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, which the skill captures via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600).
+
+The Google desktop client is public but Google's token endpoint still requires the published `client_secret` in the authorization-code and refresh exchanges, so the skill sends it. (An earlier Google client id shipped here, `...t1glqf`, was retired by Google and now returns `invalid_client`; the live client is `...t1hgqj`, verified against Thunderbird's current source.)
+
+**Google Calendar in the same sign-in.** The `...t1hgqj` client is registered under Mozilla's verified Google Cloud project (number `406964657835`), whose consent screen already grants mail, calendar, and contacts together. So one Gmail consent also grants `https://www.googleapis.com/auth/calendar`, and the `calendar` commands (see SKILL.md) work with no own Google app, no verification, and no CASA (`auth/calendar` is a "sensitive", not "restricted", scope, so it needs no annual security assessment). Existing Gmail accounts authed before this change must re-auth once to pick up the calendar scope and the corrected client id: `email-client auth add --account <name> --provider gmail --reauth`.
 
 This is why both OAuth consent screens say "Mozilla Thunderbird". That is expected, not a misconfiguration.
 
@@ -99,6 +103,8 @@ email-client-send --account personal --reply-to-uid <uid> --body "draft reply fo
 email-client list --account personal --folder Drafts --limit 3
 ```
 
+**Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` in the environment to hard-disable sending. Any send/reply/forward is refused before touching SMTP (non-zero exit), while `--draft` still works. Truthy values: `1`/`true`/`yes` (case-insensitive). Default off. Verify with `EMAIL_DRAFT_ONLY=1 email-client-send --account personal --to "<user-email>" --subject x --body y` (refuses) vs. the same with `--draft` (succeeds).
+
 Verify mailbox edits, folder counts, and folder management:
 
 ```bash
@@ -120,6 +126,20 @@ email-client delete --uid <uid> --hard   # permanent
 ```
 
 If these work, repeat steps 2-3 for each additional account.
+
+### Calendar (Gmail accounts only)
+
+A Gmail account authed after this change also has Google Calendar in the same token. Smoke-test it:
+
+```bash
+email-client calendar list-calendars --account personal
+email-client calendar list --account personal --days-ahead 7
+email-client calendar create --account personal --subject "email-client cal test" --start 2026-07-20T15:00:00 --end 2026-07-20T15:30:00 --timezone Europe/London
+email-client calendar get --account personal --id <eventId-from-create>
+email-client calendar delete --account personal --id <eventId-from-create>
+```
+
+If `list-calendars` returns `Google Calendar refused the request` or a scope error, the account was authed before calendar support: re-auth once with `email-client auth add --account personal --provider gmail --reauth`. Calendar commands only work on Google accounts; on any other provider they exit with a clear "only supported for Google accounts" message. See SKILL.md "Calendar" for the full command set and the invite-sending caveat.
 
 ## 4. Start the poll daemon
 
@@ -194,6 +214,8 @@ Repeat for each connected account. Don't rush this. Go through many hundreds of 
 - **`LOGIN failed.` on first IMAP command, no OAuth**: not using XOAUTH2 against a Microsoft account that requires it. Personal Microsoft accounts have basic-auth disabled; the device flow is mandatory.
 - **`acquire_token_by_refresh_token` errors after weeks**: Microsoft refresh token expired. Run `email-client auth add --account <name> --reauth`.
 - **Gmail `invalid_grant` on refresh**: access revoked or the refresh token aged out. Run `email-client auth add --account <name> --provider gmail --reauth`.
+- **Gmail `invalid_client` "The OAuth client was not found"**: the token was minted against the retired `...t1glqf` client id. Update the skill and re-auth (`email-client auth add --account <name> --provider gmail --reauth`); the current client id is `...t1hgqj`.
+- **`calendar` command says "only supported for Google accounts"**: calendar is Google-specific; select or add a Gmail account. On a Gmail account, a scope error instead means an old mail-only auth: re-auth with `--reauth`.
 - **Yahoo / iCloud `LOGIN failed`**: app password rotated or wrong. Generate a new one and `--reauth`.
 - **Loopback OAuth `bind: Address already in use`**: another process grabbed the port between probe and bind. Re-run; the CLI picks a fresh random port each time.
 - **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and `email-client daemon status` shows `"running": true`. A `daemon_died` notification with a `reason` field means it crashed or was killed outside the CLI; restart with `email-client daemon start`.

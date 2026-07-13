@@ -25,14 +25,14 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 
-// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// Agent create builds/pulls the image (minutes on a cold cache), which the 120s control
 // deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
 const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild", "auth", "logs", "tree", "file", "backups",
+    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups",
     "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
@@ -152,6 +152,22 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
 /// (e.g. the spawned backup/restore pipelines) without borrowing `state`.
 async fn agent_write_guard(state: &AppState, name: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
     state.agent_lock(name).await.write_owned().await
+}
+
+/// Refuse a container-mutating operation while the agent's container is mid-rebuild: the rebuild
+/// (boot reconcile included, which doesn't hold the per-agent write lock) removes and recreates
+/// the container, so a concurrent start/restart/destroy would race the recreate.
+fn ensure_not_rebuilding(
+    rebuilding: &docker::RebuildTracker,
+    name: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if rebuilding.is_rebuilding(name) {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            &format!("agent '{name}' is updating (container rebuild in progress); wait for it to finish"),
+        ));
+    }
+    Ok(())
 }
 
 /// Run a container-mutating operation on a detached task and await its single result over a oneshot
@@ -413,7 +429,7 @@ async fn gateway_update_handler(
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
+    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir, &state.rebuilding).await;
     Json(agents)
 }
 
@@ -503,7 +519,7 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
+    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir, &state.rebuilding)
         .await
         .map_err(map_docker_err)?;
     Ok(Json(status))
@@ -514,6 +530,7 @@ async fn start_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "starting agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     {
@@ -563,6 +580,7 @@ async fn stop_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "stopping agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     {
@@ -607,6 +625,7 @@ async fn restart_agent_handler(
     body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let reason =
         parse_restart_reason(&body).map_err(|msg| err_response(StatusCode::BAD_REQUEST, &msg))?;
     // Detached from this request's connection: a self-restart's client is the agent inside the very
@@ -635,6 +654,7 @@ async fn restart_agent_handler(
             &state.env_config,
             &user_mounts,
             reason,
+            &state.rebuilding,
         )
         .await
         .map_err(map_docker_err)?;
@@ -648,6 +668,7 @@ async fn destroy_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "destroying agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
@@ -661,36 +682,6 @@ async fn destroy_agent_handler(
         save_settings(&settings);
     }
 
-    Ok(ok_json())
-}
-
-async fn rebuild_agent_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "rebuilding agent");
-    let _guard = agent_write_guard(&state, &name).await;
-
-    let user_mounts = {
-        let settings = state.settings.read().await;
-        settings.agent_mounts(&name)
-    };
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts)
-        .await
-        .map_err(map_docker_err)?;
-    // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
-    {
-        let mut settings = state.settings.write().await;
-        settings
-            .agents
-            .entry(name.clone())
-            .or_default()
-            .user_desired = UserDesired::Running;
-        save_settings(&settings);
-    }
-    docker::start_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -2229,9 +2220,6 @@ pub fn build_router(state: SharedState) -> Router {
         // for a registered, rotating refresh token — so the box never mints a
         // refresh token for an unauthenticated caller.
         .route("/auth/exchange", post(auth::exchange_session_handler))
-        .route("/version", get(version))
-        .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
         .route(
@@ -2313,10 +2301,9 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
+    // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2378,7 +2365,7 @@ pub fn build_router(state: SharedState) -> Router {
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
     // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
     // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
-    // so it rides the longrun timeout like the rebuild route, not the control tier.
+    // so it rides the longrun timeout like the create route, not the control tier.
     let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .layer(control_timeout_layer())
@@ -2406,17 +2393,34 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
-    // Gateway logs: accepts either API key or the agent's token (agent self-diagnosis)
+    // Gateway self-update surface, shared with agents: the agent reads /version to see
+    // whether an update exists and POSTs /gateway/update to apply it (the vestad skill's
+    // flow). These paths carry no agent name, so the middleware accepts any of this
+    // host's agent tokens. Update is host-global: it restarts vestad, which stops and
+    // restarts every agent on the host, the caller included.
+    let gateway_agent_shared = Router::new()
+        .route("/version", get(version))
+        .route("/version/check", post(version_check))
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Gateway logs: accepts either API key or any agent's token (agent self-diagnosis;
+    // no agent name in the path, so the self-scoped middleware cannot apply here)
     let gateway_logs = Router::new()
         .route("/gateway/logs", get(gateway_logs_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth::auth_middleware_api_or_agent_token,
+            auth::auth_middleware_api_or_any_agent_token,
         ))
         .with_state(state.clone());
 
     Router::new()
         .merge(vestad_public)
+        .merge(gateway_agent_shared)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
@@ -2724,6 +2728,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
+    let reconcile_rebuilding = state.rebuilding.clone();
     tokio::spawn(async move {
         docker::reconcile_containers(
             &reconcile_docker,
@@ -2741,6 +2746,7 @@ pub async fn run_server(cfg: ServerConfig) {
             // Mount grants are also read LIVE so a grant added/removed during the reconcile window
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
+            &reconcile_rebuilding,
         )
         .await;
     });
@@ -2753,6 +2759,7 @@ pub async fn run_server(cfg: ServerConfig) {
         state.http_client.clone(),
         state.env_config.agents_dir.clone(),
         on_agents_changed,
+        state.rebuilding.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
@@ -2845,7 +2852,16 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_cached_port_reusable, spawn_pipeline_sse};
+    use super::{ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse};
+
+    #[test]
+    fn mutating_agent_ops_conflict_while_rebuilding() {
+        let rebuilding = crate::docker::RebuildTracker::default();
+        assert!(ensure_not_rebuilding(&rebuilding, "apollo").is_ok());
+        let _mark = rebuilding.mark("apollo");
+        let err = ensure_not_rebuilding(&rebuilding, "apollo").expect_err("expected 409 while rebuilding");
+        assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
+    }
 
     // ── SSE cancellation safety ───────────────────────────────────
     //
@@ -3012,7 +3028,7 @@ mod tests {
     #[tokio::test]
     async fn longrun_layer_allows_a_request_past_the_control_deadline() {
         // A handler slower than a control-class deadline must survive under the longrun layer —
-        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        // the mechanism that keeps agent create (a multi-minute image build) from 408ing.
         let slow = || async {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             "ok"
@@ -3090,6 +3106,7 @@ mod tests {
             AgentStatus::Starting,
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
+            AgentStatus::Rebuilding,
             AgentStatus::Stopped,
             AgentStatus::Dead,
             AgentStatus::NotFound,

@@ -31,8 +31,6 @@ function resolveStatus(
       return { label: "signing in...", orbState: "busy" };
     case "deleting":
       return { label: "deleting...", orbState: "deleting" };
-    case "rebuilding":
-      return { label: "rebuilding...", orbState: "busy" };
     case "backing-up":
       return { label: "backing up...", orbState: "alive" };
     case "restoring":
@@ -56,6 +54,8 @@ function resolveStatus(
       return { label: "not set up", orbState: "busy" };
     case "restarting":
       return { label: "restarting...", orbState: "busy" };
+    case "rebuilding":
+      return { label: "updating...", orbState: "busy" };
     case "stopped":
       return { label: "stopped", orbState: "off" };
     case "dead":

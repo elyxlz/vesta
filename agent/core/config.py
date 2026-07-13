@@ -282,19 +282,11 @@ class VestaConfig(pyd_settings.BaseSettings):
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     monitor_tick_interval: int = pyd.Field(default=2, ge=1)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
-    notif_pool_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
+    notif_snooze_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
-    # How an interrupting message/notification preempts a running turn — two supported modes
-    # with a real trade-off. "message" (default) pre-sends the prompt as a priority:"now" user
-    # message: the CLI ends the turn at its next step boundary and background subagents survive
-    # (issue #982), but a foreground tool call in flight finishes first. "interrupt" fires the
-    # SDK interrupt control request: it cuts the turn immediately, mid-tool included, but the
-    # CLI's headless handler also kills every backgrounded subagent. Pick "interrupt" when
-    # preemption latency matters more than in-flight background work.
-    preempt_mode: tp.Literal["message", "interrupt"] = "message"
     ws_port: int = 0
     # SecretStr so it's redacted in GET /config dumps; the auth middleware reads its real value.
     agent_token: pyd.SecretStr | None = None

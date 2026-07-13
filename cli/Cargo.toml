@@ -1,11 +1,11 @@
 [package]
 name = "vesta"
-version = "0.1.174"
+version = "0.1.175"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
 edition = "2021"
-description = "Vesta CLI for managing personal assistant agents"
+description = "Vesta CLI for managing AI guardian angel agents"
 
 [[bin]]
 name = "vesta"

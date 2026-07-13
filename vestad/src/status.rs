@@ -434,7 +434,7 @@ impl Status {
             BoxRow::Art(4),
             BoxRow::Art(5),
             BoxRow::Gap,
-            BoxRow::Center(format!("personal AI daemon · v{}", self.version)),
+            BoxRow::Center(format!("AI guardian angel daemon · v{}", self.version)),
             BoxRow::Gap,
             BoxRow::Kv("user".into(), self.user.clone()),
             BoxRow::Kv("port".into(), self.port.to_string()),
@@ -541,7 +541,7 @@ mod tests {
         let rows = vec![
             BoxRow::Gap,
             BoxRow::Art(0),
-            BoxRow::Center("personal AI daemon".into()),
+            BoxRow::Center("AI guardian angel daemon".into()),
             BoxRow::Kv("user".into(), "emi".into()),
             BoxRow::Rule("connection".into()),
             BoxRow::Value("0123456789abcdef0123456789abcdef".into()),

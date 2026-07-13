@@ -1,10 +1,10 @@
 """Arrival-time notification interrupt policy.
 
 An ordered ruleset decides an incoming notification's disposition: preempt the agent's current turn
-(`interrupt`), wait in the passive pool until the agent is idle (`pool`), or drop without ever reaching
+(`interrupt`), snooze until the agent is idle (`snooze`), or drop without ever reaching
 the agent (`trash`). First matching rule wins; with no match the decision falls back to the
 notification's own `interrupt` flag — the default the producing skill ships for its own notifications
-(whatsapp/chat interrupt, email/finance pool), so a fresh agent with no rules already behaves sensibly.
+(whatsapp/chat interrupt, email/finance snooze), so a fresh agent with no rules already behaves sensibly.
 A notification is never trashed by default, only by an explicit user rule. The user's rules exist to
 override those defaults.
 The ruleset lives on the agent config
@@ -86,7 +86,20 @@ class NotificationInterruptRule(pyd.BaseModel):
     source: str | None = None
     type: str | None = None
     match: list[FieldPredicate] = []
-    action: tp.Literal["interrupt", "pool", "trash"]
+    action: tp.Literal["interrupt", "snooze", "trash"]
+
+    @pyd.model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_pool_action(cls, data: object) -> object:
+        # LEGACY(remove-when: no stored rule still carries action="pool" — every agent rewrites its
+        # rules in canonical shape on its next rule edit): the snooze action was previously named
+        # "pool"; coerce stored rules on read so fleet rulesets keep validating.
+        if not isinstance(data, dict) or "action" not in data:
+            return data
+        data = dict(data)
+        if data["action"] == "pool":
+            data["action"] = "snooze"
+        return data
 
     @pyd.model_validator(mode="before")
     @classmethod
@@ -215,15 +228,16 @@ def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
 
 
-def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "pool", "trash"]:
+def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "snooze", "trash"]:
     """The effective disposition for an arriving notification: `interrupt` (preempt the current turn now),
-    `pool` (wait for the idle triage pass), or `trash` (drop without ever reaching the agent).
+    `snooze` (wait until the agent has been idle a little while), or `trash` (drop without ever reaching
+    the agent).
 
     First matching rule wins and supplies its action; with no match the notification's own `interrupt`
-    flag (the producing skill's default) decides interrupt-vs-pool. A notification is never trashed by
+    flag (the producing skill's default) decides interrupt-vs-snooze. A notification is never trashed by
     default, only by an explicit user rule. Core notifications never reach here: loops.py decides their
     disposition from the type."""
     for rule in rules:
         if _matches(rule, notif):
             return rule.action
-    return "interrupt" if notif.interrupt else "pool"
+    return "interrupt" if notif.interrupt else "snooze"

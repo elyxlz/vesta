@@ -11,7 +11,6 @@ import {
   Square,
   Trash2,
   Wrench,
-  Hammer,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MenuSection } from "@/components/ui/menu-section";
@@ -25,7 +24,6 @@ export interface AgentActionsInput {
   onToolCalls: () => void;
   onToggle: () => void;
   onRestart: () => void;
-  onRebuild: () => void;
   onBackup: () => void;
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;
@@ -84,22 +82,13 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     },
   ];
   if (input.isRunning) {
-    controlItems.push(
-      {
-        key: "restart",
-        icon: <RefreshCw data-icon="inline-start" />,
-        label: "restart",
-        onClick: input.onRestart,
-        disabled: input.isBusy,
-      },
-      {
-        key: "rebuild",
-        icon: <Hammer data-icon="inline-start" />,
-        label: "rebuild",
-        onClick: input.onRebuild,
-        disabled: input.isBusy,
-      },
-    );
+    controlItems.push({
+      key: "restart",
+      icon: <RefreshCw data-icon="inline-start" />,
+      label: "restart",
+      onClick: input.onRestart,
+      disabled: input.isBusy,
+    });
   }
   controlItems.push({
     key: "backup",

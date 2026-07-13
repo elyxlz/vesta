@@ -39,9 +39,7 @@ SIGNING_CONFIGS_BLOCK = """    signingConfigs {
 
 """
 
-RELEASE_SIGNING_LINE = (
-    '            signingConfig = signingConfigs.getByName("release")\n'
-)
+RELEASE_SIGNING_LINE = '            signingConfig = signingConfigs.getByName("release")\n'
 
 SENTINEL = 'signingConfigs.getByName("release")'
 
@@ -69,27 +67,19 @@ def main() -> None:
     android_block = re.search(r"(?m)^android\s*\{", text)
     if not android_block:
         sys.exit("could not find 'android {' block")
-    text = (
-        text[: android_block.start()]
-        + KEYSTORE_LOAD_BLOCK
-        + text[android_block.start() :]
-    )
+    text = text[: android_block.start()] + KEYSTORE_LOAD_BLOCK + text[android_block.start() :]
 
     # 2. Inject signingConfigs as the first child of `android { }`.
     android_open = re.search(r"(?m)^android\s*\{[ \t]*\n", text)
     if not android_open:
         sys.exit("could not re-locate 'android {' after patch step 1")
-    text = (
-        text[: android_open.end()] + SIGNING_CONFIGS_BLOCK + text[android_open.end() :]
-    )
+    text = text[: android_open.end()] + SIGNING_CONFIGS_BLOCK + text[android_open.end() :]
 
     # 3. Add signingConfig assignment inside the release buildType.
     release_block = re.search(r'getByName\("release"\)\s*\{[ \t]*\n', text)
     if not release_block:
         sys.exit("could not find 'getByName(\"release\")' block in buildTypes")
-    text = (
-        text[: release_block.end()] + RELEASE_SIGNING_LINE + text[release_block.end() :]
-    )
+    text = text[: release_block.end()] + RELEASE_SIGNING_LINE + text[release_block.end() :]
 
     path.write_text(text)
     print(f"{path}: patched")
