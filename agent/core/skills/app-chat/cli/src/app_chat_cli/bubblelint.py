@@ -15,7 +15,7 @@ import re
 
 # A bubble is "a few words to one line, rarely two" (personality SKILL.md).
 BUBBLE_MAX_CHARS = 220  # a genuinely long single bubble
-BUBBLE_MAX_SENTENCES = 2  # 3+ sentence-enders in one send = a paragraph, split it
+BUBBLE_MAX_SENTENCES = 1  # 2+ sentence-enders in one send = a paragraph, split it
 
 _URL_RE = re.compile(r"https?://\S+")  # urls
 _DECIMAL_RE = re.compile(r"\b\d+[.,]\d+\b")  # decimals: 8.6, 86,5
