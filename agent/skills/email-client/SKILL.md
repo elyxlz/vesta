@@ -9,7 +9,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 ## When to use this skill
 
-Google Calendar is also available here for Gmail accounts (see "Calendar" below). Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Google Calendar is also available here for Gmail accounts (see "Calendar" below). For Microsoft accounts (personal or work: Outlook.com, Hotmail, Live, Microsoft 365) prefer the `microsoft` skill (Graph) over this one; fall back here only when Graph is unavailable and IMAP is enabled (see SETUP.md "Microsoft 365 with a custom domain"). The `google` skill is only for Google-native APIs (full Gmail API, Contacts, Meet) and requires the user's own Google OAuth client. For an agent-owned inbox instead of personal mail, use `agentmail`.
 
 ## Notes & rules
 

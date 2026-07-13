@@ -5,6 +5,7 @@ contacts
 dashboard
 dream
 email-client
+microsoft
 nap
 notifications
 onboard
