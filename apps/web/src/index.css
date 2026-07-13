@@ -110,7 +110,14 @@ html[data-platform="android"] {
 }
 .desktop [data-drag-region] button,
 .desktop [data-drag-region] a,
-.desktop [data-drag-region] input {
+.desktop [data-drag-region] input,
+.desktop [data-drag-region] [role="button"] {
+  -webkit-app-region: no-drag;
+}
+/* While a popover-like control in the titlebar is open (the expanded agent
+   island), the navbar stops dragging so an outside click on it dismisses,
+   the way a native popover closes when you click the title bar. */
+.desktop [data-drag-region]:has([aria-expanded="true"]) {
   -webkit-app-region: no-drag;
 }
 
