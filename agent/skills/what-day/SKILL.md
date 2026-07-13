@@ -5,9 +5,7 @@ description: Determine the day of the week for any date, always do this whenever
 
 # What Day
 
-## Purpose
-
-Use this skill when working with any date to avoid mistakes about which day of the week it falls on, preventing scheduling and planning errors.
+Use whenever working with a date, to avoid mistakes about which weekday it falls on and prevent scheduling errors.
 
 ## Setup
 
@@ -15,7 +13,7 @@ Use this skill when working with any date to avoid mistakes about which day of t
 uv tool install --editable ~/agent/skills/what-day/cli
 ```
 
-## How to Determine Day of Week
+## Usage
 
 ```bash
 what-day 2025-11-14
@@ -34,17 +32,10 @@ Output:
 
 ## When to Use
 
-- When a date is mentioned in conversation
-- When planning or scheduling events
-- When discussing deadlines or appointments
-- When comparing dates or calculating intervals
-- When verifying day-of-week for any date reference
-
-## Examples
-
-- "2025-11-14" -> "November 14, 2025 is a Friday"
-- "2024-12-25" -> "December 25, 2024 is a Wednesday"
-- "2023-01-01" -> "January 01, 2023 is a Sunday"
+- A date is mentioned in conversation
+- Planning or scheduling events, deadlines, appointments
+- Comparing dates or calculating intervals
+- Verifying day-of-week for any date reference
 
 ## Learned Patterns
 

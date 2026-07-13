@@ -1,14 +1,13 @@
 # Dashboard setup
 
 `node` and `npm` ship in the base image. Run the one-shot setup script; it installs
-dependencies, builds, starts the daemon, confirms it answers a 200, and appends the
-guarded startup line to the restart skill, all idempotent (safe to re-run):
+deps, builds, starts the daemon, confirms a 200, and appends the guarded startup line
+to the restart skill, all idempotent (safe to re-run):
 ```bash
 ~/agent/skills/dashboard/scripts/setup.sh
 ```
 
-It fails loudly on a real problem instead of leaving a half set-up dashboard: don't
-assume success, check its output.
+It fails loudly on a real problem rather than leaving a half-set-up dashboard: check its output, don't assume success.
 
 ## Manual steps (only if setup.sh can't be used)
 

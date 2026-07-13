@@ -5,15 +5,15 @@ description: The people Vesta knows, a living address book and CRM. Who they are
 
 # Contacts
 
-Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user. This is how you stop treating each person like a stranger. Before you message someone, read their file. After you learn something, write it down. Over time this becomes the thing that lets you sound like you actually know them.
+Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user. Before you message someone, read their file; after you learn something, write it down. Over time this lets you sound like you actually know them.
 
-Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and Grep. No CLI, no database.
+Plain markdown, edited with Read, Write, Glob, Grep. No CLI, no database.
 
 ## Where it lives
 
-`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
+`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`. Slug is lowercase, dashes for spaces. No index, the files are the whole thing.
 
-To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
+Derive the roster from the files instead of keeping a separate list:
 
 ```bash
 grep -rHs "^# \|^Relationship:" ~/.contacts/   # name + relationship for everyone; empty until you add people
@@ -21,9 +21,9 @@ grep -rHs "^# \|^Relationship:" ~/.contacts/   # name + relationship for everyon
 
 `Glob ~/.contacts/*.md` lists everyone; `Grep` across the dir finds who said what or who works where.
 
-## What a person's file holds
+## What a file holds
 
-Flexible, not a form. Lead with the header line, then whatever you actually know. A good file for someone close:
+Flexible, not a form. Lead with the header line, then whatever you actually know:
 
 ```markdown
 # Jane Rossi
@@ -49,23 +49,21 @@ morning, goes dark after 6pm. Sarcasm lands; corporate tone does not.
 - Owes the user dinner from the bet they lost
 ```
 
-Only fill what's real. A near-stranger might be three lines. Someone central might be a page. Personality and communication style matter most, they're what change how you actually talk to and about this person.
+Only fill what's real. A near-stranger might be three lines; someone central a page. Personality and communication style matter most, they change how you talk to and about this person.
 
 ## When to touch it
 
-- **Someone new appears** (a new sender, a name the user mentions, a person on the calendar): add a file, even if it's just a stub.
-- **You learn something**: append it to their file. A preference, a date, a mood, a fact, a thing they're going through. Small and often beats a big rewrite.
-- **Before reaching out**: read their file so you match their style and remember what's open.
-- **The user asks about someone**: their file is your first stop, then `recall` for anything not captured yet.
+- **Someone new appears** (new sender, a name the user mentions, a person on the calendar): add a file, even just a stub.
+- **You learn something**: append it. Small and often beats a big rewrite.
+- **Before reaching out**: read their file to match their style and remember what's open.
+- **The user asks about someone**: their file first, then `recall` for anything not captured yet.
 
 ## Keeping contacts current
 
-People don't live in one place, and you learn about them all day long. Two things keep the files honest, and you do both on one nightly pass in the early hours:
+Two things keep the files honest, both on one nightly pass in the early hours (the nightly `dream` runs it, no separate reminder):
 
-- **Capture the day**: go back over the day's conversations and activity and fold everything you learned about anyone into their file, a new fact, a mood, a plan, something they're going through, a handle you saw. Anyone who came up for the first time gets a file.
-- **Reconcile the sources**: the same person is a thread in one messaging app, an address in another, a guest on a calendar, a row in an address book. Contacts is the hub of truth that ties them together. Pull new people and facts in from everywhere that holds contacts, and push your canonical fields (name, number, email) back out to the services that can be written to. Non-destructive: fill gaps and fix what's clearly stale, never bulk-overwrite a service's data.
-
-The nightly `dream` runs this pass, so there's no separate reminder to maintain.
+- **Capture the day**: fold everything you learned about anyone into their file, a new fact, mood, plan, a handle you saw. Anyone new that day gets a file.
+- **Reconcile the sources**: the same person is a thread in one app, an address in another, a calendar guest, an address-book row. Contacts is the hub of truth. Pull new people and facts in from everywhere that holds contacts, and push your canonical fields (name, number, email) back out to writable services. Non-destructive: fill gaps and fix clearly-stale data, never bulk-overwrite a service.
 
 ## [Your setup]
 
