@@ -23,7 +23,7 @@ STOP_TIMEOUT_S = 15
 POLL_INTERVAL_S = 1.0
 PORT_CONNECT_TIMEOUT_S = 2.0
 
-REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "service" / "scripts" / "register-service"
+REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 
 
 class DaemonError(RuntimeError):

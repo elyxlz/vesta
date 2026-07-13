@@ -104,9 +104,9 @@ uv tool install --editable ~/agent/skills/tasks/cli
 
 ## Background Daemon
 
-Register with vestad to get a port (see [service](../service/SKILL.md)), then start:
+Register with vestad to get a port (see [vestad](../vestad/SKILL.md)), then start:
 ```bash
-PORT=$(~/agent/skills/service/scripts/register-service tasks)
+PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
 screen -dmS tasks tasks serve --port $PORT
 ```
 
@@ -116,7 +116,7 @@ One daemon handles everything, both task due-date monitoring and reminder schedu
 
 **Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
+PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
 ```
 
 `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.

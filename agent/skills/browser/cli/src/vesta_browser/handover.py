@@ -40,7 +40,7 @@ SCREEN_W, SCREEN_H = 1600, 1000
 # Public vestad service name for the handover page. The tunnel routes it at
 # `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
 HANDOVER_SERVICE = "browser"
-REGISTER_SERVICE = Path.home() / "agent" / "skills" / "service" / "scripts" / "register-service"
+REGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 SERVICE_REGISTER_TIMEOUT_S = 35  # register-service polls vestad up to ~30s before giving up
 
 # The handover display shows exactly one app. Without this, openbox smart-places the window a

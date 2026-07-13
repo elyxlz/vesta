@@ -101,20 +101,12 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - The `restart` skill (`~/agent/skills/restart/SKILL.md`) must start every service the user has set up on every boot, via its `## Services` section. New integrations follow the same pattern: a daemon that writes JSON to `~/agent/notifications/`.
 - The JSON field `interrupt: bool` determines whether a notification interrupts you; update the producers to change behaviour.
 
-### Service Registration
-All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_TOKEN"` (both `$VESTAD_PORT` and `$AGENT_TOKEN` come from `/run/vestad-env`, exported into the environment).
-- Register a service: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Returns `{"port": <N>}`. Register once on that port; vestad persists registrations across restarts and routes `/agents/{name}/{service}/...` directly to it.
-- List: `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"`
-- Invalidate (notify clients to reload): `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"`. Optionally pass `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what changed; omit the body for a full invalidation.
-- Use for anything: skill servers (voice, dashboard), custom APIs, webhooks, websites. To add a server: register for a port, start it in a screen session, and add the command to the `restart` skill's `## Services` section.
-- **Public services**: pass `"public": true` in the body to serve without authentication (e.g. a website). Public services are fully open. Default is `false` (requires auth).
-
-### Self-diagnosis
-- Read the gateway (vestad) logs to debug gateway or container issues: `curl -sk "https://localhost:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"`. Returns the last N lines as Server-Sent Events, so parse the `data:` lines; it closes after the tail. Add `&follow=true` to keep streaming live.
+### vestad
+- Everything about talking to vestad (registering services to get a port, public URLs, updating vestad, reading gateway logs) lives in the `vestad` skill (`~/agent/skills/vestad/SKILL.md`).
 
 ### Self-Modification
 - Edit skills, prompts, MEMORY.md freely.
-- **Config (model, context window, personality, thinking, and more)**: these live in your config store, not env vars. Change any of them through the vestad endpoint, which writes the store and restarts you to apply: `curl -sk -X PUT https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/config -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"agent_model":"sonnet"}'`. Keys are the config field names (`agent_model`, `max_context_tokens`, `agent_personality`, `thinking`, ...); `GET /config` lists them all, `GET /config/schema` describes them. A `null` value clears a key back to its default. Provider + credentials are the separate `/provider` endpoint. Other persistent env (skill secrets, PATH) still goes in `~/.bashrc` (`restart_vesta` to apply).
+- **Config (personality, timezone, notification rules)**: lives in your config store, edited through your own local API: `curl -s http://127.0.0.1:$WS_PORT/config -H "X-Agent-Token: $AGENT_TOKEN"` to read, PUT with the fields to change to write. **Model, context window, thinking** live on the provider: `curl -s -X PATCH http://127.0.0.1:$WS_PORT/provider -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"model":"sonnet"}'`. Notification rules apply live; everything else applies on the next restart (`restart_vesta`). Other persistent env (skill secrets, PATH) still goes in `~/.bashrc` (`restart_vesta` to apply).
 - `agent/core/` may be read-only (depends on agent config); if so, PR changes through the upstream skill.
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, entry in the `restart` skill's `## Services` section).
 - Changes take effect on next restart, or call `restart_vesta` to apply immediately.
