@@ -37,7 +37,11 @@ export function WindowControls() {
         onClick={() => controls.toggleMaximize()}
         className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
-        {maximized ? <Copy className="size-3.5" /> : <Square className="size-3.5" />}
+        {maximized ? (
+          <Copy className="size-3.5" />
+        ) : (
+          <Square className="size-3.5" />
+        )}
       </button>
       <button
         aria-label="close"
