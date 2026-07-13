@@ -1,42 +1,33 @@
 #!/usr/bin/env python3
-"""Google Calendar on CalDAV.
+"""Google Calendar on the official REST API (calendar/v3).
 
-The Calendar REST API (``calendar/v3``) is unusable under this skill's reused
-Thunderbird OAuth client - its Cloud project has the Calendar API disabled, so
-every REST call 403s with ``accessNotConfigured``. This module reimplements the
-whole calendar command surface (list / calendars / get / create / update /
-delete / respond) on **CalDAV** against
-``https://apidata.googleusercontent.com/caldav/v2/{email}/`` using the OAuth
-Bearer token from this skill's token store - the same path Thunderbird uses.
-
-The HTTP/DAV plumbing lives in :mod:`caldav_client`; here we build CalDAV
-REPORT/PUT bodies, parse and emit iCalendar via the ``icalendar`` library, and
-expand recurring events into concrete occurrences with ``recurring_ical_events``
-(mirroring REST's ``singleEvents=True``). Event dicts are shaped to match the old
-REST output (``start``/``end`` objects, ``attendees``, ``organizer``,
-``recurrence``) so existing callers - the CLI and the daemon monitor - keep
-working unchanged: only the backend moved.
+Talks to the Calendar API directly over stdlib ``urllib`` with the OAuth Bearer
+token from this skill's token store. The user's own Google Cloud project (see
+SETUP.md) must have the Google Calendar API enabled. Event ids are Calendar API
+event ids. All API traffic funnels through :func:`_http` so tests can
+monkeypatch a single choke point.
 
 NOTE ON INVITES: creating/updating/deleting an event with attendees causes Google
-to email calendar invites/updates to them - a real outward send. The
+to email calendar invites/updates to them, a real outward send. The
 EMAIL_DRAFT_ONLY guard covers email sending only and does NOT block calendar
 writes; use judgment before writing events with attendees.
 """
 
 from __future__ import annotations
 
-import re
+import json
+import urllib.error
 import urllib.parse
-import uuid
+import urllib.request
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import icalendar
-import recurring_ical_events
-
-from . import caldav_client
+from . import auth
 from .config import Config
+
+CAL_API_BASE = "https://www.googleapis.com/calendar/v3"
+HTTP_TIMEOUT_SECS = 30
+LIST_MAX_RESULTS = 250
 
 RECURRENCE_MAP = {
     "daily": "DAILY",
@@ -45,21 +36,11 @@ RECURRENCE_MAP = {
     "yearly": "YEARLY",
 }
 
-RESPONSE_TO_PARTSTAT = {
-    "accept": "ACCEPTED",
-    "decline": "DECLINED",
-    "tentative": "TENTATIVE",
+RESPONSE_TO_STATUS = {
+    "accept": "accepted",
+    "decline": "declined",
+    "tentative": "tentative",
 }
-
-PARTSTAT_TO_RESPONSE = {
-    "ACCEPTED": "accepted",
-    "DECLINED": "declined",
-    "TENTATIVE": "tentative",
-    "NEEDS-ACTION": "needsAction",
-    "DELEGATED": "delegated",
-}
-
-CALDAV_CALENDAR_TAG = "{urn:ietf:params:xml:ns:caldav}calendar"
 
 
 def _validate_timezone(timezone: str) -> None:
@@ -69,149 +50,94 @@ def _validate_timezone(timezone: str) -> None:
         raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
 
-# -- iCalendar -> normalized dict ---------------------------------------
+# -- HTTP layer (single choke point) -------------------------------------
 
 
-def _prop_str(vevent, name: str) -> str:
-    value = vevent.get(name)
-    return str(value) if value is not None else ""
+def _bearer(config: Config) -> str:
+    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+    return creds.token
 
 
-def _time_dict(prop, user_timezone: str | None) -> dict[str, Any]:
-    """Convert an iCal DTSTART/DTEND property to a REST-style start/end object.
-
-    Timed values become ``{"dateTime": <iso-with-offset>, "timeZone": <tzid>}``;
-    all-day values become ``{"date": "YYYY-MM-DD"}``. A ``user_timezone`` converts
-    timed values into that zone.
-    """
-    if prop is None:
-        return {}
-    value = prop.dt
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        tzid = prop.params.get("TZID") if hasattr(prop, "params") else None
-        if user_timezone:
-            value = value.astimezone(ZoneInfo(user_timezone))
-            tzid = user_timezone
-        elif tzid is None:
-            tzid = getattr(value.tzinfo, "key", None) or str(value.tzinfo)
-        return {"dateTime": value.isoformat(), "timeZone": tzid}
-    if isinstance(value, date):
-        return {"date": value.isoformat()}
-    return {}
-
-
-def _clean_addr(value) -> str:
-    return re.sub(r"^mailto:", "", str(value), flags=re.IGNORECASE)
-
-
-def _attendees(vevent) -> list[dict[str, Any]]:
-    raw = vevent.get("ATTENDEE")
-    if raw is None:
-        return []
-    items = raw if isinstance(raw, list) else [raw]
-    out = []
-    for a in items:
-        params = getattr(a, "params", {}) or {}
-        partstat = str(params.get("PARTSTAT", "")).upper()
-        out.append(
-            {
-                "email": _clean_addr(a),
-                "displayName": str(params["CN"]) if "CN" in params else None,
-                "responseStatus": PARTSTAT_TO_RESPONSE.get(partstat, partstat.lower() or None),
-                "optional": str(params.get("ROLE", "")).upper() == "OPT-PARTICIPANT" or None,
-            }
-        )
-    return out
+def _http(config: Config, method: str, path: str, *, params: dict | None = None, body: dict | None = None) -> dict:
+    """Make one Calendar API request and return parsed JSON ({} if empty)."""
+    url = CAL_API_BASE + path
+    if params:
+        clean = {k: v for k, v in params.items() if v is not None}
+        if clean:
+            url += "?" + urllib.parse.urlencode(clean)
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Authorization": f"Bearer {_bearer(config)}"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECS) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")
+        if "accessNotConfigured" in detail or "has not been used in project" in detail:
+            raise RuntimeError(
+                f"The Google Calendar API is not enabled on your Google Cloud project (HTTP {e.code}). "
+                f"Enable it at https://console.cloud.google.com/apis/library/calendar-json.googleapis.com "
+                f"and retry. (details: {detail[:300]})"
+            )
+        if e.code in (401, 403):
+            raise RuntimeError(
+                f"Google Calendar refused the request (HTTP {e.code}). The stored token is missing scopes "
+                "or was minted under a different OAuth client; run 'google auth login' to sign in again. "
+                f"(details: {detail[:300]})"
+            )
+        raise RuntimeError(f"Google Calendar API error {e.code}: {detail[:500]}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Google Calendar {method} could not reach Google: {e.reason}")
 
 
-def _organizer(vevent) -> dict[str, Any] | None:
-    raw = vevent.get("ORGANIZER")
-    if raw is None:
-        return None
-    params = getattr(raw, "params", {}) or {}
-    return {"email": _clean_addr(raw), "displayName": str(params["CN"]) if "CN" in params else None}
+def _events_path(calendar_id: str) -> str:
+    return f"/calendars/{urllib.parse.quote(calendar_id, safe='')}/events"
 
 
-def _recurrence(vevent) -> list[str]:
-    out: list[str] = []
-    for key in ("RRULE", "EXRULE", "RDATE", "EXDATE"):
-        value = vevent.get(key)
-        if value is None:
-            continue
-        items = value if isinstance(value, list) else [value]
-        for item in items:
-            out.append(f"{key}:" + item.to_ical().decode("utf-8"))
-    return out
+def _event_path(calendar_id: str, event_id: str) -> str:
+    return _events_path(calendar_id) + "/" + urllib.parse.quote(event_id, safe="")
 
 
-def _event_to_dict(vevent, *, href=None, etag=None, include_details=True, user_timezone=None) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "id": _prop_str(vevent, "UID"),
-        "summary": _prop_str(vevent, "SUMMARY"),
-        "start": _time_dict(vevent.get("DTSTART"), user_timezone),
-        "end": _time_dict(vevent.get("DTEND"), user_timezone),
-        "location": _prop_str(vevent, "LOCATION") or None,
-        "status": (_prop_str(vevent, "STATUS") or "").lower() or None,
+# -- shaping --------------------------------------------------------------
+
+
+def _rfc3339(when: datetime) -> str:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _event_to_dict(event: dict, *, include_details: bool) -> dict:
+    result: dict = {
+        "id": event["id"] if "id" in event else None,
+        "summary": event["summary"] if "summary" in event else "",
+        "start": event["start"] if "start" in event else {},
+        "end": event["end"] if "end" in event else {},
+        "location": event["location"] if "location" in event else None,
+        "status": event["status"] if "status" in event else None,
     }
-    if href:
-        result["ics_href"] = href
-    if etag:
-        result["etag"] = etag
     if include_details:
-        result["description"] = _prop_str(vevent, "DESCRIPTION") or None
-        result["organizer"] = _organizer(vevent)
-        result["attendees"] = _attendees(vevent)
-        recurrence = _recurrence(vevent)
-        if recurrence:
-            result["recurrence"] = recurrence
+        result["description"] = event["description"] if "description" in event else None
+        result["organizer"] = event["organizer"] if "organizer" in event else None
+        result["attendees"] = event["attendees"] if "attendees" in event else []
+        if "recurrence" in event:
+            result["recurrence"] = event["recurrence"]
+        if "recurringEventId" in event:
+            result["recurringEventId"] = event["recurringEventId"]
     return result
 
 
-def _sort_key(event: dict[str, Any]):
-    start = event.get("start", {})
-    value = start.get("dateTime") or start.get("date")
-    if not value:
-        return (1, datetime.max.replace(tzinfo=UTC))
-    try:
-        parsed = datetime.fromisoformat(value)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return (0, parsed.astimezone(UTC))
-    except ValueError:
-        return (1, datetime.max.replace(tzinfo=UTC))
+def _time_field(value: str, timezone: str) -> dict:
+    """Build a Calendar API start/end object: timed dateTime with timeZone, or an all-day date."""
+    if "T" in value:
+        return {"dateTime": value, "timeZone": timezone}
+    return {"date": value}
 
 
-# -- CalDAV query -------------------------------------------------------
-
-
-def _caldav_stamp(when: datetime) -> str:
-    return when.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-
-
-def _calendar_query_xml(start: datetime, end: datetime) -> str:
-    return (
-        '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
-        "<d:prop><d:getetag/><c:calendar-data/></d:prop>"
-        '<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT">'
-        f'<c:time-range start="{_caldav_stamp(start)}" end="{_caldav_stamp(end)}"/>'
-        "</c:comp-filter></c:comp-filter></c:filter>"
-        "</c:calendar-query>"
-    )
-
-
-def _expand(cal, start: datetime, end: datetime):
-    """Expand a parsed VCALENDAR into concrete VEVENT occurrences in [start, end).
-
-    Mirrors REST ``singleEvents=True``. Falls back to the raw VEVENTs if the
-    recurrence expander chokes on an odd event, so one bad event never blanks the
-    whole list.
-    """
-    try:
-        return list(recurring_ical_events.of(cal).between(start, end))
-    except Exception:
-        return list(cal.walk("VEVENT"))
+# -- commands -------------------------------------------------------------
 
 
 def list_events_between(
@@ -223,37 +149,23 @@ def list_events_between(
     include_details: bool = True,
     user_timezone: str | None = None,
     limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """Return normalized events overlapping ``[start, end)`` for a calendar."""
-    url = caldav_client.collection_url(config, calendar_id)
-    body = _calendar_query_xml(start, end)
-    _status, text = caldav_client.request(config, "REPORT", url, body=body, depth="1")
-    records = caldav_client.parse_multistatus(text)
-
-    events: list[dict[str, Any]] = []
-    for rec in records:
-        cdata = rec.get("calendar_data")
-        if not cdata:
-            continue
-        try:
-            cal = icalendar.Calendar.from_ical(cdata)
-        except Exception:
-            continue
-        for vevent in _expand(cal, start, end):
-            events.append(
-                _event_to_dict(
-                    vevent,
-                    href=rec.get("href"),
-                    etag=rec.get("etag"),
-                    include_details=include_details,
-                    user_timezone=user_timezone,
-                )
-            )
-
-    events.sort(key=_sort_key)
+) -> list[dict]:
+    """Return events overlapping ``[start, end)``, recurring ones expanded (singleEvents)."""
+    if user_timezone:
+        _validate_timezone(user_timezone)
+    params = {
+        "timeMin": _rfc3339(start),
+        "timeMax": _rfc3339(end),
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": min(limit, LIST_MAX_RESULTS) if limit is not None else LIST_MAX_RESULTS,
+        "timeZone": user_timezone,
+    }
+    result = _http(config, "GET", _events_path(calendar_id), params=params)
+    items = result["items"] if "items" in result else []
     if limit is not None:
-        events = events[:limit]
-    return events
+        items = items[:limit]
+    return [_event_to_dict(e, include_details=include_details) for e in items]
 
 
 def list_events(
@@ -265,7 +177,7 @@ def list_events(
     include_details: bool = True,
     user_timezone: str | None = None,
     limit: int | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict]:
     tz = ZoneInfo(user_timezone) if user_timezone else UTC
     now_local = datetime.now(tz)
     start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -282,97 +194,32 @@ def list_events(
     )
 
 
-def _calendar_id_from_href(href: str) -> str:
-    m = re.search(r"/caldav/v2/([^/]+)/", href or "")
-    return urllib.parse.unquote(m.group(1)) if m else (href or "")
+def list_calendars(config: Config) -> list[dict]:
+    result = _http(config, "GET", "/users/me/calendarList")
+    items = result["items"] if "items" in result else []
+    return [
+        {
+            "id": c["id"] if "id" in c else None,
+            "summary": c["summary"] if "summary" in c else "",
+            "primary": c["primary"] if "primary" in c else False,
+            "accessRole": c["accessRole"] if "accessRole" in c else "",
+        }
+        for c in items
+    ]
 
 
-def list_calendars(config: Config) -> list[dict[str, Any]]:
-    url = caldav_client.home_url(config, "primary")
-    body = '<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:displayname/><d:resourcetype/></d:prop></d:propfind>'
-    _status, text = caldav_client.request(config, "PROPFIND", url, body=body, depth="1")
-    records = caldav_client.parse_multistatus(text)
-    email = caldav_client.account_email(config)
-
-    calendars = []
-    for rec in records:
-        if CALDAV_CALENDAR_TAG not in rec.get("resourcetypes", set()):
-            continue
-        cal_id = _calendar_id_from_href(rec.get("href") or "")
-        calendars.append(
-            {
-                "id": cal_id,
-                "summary": rec.get("displayname") or cal_id,
-                "primary": cal_id == email,
-            }
-        )
-    return calendars
+def get_event(config: Config, *, calendar_id: str = "primary", event_id: str) -> dict:
+    return _http(config, "GET", _event_path(calendar_id, event_id))
 
 
-def _master_vevent(cal, uid: str | None = None):
-    """Return the master VEVENT (no RECURRENCE-ID), matching ``uid`` if given."""
-    vevents = list(cal.walk("VEVENT"))
-    for v in vevents:
-        if "RECURRENCE-ID" in v and uid is None:
-            continue
-        if uid is not None and str(v.get("UID")) != uid:
-            continue
-        if "RECURRENCE-ID" not in v:
-            return v
-    return vevents[0] if vevents else None
-
-
-def get_event(config: Config, *, calendar_id: str = "primary", event_id: str) -> dict[str, Any]:
-    url = caldav_client.event_url(config, calendar_id, event_id)
-    _status, text = caldav_client.request(config, "GET", url)
-    cal = icalendar.Calendar.from_ical(text)
-    master = _master_vevent(cal, event_id) or _master_vevent(cal)
-    if master is None:
-        raise ValueError(f"Event not found: {event_id}")
-    result = _event_to_dict(master, include_details=True)
-    result["ics_href"] = url
-    return result
-
-
-# -- write helpers ------------------------------------------------------
-
-
-def _new_calendar() -> icalendar.Calendar:
-    cal = icalendar.Calendar()
-    cal.add("PRODID", "-//Vesta//google skill CalDAV//EN")
-    cal.add("VERSION", "2.0")
-    return cal
-
-
-def _parse_local(value: str, tz: ZoneInfo) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=tz)
-    return parsed
-
-
-def _set_prop(component, key: str, value) -> None:
-    if key in component:
-        del component[key]
-    component.add(key, value)
-
-
-def _build_rrule(recurrence: str, recurrence_end_date: str | None) -> dict[str, Any]:
-    freq = RECURRENCE_MAP.get(recurrence, recurrence.upper())
-    rule: dict[str, Any] = {"FREQ": freq}
+def _build_rrule(recurrence: str, recurrence_end_date: str | None) -> str:
+    freq = RECURRENCE_MAP[recurrence] if recurrence in RECURRENCE_MAP else recurrence.upper()
+    rule = f"RRULE:FREQ={freq}"
     if recurrence_end_date:
         date_only = recurrence_end_date.split("T")[0]
         until = datetime.fromisoformat(date_only).replace(tzinfo=UTC, hour=23, minute=59, second=59)
-        rule["UNTIL"] = until
+        rule += ";UNTIL=" + until.strftime("%Y%m%dT%H%M%SZ")
     return rule
-
-
-def _attendee_address(email: str, *, partstat: str = "NEEDS-ACTION") -> icalendar.vCalAddress:
-    addr = icalendar.vCalAddress(f"mailto:{email}")
-    addr.params["ROLE"] = icalendar.vText("REQ-PARTICIPANT")
-    addr.params["PARTSTAT"] = icalendar.vText(partstat)
-    addr.params["RSVP"] = icalendar.vText("TRUE")
-    return addr
 
 
 def create_event(
@@ -389,55 +236,41 @@ def create_event(
     all_day: bool = False,
     recurrence: str | None = None,
     recurrence_end_date: str | None = None,
-) -> dict[str, Any]:
+) -> dict:
     _validate_timezone(timezone)
-    tz = ZoneInfo(timezone)
-    uid = f"{uuid.uuid4().hex}@vesta-google"
-
-    ev = icalendar.Event()
-    ev.add("UID", uid)
-    ev.add("DTSTAMP", datetime.now(UTC))
-    ev.add("SUMMARY", subject)
 
     if all_day:
         start_date = date.fromisoformat(start.split("T")[0])
         end_date = date.fromisoformat(end.split("T")[0]) if end else start_date + timedelta(days=1)
+        # The Calendar API's all-day end date is exclusive; bump a same-day end.
         if end_date <= start_date:
             end_date = start_date + timedelta(days=1)
-        ev.add("DTSTART", start_date)
-        ev.add("DTEND", end_date)
+        event: dict = {
+            "summary": subject,
+            "start": {"date": start_date.isoformat()},
+            "end": {"date": end_date.isoformat()},
+        }
     else:
-        start_dt = _parse_local(start, tz)
-        end_dt = _parse_local(end, tz) if end else start_dt + timedelta(hours=1)
-        # Store as UTC instants so no VTIMEZONE component is needed for the PUT.
-        ev.add("DTSTART", start_dt.astimezone(UTC))
-        ev.add("DTEND", end_dt.astimezone(UTC))
+        end_value = end
+        if not end_value:
+            end_value = (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()
+        event = {
+            "summary": subject,
+            "start": _time_field(start, timezone),
+            "end": _time_field(end_value, timezone),
+        }
 
     if location:
-        ev.add("LOCATION", location)
+        event["location"] = location
     if body:
-        ev.add("DESCRIPTION", body)
+        event["description"] = body
     if attendees:
-        for a in attendees:
-            ev.add("ATTENDEE", _attendee_address(a))
-        ev.add("ORGANIZER", icalendar.vCalAddress(f"mailto:{caldav_client.account_email(config)}"))
+        event["attendees"] = [{"email": a} for a in attendees]
     if recurrence:
-        ev.add("RRULE", _build_rrule(recurrence, recurrence_end_date))
+        event["recurrence"] = [_build_rrule(recurrence, recurrence_end_date)]
 
-    cal = _new_calendar()
-    cal.add_component(ev)
-    ics = cal.to_ical().decode("utf-8")
-
-    url = caldav_client.event_url(config, calendar_id, uid)
-    caldav_client.request(
-        config,
-        "PUT",
-        url,
-        body=ics,
-        content_type="text/calendar; charset=utf-8",
-        extra_headers={"If-None-Match": "*"},
-    )
-    return {"status": "created", "id": uid, "calendar": calendar_id}
+    created = _http(config, "POST", _events_path(calendar_id), params={"sendUpdates": "all"}, body=event)
+    return {"status": "created", "id": created["id"] if "id" in created else None, "calendar": calendar_id}
 
 
 def update_event(
@@ -451,7 +284,7 @@ def update_event(
     location: str | None = None,
     body: str | None = None,
     timezone: str | None = None,
-) -> dict[str, Any]:
+) -> dict:
     if (start is not None or end is not None) and timezone is None:
         raise ValueError("--timezone is required when updating start or end")
     if timezone is not None:
@@ -459,31 +292,19 @@ def update_event(
     if all(v is None for v in (subject, start, end, location, body)):
         raise ValueError("Must specify at least one field to update")
 
-    url = caldav_client.event_url(config, calendar_id, event_id)
-    _status, text = caldav_client.request(config, "GET", url)
-    cal = icalendar.Calendar.from_ical(text)
-    master = _master_vevent(cal, event_id) or _master_vevent(cal)
-    if master is None:
-        raise ValueError(f"Event not found: {event_id}")
-
-    tz = ZoneInfo(timezone) if timezone else UTC
+    updates: dict = {}
     if subject is not None:
-        _set_prop(master, "SUMMARY", subject)
+        updates["summary"] = subject
     if start is not None:
-        _set_prop(master, "DTSTART", _parse_local(start, tz).astimezone(UTC))
+        updates["start"] = _time_field(start, timezone or "UTC")
     if end is not None:
-        _set_prop(master, "DTEND", _parse_local(end, tz).astimezone(UTC))
+        updates["end"] = _time_field(end, timezone or "UTC")
     if location is not None:
-        _set_prop(master, "LOCATION", location)
+        updates["location"] = location
     if body is not None:
-        _set_prop(master, "DESCRIPTION", body)
+        updates["description"] = body
 
-    seq = master.get("SEQUENCE")
-    _set_prop(master, "SEQUENCE", (int(seq) if seq is not None else 0) + 1)
-    _set_prop(master, "DTSTAMP", datetime.now(UTC))
-
-    ics = cal.to_ical().decode("utf-8")
-    caldav_client.request(config, "PUT", url, body=ics, content_type="text/calendar; charset=utf-8")
+    _http(config, "PATCH", _event_path(calendar_id, event_id), params={"sendUpdates": "all"}, body=updates)
     return {"status": "updated", "id": event_id, "calendar": calendar_id}
 
 
@@ -493,11 +314,8 @@ def delete_event(
     calendar_id: str = "primary",
     event_id: str,
     send_updates: str = "all",
-) -> dict[str, str]:
-    # CalDAV has no sendUpdates knob; Google notifies attendees on its own. The
-    # send_updates arg is accepted for CLI compatibility and otherwise ignored.
-    url = caldav_client.event_url(config, calendar_id, event_id)
-    caldav_client.request(config, "DELETE", url)
+) -> dict:
+    _http(config, "DELETE", _event_path(calendar_id, event_id), params={"sendUpdates": send_updates})
     return {"status": "deleted", "event_id": event_id}
 
 
@@ -508,37 +326,24 @@ def respond_event(
     event_id: str,
     response: str = "accept",
     message: str | None = None,
-) -> dict[str, str]:
-    partstat = RESPONSE_TO_PARTSTAT[response]
-    url = caldav_client.event_url(config, calendar_id, event_id)
-    _status, text = caldav_client.request(config, "GET", url)
-    cal = icalendar.Calendar.from_ical(text)
-    master = _master_vevent(cal, event_id) or _master_vevent(cal)
-    if master is None:
-        raise ValueError(f"Event not found: {event_id}")
-
-    raw = master.get("ATTENDEE")
-    if raw is None:
+) -> dict:
+    status = RESPONSE_TO_STATUS[response]
+    event = _http(config, "GET", _event_path(calendar_id, event_id))
+    attendees = event["attendees"] if "attendees" in event else []
+    if not attendees:
         raise ValueError(f"Event {event_id} has no attendees - cannot set a response")
-    items = raw if isinstance(raw, list) else [raw]
 
-    user_email = caldav_client.account_email(config)
+    # The API stamps self=True on the authenticated user's own attendee entry.
     found = False
-    for a in items:
-        if _clean_addr(a).lower() == user_email.lower():
-            a.params["PARTSTAT"] = icalendar.vText(partstat)
+    for a in attendees:
+        if "self" in a and a["self"]:
+            a["responseStatus"] = status
             if message:
-                a.params["X-RESPONSE-COMMENT"] = icalendar.vText(message)
+                a["comment"] = message
             found = True
             break
     if not found:
-        raise ValueError(f"You ({user_email}) are not an attendee of this event")
+        raise ValueError("You are not an attendee of this event")
 
-    del master["ATTENDEE"]
-    for a in items:
-        master.add("ATTENDEE", a)
-    _set_prop(master, "DTSTAMP", datetime.now(UTC))
-
-    ics = cal.to_ical().decode("utf-8")
-    caldav_client.request(config, "PUT", url, body=ics, content_type="text/calendar; charset=utf-8")
-    return {"status": PARTSTAT_TO_RESPONSE.get(partstat, partstat.lower()), "event_id": event_id}
+    _http(config, "PATCH", _event_path(calendar_id, event_id), params={"sendUpdates": "all"}, body={"attendees": attendees})
+    return {"status": status, "event_id": event_id}

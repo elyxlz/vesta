@@ -1,15 +1,27 @@
 # Google Setup
 
-**Zero bring-your-own-app.** The default sign-in reuses **Mozilla Thunderbird's
-published public OAuth client**, so there is **no Google Cloud project to create**
-and **no `credentials.json` to download**. Just install, start the daemon, and
-sign in.
+**Bring your own Google Cloud OAuth client.** This skill talks to the official
+Google REST APIs (Gmail + Calendar v3) and requires the user's own OAuth client
+JSON at `~/.google/credentials.json`. There is no shared sign-in client. If the
+user just wants everyday Gmail mail and calendar, install the `email-client`
+skill instead: it signs into Gmail with zero setup (no Google Cloud project) and
+covers mail plus calendar. Use this skill only when Google-native APIs are
+genuinely needed (raised quotas, API surfaces email-client does not cover,
+future Meet/conferenceData work).
 
-**What works under this client:** Gmail (via the Gmail REST API) and Google
-Calendar (via **CalDAV**, the same path Thunderbird uses). The Calendar *REST*
-API and Google Meet are **disabled** for this client's Cloud project and cannot be
-used; calendar therefore runs entirely over CalDAV, which needs only the
-`.../auth/calendar` scope granted at sign-in.
+## 1. Create the OAuth client (one-time, user does this in a browser)
+
+In https://console.cloud.google.com/ with the user's Google account:
+
+1. Create a project (or pick an existing one)
+2. Enable the **Gmail API** and the **Google Calendar API**
+   (APIs & Services -> Library)
+3. Configure the OAuth consent screen (External is fine; while the app is in
+   Testing mode, add the user's own address as a test user)
+4. Create credentials -> OAuth client ID -> Application type **Desktop app**
+5. Download the client JSON and place it at `~/.google/credentials.json`
+
+## 2. Install and start the daemon
 
 1. Install: `uv tool install --editable ~/agent/skills/google/cli`
 2. Start background daemon: `screen -dmS google google serve`
@@ -18,7 +30,7 @@ used; calendar therefore runs entirely over CalDAV, which needs only the
    screen -dmS google google serve --notifications-dir ~/agent/notifications
    ```
 
-## Authentication
+## 3. Authentication
 
 Sign-in is a **loopback OAuth** flow: it prints a consent URL and runs a
 `127.0.0.1:<port>` listener for the redirect. It does **not** auto-open a browser
@@ -29,51 +41,22 @@ google auth login                   # Start OAuth flow, prints a consent URL to 
 google auth complete --code <code>  # Complete after authorizing and pasting the code from redirect URL
 google auth login-local             # Alternative: runs the local loopback server to capture the redirect automatically
 google auth list                    # Show authenticated account
-google auth probe                   # Check the OAuth client's health + attempt a silent self-heal
 ```
 
 Requested scopes: `https://mail.google.com/` (full Gmail) and
-`https://www.googleapis.com/auth/calendar` (used by CalDAV), one verified
-Thunderbird consent screen grants both.
+`https://www.googleapis.com/auth/calendar`; one consent screen grants both.
 
-### Advanced: bring your own Google Cloud app (optional)
-
-If you prefer to run your own OAuth client (e.g. to raise quotas, to use the
-Calendar REST API instead of CalDAV, or to enable Meet), create a **Desktop app**
-OAuth client in https://console.cloud.google.com/ (enable the Gmail API, and the
-Calendar / Meet REST APIs if you want them), download the client JSON, and place
-it at `~/.google/credentials.json`. If that file exists it transparently takes
-over; its absence is **not** an error. (Note: the calendar backend in this skill
-is CalDAV either way, a bring-your-own app is not needed for calendar to work.)
+Every auth command requires `~/.google/credentials.json` and fails with a clear
+error when it is missing. Tokens are minted against the client in that file: if
+the file is replaced with a **different** client (including moving off a
+previously used shared client), the stored token cannot refresh, re-run
+`google auth login` to sign in again.
 
 ### Google Meet
 
-Meet is unavailable under the default sign-in. Standalone Meet spaces need a
-restricted scope the shared client is not verified for, and the calendar
-`conferenceData` route needs the Calendar REST API, which is disabled for this
-client. There is no `meet` command. A separately-verified own app
-(`credentials.json`) with the Meet/Calendar REST APIs enabled would be required to
-add it back; that is not wired up here.
-
-### Self-healing sign-in client
-
-The shared Thunderbird client is a commons Google can rotate or delete upstream.
-A low-frequency (≤ once/day) daemon probe detects a dead client via a stored-token
-refresh and runs an automatic escalation ladder:
-
-- **Level 1 (silent):** re-fetch Thunderbird's current client from comm-central,
-  swap it in, re-test. If healthy again → fixed silently (cache + token updated,
-  info log only, **no notification**).
-- **Level 2 (wake the agent):** if the freshly-fetched client is also dead → write
-  an agent-actionable `google_client_heal_request` notification (find/patch a new
-  verified client, test, upstream). A marker prevents repeats.
-- **Level 3 (user, last resort):** if the heal-request marker already exists from a
-  previous cycle and the client is still dead → a plain-English user notification.
-  This is the only path that ever reaches the user.
-
-Run `google auth probe` any time to check health and trigger a silent self-heal
-attempt manually (it never files an agent/user notification, that is the daemon's
-job).
+Not implemented here: no `meet` command, and `calendar create` does not attach
+`conferenceData`. With your own project nothing blocks it in principle (enable
+the Calendar API and any Meet scopes you need); it simply is not wired up.
 
 ## First Use: Data Gathering
 

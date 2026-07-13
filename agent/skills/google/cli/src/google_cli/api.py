@@ -12,12 +12,6 @@ def gmail_service(config: Config):
     return build("gmail", "v1", credentials=creds)
 
 
-# NOTE: there is deliberately no calendar_service / meet_service here. The reused
-# Thunderbird OAuth client's Cloud project has the Calendar and Meet REST APIs
-# disabled (accessNotConfigured), so those REST paths are dead. Calendar now runs
-# on CalDAV (see calendar.py / caldav_client.py); Gmail REST still works.
-
-
 def retry(func, *, max_retries: int = 3):
     for attempt in range(max_retries + 1):
         try:
