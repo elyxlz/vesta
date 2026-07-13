@@ -883,11 +883,11 @@ impl TunnelSupervisor {
 /// `next_respawn_delay_secs`).
 ///
 /// `on_tunnel_up(bool)` is invoked on SUSTAINED edge changes (debounced) so the
-/// caller can mirror tunnel health into status.json: `true` as soon as the tunnel
-/// re-registers, `false` only after it has been unregistered for
-/// `TUNNEL_DOWN_SUSTAINED_SECS` (so transient blips the supervisor heals don't
-/// flip status). Kept as a plain `Fn(bool)` to keep this module free of caller
-/// types.
+/// caller can mirror tunnel health into status.json: `true` when the tunnel
+/// registers (including the first registration after boot), `false` only after
+/// it has been unregistered for `TUNNEL_DOWN_SUSTAINED_SECS` (so transient blips
+/// the supervisor heals don't flip status). Kept as a plain `Fn(bool)` to keep
+/// this module free of caller types.
 pub fn supervise_tunnel(
     config_dir: PathBuf,
     port: u16,
@@ -908,10 +908,11 @@ pub fn supervise_tunnel(
                 None
             }
         };
-        // Edge state for status.json, carried across cloudflared restarts. The
-        // supervisor only runs once the tunnel was verified up, so we start
-        // "reported up" with `now` as the last registered time.
-        let mut reported_up = true;
+        // Edge state for status.json, carried across cloudflared restarts.
+        // Nothing is reported at spawn (boot shows "connecting…"), so the first
+        // registered probe reports up, and a boot that never registers reports
+        // down once the outage is sustained.
+        let mut reported: Option<bool> = None;
         let mut last_registered = tokio::time::Instant::now();
         let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
         loop {
@@ -927,7 +928,7 @@ pub fn supervise_tunnel(
                             probe_client.as_ref(),
                             metrics_port,
                             on_tunnel_up.as_ref(),
-                            &mut reported_up,
+                            &mut reported,
                             &mut last_registered,
                         ) => outcome,
                     };
@@ -962,13 +963,13 @@ pub fn supervise_tunnel(
 /// /ready failing READY_PROBE_MAX_FAILURES times in a row; the `registered` flag
 /// drives the respawn backoff (a run that reconnected resets it, one that never
 /// did lets it grow). Drives the debounced `on_tunnel_up` edge callback via
-/// `reported_up`/`last_registered`, which persist across restarts.
+/// `reported`/`last_registered`, which persist across restarts.
 async fn run_until_unhealthy(
     child: &mut tokio::process::Child,
     probe_client: Option<&reqwest::Client>,
     metrics_port: u16,
     on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
-    reported_up: &mut bool,
+    reported: &mut Option<bool>,
     last_registered: &mut tokio::time::Instant,
 ) -> (String, bool) {
     let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
@@ -1001,20 +1002,17 @@ async fn run_until_unhealthy(
                     Ok(resp) => resp.status().is_success(),
                     Err(_) => false,
                 };
-                // Mirror health into status.json on sustained edges only: "up" the
-                // moment it re-registers, "down" only after a sustained outage.
                 if ok {
                     registered = true;
                     *last_registered = tokio::time::Instant::now();
-                    if !*reported_up {
-                        on_tunnel_up(true);
-                        *reported_up = true;
-                    }
-                } else if *reported_up
-                    && last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS)
-                {
-                    on_tunnel_up(false);
-                    *reported_up = false;
+                }
+                // Mirror health into status.json on sustained edges only: "up" the
+                // moment it registers, "down" only after a sustained outage.
+                let sustained_down = last_registered.elapsed()
+                    >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
+                if let Some(report) = edge_report(*reported, ok, sustained_down) {
+                    on_tunnel_up(report);
+                    *reported = Some(report);
                 }
                 let (failures, restart) = record_probe(consecutive_failures, ok);
                 consecutive_failures = failures;
@@ -1047,6 +1045,20 @@ fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     }
     let failures = consecutive_failures + 1;
     (failures, failures >= READY_PROBE_MAX_FAILURES)
+}
+
+/// Pure edge accounting for status.json: which sustained transition (if any) to
+/// report given what was last reported (`None` = nothing yet, at boot). Reports
+/// up on the first successful probe after boot or a reported outage; reports
+/// down once the edge has been unregistered for the sustained window.
+fn edge_report(reported: Option<bool>, ok: bool, sustained_down: bool) -> Option<bool> {
+    if ok && reported != Some(true) {
+        return Some(true);
+    }
+    if !ok && sustained_down && reported != Some(false) {
+        return Some(false);
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1113,6 +1125,26 @@ mod tests {
         let (count, restart) = record_probe(failures, false);
         assert_eq!(count, READY_PROBE_MAX_FAILURES);
         assert!(restart, "restart at the threshold");
+    }
+
+    #[test]
+    fn edge_report_reports_each_sustained_transition_once() {
+        // Boot, nothing reported yet: first success reports up.
+        assert_eq!(edge_report(None, true, false), Some(true));
+        // Already up: further successes are silent.
+        assert_eq!(edge_report(Some(true), true, false), None);
+        // Up, blip not yet sustained: silent.
+        assert_eq!(edge_report(Some(true), false, false), None);
+        // Up, outage sustained: reports down once.
+        assert_eq!(edge_report(Some(true), false, true), Some(false));
+        assert_eq!(edge_report(Some(false), false, true), None);
+        // Down, recovers: reports up.
+        assert_eq!(edge_report(Some(false), true, false), Some(true));
+        // Boot, never registers, sustained: reports down so status.json gets
+        // the recovery hint instead of showing connecting forever.
+        assert_eq!(edge_report(None, false, true), Some(false));
+        // Boot, not yet sustained: silent.
+        assert_eq!(edge_report(None, false, false), None);
     }
 
     #[test]
