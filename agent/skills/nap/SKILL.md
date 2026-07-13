@@ -5,21 +5,21 @@ description: Take a nap; compact the conversation in place to free up context. U
 
 # Nap
 
-A nap compacts the current conversation in place: the session continues right where it was, with the older history rewritten as a curated summary. It is the light sibling of the nightly dream: the dream curates memory to disk, compacts, and restarts; a nap only compacts.
+A nap compacts the current conversation in place: the session continues right where it was, with older history rewritten as a curated summary. It's the light sibling of the nightly dream (which curates memory to disk, compacts, and restarts); a nap only compacts.
 
 ## When to nap
 
-- Context usage is getting high. Nap deliberately with the prompt below, which preserves what matters, rather than letting the built-in autocompact fire only once the window is nearly full and summarize blindly.
+- Context usage is getting high. Nap deliberately with the prompt below (preserves what matters) rather than letting built-in autocompact fire once the window is nearly full and summarize blindly.
 - The user asks you to take a nap.
 
 A nap costs a summarization pass, so nap with a reason, not mid-task out of habit.
 
 ## How
 
-Call the `compact_context` tool once. It schedules the compaction for after the current turn ends, and the session then continues compacted.
+Call the `compact_context` tool once. It schedules compaction for after the current turn ends, then the session continues compacted.
 
-- `followup` (optional): a short instruction to your own next turn after the compaction. It is delivered to you, not the user, so word it to yourself, for example "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit it for a silent nap.
-- `prompt` (required): how to summarize the conversation. Use the nap prompt below.
+- `followup` (optional): a short instruction to your own next turn after compaction. Delivered to you, not the user, so word it to yourself, e.g. "You just compacted; tell the user you cleared your head if it is worth saying, otherwise carry on." Omit for a silent nap.
+- `prompt` (required): how to summarize. Use the nap prompt below.
 
 ## The nap prompt (for `prompt`)
 
