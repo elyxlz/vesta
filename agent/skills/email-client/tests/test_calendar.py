@@ -4,10 +4,11 @@ calendar_client/caldav_client import imap_client (which needs imap_tools from
 the on-box runtime), so a minimal imap_tools stub is registered first. All
 network traffic funnels through ``caldav_client.request``, so most tests
 monkeypatch that single choke point and feed real multistatus/iCalendar
-bodies; the redirect test fakes ``urllib`` one level lower.
+bodies; the redirect and 412 tests fake ``urllib`` one level lower.
 """
 
 import argparse
+import base64
 import datetime as dt
 import io
 import json
@@ -15,6 +16,7 @@ import pathlib
 import sys
 import types
 import urllib.error
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -71,15 +73,16 @@ def _run(argv, capsys):
     return capsys.readouterr().out
 
 
-def _ctx(auth="bearer", base_url=GOOGLE_BASE, user="me@gmail.com"):
-    return caldav_client.CalDavAccount(account="personal", user=user, base_url=base_url, auth=auth)
+def _ctx(auth="bearer", base_url=GOOGLE_BASE, user="me@gmail.com", layout=None):
+    resolved_layout = layout if layout is not None else ("google" if auth == "bearer" else "discovery")
+    return caldav_client.CalDavAccount(account="personal", user=user, base_url=base_url, auth=auth, layout=resolved_layout)
 
 
 class _Recorder:
     """Capture caldav_client.request calls and feed canned responses.
 
     ``responses`` is a list of (method, url_substring, (status, body)) rules;
-    the first match wins. Unmatched calls return an empty 207.
+    the first match wins. Unmatched calls return an empty 207 multistatus.
     """
 
     def __init__(self, responses=None):
@@ -92,7 +95,7 @@ class _Recorder:
             if rule_method == method and needle in url:
                 status, text = response
                 return status, text, url
-        return 207, "", url
+        return 207, '<D:multistatus xmlns:D="DAV:"/>', url
 
 
 @pytest.fixture
@@ -191,6 +194,32 @@ EXISTING_ICS = "\r\n".join(
     ]
 )
 
+RECURRING_ICS = "\r\n".join(
+    [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "DTSTART:20260720T140000Z",
+        "DTEND:20260720T150000Z",
+        "UID:evt-series@google.com",
+        "SUMMARY:Series",
+        "RRULE:FREQ=DAILY;COUNT=5",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ]
+)
+
+
+def _report_body(ics_text, href="/caldav/v2/me%40gmail.com/events/evt-timed%40google.com.ics", etag='"e1"'):
+    return (
+        '<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">'
+        f"<D:response><D:href>{href}</D:href>"
+        "<D:propstat><D:status>HTTP/1.1 200 OK</D:status>"
+        f"<D:prop><D:getetag>{etag}</D:getetag><caldav:calendar-data>{ics_text}</caldav:calendar-data></D:prop>"
+        "</D:propstat></D:response></D:multistatus>"
+    )
+
 
 def _freeze_window(monkeypatch):
     """Pin the query window so the recurring fixture expands deterministically."""
@@ -212,12 +241,13 @@ def _fake_account(monkeypatch, profile, token=None, user="me@example.com"):
     monkeypatch.setattr(imap_client, "account_user", lambda a: user)
 
 
-def test_gmail_account_resolves_to_bearer(monkeypatch):
+def test_gmail_account_resolves_to_bearer_google_layout(monkeypatch):
     profile = {"auth_strategy": "loopback-oauth", "caldav_url": GOOGLE_BASE}
     token = {"scope": "https://mail.google.com/ https://www.googleapis.com/auth/calendar"}
     _fake_account(monkeypatch, profile, token=token, user="me@gmail.com")
     ctx = caldav_client.caldav_account("acct")
     assert ctx.auth == "bearer"
+    assert ctx.layout == "google"
     assert ctx.base_url == GOOGLE_BASE
     assert ctx.user == "me@gmail.com"
 
@@ -236,11 +266,12 @@ def test_gmail_token_without_scope_field_is_not_blocked(monkeypatch):
     assert caldav_client.caldav_account("acct").auth == "bearer"
 
 
-def test_app_password_account_resolves_to_basic(monkeypatch):
+def test_app_password_account_resolves_to_basic_discovery(monkeypatch):
     profile = {"auth_strategy": "app-password", "caldav_url": "https://caldav.icloud.com"}
     _fake_account(monkeypatch, profile, user="me@icloud.com")
     ctx = caldav_client.caldav_account("acct")
     assert ctx.auth == "basic"
+    assert ctx.layout == "discovery"
     assert ctx.base_url == "https://caldav.icloud.com"
 
 
@@ -286,8 +317,6 @@ def test_auth_header_bearer_and_basic(monkeypatch):
     assert caldav_client._auth_header(_ctx()) == "Bearer TOKEN123"
     basic = caldav_client._auth_header(_ctx(auth="basic", base_url="https://caldav.icloud.com", user="me@icloud.com"))
     assert basic.startswith("Basic ")
-    import base64
-
     assert base64.b64decode(basic.split()[1]).decode() == "me@icloud.com:app-pass"
 
 
@@ -343,6 +372,74 @@ def test_list_custom_calendar_id_used_verbatim_on_google(rec, monkeypatch, capsy
     assert rec.calls[0]["url"] == f"{GOOGLE_BASE}/team@group.calendar.google.com/events/"
 
 
+def test_list_reports_unparseable_event_as_degraded_entry(rec, monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    broken = (
+        '<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">'
+        "<D:response><D:href>/caldav/v2/me%40gmail.com/events/bad.ics</D:href>"
+        "<D:propstat><D:status>HTTP/1.1 200 OK</D:status>"
+        "<D:prop><caldav:calendar-data>BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:evt-broken\nDTSTART broken line no colon\n"
+        "END:VEVENT\nEND:VCALENDAR\n</caldav:calendar-data></D:prop></D:propstat></D:response>"
+        "<D:response><D:href>/caldav/v2/me%40gmail.com/events/good.ics</D:href>"
+        "<D:propstat><D:status>HTTP/1.1 200 OK</D:status>"
+        "<D:prop><caldav:calendar-data>BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:evt-good\nDTSTART:20260714T100000Z\n"
+        "DTEND:20260714T110000Z\nSUMMARY:Fine\nEND:VEVENT\nEND:VCALENDAR\n</caldav:calendar-data></D:prop></D:propstat></D:response>"
+        "</D:multistatus>"
+    )
+    rec.responses = [("REPORT", "/events/", (207, broken))]
+    out = json.loads(_run(["calendar", "list", "--days-ahead", "10"], capsys))
+    assert [e["id"] for e in out if "parse_error" not in e] == ["evt-good"]
+    degraded = next(e for e in out if "parse_error" in e)
+    assert degraded["id"] == "evt-broken"
+    assert "no ':'" in degraded["parse_error"]
+
+
+def test_list_flags_unsupported_rrule_instead_of_partial_schedule(rec, monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    body = _report_body(
+        "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:evt-exotic\nDTSTART:20260714T100000Z\nDTEND:20260714T110000Z\n"
+        "RRULE:FREQ=HOURLY;COUNT=3\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+    rec.responses = [("REPORT", "/events/", (207, body))]
+    out = json.loads(_run(["calendar", "list", "--days-ahead", "10"], capsys))
+    assert len(out) == 1
+    assert out[0]["rrule_unsupported"] == "FREQ=HOURLY;COUNT=3"
+
+
+def test_list_warns_on_unknown_tzid_and_maps_windows_names(rec, monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    body = _report_body(
+        "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:evt-win\nDTSTART;TZID=W. Europe Standard Time:20260714T100000\n"
+        "DTEND;TZID=W. Europe Standard Time:20260714T110000\nSUMMARY:Berlin\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nUID:evt-mystery\nDTSTART;TZID=Custom/Nowhere:20260714T100000\n"
+        "DTEND;TZID=Custom/Nowhere:20260714T110000\nSUMMARY:Mystery\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+    rec.responses = [("REPORT", "/events/", (207, body))]
+    out = json.loads(_run(["calendar", "list", "--days-ahead", "10"], capsys))
+    berlin = next(e for e in out if e["id"] == "evt-win")
+    # 10:00 Berlin summer time is UTC+2.
+    assert berlin["start"]["timeZone"] == "Europe/Berlin"
+    assert berlin["start"]["dateTime"] == "2026-07-14T10:00:00+02:00"
+    assert "timezone_warning" not in berlin
+    mystery = next(e for e in out if e["id"] == "evt-mystery")
+    assert "unknown timezone 'Custom/Nowhere'" in mystery["timezone_warning"]
+    assert mystery["start"]["dateTime"] == "2026-07-14T10:00:00+00:00"
+
+
+def test_list_uses_vtimezone_offset_for_custom_tzid(rec, monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    body = _report_body(
+        "BEGIN:VCALENDAR\nBEGIN:VTIMEZONE\nTZID:Custom/Somewhere\nBEGIN:STANDARD\nDTSTART:19700101T000000\n"
+        "TZOFFSETFROM:+0500\nTZOFFSETTO:+0500\nEND:STANDARD\nEND:VTIMEZONE\n"
+        "BEGIN:VEVENT\nUID:evt-custom\nDTSTART;TZID=Custom/Somewhere:20260714T100000\n"
+        "DTEND;TZID=Custom/Somewhere:20260714T110000\nSUMMARY:Offset\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+    rec.responses = [("REPORT", "/events/", (207, body))]
+    out = json.loads(_run(["calendar", "list", "--days-ahead", "10"], capsys))
+    assert out[0]["start"]["dateTime"] == "2026-07-14T10:00:00+05:00"
+    assert "timezone_warning" not in out[0]
+
+
 # -- list-calendars ---------------------------------------------------
 
 
@@ -377,12 +474,18 @@ ICLOUD_PRINCIPAL = """<D:multistatus xmlns:D="DAV:">
   </D:propstat></D:response>
 </D:multistatus>"""
 
-ICLOUD_HOME_SET = """<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">
- <D:response><D:href>/12345/principal/</D:href>
-  <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
-   <D:prop><caldav:calendar-home-set><D:href>https://p42-caldav.icloud.com/12345/calendars/</D:href></caldav:calendar-home-set></D:prop>
-  </D:propstat></D:response>
-</D:multistatus>"""
+
+def _icloud_home_set(default_href=None):
+    default = (
+        f"<caldav:schedule-default-calendar-URL><D:href>{default_href}</D:href></caldav:schedule-default-calendar-URL>" if default_href else ""
+    )
+    return f"""<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">
+     <D:response><D:href>/12345/principal/</D:href>
+      <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
+       <D:prop><caldav:calendar-home-set><D:href>https://p42-caldav.icloud.com/12345/calendars/</D:href></caldav:calendar-home-set>{default}</D:prop>
+      </D:propstat></D:response>
+    </D:multistatus>"""
+
 
 ICLOUD_CALENDARS = """<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">
  <D:response><D:href>/12345/calendars/</D:href>
@@ -392,6 +495,13 @@ ICLOUD_CALENDARS = """<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:param
  <D:response><D:href>/12345/calendars/home/</D:href>
   <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
    <D:prop><D:displayname>Home</D:displayname>
+    <D:resourcetype><D:collection/><caldav:calendar/></D:resourcetype>
+    <caldav:supported-calendar-component-set><caldav:comp name="VEVENT"/></caldav:supported-calendar-component-set>
+   </D:prop></D:propstat>
+ </D:response>
+ <D:response><D:href>/12345/calendars/work/</D:href>
+  <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
+   <D:prop><D:displayname>Work</D:displayname>
     <D:resourcetype><D:collection/><caldav:calendar/></D:resourcetype>
     <caldav:supported-calendar-component-set><caldav:comp name="VEVENT"/></caldav:supported-calendar-component-set>
    </D:prop></D:propstat>
@@ -406,49 +516,65 @@ ICLOUD_CALENDARS = """<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:param
 </D:multistatus>"""
 
 
-def _icloud_recorder():
+def _icloud_recorder(default_href=None):
     # First match wins, so the more specific paths come before the bare host.
     return _Recorder(
         responses=[
-            ("PROPFIND", "/12345/principal/", (207, ICLOUD_HOME_SET)),
+            ("PROPFIND", "/12345/principal/", (207, _icloud_home_set(default_href))),
             ("PROPFIND", "/12345/calendars/", (207, ICLOUD_CALENDARS)),
             ("PROPFIND", "caldav.icloud.com/", (207, ICLOUD_PRINCIPAL)),
         ]
     )
 
 
-def test_list_calendars_discovers_icloud_home_and_filters_vtodo(monkeypatch, capsys):
+def _icloud_ctx(monkeypatch, default_href=None):
     monkeypatch.setattr(
         caldav_client, "caldav_account", lambda a: _ctx(auth="basic", base_url="https://caldav.icloud.com", user="me@icloud.com")
     )
-    recorder = _icloud_recorder()
+    recorder = _icloud_recorder(default_href)
     monkeypatch.setattr(caldav_client, "request", recorder)
+    return recorder
+
+
+def test_list_calendars_discovers_icloud_home_and_filters_vtodo(monkeypatch, capsys):
+    recorder = _icloud_ctx(monkeypatch)
     out = json.loads(_run(["calendar", "list-calendars"], capsys))
-    assert out == [{"id": "home", "summary": "Home", "primary": True}]
+    assert out == [
+        {"id": "home", "summary": "Home", "primary": True},
+        {"id": "work", "summary": "Work", "primary": False},
+    ]
     # Discovery walked principal -> home-set -> partition-host calendars.
     assert recorder.calls[1]["url"] == "https://caldav.icloud.com/12345/principal/"
     assert recorder.calls[2]["url"] == "https://p42-caldav.icloud.com/12345/calendars/"
 
 
+def test_list_calendars_primary_follows_schedule_default(monkeypatch, capsys):
+    _icloud_ctx(monkeypatch, default_href="/12345/calendars/work/")
+    out = json.loads(_run(["calendar", "list-calendars"], capsys))
+    assert {"id": "work", "summary": "Work", "primary": True} in out
+    assert {"id": "home", "summary": "Home", "primary": False} in out
+
+
 def test_event_ops_use_discovered_collection(monkeypatch, capsys):
-    monkeypatch.setattr(
-        caldav_client, "caldav_account", lambda a: _ctx(auth="basic", base_url="https://caldav.icloud.com", user="me@gmail.com")
-    )
-    recorder = _icloud_recorder()
-    recorder.responses.append(("GET", "/calendars/home/", (200, EXISTING_ICS)))
-    monkeypatch.setattr(caldav_client, "request", recorder)
+    recorder = _icloud_ctx(monkeypatch)
+    recorder.responses.insert(0, ("REPORT", "/calendars/home/", (207, _report_body(EXISTING_ICS, href="/12345/calendars/home/abc.ics"))))
     out = json.loads(_run(["calendar", "get", "--id", "evt-timed@google.com"], capsys))
     assert out["summary"] == "Old title"
-    get = next(c for c in recorder.calls if c["method"] == "GET")
-    assert get["url"] == "https://p42-caldav.icloud.com/12345/calendars/home/evt-timed%40google.com.ics"
+    report = next(c for c in recorder.calls if c["method"] == "REPORT")
+    assert report["url"] == "https://p42-caldav.icloud.com/12345/calendars/home/"
+    assert out["ics_href"] == "https://p42-caldav.icloud.com/12345/calendars/home/abc.ics"
 
 
 # -- get ---------------------------------------------------------------
 
 
-def test_get_event_by_uid_resource_name(rec, capsys):
-    rec.responses = [("GET", "/events/evt-timed%40google.com.ics", (200, EXISTING_ICS))]
+def test_get_event_via_uid_report(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     out = json.loads(_run(["calendar", "get", "--id", "evt-timed@google.com"], capsys))
+    report = rec.calls[0]
+    assert report["method"] == "REPORT"
+    assert 'prop-filter name="UID"' in report["body"]
+    assert "evt-timed@google.com" in report["body"]
     assert out["id"] == "evt-timed@google.com"
     assert out["summary"] == "Old title"
     assert out["start"] == {"dateTime": "2026-07-20T14:00:00+00:00", "timeZone": "UTC"}
@@ -456,28 +582,20 @@ def test_get_event_by_uid_resource_name(rec, capsys):
     assert out["attendees"][0]["responseStatus"] == "needsAction"
 
 
-def test_get_falls_back_to_uid_report_when_resource_name_differs(rec, capsys):
-    report_body = f"""<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">
-     <D:response><D:href>/caldav/v2/me%40gmail.com/events/ABC123.ics</D:href>
-      <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
-       <D:prop><caldav:calendar-data>{EXISTING_ICS}</caldav:calendar-data></D:prop></D:propstat>
-     </D:response></D:multistatus>"""
+def test_get_falls_back_to_resource_name_when_report_is_empty(rec, capsys):
     rec.responses = [
-        ("GET", ".ics", (404, "not found")),
-        ("REPORT", "/events/", (207, report_body)),
+        ("REPORT", "/events/", (207, '<D:multistatus xmlns:D="DAV:"/>')),
+        ("GET", "/events/evt-timed%40google.com.ics", (200, EXISTING_ICS)),
     ]
     out = json.loads(_run(["calendar", "get", "--id", "evt-timed@google.com"], capsys))
     assert out["summary"] == "Old title"
-    report = next(c for c in rec.calls if c["method"] == "REPORT")
-    assert "evt-timed@google.com" in report["body"]
-    assert 'prop-filter name="UID"' in report["body"]
-    assert out["ics_href"] == f"{GOOGLE_BASE}/me%40gmail.com/events/ABC123.ics"
+    assert [c["method"] for c in rec.calls] == ["REPORT", "GET"]
 
 
 # -- create ------------------------------------------------------------
 
 
-def test_create_puts_utc_ical_with_attendees(rec, capsys):
+def test_create_puts_tzid_anchored_ical_with_attendees(rec, capsys):
     out = json.loads(
         _run(
             [
@@ -507,21 +625,29 @@ def test_create_puts_utc_ical_with_attendees(rec, capsys):
     assert put["extra_headers"] == {"If-None-Match": "*"}
     body = put["body"]
     assert "SUMMARY:Sync\\; agenda\\, notes" in body
-    # 15:00 London (BST, UTC+1) -> 14:00 UTC, emitted as a Z time (no VTIMEZONE).
-    assert "DTSTART:20260720T140000Z" in body
-    assert "DTEND:20260720T150000Z" in body
-    assert "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:a@x.com" in body.replace("\r\n ", "")
-    assert "mailto:c@z.com" in body.replace("\r\n ", "")
+    # Local wall time anchored to the IANA zone, not a fixed UTC instant, so
+    # recurring events stay at 15:00 London across DST.
+    assert "DTSTART;TZID=Europe/London:20260720T150000" in body
+    assert "DTEND;TZID=Europe/London:20260720T160000" in body
+    assert "Z" not in body.split("DTSTART;TZID=Europe/London:")[1][:16]
+    assert "BEGIN:VTIMEZONE" in body
+    assert "TZID:Europe/London" in body
+    assert "TZOFFSETTO:+0100" in body  # BST block
+    unfolded = body.replace("\r\n ", "")
+    assert "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:a@x.com" in unfolded
+    assert "mailto:c@z.com" in unfolded
     assert "ORGANIZER:mailto:me@gmail.com" in body
+    assert "SCHEDULE-AGENT" not in body  # server-side implicit scheduling stays in effect
     assert out["status"] == "created"
     assert out["id"].endswith("@email-client")
 
 
-def test_create_defaults_end_to_plus_one_hour(rec, capsys):
+def test_create_defaults_end_to_plus_one_hour_utc(rec, capsys):
     _run(["calendar", "create", "--subject", "Quick", "--start", "2026-07-20T09:00:00"], capsys)
     body = rec.calls[0]["body"]
-    assert "DTSTART:20260720T090000Z" in body  # default timezone UTC
+    assert "DTSTART:20260720T090000Z" in body  # default timezone UTC keeps the compact Z form
     assert "DTEND:20260720T100000Z" in body
+    assert "BEGIN:VTIMEZONE" not in body
 
 
 def test_create_all_day_uses_exclusive_end_date(rec, capsys):
@@ -538,13 +664,24 @@ def test_create_rejects_bad_timezone(rec, capsys):
     assert "invalid timezone" in str(ei.value)
 
 
+def test_build_vtimezone_has_both_dst_blocks():
+    vtz = ics.build_vtimezone(ZoneInfo("Europe/London"), 2026)
+    names = sorted(child.name for child in vtz.children)
+    assert names == ["DAYLIGHT", "STANDARD"]
+    daylight = next(child for child in vtz.children if child.name == "DAYLIGHT")
+    assert ics.first_prop(daylight, "TZOFFSETTO").value == "+0100"
+    standard = next(child for child in vtz.children if child.name == "STANDARD")
+    assert ics.first_prop(standard, "TZOFFSETTO").value == "+0000"
+
+
 # -- update / delete / respond ------------------------------------------
 
 
-def test_update_patches_summary_and_bumps_sequence(rec, capsys):
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+def test_update_patches_summary_bumps_sequence_and_sends_if_match(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     _run(["calendar", "update", "--id", "evt-timed@google.com", "--subject", "New title"], capsys)
     put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert put["extra_headers"] == {"If-Match": '"e1"'}
     assert "SUMMARY:New title" in put["body"]
     assert "SEQUENCE:3" in put["body"]
     # Properties this module does not model survive the round-trip untouched.
@@ -563,18 +700,28 @@ def test_update_with_no_fields_errors(rec, capsys):
     assert "nothing to update" in str(ei.value).lower()
 
 
-def test_update_start_rewrites_dtstart_in_utc(rec, capsys):
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+def test_update_start_writes_tzid_and_vtimezone(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     _run(
         ["calendar", "update", "--id", "evt-timed@google.com", "--start", "2026-07-21T10:00:00", "--timezone", "Europe/London"],
         capsys,
     )
     put = next(c for c in rec.calls if c["method"] == "PUT")
-    assert "DTSTART:20260721T090000Z" in put["body"]
+    assert "DTSTART;TZID=Europe/London:20260721T100000" in put["body"]
+    assert "BEGIN:VTIMEZONE" in put["body"]
+
+
+def test_update_end_drops_duration(rec, capsys):
+    with_duration = EXISTING_ICS.replace("DTEND:20260720T150000Z\r\n", "").replace("SEQUENCE:2", "DURATION:PT1H\r\nSEQUENCE:2")
+    rec.responses = [("REPORT", "/events/", (207, _report_body(with_duration)))]
+    _run(["calendar", "update", "--id", "evt-timed@google.com", "--end", "2026-07-20T16:00:00", "--timezone", "UTC"], capsys)
+    put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert "DTEND:20260720T160000Z" in put["body"]
+    assert "DURATION" not in put["body"]
 
 
 def test_update_replaces_attendees(rec, capsys):
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     _run(["calendar", "update", "--id", "evt-timed@google.com", "--attendees", "new@x.com"], capsys)
     put = next(c for c in rec.calls if c["method"] == "PUT")
     assert "mailto:new@x.com" in put["body"].replace("\r\n ", "")
@@ -582,30 +729,65 @@ def test_update_replaces_attendees(rec, capsys):
 
 
 def test_delete_finds_event_then_deletes(rec, capsys):
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     out = _run(["calendar", "delete", "--id", "evt-timed@google.com"], capsys)
     delete = next(c for c in rec.calls if c["method"] == "DELETE")
     assert delete["url"].endswith("/events/evt-timed%40google.com.ics")
     assert '"deleted"' in out
 
 
-def test_respond_sets_partstat_for_self(rec, capsys):
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+def test_delete_occurrence_appends_exdate_instead_of_deleting(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(RECURRING_ICS)))]
+    out = _run(["calendar", "delete", "--id", "evt-series@google.com", "--occurrence", "2026-07-22T14:00:00+00:00"], capsys)
+    assert not [c for c in rec.calls if c["method"] == "DELETE"]
+    put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert put["extra_headers"] == {"If-Match": '"e1"'}
+    assert "EXDATE:20260722T140000Z" in put["body"]
+    assert "RRULE:FREQ=DAILY;COUNT=5" in put["body"]  # series itself survives
+    assert '"occurrence-cancelled"' in out
+
+
+def test_delete_occurrence_on_non_recurring_event_errors(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
+    with pytest.raises(SystemExit) as ei:
+        _run(["calendar", "delete", "--id", "evt-timed@google.com", "--occurrence", "2026-07-20T14:00:00+00:00"], capsys)
+    assert "not recurring" in str(ei.value)
+
+
+def test_delete_occurrence_not_in_series_errors(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(RECURRING_ICS)))]
+    with pytest.raises(SystemExit) as ei:
+        _run(["calendar", "delete", "--id", "evt-series@google.com", "--occurrence", "2026-07-22T15:00:00+00:00"], capsys)
+    assert "no occurrence" in str(ei.value)
+
+
+def test_respond_sets_partstat_for_self_with_if_match(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     out = _run(["calendar", "respond", "--id", "evt-timed@google.com", "--response", "accept"], capsys)
     put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert put["extra_headers"] == {"If-Match": '"e1"'}
     assert "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@gmail.com" in put["body"]
     assert '"accepted"' in out
 
 
-def test_respond_when_not_an_attendee_errors(rec, monkeypatch, capsys):
+def test_respond_matches_attendee_case_insensitively(rec, monkeypatch, capsys):
+    monkeypatch.setattr(caldav_client, "caldav_account", lambda account: _ctx(user="ME@Gmail.com"))
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
+    out = _run(["calendar", "respond", "--id", "evt-timed@google.com", "--response", "decline"], capsys)
+    assert '"declined"' in out
+
+
+def test_respond_when_not_an_attendee_lists_the_attendees(rec, monkeypatch, capsys):
     monkeypatch.setattr(caldav_client, "caldav_account", lambda account: _ctx(user="other@gmail.com"))
-    rec.responses = [("GET", ".ics", (200, EXISTING_ICS))]
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
     with pytest.raises(SystemExit) as ei:
         _run(["calendar", "respond", "--id", "evt-timed@google.com", "--response", "accept"], capsys)
-    assert "not an attendee" in str(ei.value)
+    message = str(ei.value)
+    assert "not an attendee" in message
+    assert "me@gmail.com" in message  # the event's attendees are listed for alias debugging
 
 
-# -- redirects (iCloud partition hosts) -----------------------------------
+# -- transport: redirects + preconditions ----------------------------------
 
 
 class _FakeResponse(io.BytesIO):
@@ -633,6 +815,18 @@ def test_request_follows_redirect_with_method_and_auth(monkeypatch):
     assert all(s["auth"] == "Basic abc" for s in seen)
 
 
+def test_request_412_reports_concurrent_change(monkeypatch):
+    monkeypatch.setattr(caldav_client, "_auth_header", lambda ctx: "Basic abc")
+
+    def fake_urlopen(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 412, "precondition failed", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(caldav_client.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(SystemExit) as ei:
+        caldav_client.request(_ctx(auth="basic"), "PUT", "https://caldav.example.com/x.ics", body="B", extra_headers={"If-Match": '"e"'})
+    assert "changed on the server" in str(ei.value)
+
+
 # -- recurrence expansion (ics) -------------------------------------------
 
 
@@ -649,7 +843,7 @@ WINDOW_START = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
 WINDOW_END = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
 
 
-def test_expand_weekly_byday(monkeypatch):
+def test_expand_weekly_byday():
     vcal = _vcal(
         "BEGIN:VEVENT",
         "UID:w1",
@@ -741,17 +935,120 @@ def test_expand_all_day_weekly():
     assert starts == [dt.date(2026, 7, 3), dt.date(2026, 7, 10), dt.date(2026, 7, 17)]
 
 
-def test_expand_unsupported_rule_falls_back_to_master_only():
+def test_expand_daily_event_started_years_ago_reaches_todays_window():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:old1",
+        "DTSTART:20200101T090000Z",
+        "DTEND:20200101T093000Z",
+        "RRULE:FREQ=DAILY",
+        "END:VEVENT",
+    )
+    starts = _starts(vcal, dt.datetime(2026, 7, 13, tzinfo=dt.UTC), dt.datetime(2026, 7, 20, tzinfo=dt.UTC))
+    in_window = [s for s in starts if s >= dt.datetime(2026, 7, 13, tzinfo=dt.UTC)]
+    assert len(in_window) == 7
+    assert in_window[0] == dt.datetime(2026, 7, 13, 9, 0, tzinfo=dt.UTC)
+
+
+def test_expand_count_includes_nonmatching_dtstart_exactly_once():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:c1",
+        "DTSTART:20260707T090000Z",  # a Tuesday, not in BYDAY
+        "DTEND:20260707T100000Z",
+        "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=2",
+        "END:VEVENT",
+    )
+    starts = _starts(vcal, WINDOW_START, WINDOW_END)
+    # DTSTART counts as the first occurrence, so COUNT=2 = DTSTART + one Monday.
+    assert [s.date().isoformat() for s in starts] == ["2026-07-07", "2026-07-13"]
+
+
+def test_expand_rdate_period_forms():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:p1",
+        "DTSTART:20260701T100000Z",
+        "DTEND:20260701T110000Z",
+        "RDATE;VALUE=PERIOD:20260710T100000Z/20260710T113000Z,20260711T100000Z/PT2H",
+        "END:VEVENT",
+    )
+    occurrences = ics.expand(vcal, WINDOW_START, WINDOW_END)
+    by_start = {occ.start: occ.end for occ in occurrences}
+    assert by_start[dt.datetime(2026, 7, 10, 10, 0, tzinfo=dt.UTC)] == dt.datetime(2026, 7, 10, 11, 30, tzinfo=dt.UTC)
+    assert by_start[dt.datetime(2026, 7, 11, 10, 0, tzinfo=dt.UTC)] == dt.datetime(2026, 7, 11, 12, 0, tzinfo=dt.UTC)
+
+
+def test_expand_monthly_bysetpos_last_weekday():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:s1",
+        "DTSTART:20260731T090000Z",  # last weekday of July 2026 (Friday)
+        "DTEND:20260731T100000Z",
+        "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=2",
+        "END:VEVENT",
+    )
+    starts = _starts(vcal, WINDOW_START, WINDOW_END)
+    assert [s.date().isoformat() for s in starts] == ["2026-07-31", "2026-08-31"]
+
+
+def test_expand_yearly_bymonth_bymonthday():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:y1",
+        "DTSTART:20260720T090000Z",
+        "DTEND:20260720T100000Z",
+        "RRULE:FREQ=YEARLY;BYMONTH=7;BYMONTHDAY=20;COUNT=2",
+        "END:VEVENT",
+    )
+    starts = _starts(vcal, WINDOW_START, dt.datetime(2028, 1, 1, tzinfo=dt.UTC))
+    assert [s.date().isoformat() for s in starts] == ["2026-07-20", "2027-07-20"]
+
+
+def test_expand_unsupported_rule_reports_instead_of_guessing():
     vcal = _vcal(
         "BEGIN:VEVENT",
         "UID:x1",
         "DTSTART:20260701T120000Z",
         "DTEND:20260701T130000Z",
-        "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+        "RRULE:FREQ=HOURLY;COUNT=3",
         "END:VEVENT",
     )
-    starts = _starts(vcal, WINDOW_START, WINDOW_END)
-    assert starts == [dt.datetime(2026, 7, 1, 12, 0, tzinfo=dt.UTC)]
+    occurrences = ics.expand(vcal, WINDOW_START, WINDOW_END)
+    assert [occ.start for occ in occurrences] == [dt.datetime(2026, 7, 1, 12, 0, tzinfo=dt.UTC)]
+    assert occurrences[0].rrule_unsupported == "FREQ=HOURLY;COUNT=3"
+
+
+def test_expand_floating_datetime_uses_local_timezone(monkeypatch):
+    monkeypatch.setattr(ics, "_local_tz", lambda: ZoneInfo("Europe/Rome"))
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:f1",
+        "DTSTART:20260714T100000",
+        "DTEND:20260714T110000",
+        "END:VEVENT",
+    )
+    occ = ics.expand(vcal, WINDOW_START, WINDOW_END)[0]
+    assert isinstance(occ.start, dt.datetime)
+    # 10:00 floating = 10:00 local (Rome, UTC+2 in July), not 10:00 UTC.
+    assert occ.start.utcoffset() == dt.timedelta(hours=2)
+
+
+def test_expand_uid_less_events_all_survive():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "DTSTART:20260702T100000Z",
+        "DTEND:20260702T110000Z",
+        "SUMMARY:First",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "DTSTART:20260703T100000Z",
+        "DTEND:20260703T110000Z",
+        "SUMMARY:Second",
+        "END:VEVENT",
+    )
+    occurrences = ics.expand(vcal, WINDOW_START, WINDOW_END)
+    assert [ics.first_prop(occ.vevent, "SUMMARY").value for occ in occurrences] == ["First", "Second"]
 
 
 def test_serialize_round_trips_unknown_props_and_folds_long_lines():
@@ -771,3 +1068,19 @@ def test_serialize_round_trips_unknown_props_and_folds_long_lines():
     custom = ics.first_prop(ics.vevents(reparsed)[0], "X-CUSTOM")
     assert custom.value == "y" * 200
     assert custom.params["PARAM"] == '"a,b"'
+
+
+def test_serialize_round_trips_valueless_params():
+    vcal = _vcal(
+        "BEGIN:VEVENT",
+        "UID:v1",
+        "DTSTART:20260701T120000Z",
+        "ATTENDEE;LEGACY;PARTSTAT=NEEDS-ACTION:mailto:x@y.com",
+        "END:VEVENT",
+    )
+    text = ics.serialize(vcal)
+    assert "ATTENDEE;LEGACY;PARTSTAT=NEEDS-ACTION:mailto:x@y.com" in text
+    reparsed = ics.parse_calendar(text)
+    attendee = ics.first_prop(ics.vevents(reparsed)[0], "ATTENDEE")
+    assert attendee.params["LEGACY"] == ""
+    assert attendee.params["PARTSTAT"] == "NEEDS-ACTION"
