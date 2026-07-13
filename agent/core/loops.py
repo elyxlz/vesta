@@ -135,13 +135,12 @@ def _format_one(notif: Notification) -> str:
     return body.replace("</channel>", f"{hint}\n</channel>")
 
 
-def format_notification_batch(notifications: list[Notification], *, suffix: str = "") -> str:
+def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained."""
-    suffix_str = f"\n\n{suffix}" if suffix else ""
-    inner = "\n".join(_format_one(n) for n in notifications)
-    return f"{inner}{suffix_str}"
+    self-contained. Any read-time guidance is carried per-notification by the producer (e.g. the
+    `reply_hint` attribute), not appended as a global suffix here."""
+    return "\n".join(_format_one(n) for n in notifications)
 
 
 async def process_batch(
@@ -150,7 +149,7 @@ async def process_batch(
     queue: asyncio.Queue[vm.QueuedTurn],
     config: cfg.VestaConfig,
 ) -> None:
-    """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
+    """Render a batch as one prompt and queue it. Mixed batches render in two sections, system (`source=core`) first.
 
     Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_preempts):
     an item landing mid-turn is pre-sent there as a priority:"now" message. File paths are
@@ -162,15 +161,15 @@ async def process_batch(
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
-    async def queue_section(group: list[Notification], *, suffix: str) -> None:
-        text = format_notification_batch(group, suffix=suffix)
+    async def queue_section(group: list[Notification]) -> None:
+        text = format_notification_batch(group)
         paths = [n.file_path for n in group if n.file_path]
         await queue.put(vm.QueuedTurn(text, False, paths))
 
     if system:
-        await queue_section(system, suffix="")
+        await queue_section(system)
     if external:
-        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
+        await queue_section(external)
 
 
 def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> str | None:
