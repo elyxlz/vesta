@@ -19,4 +19,4 @@ assume success, check its output.
    ```
    running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }
    ```
-5. **Check it's alive**: `~/agent/skills/dashboard/scripts/daemon status` reports `running`, `port`, and `http_ok` in one JSON blob. Don't assume success; a failed build or server won't tell you otherwise.
+5. **Check it's alive**: `~/agent/skills/dashboard/scripts/daemon status` reports `running`, `port`, and `http_ok` in one JSON blob.

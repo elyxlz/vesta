@@ -36,7 +36,7 @@ notification's other fields. Every field/condition you set must hold (AND); what
   `--match 'sender=X'` and `--match 'text~=RE'`.
 - **First match wins**: rules evaluate top to bottom and stop at the first match, so order is the only
   precedence; a later, more-specific rule never overrides an earlier, broader one. To OR across fields,
-  write separate rules (one rule's conditions are all ANDed).
+  write separate rules.
 - **Placement is handled for you.** `add` auto-places a new rule above any broader one (fewer conditions),
   so a narrow exception isn't shadowed. Override with `--before`/`--after <id>` on add, or `move <id>`
   (`--before`/`--after`/`--top`/`--bottom`) later. `list` shows priority order.

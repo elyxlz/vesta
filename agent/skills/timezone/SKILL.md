@@ -19,4 +19,4 @@ The timezone lives in the agent's config store (`~/agent/data/config.json`, key 
 ## When to use
 
 - First start, if the timezone is still the default `UTC`.
-- The user relocates, moves, travels, or goes on holiday somewhere on a different timezone.
+- The user relocates, travels, or holidays on a different timezone.

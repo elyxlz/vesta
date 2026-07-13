@@ -15,29 +15,19 @@ On a fresh start only (after the nightly dream or a first start, not a mid-conve
 
 Skill setup steps add their daemon startup commands here, one fenced block per skill (a daemon that vestad proxies on a port is a service, registered via the `service` skill; a portless background process still goes here).
 
-Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate. This is load-bearing: crash/timeout recovery re-enters this skill repeatedly and a crash can interrupt the block partway, so an unguarded line piles up duplicate daemons (two of one poller wedge each other; many writing notifications swamp the event log).
+Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate. This is load-bearing: crash/timeout recovery re-enters this skill repeatedly, and an unguarded line piles up duplicate daemons.
 
 ```bash
-# Dead sockets from a previous boot can linger in /run/screen (a restart that
-# preserves /run leaves the old sessions behind, now marked "(Dead ???)"). The
-# guard below would treat such a corpse as "still running" and never restart the
-# daemon. Wipe them first so `running` reflects the true live state.
+# Wipe dead sockets a restart may have left in /run/screen, else the guard treats
+# a "(Dead ???)" corpse as still-running and never restarts the daemon.
 screen -wipe >/dev/null 2>&1 || true
 
-# True iff a LIVE screen session with this exact name exists: keep the matching
-# lines, drop any "(Dead ???)" corpse, and test that something LIVE remains.
-# Trailing-whitespace match keeps `running whatsapp` false when only `whatsapp-elio` exists.
-# Judge by captured output (test -n), never by a pipeline's exit code: the agent's
-# `grep` is ugrep (the Bash tool's shell snapshot shims it), and ugrep's `grep -qv`
-# returns 0 on EMPTY input -- so the obvious `... | grep -qv "Dead"` reports every
-# daemon as live on a cold boot (zero screens) and skips every guarded launch.
-# Filtering with `grep -v "Dead"` (not `grep -q "Dead"` negated) is also existential,
-# so a live session is still seen as running even if a same-name corpse lingers.
+# True iff a LIVE screen session with this exact name exists. Judge by captured
+# output (test -n), not exit code: the agent's shimmed ugrep `grep -qv` returns 0
+# on empty input, which would report every daemon as live on a cold boot.
 running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -v "Dead")"; }
 
 # Skills append guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
-# The trailing `sleep 1` is defensive: firing several `screen -dmS` back-to-back
-# right after a reboot can race and silently drop sessions; a brief beat per launch
-# makes them stick.
+# The trailing `sleep 1` keeps back-to-back `screen -dmS` launches from racing and dropping sessions.
 ```

@@ -119,7 +119,5 @@ One daemon handles everything, both task due-date monitoring and reminder schedu
 PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
 ```
 
-`--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.
-
 ### Reminder Patterns
 [User's common reminder types and preferences]

@@ -15,7 +15,7 @@ Google Calendar is also available here for Gmail accounts (see "Calendar" below)
 
 ## Notes & rules
 
-Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task (and especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (Setup adds a pointer in `~/agent/MEMORY.md` reminding you to load and apply this section on every `email-client` notification; see SETUP.md step 6.)
+Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task (and especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (SETUP.md step 6 adds a MEMORY.md pointer reminding you to load this on every `email-client` notification.)
 
 When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands above. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task, only durable rules.
 

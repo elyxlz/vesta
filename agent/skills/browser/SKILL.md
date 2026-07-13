@@ -70,9 +70,9 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 ```bash
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
-browser launch --mode screenshot                  # ... and report back with screenshots, not the a11y tree
+browser launch --mode screenshot                  # ... reporting screenshots, not the a11y tree
 browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
-browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
+browser connect http://192.168.1.10:9222          # attach to the user's Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session
@@ -173,10 +173,8 @@ order, most-preferred first:
 
 ## More
 
-Occasional topics live in their own files so this one stays lean:
+Occasional topics live in their own files so this one stays lean (handover and remote-control are covered under escalation above):
 
-- [interaction-skills/handover.md](interaction-skills/handover.md) : hand the browser to the user to sign in (primary fallback)
-- [interaction-skills/remote-control.md](interaction-skills/remote-control.md) : drive the user's own Chrome over a tunnel (last resort)
 - [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
 - [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
 

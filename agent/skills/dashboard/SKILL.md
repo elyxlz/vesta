@@ -96,11 +96,3 @@ Dispatch a general-purpose subagent, filling the template at [dashboard-builder.
 ## Verify and relay
 
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
-
-## Key principles
-
-- **You hold the design.** The user gives intent; you make the calls.
-- **One question at a time**, and only to resolve real ambiguity.
-- **YAGNI**: the smallest change that satisfies the intent.
-- **Build on what exists**: extend pages and widgets rather than duplicating.
-- **Verify before done**: confirm it serves, don't assume.

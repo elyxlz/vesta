@@ -11,13 +11,9 @@ Run this once and the daemon and both binaries share the same per-account token 
 - **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
 - **Yahoo / iCloud / Fastmail / generic IMAP**: **app password**.
 
-Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop-app secret `kSmqreRr0qwBWJgbf5Y-PjSU`). These are public, not secrets, and are the canonical open-source-mail-client choice. The reason: Microsoft killed basic-auth IMAP for personal accounts in late 2024 and deprecated tenantless Azure app registrations mid-2025, so reusing a published client ID is the only OAuth path that doesn't require the user to register an Azure tenant. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, which the skill captures via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600).
-
-The Google desktop client is public but Google's token endpoint still requires the published `client_secret` in the authorization-code and refresh exchanges, so the skill sends it. (An earlier Google client id shipped here, `...t1glqf`, was retired by Google and now returns `invalid_client`; the live client is `...t1hgqj`, verified against Thunderbird's current source.)
+Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop-app secret `kSmqreRr0qwBWJgbf5Y-PjSU`, which Google's token endpoint still requires and the skill sends). These are public, not secrets, and are the canonical open-source-mail-client choice: reusing a published client ID is the only OAuth path that doesn't need the user to register an Azure tenant, after Microsoft killed basic-auth IMAP for personal accounts and deprecated tenantless Azure app registrations. Google deprecated the device flow for desktop apps, so its supported equivalent is the loopback redirect, captured via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600). Both consent screens therefore say "Mozilla Thunderbird" — expected, not a misconfiguration. (An earlier Google client id, `...t1glqf`, was retired and returns `invalid_client`; the live one is `...t1hgqj`.)
 
 **Google Calendar in the same sign-in.** The `...t1hgqj` client is registered under Mozilla's verified Google Cloud project (number `406964657835`), whose consent screen already grants mail, calendar, and contacts together. So one Gmail consent also grants `https://www.googleapis.com/auth/calendar`, and the `calendar` commands (see SKILL.md) work with no own Google app, no verification, and no CASA (`auth/calendar` is a "sensitive", not "restricted", scope, so it needs no annual security assessment). Existing Gmail accounts authed before this change must re-auth once to pick up the calendar scope and the corrected client id: `email-client auth add --account <name> --provider gmail --reauth`.
-
-This is why both OAuth consent screens say "Mozilla Thunderbird". That is expected, not a misconfiguration.
 
 ## 1. Install
 
@@ -87,7 +83,7 @@ email-client-send --account personal --to "<user-email>" --subject "with attachm
 email-client attachments --account personal --uid <uid-of-the-attached-send>
 ```
 
-Verify reply/forward threading with `--dry-run` (prints headers without contacting SMTP), against a real UID from the self-send above:
+Verify reply/forward threading with `--dry-run` (prints headers, no SMTP), against a real UID from the self-send above:
 
 ```bash
 email-client-send --account personal --reply-to-uid <uid> --body "test reply" --dry-run
@@ -95,7 +91,7 @@ email-client-send --account personal --reply-to-uid <uid> --cc cc1@example.com -
 email-client-send --account personal --forward-uid <uid> --to recipient@example.com --body "fwd" --dry-run
 ```
 
-Save a draft (APPENDs to the Drafts folder, no SMTP), then read it back:
+Save a draft (APPENDs to Drafts, no SMTP), then read it back:
 
 ```bash
 email-client-send --account personal --to "<user-email>" --subject "draft test" --body "review me" --draft
@@ -103,7 +99,7 @@ email-client-send --account personal --reply-to-uid <uid> --body "draft reply fo
 email-client list --account personal --folder Drafts --limit 3
 ```
 
-**Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` in the environment to hard-disable sending. Any send/reply/forward is refused before touching SMTP (non-zero exit), while `--draft` still works. Truthy values: `1`/`true`/`yes` (case-insensitive). Default off. Verify with `EMAIL_DRAFT_ONLY=1 email-client-send --account personal --to "<user-email>" --subject x --body y` (refuses) vs. the same with `--draft` (succeeds).
+**Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` to hard-disable sending. Any send/reply/forward is refused before touching SMTP (non-zero exit); `--draft` still works. Truthy: `1`/`true`/`yes` (case-insensitive). Default off. Verify with `EMAIL_DRAFT_ONLY=1 email-client-send --account personal --to "<user-email>" --subject x --body y` (refuses) vs. the same with `--draft` (succeeds).
 
 Verify mailbox edits, folder counts, and folder management:
 

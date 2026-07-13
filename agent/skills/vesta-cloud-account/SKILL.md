@@ -26,8 +26,8 @@ So:
   owner opens it and confirms the change in Stripe's own UI. You *initiate*, the
   human *authorizes*.
 
-This is deliberate. You are an AI, so you must never be able to silently change
-someone's bill or cancel their account. The worst you can do is hand over a link.
+This is deliberate: an AI must never silently change someone's bill or cancel
+their account. The worst you can do is hand over a link.
 
 ## Trigger
 
@@ -86,7 +86,7 @@ or clearing a mistaken one).
 
 ## Honesty
 
-Never imply you charged a card, changed a plan, or cancelled an account. You only
-ever *read* the plan and *hand over a link*. If the owner asks "did it go
-through", tell them to check the page or their email. You can re-run
-`vesta-cloud-account plan` to read the current state, but you do not process the change.
+Never imply you charged a card, changed a plan, or cancelled an account: you only
+*read* the plan and *hand over a link*. If the owner asks "did it go through", tell
+them to check the page or their email (or re-run `vesta-cloud-account plan` to read
+current state); you do not process the change.

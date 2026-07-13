@@ -41,7 +41,7 @@ Once configured, the user can manage voice settings directly from the **agent se
    ```bash
    voice-keys daemon start
    ```
-   Idempotent (a running daemon is a no-op) and owns the register-service call, so this is the only command needed. Check with `voice-keys daemon status`.
+   Idempotent and the only command needed. Check with `voice-keys daemon status`.
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
