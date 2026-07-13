@@ -1,6 +1,6 @@
 use vesta_tests::{
-    SERVER, TestAgent, agent_container_name, docker_cmd, exec_in_container, inject_fake_token,
-    is_up, unique_agent,
+    agent_container_name, docker_cmd, exec_in_container, inject_fake_token, is_up, unique_agent,
+    TestAgent, SERVER,
 };
 
 fn agents_dir() -> std::path::PathBuf {
@@ -26,8 +26,16 @@ fn rename_basic() {
 
     let old_env = agents_dir().join(format!("{old_name}.env"));
     let new_env = agents_dir().join(format!("{new_name}.env"));
-    assert!(!old_env.exists(), "old env file should be deleted: {}", old_env.display());
-    assert!(new_env.exists(), "new env file should exist: {}", new_env.display());
+    assert!(
+        !old_env.exists(),
+        "old env file should be deleted: {}",
+        old_env.display()
+    );
+    assert!(
+        new_env.exists(),
+        "new env file should exist: {}",
+        new_env.display()
+    );
     let env_contents = std::fs::read_to_string(&new_env).unwrap();
     assert!(
         env_contents.contains(&format!("AGENT_NAME={new_name}")),

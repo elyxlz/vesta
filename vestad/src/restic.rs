@@ -1,7 +1,7 @@
 //! restic-backed backup storage: one deduplicated, compressed, encrypted restic
 //! repository per agent, snapshots tagged `agent:<name>` + `type:<backup_type>`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::docker::{container_name, DockerError};
 use crate::types::{BackupInfo, BackupType};
@@ -51,7 +51,9 @@ pub fn remove_repo(name: &str) {
     if repo.exists() {
         match std::fs::remove_dir_all(&repo) {
             Ok(()) => tracing::info!(agent = %name, "removed restic backup repository"),
-            Err(e) => tracing::warn!(agent = %name, error = %e, "failed to remove backup repository"),
+            Err(e) => {
+                tracing::warn!(agent = %name, error = %e, "failed to remove backup repository")
+            }
         }
     }
 }
@@ -62,70 +64,18 @@ fn password_path() -> PathBuf {
 
 /// PATH restic if present, else the copy embedded at build time.
 pub fn ensure_restic() -> Result<PathBuf, DockerError> {
-    if let Some(path) = which(RESTIC_BIN) {
+    if let Some(path) = crate::vendored_bin::which(RESTIC_BIN) {
         return Ok(path);
     }
 
-    if let Some((bytes, fingerprint)) = crate::restic_embed::vendored_restic() {
-        return extract_embedded_restic(&config_dir(), bytes, fingerprint);
+    if let Some((bytes, fingerprint)) = crate::vendored_bin::vendored_restic() {
+        return crate::vendored_bin::extract_embedded(&config_dir(), RESTIC_BIN, bytes, fingerprint)
+            .map_err(|e| DockerError::Failed(e.to_string()));
     }
 
     Err(DockerError::Failed(
         "restic not found: not on PATH and not embedded in this build (VESTAD_SKIP_RESTIC=1?). Install restic.".into(),
     ))
-}
-
-const RESTIC_FINGERPRINT_MARKER: &str = ".restic-fingerprint";
-
-/// Serializes extraction so concurrent first-use callers don't write the binary
-/// while another thread is exec'ing it (ETXTBSY).
-static EXTRACT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Write the embedded binary to disk, re-extracting only if the fingerprint changed.
-fn extract_embedded_restic(
-    config_dir: &Path,
-    bytes: &[u8],
-    fingerprint: &str,
-) -> Result<PathBuf, DockerError> {
-    let local_bin = config_dir.join(RESTIC_BIN);
-    let marker = config_dir.join(RESTIC_FINGERPRINT_MARKER);
-    let _guard = EXTRACT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if local_bin.exists()
-        && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
-    {
-        return Ok(local_bin);
-    }
-
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| DockerError::Failed(format!("failed to create config dir: {e}")))?;
-    // Write to a temp file and atomically rename, so we never truncate a binary
-    // another thread is currently executing (which would fail with ETXTBSY).
-    let tmp = config_dir.join(format!("{RESTIC_BIN}.tmp"));
-    std::fs::write(&tmp, bytes)
-        .map_err(|e| DockerError::Failed(format!("failed to write embedded restic: {e}")))?;
-    set_executable(&tmp)?;
-    std::fs::rename(&tmp, &local_bin)
-        .map_err(|e| DockerError::Failed(format!("failed to install restic binary: {e}")))?;
-    std::fs::write(&marker, fingerprint)
-        .map_err(|e| DockerError::Failed(format!("failed to write restic fingerprint: {e}")))?;
-
-    tracing::info!(path = %local_bin.display(), "restic extracted from embed");
-    Ok(local_bin)
-}
-
-fn set_executable(path: &Path) -> Result<(), DockerError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| DockerError::Failed(format!("chmod failed: {e}")))
-}
-
-fn which(name: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new("which").arg(name).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() { None } else { Some(PathBuf::from(path)) }
 }
 
 /// Generate the repo encryption passphrase once (32 random bytes, hex) at 0600.
@@ -174,44 +124,109 @@ fn run_restic_capture(name: &str, label: &str, args: &[&str]) -> Result<Vec<u8>,
         .map_err(|e| DockerError::Failed(format!("failed to run restic {label}: {e}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DockerError::Failed(format!("restic {label} failed: {stderr}")));
+        return Err(DockerError::Failed(format!(
+            "restic {label} failed: {stderr}"
+        )));
     }
     Ok(output.stdout)
 }
 
+/// Registered child pids for one `pipe_through` call, so a caller-side timeout can
+/// kill the still-running processes instead of only abandoning the blocking task
+/// that owns them, which would otherwise let a stale export/import keep streaming
+/// (and a torn snapshot commit) after vestad has already given up.
+#[derive(Clone, Default)]
+struct KillSwitch(std::sync::Arc<std::sync::Mutex<Vec<u32>>>);
+
+impl KillSwitch {
+    fn register(&self, pid: u32) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
+    }
+
+    /// Forget every registered pid. Called once both children are reaped: the kernel
+    /// may reassign a reaped pid, so a later `kill_all` must never target it.
+    fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// Best-effort SIGKILL every registered pid; a pid that already exited is a no-op.
+    fn kill_all(&self) {
+        for pid in self.0.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+            std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
+        }
+    }
+}
+
+/// Result of piping `producer`'s stdout into `consumer`'s stdin. `producer_failed`
+/// carries the producer's stderr when it exited nonzero: the consumer already saw a
+/// clean EOF and may have committed whatever partial bytes it received, so the
+/// caller (not this helper) decides what a failed producer means for what the
+/// consumer produced.
+struct PipeOutput {
+    stdout: Vec<u8>,
+    producer_failed: Option<String>,
+}
+
 /// Pipe `producer`'s stdout into `consumer`'s stdin, run both to completion, and
-/// return the consumer's captured stdout. A nonzero exit on either side maps to
-/// `Failed`, named by its label.
+/// return the consumer's captured stdout. A nonzero consumer exit always maps to
+/// `Failed` (nothing usable came out); a nonzero producer exit is reported via
+/// `PipeOutput::producer_failed` instead, since the consumer may already have
+/// committed something from the partial stream. Registers both child pids with
+/// `kill_switch` as soon as they spawn and deregisters them once both are reaped,
+/// so a caller-side timeout kills only children this call still owns.
 fn pipe_through(
     mut producer: std::process::Command,
     producer_label: &str,
     mut consumer: std::process::Command,
     consumer_label: &str,
-) -> Result<Vec<u8>, DockerError> {
+    kill_switch: &KillSwitch,
+) -> Result<PipeOutput, DockerError> {
     let mut producer_child = producer
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| DockerError::Failed(format!("failed to start {producer_label}: {e}")))?;
-    let producer_stdout = producer_child.stdout.take()
+    kill_switch.register(producer_child.id());
+    let producer_stdout = producer_child
+        .stdout
+        .take()
         .ok_or_else(|| DockerError::Failed(format!("{producer_label} stdout not available")))?;
 
-    let consumer_output = consumer
+    let consumer_child = consumer
         .stdin(producer_stdout)
-        .output()
-        .map_err(|e| DockerError::Failed(format!("failed to run {consumer_label}: {e}")))?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to start {consumer_label}: {e}")))?;
+    kill_switch.register(consumer_child.id());
+    let consumer_output = consumer_child
+        .wait_with_output()
+        .map_err(|e| DockerError::Failed(format!("{consumer_label} wait failed: {e}")))?;
 
-    let producer_output = producer_child.wait_with_output()
+    let producer_output = producer_child
+        .wait_with_output()
         .map_err(|e| DockerError::Failed(format!("{producer_label} wait failed: {e}")))?;
-    if !producer_output.status.success() {
-        let stderr = String::from_utf8_lossy(&producer_output.stderr);
-        return Err(DockerError::Failed(format!("{producer_label} failed: {stderr}")));
-    }
+    kill_switch.clear();
+
     if !consumer_output.status.success() {
         let stderr = String::from_utf8_lossy(&consumer_output.stderr);
-        return Err(DockerError::Failed(format!("{consumer_label} failed: {stderr}")));
+        return Err(DockerError::Failed(format!(
+            "{consumer_label} failed: {stderr}"
+        )));
     }
-    Ok(consumer_output.stdout)
+
+    let producer_failed = (!producer_output.status.success())
+        .then(|| String::from_utf8_lossy(&producer_output.stderr).into_owned());
+
+    Ok(PipeOutput {
+        stdout: consumer_output.stdout,
+        producer_failed,
+    })
 }
 
 /// Initialize the agent's repository if it does not already exist. Idempotent.
@@ -243,7 +258,8 @@ fn agent_tar_name(name: &str) -> String {
 /// Convert a restic RFC3339 timestamp to the `YYYYMMDD-HHMMSS` (UTC) format the
 /// rest of the backup system uses for `created_at`.
 fn format_restic_time(ts: &str) -> Option<String> {
-    let dt = time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339).ok()?;
+    let dt = time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339)
+        .ok()?;
     let utc = dt.to_offset(time::UtcOffset::UTC);
     let fmt = time::macros::format_description!("[year][month][day]-[hour][minute][second]");
     utc.format(&fmt).ok()
@@ -257,6 +273,41 @@ struct ResticSummaryMsg {
     total_bytes_processed: u64,
 }
 
+/// What `snapshot()` must do once the export/backup pipeline finishes: either a
+/// clean snapshot to report, or a torn one (the export died mid-stream, but restic
+/// still committed whatever partial bytes it received) that must be forgotten
+/// before the caller sees the export error, so an incomplete export never lists.
+enum SnapshotOutcome {
+    Committed(ResticSummaryMsg),
+    Torn {
+        snapshot_id: String,
+        export_error: String,
+    },
+}
+
+/// The final JSON line restic emits is the summary, carrying the new snapshot_id.
+fn classify_snapshot_output(output: PipeOutput) -> Result<SnapshotOutcome, DockerError> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<ResticSummaryMsg>(line).ok())
+        .find(|msg| msg.message_type.as_deref() == Some("summary"))
+        .ok_or_else(|| DockerError::Failed("restic backup produced no summary".into()))?;
+
+    match output.producer_failed {
+        Some(export_error) => {
+            let snapshot_id = summary
+                .snapshot_id
+                .ok_or_else(|| DockerError::Failed("restic summary missing snapshot_id".into()))?;
+            Ok(SnapshotOutcome::Torn {
+                snapshot_id,
+                export_error,
+            })
+        }
+        None => Ok(SnapshotOutcome::Committed(summary)),
+    }
+}
+
 /// Stream `docker export <cname>` into `restic backup --stdin`. Caller owns stop/start.
 pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo, DockerError> {
     ensure_repo(name)?;
@@ -267,37 +318,69 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
     let backup_type = backup_type.clone();
     let name = name.to_string();
     let repo_name = name.clone();
+    let kill_switch = KillSwitch::default();
+    let kill_switch_for_task = kill_switch.clone();
 
-    let summary = tokio::time::timeout(
-        std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || -> Result<ResticSummaryMsg, DockerError> {
-            let mut export = std::process::Command::new("docker");
-            export.args(["export", &cname]);
-            let mut backup = restic_command(&repo_name)?;
-            backup.args([
-                "backup", "--stdin",
-                "--stdin-filename", &tar_name,
-                "--tag", &agent_tag,
-                "--tag", &type_tag,
-                "--json",
-            ]);
-            let backup_stdout = pipe_through(export, "docker export", backup, "restic backup")?;
+    let task = tokio::task::spawn_blocking(move || -> Result<ResticSummaryMsg, DockerError> {
+        let mut export = std::process::Command::new("docker");
+        export.args(["export", &cname]);
+        let mut backup = restic_command(&repo_name)?;
+        backup.args([
+            "backup",
+            "--stdin",
+            "--stdin-filename",
+            &tar_name,
+            "--tag",
+            &agent_tag,
+            "--tag",
+            &type_tag,
+            "--json",
+        ]);
+        let output = pipe_through(
+            export,
+            "docker export",
+            backup,
+            "restic backup",
+            &kill_switch_for_task,
+        )?;
 
-            // The final JSON line is the summary, carrying the new snapshot_id.
-            let stdout = String::from_utf8_lossy(&backup_stdout);
-            let summary = stdout
-                .lines()
-                .filter_map(|line| serde_json::from_str::<ResticSummaryMsg>(line).ok())
-                .find(|msg| msg.message_type.as_deref() == Some("summary"))
-                .ok_or_else(|| DockerError::Failed("restic backup produced no summary".into()))?;
-            Ok(summary)
-        }),
-    )
-    .await
-    .map_err(|_| DockerError::Failed(format!("backup timed out after {RESTIC_TIMEOUT_SECS}s")))?
-    .map_err(|e| DockerError::Failed(format!("backup task failed: {e}")))??;
+        match classify_snapshot_output(output)? {
+            SnapshotOutcome::Committed(summary) => Ok(summary),
+            SnapshotOutcome::Torn {
+                snapshot_id,
+                export_error,
+            } => {
+                match run_restic_capture(&repo_name, "forget", &["forget", "--prune", &snapshot_id])
+                {
+                    Ok(_) => {
+                        tracing::warn!(agent = %repo_name, snapshot_id = %snapshot_id, "pruned torn snapshot after docker export failed mid-stream")
+                    }
+                    Err(e) => {
+                        tracing::error!(agent = %repo_name, snapshot_id = %snapshot_id, error = %e, "failed to prune torn snapshot after docker export failed")
+                    }
+                }
+                Err(DockerError::Failed(format!(
+                    "docker export failed: {export_error}"
+                )))
+            }
+        }
+    });
 
-    let full_id = summary.snapshot_id
+    let summary =
+        match tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await
+        {
+            Ok(join_result) => join_result
+                .map_err(|e| DockerError::Failed(format!("backup task failed: {e}")))??,
+            Err(_) => {
+                kill_switch.kill_all();
+                return Err(DockerError::Failed(format!(
+                    "backup timed out after {RESTIC_TIMEOUT_SECS}s"
+                )));
+            }
+        };
+
+    let full_id = summary
+        .snapshot_id
         .ok_or_else(|| DockerError::Failed("restic summary missing snapshot_id".into()))?;
     let id = short_id(&full_id);
 
@@ -305,7 +388,7 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
         id,
         agent_name: name,
         backup_type,
-        created_at: crate::backup::now_timestamp(),
+        created_at: crate::time_utils::now_timestamp(),
         size: summary.total_bytes_processed,
     })
 }
@@ -383,13 +466,14 @@ pub async fn list(name: &str) -> Result<Vec<BackupInfo>, DockerError> {
     ensure_repo(name)?;
     let name = name.to_string();
 
-    let snapshots = tokio::task::spawn_blocking(move || -> Result<Vec<ResticSnapshot>, DockerError> {
-        let stdout = run_restic_capture(&name, "snapshots", &["snapshots", "--json"])?;
-        serde_json::from_slice::<Vec<ResticSnapshot>>(&stdout)
-            .map_err(|e| DockerError::Failed(format!("failed to parse restic snapshots: {e}")))
-    })
-    .await
-    .map_err(|e| DockerError::Failed(format!("list task failed: {e}")))??;
+    let snapshots =
+        tokio::task::spawn_blocking(move || -> Result<Vec<ResticSnapshot>, DockerError> {
+            let stdout = run_restic_capture(&name, "snapshots", &["snapshots", "--json"])?;
+            serde_json::from_slice::<Vec<ResticSnapshot>>(&stdout)
+                .map_err(|e| DockerError::Failed(format!("failed to parse restic snapshots: {e}")))
+        })
+        .await
+        .map_err(|e| DockerError::Failed(format!("list task failed: {e}")))??;
 
     let mut backups: Vec<BackupInfo> = snapshots.into_iter().filter_map(snapshot_to_info).collect();
     backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -410,31 +494,48 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
     let backup_id = backup_id.to_string();
     let image_for_task = image_ref.clone();
     let repo_name = name.to_string();
+    let kill_switch = KillSwitch::default();
+    let kill_switch_for_task = kill_switch.clone();
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-            crate::docker::retry_import_pipeline("restic restore", || {
-                // Best-effort removal of a previous restore image for this agent.
-                std::process::Command::new("docker")
-                    .args(["rmi", "-f", &image_for_task])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .ok();
+    let task = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+        crate::docker::retry_import_pipeline("restic restore", || {
+            // Best-effort removal of a previous restore image for this agent.
+            std::process::Command::new("docker")
+                .args(["rmi", "-f", &image_for_task])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
 
-                let mut dump = restic_command(&repo_name)?;
-                dump.args(["dump", &backup_id, &tar_path]);
-                let mut import = std::process::Command::new("docker");
-                import.args(["import", "-", &image_for_task]);
-                pipe_through(dump, "restic dump", import, "docker import")?;
-                Ok(())
-            })
-        }),
-    )
-    .await
-    .map_err(|_| DockerError::Failed(format!("restore timed out after {RESTIC_TIMEOUT_SECS}s")))?
-    .map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??;
+            let mut dump = restic_command(&repo_name)?;
+            dump.args(["dump", &backup_id, &tar_path]);
+            let mut import = std::process::Command::new("docker");
+            import.args(["import", "-", &image_for_task]);
+            let output = pipe_through(
+                dump,
+                "restic dump",
+                import,
+                "docker import",
+                &kill_switch_for_task,
+            )?;
+            if let Some(stderr) = output.producer_failed {
+                return Err(DockerError::Failed(format!("restic dump failed: {stderr}")));
+            }
+            Ok(())
+        })
+    });
+
+    match tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await {
+        Ok(join_result) => {
+            join_result.map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??
+        }
+        Err(_) => {
+            kill_switch.kill_all();
+            return Err(DockerError::Failed(format!(
+                "restore timed out after {RESTIC_TIMEOUT_SECS}s"
+            )));
+        }
+    }
 
     Ok(image_ref)
 }
@@ -470,6 +571,150 @@ mod tests {
     fn short_id_truncates() {
         assert_eq!(short_id("0123456789abcdef"), "01234567");
         assert_eq!(short_id("abc"), "abc");
+    }
+
+    // ── pipe_through: producer failure must survive past the consumer ─────────
+    //
+    // The bug: pipe_through checked the producer's exit status only after the
+    // consumer had already run to completion, so a producer that dies mid-stream
+    // (e.g. `docker export` losing the container) hands the consumer a clean EOF
+    // and its output looked identical to a successful run.
+
+    #[test]
+    fn pipe_through_reports_producer_failure_after_consumer_succeeds() {
+        // Producer: emit partial output, then exit nonzero, mimicking `docker
+        // export` dying mid-stream. Consumer: a trivial pass-through that always
+        // succeeds, mimicking restic happily committing whatever partial bytes it
+        // received.
+        let mut producer = std::process::Command::new("sh");
+        producer.args(["-c", "printf 'partial-tar-bytes'; exit 1"]);
+        let mut consumer = std::process::Command::new("sh");
+        consumer.args(["-c", "cat; exit 0"]);
+
+        let output = pipe_through(
+            producer,
+            "docker export",
+            consumer,
+            "restic backup",
+            &KillSwitch::default(),
+        )
+        .expect("consumer succeeded, so pipe_through must not error");
+
+        assert_eq!(output.stdout, b"partial-tar-bytes");
+        assert!(
+            output.producer_failed.is_some(),
+            "producer's nonzero exit must be reported, not swallowed"
+        );
+    }
+
+    #[test]
+    fn pipe_through_succeeds_when_both_sides_succeed() {
+        let mut producer = std::process::Command::new("sh");
+        producer.args(["-c", "printf 'ok'; exit 0"]);
+        let mut consumer = std::process::Command::new("sh");
+        consumer.args(["-c", "cat; exit 0"]);
+
+        let output = pipe_through(
+            producer,
+            "docker export",
+            consumer,
+            "restic backup",
+            &KillSwitch::default(),
+        )
+        .unwrap();
+        assert_eq!(output.stdout, b"ok");
+        assert!(output.producer_failed.is_none());
+    }
+
+    #[test]
+    fn pipe_through_errors_when_consumer_fails() {
+        let mut producer = std::process::Command::new("sh");
+        producer.args(["-c", "printf 'x'; exit 0"]);
+        let mut consumer = std::process::Command::new("sh");
+        consumer.args(["-c", "exit 1"]);
+
+        let result = pipe_through(
+            producer,
+            "docker export",
+            consumer,
+            "restic backup",
+            &KillSwitch::default(),
+        );
+        assert!(
+            result.is_err(),
+            "a failed consumer never produced anything usable"
+        );
+    }
+
+    #[test]
+    fn pipe_through_deregisters_pids_once_children_are_reaped() {
+        // A timeout firing after pipe_through returns (e.g. during the torn path's
+        // slow `restic forget --prune`) must not SIGKILL the reaped children's pids:
+        // the kernel may have reassigned them to unrelated processes.
+        let mut producer = std::process::Command::new("sh");
+        producer.args(["-c", "printf 'ok'; exit 0"]);
+        let mut consumer = std::process::Command::new("sh");
+        consumer.args(["-c", "cat; exit 0"]);
+
+        let kill_switch = KillSwitch::default();
+        pipe_through(
+            producer,
+            "docker export",
+            consumer,
+            "restic backup",
+            &kill_switch,
+        )
+        .unwrap();
+
+        let registered = kill_switch
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
+        assert_eq!(
+            registered, 0,
+            "reaped child pids must not stay registered for a later kill_all"
+        );
+    }
+
+    // ── classify_snapshot_output: a torn export must never look committed ──────
+
+    fn summary_line(snapshot_id: &str) -> Vec<u8> {
+        format!(r#"{{"message_type":"summary","snapshot_id":"{snapshot_id}","total_bytes_processed":42}}"#).into_bytes()
+    }
+
+    #[test]
+    fn classify_snapshot_output_flags_torn_snapshot_for_forget() {
+        let output = PipeOutput {
+            stdout: summary_line("abc123def456"),
+            producer_failed: Some("docker: unexpected EOF".to_string()),
+        };
+        match classify_snapshot_output(output).unwrap() {
+            SnapshotOutcome::Torn {
+                snapshot_id,
+                export_error,
+            } => {
+                assert_eq!(snapshot_id, "abc123def456");
+                assert_eq!(export_error, "docker: unexpected EOF");
+            }
+            SnapshotOutcome::Committed(_) => {
+                panic!("a failed producer must never be treated as a committed snapshot")
+            }
+        }
+    }
+
+    #[test]
+    fn classify_snapshot_output_commits_when_producer_succeeds() {
+        let output = PipeOutput {
+            stdout: summary_line("abc123def456"),
+            producer_failed: None,
+        };
+        match classify_snapshot_output(output).unwrap() {
+            SnapshotOutcome::Committed(summary) => {
+                assert_eq!(summary.snapshot_id.as_deref(), Some("abc123def456"))
+            }
+            SnapshotOutcome::Torn { .. } => panic!("a successful producer must commit normally"),
+        }
     }
 
     #[test]
@@ -536,7 +781,9 @@ mod tests {
             short_id: "abc12345".into(),
             time: "2026-05-29T04:00:01Z".into(),
             tags: vec!["agent:okami".into(), "type:daily".into()],
-            summary: Some(ResticSnapshotSummary { total_bytes_processed: 4242 }),
+            summary: Some(ResticSnapshotSummary {
+                total_bytes_processed: 4242,
+            }),
         };
         let info = snapshot_to_info(snap).unwrap();
         assert_eq!(info.id, "abc12345");

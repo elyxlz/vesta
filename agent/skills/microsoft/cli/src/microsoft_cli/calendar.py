@@ -277,7 +277,17 @@ def delete_event(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     if send_cancellation:
-        graph.request_cfg(config, client, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
+        # /cancel only applies to meetings you organize that have attendees. For a
+        # personal event (no attendees) Graph rejects it (seen: 415 Unsupported Media
+        # Type), which would otherwise leave the event undeleted. Fall back to a hard
+        # DELETE so `calendar delete` just works without needing --no-cancellation.
+        try:
+            graph.request_cfg(config, client, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 405, 415):
+                graph.request_cfg(config, client, "DELETE", f"/me/events/{event_id}", account_id)
+            else:
+                raise
     else:
         graph.request_cfg(config, client, "DELETE", f"/me/events/{event_id}", account_id)
     return {"status": "deleted", "event_id": event_id}

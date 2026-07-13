@@ -1,6 +1,18 @@
 import { apiUrl, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 
+/// A non-2xx API response: the server's error message plus the HTTP status,
+/// so callers can react to specific statuses (409 conflict, 4xx rejection).
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export async function apiFetch(
   path: string,
   init?: RequestInit,
@@ -32,7 +44,7 @@ export async function apiFetch(
     } catch {
       msg = body;
     }
-    throw new Error(msg);
+    throw new ApiError(resp.status, msg);
   }
   return resp;
 }

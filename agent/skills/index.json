@@ -4,8 +4,12 @@
     "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
   },
   {
+    "name": "upstream-sync",
+    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock snapshot. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+  },
+  {
     "name": "workspace-sync",
-    "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock workspace. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
+    "description": "Renamed to upstream-sync. Read ~/agent/core/skills/upstream-sync/SKILL.md instead."
   },
   {
     "name": "agentmail",
@@ -28,8 +32,16 @@
     "description": "The people Vesta knows, a living address book and CRM. Who they are, how they communicate, what you know about them, and the history. Use whenever a person comes up, someone new appears, or you learn something about anyone in the user's world. Read a contact before reaching out to them; update it after."
   },
   {
+    "name": "cooking-hacks",
+    "description": "Hands-on kitchen and cooking technique hacks across prep and tools, produce and herbs, eggs, sauces and stocks, meat, fish, baking and pastry, and frying. Use when the user wants a cooking tip, a better way to do a kitchen task, or how a technique works."
+  },
+  {
     "name": "dashboard",
-    "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
+    "description": "Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it."
+  },
+  {
+    "name": "discord",
+    "description": "\"Discord: send/receive server messages and DMs; reply to source=discord notifications. Requires daemon.\""
   },
   {
     "name": "dream",
@@ -37,7 +49,7 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications."
   },
   {
     "name": "enable-banking",
@@ -61,7 +73,7 @@
   },
   {
     "name": "google",
-    "description": "Gmail, Google Calendar, Meet: email, events, scheduling. Requires daemon."
+    "description": "Gmail and Google Calendar: email, events, scheduling. Requires daemon."
   },
   {
     "name": "growth",
@@ -81,7 +93,7 @@
   },
   {
     "name": "microsoft",
-    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, and new-mail paging. Requires daemon."
+    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon."
   },
   {
     "name": "nap",
@@ -89,7 +101,7 @@
   },
   {
     "name": "notifications",
-    "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. wait in the pool for triage vs. get dropped entirely. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when the user wants a kind of notification ignored/trashed outright so it never reaches you (\"stop showing me WhatsApp status updates\", \"always ignore X\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when triaging pooled notifications."
+    "description": "Interrupt rules that guard YOUR focus (you, the agent, are the one interrupted, not the user): tune which notifications pull you off your work now vs. snooze until you're free vs. get dropped entirely. Use when the user says what should or shouldn't interrupt you (\"don't let Twitter interrupt you\", \"always let my wife's messages through right away\"), when the user wants a kind of notification ignored/trashed outright so it never reaches you (\"stop showing me WhatsApp status updates\", \"always ignore X\"), when guarding deep work, when asked what's currently allowed to interrupt you, or when working through snoozed notifications."
   },
   {
     "name": "onboard",
@@ -128,16 +140,16 @@
     "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
   },
   {
-    "name": "service",
-    "description": "Register a background daemon with vestad to get a port, and keep it alive across restarts. Use when a skill runs a long-lived serve process (dashboard, tasks, voice, webhook receivers)."
-  },
-  {
     "name": "shop",
     "description": "Shop for real products on the user's behalf via Shop.app. Catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy ('order me X', 'find me running shoes', 'track my order', 'reorder the coffee'). For paying non-Shop merchants, use the stripe-pay skill instead."
   },
   {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the GitHub skill registry."
+  },
+  {
+    "name": "slack",
+    "description": "\"Slack: send/receive workspace messages, DMs, threads; reply to source=slack notifications. Requires daemon.\""
   },
   {
     "name": "spotify",
@@ -168,12 +180,24 @@
     "description": "This skill should be used when the user asks about their torrent box: searching trackers, adding torrents to qBittorrent, monitoring downloads, or browsing the media library on the server."
   },
   {
+    "name": "tricount",
+    "description": "Tricount shared-expense / bill-splitting CLI. List tricounts, view expenses and balances, add expenses. No official API: uses the reverse-engineered Tricount (bunq) REST API."
+  },
+  {
+    "name": "trivia",
+    "description": "Run a trivia game with the user. Use when the user says \"let's play trivia\", \"trivia game\", \"quiz\", or asks for trivia questions on a topic. Generates 15 multiple-choice questions easy to hard, marks correct answers, and tallies scores across multiple players."
+  },
+  {
     "name": "upstream-pr",
     "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
   },
   {
     "name": "vesta-cloud-account",
     "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
+  },
+  {
+    "name": "vestad",
+    "description": "Talk to vestad, the host daemon that runs this container. Register a background service to get a port, build public URLs, update vestad to the latest release, check its version, and read gateway logs. Use when a skill needs an inbound port or a shareable link, when the user asks to update Vesta, or when debugging gateway/container issues."
   },
   {
     "name": "video-use",
@@ -193,7 +217,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon."
+    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon."
   },
   {
     "name": "whisper",

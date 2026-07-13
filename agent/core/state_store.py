@@ -2,30 +2,22 @@
 
 All boot-time and cross-restart markers live in `~/agent/data/state.json`. Loaded once
 at boot, mutated in place via the `PersistedState` field on `vm.State`, and saved
-immediately via `save_state` after every mutation. Writes are atomic (tmp + rename).
+immediately after every mutation: `save_state` from sync code (boot, done-callbacks,
+cancellation handlers), `save_state_async` from coroutines. Writes are atomic and
+durable (cfg.atomic_write_text: tmp + fsync + rename).
 """
 
+import asyncio
 import datetime as dt
-import os
 import pathlib as pl
 
 import pydantic as pyd
 
 from . import logger
 from . import config as cfg
+from .events import EVENTS_DB_FILENAME
 
 STATE_FILENAME = "state.json"
-
-
-def atomic_write_text(path: pl.Path, text: str) -> None:
-    """Write text to path atomically: write a sibling temp file, then rename over the target.
-
-    The single owner of the tmp-write + os.replace recipe (state.json, the notification interrupt
-    rules store, ...) so durability changes live in one place."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
 
 
 class PersistedState(pyd.BaseModel):
@@ -70,14 +62,27 @@ def load_state(config: cfg.VestaConfig) -> PersistedState:
         try:
             return PersistedState.model_validate_json(path.read_text())
         except (pyd.ValidationError, ValueError, OSError) as e:
-            # Don't crash-loop the container on a corrupt or schema-incompatible
-            # state.json — log and start fresh; first-start will re-run.
-            logger.error(f"state.json unparseable ({type(e).__name__}: {e}) — starting fresh")
-            return PersistedState()
+            # Don't crash-loop the container on a corrupt or schema-incompatible state.json —
+            # log and start fresh. A veteran agent (events.db already exists) must not
+            # re-onboard or pre-mark migrations on top of months of memory: corroborate against
+            # the data dir and mark it a fresh boot only if there is truly no prior history.
+            veteran = (config.data_dir / EVENTS_DB_FILENAME).exists()
+            logger.error(
+                f"state.json unparseable ({type(e).__name__}: {e}) — starting fresh"
+                + (" (events.db present: session_id lost, migrations will re-run)" if veteran else "")
+            )
+            return PersistedState(first_start_done=veteran)
     state = PersistedState()
     save_state(state, config)
     return state
 
 
 def save_state(state: PersistedState, config: cfg.VestaConfig) -> None:
-    atomic_write_text(state_path(config), state.model_dump_json())
+    cfg.atomic_write_text(state_path(config), state.model_dump_json())
+
+
+async def save_state_async(state: PersistedState, config: cfg.VestaConfig) -> None:
+    """save_state for coroutines: snapshot the JSON on the event loop (a consistent view of the
+    mutable state), then run the fsync-ing write in a worker thread so it never stalls the loop."""
+    payload = state.model_dump_json()
+    await asyncio.to_thread(cfg.atomic_write_text, state_path(config), payload)

@@ -19,6 +19,6 @@ if __name__ == "__main__":
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        skills.append({"name": fm.get("name", skill_name), "description": fm.get("description", "")})
+        skills.append({"name": fm["name"] if "name" in fm else skill_name, "description": fm["description"] if "description" in fm else ""})
     OUTPUT_FILE.write_text(json.dumps(skills, indent=2) + "\n")
     print(f"Generated {OUTPUT_FILE} with {len(skills)} skills.")

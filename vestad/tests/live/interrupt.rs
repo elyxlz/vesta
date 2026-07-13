@@ -21,7 +21,13 @@ const COUNT_DEATH_TIMEOUT: Duration = Duration::from_secs(60);
 /// stop growing. Returns as soon as the file has been stable for COUNT_STABLE_WINDOW rather than
 /// always blocking for a fixed grace period.
 fn assert_counting_is_dead(container: &str, counting_file: &str) {
-    let read = || exec_in_container(container, &format!("cat {counting_file} 2>/dev/null || true")).unwrap_or_default();
+    let read = || {
+        exec_in_container(
+            container,
+            &format!("cat {counting_file} 2>/dev/null || true"),
+        )
+        .unwrap_or_default()
+    };
     let overall_deadline = Instant::now() + COUNT_DEATH_TIMEOUT;
     let mut last = read();
     let mut last_changed = Instant::now();
@@ -52,7 +58,10 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
         return;
     };
 
-    let uid = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let uid = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let counting_file = format!("{E2E_FILES_DIR}/count-{uid}.txt");
     let redirect_file = format!("{E2E_FILES_DIR}/instead-{uid}.txt");
 
@@ -71,8 +80,8 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
     .expect("write counting notification");
 
     // The task is genuinely mid-flight once the file contains 3.
-    let content_at_3 =
-        wait_for_file_contains(&container, &counting_file, "3", TASK_TIMEOUT).expect("counting reached 3");
+    let content_at_3 = wait_for_file_contains(&container, &counting_file, "3", TASK_TIMEOUT)
+        .expect("counting reached 3");
     assert!(
         !content_at_3.contains("10"),
         "agent wrote the whole count at once instead of one number at a time; cannot exercise interruption:\n{content_at_3}"
@@ -91,17 +100,18 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
     .expect("write interrupt notification");
 
     // The redirect task must complete.
-    wait_for_file_contains(&container, &redirect_file, "interrupted", TASK_TIMEOUT).expect("redirect file written");
+    wait_for_file_contains(&container, &redirect_file, "interrupted", TASK_TIMEOUT)
+        .expect("redirect file written");
 
     // The counting task must stay dead: never reach 10, and stop growing.
     assert_counting_is_dead(&container, &counting_file);
 }
 
 /// The other half of the preemption contract, and the #982 regression guard: when the main turn
-/// is preempted, an already-running BACKGROUND subagent must survive and run to completion. The
-/// default `preempt_mode = "message"` pre-sends the interrupt as a priority:"now" message, which
-/// aborts only the turn; the old `interrupt()` control request (still used by `preempt_mode =
-/// "interrupt"`) swept the CLI's task registry and killed every backgrounded subagent, so this
+/// is preempted, an already-running BACKGROUND subagent must survive and run to completion.
+/// Preemption pre-sends the interrupting prompt as a priority:"now" message, which aborts only
+/// the turn; the old `interrupt()` control request (now fired only on failure paths) swept the
+/// CLI's task registry and killed every backgrounded subagent, so this
 /// test would fail under that mode — it pins the default behavior against a silent regression.
 ///
 /// The main agent launches a background subagent that slowly counts to 10 in its own file, then
@@ -114,7 +124,10 @@ fn preempt_preserves_running_background_subagent() {
         return;
     };
 
-    let uid = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let uid = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let background_file = format!("{E2E_FILES_DIR}/bg-{uid}.txt");
     let foreground_file = format!("{E2E_FILES_DIR}/fg-{uid}.txt");
     let redirect_file = format!("{E2E_FILES_DIR}/instead-{uid}.txt");
@@ -141,14 +154,15 @@ fn preempt_preserves_running_background_subagent() {
     // Both halves must be genuinely mid-flight before the interrupt: the foreground count has
     // reached 3 (a live turn to preempt) and the background subagent has started (something to
     // preserve) but is nowhere near done.
-    let foreground_at_3 =
-        wait_for_file_contains(&container, &foreground_file, "3", TASK_TIMEOUT).expect("foreground counting reached 3");
+    let foreground_at_3 = wait_for_file_contains(&container, &foreground_file, "3", TASK_TIMEOUT)
+        .expect("foreground counting reached 3");
     assert!(
         !foreground_at_3.contains("10"),
         "agent wrote the whole foreground count at once; cannot exercise mid-turn preemption:\n{foreground_at_3}"
     );
     let background_started =
-        wait_for_file_contains(&container, &background_file, "2", TASK_TIMEOUT).expect("background subagent started counting");
+        wait_for_file_contains(&container, &background_file, "2", TASK_TIMEOUT)
+            .expect("background subagent started counting");
     assert!(
         !background_started.contains("10"),
         "background subagent already finished before the interrupt; cannot prove it survived preemption:\n{background_started}"
@@ -169,7 +183,8 @@ fn preempt_preserves_running_background_subagent() {
 
     // The redirect must complete (the preempt landed) and the background subagent must reach 10
     // (it survived the preempt — the regression assertion).
-    wait_for_file_contains(&container, &redirect_file, "interrupted", TASK_TIMEOUT).expect("redirect file written");
+    wait_for_file_contains(&container, &redirect_file, "interrupted", TASK_TIMEOUT)
+        .expect("redirect file written");
     wait_for_file_contains(&container, &background_file, "10", TASK_TIMEOUT)
         .expect("background subagent survived the preempt and finished counting to 10");
 

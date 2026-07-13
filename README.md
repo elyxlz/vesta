@@ -1,6 +1,6 @@
 # Vesta
 
-A personal AI agent that lives in a Docker container, powered by Claude.
+An AI guardian angel that gives you back time and helps you achieve your goals, living in a Docker container, powered by Claude.
 
 Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. Invite-only.
 

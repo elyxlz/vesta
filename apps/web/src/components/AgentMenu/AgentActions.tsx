@@ -11,11 +11,9 @@ import {
   Square,
   Trash2,
   Wrench,
-  Hammer,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MenuSection } from "@/components/ui/menu-section";
-import type { MenuState } from "./types";
 
 export interface AgentActionsInput {
   isRunning: boolean;
@@ -26,7 +24,6 @@ export interface AgentActionsInput {
   onToolCalls: () => void;
   onToggle: () => void;
   onRestart: () => void;
-  onRebuild: () => void;
   onBackup: () => void;
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;
@@ -34,26 +31,6 @@ export interface AgentActionsInput {
   onAgentSettings?: () => void;
   onDelete?: () => void;
   onDebugInfo?: () => void;
-}
-
-// The subset of MenuState the menus expose. Both the desktop dropdown and mobile drawer
-// deliberately drop delete/authenticate (those live elsewhere), so the projection lives
-// here once instead of being respelled in each menu.
-export function menuActionsInput(state: MenuState): AgentActionsInput {
-  return {
-    isRunning: state.isRunning,
-    showAliveActions: state.showAliveActions,
-    isBusy: state.isBusy,
-    showToolCalls: state.showToolCalls,
-    onLogs: state.onLogs,
-    onToolCalls: state.onToolCalls,
-    onToggle: state.onToggle,
-    onRestart: state.onRestart,
-    onRebuild: state.onRebuild,
-    onBackup: state.onBackup,
-    onOpenSettings: state.onOpenSettings,
-    onDebugInfo: state.onDebugInfo,
-  };
 }
 
 export interface ActionItem {
@@ -105,22 +82,13 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     },
   ];
   if (input.isRunning) {
-    controlItems.push(
-      {
-        key: "restart",
-        icon: <RefreshCw data-icon="inline-start" />,
-        label: "restart",
-        onClick: input.onRestart,
-        disabled: input.isBusy,
-      },
-      {
-        key: "rebuild",
-        icon: <Hammer data-icon="inline-start" />,
-        label: "rebuild",
-        onClick: input.onRebuild,
-        disabled: input.isBusy,
-      },
-    );
+    controlItems.push({
+      key: "restart",
+      icon: <RefreshCw data-icon="inline-start" />,
+      label: "restart",
+      onClick: input.onRestart,
+      disabled: input.isBusy,
+    });
   }
   controlItems.push({
     key: "backup",

@@ -11,8 +11,15 @@ logger = logging.getLogger("voice.elevenlabs")
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
 MODEL_ID = "eleven_flash_v2_5"
-OUTPUT_FORMAT = "mp3_22050_32"
 DEFAULT_VOICE_ID = "FGY2WhTYpPnrIDTdsKH5"  # Laura
+
+# One entry per audio_format the caller may request: the ElevenLabs output_format and the
+# Content-Type to hand back. "mp3" feeds the app's <audio> element; "pcm" is raw signed
+# 16-bit LE mono at 16 kHz, the frame format a phone-call consumer plays straight into a call.
+AUDIO_FORMATS: dict[str, tuple[str, str]] = {
+    "mp3": ("mp3_22050_32", "audio/mpeg"),
+    "pcm": ("pcm_16000", "audio/l16;rate=16000"),
+}
 
 PREMADE_VOICES: list[dict[str, str]] = [
     {
@@ -156,10 +163,16 @@ class ElevenLabsTts:
         voice_id: str,
         creds: dict[str, str],
         request: web.Request,
+        audio_format: str,
     ) -> web.StreamResponse:
+        resolved = AUDIO_FORMATS.get(audio_format)
+        if resolved is None:
+            return web.json_response({"error": f"unsupported audio format: {audio_format}"}, status=400)
+        output_format, content_type = resolved
+
         api_key = creds.get("api_key", "")
         url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice_id}/stream"
-        payload = {"text": text, "model_id": MODEL_ID, "output_format": OUTPUT_FORMAT}
+        payload = {"text": text, "model_id": MODEL_ID, "output_format": output_format}
 
         session = aiohttp.ClientSession()
         try:
@@ -180,7 +193,7 @@ class ElevenLabsTts:
             await session.close()
             return web.json_response({"error": f"elevenlabs returned {upstream.status}", "body": body_text[:500]}, status=upstream.status)
 
-        response = web.StreamResponse(status=200, headers={"Content-Type": "audio/mpeg"})
+        response = web.StreamResponse(status=200, headers={"Content-Type": content_type})
         await response.prepare(request)
         try:
             async for chunk in upstream.content.iter_any():

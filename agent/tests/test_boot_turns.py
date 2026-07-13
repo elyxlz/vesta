@@ -1,12 +1,13 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
 import core.models as vm
-from core.main import collect_boot_turns
+import core.config as cfg
+from core.main import collect_boot_turns, BOOT_RESTORE_ORIENTATION
 from core.provider import ProviderAuthState, ProviderStatus
 
 
 def _boot_config(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     for sub in ["core/migrations", "core/prompts", "skills", "data", "dreamer"]:
         (config.agent_dir / sub).mkdir(parents=True, exist_ok=True)
     return config
@@ -23,7 +24,7 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
     (config.agent_dir / "core" / "default-skills.txt").write_text("alpha\n")  # alpha missing on disk
-    # An out-of-date sync marker vs the running core version fires the workspace-sync turn.
+    # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
     turns = collect_boot_turns(
@@ -35,11 +36,32 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
     )
 
     assert len(turns) == 5
+    # The first converge turn carries the daemon-restore orientation so a migration/upgrade boot
+    # restores daemons via the restart skill first, exactly as a plain restart would.
+    assert turns[0].startswith(BOOT_RESTORE_ORIENTATION)
     assert "[Migration: 001-x]" in turns[0]
-    assert "[Workspace sync]" in turns[1]
+    assert "[Upstream sync]" in turns[1]
     assert "skills-install alpha" in turns[2]
     assert "BAD=1" in turns[3]
     assert "[System Restart]\nReason: routine restart, no specific reason" in turns[4]
+    # The orientation rides only the first converge turn, never the restart greeting (it already
+    # runs the restart skill) or the later converge turns.
+    assert BOOT_RESTORE_ORIENTATION not in turns[1]
+    assert BOOT_RESTORE_ORIENTATION not in turns[4]
+
+
+def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
+    """A plain restart has no converge turns: the greeting is the restart turn itself, so it must not
+    be prefixed with the converge-turn daemon-restore orientation."""
+    config = _boot_config(tmp_path)
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
+    state = _authed_state()
+    state.persisted.last_synced_version = "9.9.9"  # current, so no upstream-sync turn fires
+
+    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: routine restart", first_start=False)
+
+    assert len(turns) == 1
+    assert BOOT_RESTORE_ORIENTATION not in turns[0]
 
 
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):

@@ -1,6 +1,7 @@
 """Email commands for Microsoft CLI."""
 
 import base64
+import html
 import pathlib as pl
 from datetime import datetime, UTC
 from typing import Any
@@ -460,6 +461,102 @@ def reply_to_email(
         payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
         graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
         return {"status": "sent"}
+
+
+def _reply_body_to_html(raw: str) -> str:
+    """Render a plain-text reply body as HTML so it can sit above the quoted history:
+    `- ` lines become bullets, blank lines become spacing, everything else a div. Escaped
+    so the body cannot inject markup."""
+    parts: list[str] = []
+    in_ul = False
+    for line in raw.rstrip("\n").split("\n"):
+        if line.startswith("- "):
+            if not in_ul:
+                parts.append("<ul>")
+                in_ul = True
+            parts.append("<li>" + html.escape(line[2:]) + "</li>")
+        else:
+            if in_ul:
+                parts.append("</ul>")
+                in_ul = False
+            parts.append("<br>" if line.strip() == "" else "<div>" + html.escape(line) + "</div>")
+    if in_ul:
+        parts.append("</ul>")
+    return "".join(parts)
+
+
+def reply_draft(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+    body: str,
+    attachments: list[str] | None = None,
+    reply_all: bool = False,
+    replace_draft: str | None = None,
+) -> dict[str, Any]:
+    """Leave an UNSENT threaded reply(-all) draft for the user to review and send.
+
+    `email reply` always sends and `email draft --reply-to` overwrites the quoted history;
+    this fills the gap. createReply/createReplyAll pre-fills recipients + the quoted thread,
+    the new body is placed above that preserved quote, files attach, and we STOP before /send.
+    `--replace-draft` deletes a prior draft first so repeated edits leave exactly one draft."""
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+
+    warnings: list[str] = []
+    if replace_draft:
+        try:
+            graph.request_cfg(config, client, "DELETE", f"/me/messages/{replace_draft}", account_id)
+        except httpx.HTTPStatusError as exc:
+            warnings.append(f"could not delete old draft {replace_draft}: {exc}")
+
+    create_endpoint = "createReplyAll" if reply_all else "createReply"
+    draft = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
+    if not draft or "id" not in draft:
+        raise ValueError("Failed to create reply draft")
+    draft_id = draft["id"]
+
+    existing = graph.request_cfg(
+        config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body,toRecipients,ccRecipients"}
+    )
+    if not existing or "body" not in existing:
+        raise ValueError("Failed to read the created reply draft")
+    quoted = existing["body"]["content"]
+    to = _extract_addresses(existing["toRecipients"] if "toRecipients" in existing else [])
+    cc = _extract_addresses(existing["ccRecipients"] if "ccRecipients" in existing else [])
+
+    graph.request_cfg(
+        config,
+        client,
+        "PATCH",
+        f"/me/messages/{draft_id}",
+        account_id,
+        json={"body": {"contentType": "HTML", "content": _reply_body_to_html(body) + "<br><br>" + quoted}},
+    )
+
+    _attach_files(config, client, draft_id, attachments, account_id)
+
+    check = graph.request_cfg(
+        config,
+        client,
+        "GET",
+        f"/me/messages/{draft_id}",
+        account_id,
+        params={"$select": "subject,isDraft", "$expand": "attachments($select=name,size)"},
+    )
+    result: dict[str, Any] = {
+        "status": "drafted",
+        "id": draft_id,
+        "subject": check["subject"] if check and "subject" in check else None,
+        "isDraft": check["isDraft"] if check and "isDraft" in check else None,
+        "to": to,
+        "cc": cc,
+        "attachments": [a["name"] for a in (check["attachments"] if check and "attachments" in check else [])],
+    }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def forward_email(
