@@ -39,25 +39,25 @@ A rule has two dedicated fields (`source`, `type`) plus any number of `match` co
 ## Usage
 
 ```bash
-# See what's targetable (source/type/sender + every structured field like chat_name) from notifications
-# seen so far. Check this first so you target real field names/values.
+# Show targetable source/type/sender + every structured field (chat_name, ...) from notifications
+# seen so far. Check first so you target real field names/values.
 notifications facets
 
-# See the current rules (with ids), in priority order
+# Current rules (with ids), in priority order
 notifications list
 
-# Snooze low-value distractions so they wait until you are idle
+# Snooze low-value distractions until you are idle
 notifications add --source twitter --action snooze
 
-# Let what genuinely matters reach you immediately (auto-placed above broader snooze rules)
+# Let what matters reach you immediately (auto-placed above broader snooze rules)
 notifications add --source whatsapp --sender "wife" --action interrupt
 notifications add --source email --keyword urgent --action interrupt
 
-# Snooze one busy group chat by name, while 1:1s and other groups still interrupt (target chat_name)
+# Snooze one busy group chat by name; 1:1s and other groups still interrupt (target chat_name)
 notifications add --source whatsapp --match 'chat_name=Bride squad' --action snooze
 
-# Drop noise the user always wants ignored, so it never costs a turn (here: WhatsApp status broadcasts).
-# Still visible in history (marked "trashed"); only do this when the user has said to ignore it outright.
+# Drop noise the user always wants ignored, so it never costs a turn (WhatsApp status broadcasts).
+# Still in history (marked "trashed"); only when the user has said to ignore it outright.
 notifications add --source whatsapp --match 'chat_name=status' --action trash
 
 # Combine conditions (AND): snooze only group chats from whatsapp, leaving DMs alone
@@ -66,8 +66,8 @@ notifications add --source whatsapp --match 'chat_type=group' --action snooze
 # Negate: interrupt for any chat that is NOT that one group
 notifications add --source whatsapp --match 'chat_name!=Bride squad' --action interrupt
 
-# Reorder when precedence matters (first match wins). New rules auto-place above broader ones, but you
-# can force position on add, or move an existing rule by id.
+# Reorder when precedence matters (first match wins). New rules auto-place above broader ones;
+# force position on add, or move an existing rule by id.
 notifications add --source whatsapp --action snooze --after <id>
 notifications move <id> --top
 notifications move <id> --before <other-id>

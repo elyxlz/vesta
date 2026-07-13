@@ -11,8 +11,6 @@ Invoke it in print mode (`-p`): it runs to completion in one call and only the f
 
 ## When to use this skill
 
-Reach for `claude` when the task is genuinely big:
-
 - Building a whole feature or new module
 - Multi-file refactors or "do this across the repo"
 - Complex debugging that needs extensive exploration before a fix

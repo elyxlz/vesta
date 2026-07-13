@@ -9,7 +9,7 @@ One-time setup per account, ~2 minutes. Auth flow is picked automatically from t
 - **Gmail**: OAuth2 **loopback flow** (`http://127.0.0.1:<port>/`).
 - **Yahoo / iCloud / Fastmail / generic IMAP**: **app password**.
 
-Both OAuth flows reuse Thunderbird's published public client IDs: Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop secret `kSmqreRr0qwBWJgbf5Y-PjSU` (Google's token endpoint requires it; the skill sends it). These are public, not secrets — the only OAuth path that avoids registering an Azure tenant. Google's device flow is deprecated for desktop, so Gmail uses the loopback redirect captured via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600). Both consent screens say "Mozilla Thunderbird" — expected. (The retired Google client `...t1glqf` returns `invalid_client`; the live one is `...t1hgqj`.)
+Both OAuth flows reuse Thunderbird's published public client IDs: Microsoft `9e5f94bc-e8a4-4e73-b8be-63364c29d753`, Google `406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com` plus its published desktop secret `kSmqreRr0qwBWJgbf5Y-PjSU` (Google's token endpoint requires it; the skill sends it). These are public, not secrets: the only OAuth path that avoids registering an Azure tenant. Google's device flow is deprecated for desktop, so Gmail uses the loopback redirect captured via a throwaway `http.server` on a random port. Providers with no public OAuth client fall back to app passwords (chmod 600). Both consent screens say "Mozilla Thunderbird", expected. (The retired Google client `...t1glqf` returns `invalid_client`; the live one is `...t1hgqj`.)
 
 **Google Calendar in the same sign-in.** The `...t1hgqj` client sits under Mozilla's verified Google Cloud project (number `406964657835`), whose consent screen grants mail, calendar, and contacts together. So one Gmail consent also grants `https://www.googleapis.com/auth/calendar` and the `calendar` commands (see SKILL.md) work with no own Google app, no verification, no CASA (`auth/calendar` is "sensitive", not "restricted"). Gmail accounts authed before this change must re-auth once to pick up the calendar scope and corrected client id: `email-client auth add --account <name> --provider gmail --reauth`.
 
@@ -66,9 +66,9 @@ The CLI prints a Google consent URL and listens on `http://127.0.0.1:<random-por
 
 The CLI prompts for an app password. Generate one in the provider's security settings:
 
-- Yahoo: Account Info → Account security → Generate app password
-- iCloud: appleid.apple.com → Sign-In and Security → App-Specific Passwords
-- Fastmail: Settings → Privacy & Security → App passwords (scope: IMAP/SMTP)
+- Yahoo: Account Info -> Account security -> Generate app password
+- iCloud: appleid.apple.com -> Sign-In and Security -> App-Specific Passwords
+- Fastmail: Settings -> Privacy & Security -> App passwords (scope: IMAP/SMTP)
 
 Paste at the prompt; it's written to `token.json` (mode 600) and used as basic-auth for IMAP and SMTP. To skip the prompt in scripts, pre-export `EMAIL_CLIENT_APP_PASSWORD`.
 
@@ -145,7 +145,7 @@ Idempotent (a running daemon is a no-op); `--interval` defaults to `$EMAIL_CLIEN
 
 The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so no restart is needed when adding an account or changing the watch list.
 
-**Ask the user which folders they want notified about, per account.** No preference → default to **all**. Then set the watch list (see SKILL.md "Choosing which folders notify"):
+**Ask the user which folders they want notified about, per account.** No preference -> default to **all**. Then set the watch list (see SKILL.md "Choosing which folders notify"):
 
 ```bash
 email-client notify add --all --account personal     # default: every folder
@@ -264,9 +264,9 @@ This profile ships the right `outlook.office365.com` IMAP/SMTP hosts, the `Sent 
 
 Approve the device-flow code at https://www.microsoft.com/link. Four org-side blockers can stop this (none fixable from the skill):
 
-1. **Third-party OAuth clients disabled** → device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it (the env override applies on top of any provider).
-2. **IMAP disabled on the mailbox** → `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
-3. **SMTP AUTH disabled on the tenant** → outbound returns `535 5.7.139 SmtpClientAuthentication is disabled for the Tenant` (the M365 default). Reading and drafts still work over IMAP; outbound is blocked until an admin runs `Set-TransportConfig -SmtpClientAuthenticationDisabled $false` (tenant-wide) or `Set-CASMailbox -Identity user@... -SmtpClientAuthenticationDisabled $false` (per-mailbox). If you can't change it, use `--draft` and let the user send from their normal client, or switch outbound to the `microsoft` (Graph) skill.
-4. **Conditional Access policies** → device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
+1. **Third-party OAuth clients disabled** -> device flow returns `AADSTS50020` / "needs admin consent". Fix: admin registers an internal Azure app with `Mail.ReadWrite` + `SMTP.Send` delegated permissions; set `EMAIL_CLIENT_OAUTH_CLIENT_ID` to it (the env override applies on top of any provider).
+2. **IMAP disabled on the mailbox** -> `LOGIN`/`AUTHENTICATE` fails after a successful OAuth. Fix: admin runs `Set-CASMailbox -ImapEnabled $true`, or switch to the `microsoft` (Graph) skill.
+3. **SMTP AUTH disabled on the tenant** -> outbound returns `535 5.7.139 SmtpClientAuthentication is disabled for the Tenant` (the M365 default). Reading and drafts still work over IMAP; outbound is blocked until an admin runs `Set-TransportConfig -SmtpClientAuthenticationDisabled $false` (tenant-wide) or `Set-CASMailbox -Identity user@... -SmtpClientAuthenticationDisabled $false` (per-mailbox). If you can't change it, use `--draft` and let the user send from their normal client, or switch outbound to the `microsoft` (Graph) skill.
+4. **Conditional Access policies** -> device flow lands on "your sign-in was blocked". Fix: admin must whitelist the app or relax the policy. No client-side workaround.
 
 If 1-4 all check out and it still fails, capture the full error from `email-client auth add --reauth`; the useful detail is usually in the OAuth response's `error_description`.

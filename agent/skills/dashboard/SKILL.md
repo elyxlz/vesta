@@ -27,7 +27,7 @@ Create a task per item and work them in order:
 
 ## Understanding intent
 
-The user tells you what they care about, not how to build it. Ask only to resolve real ambiguity: what they want to see, what a number should mean, whether something is view-only or interactive. One question per message, multiple choice when you can. Never ask about implementation (files, components, styling) — those are yours.
+The user tells you what they care about, not how to build it. Ask only to resolve real ambiguity: what they want to see, what a number should mean, whether something is view-only or interactive. One question per message, multiple choice when you can. Never ask about implementation (files, components, styling): those are yours.
 
 ## Designing the change
 

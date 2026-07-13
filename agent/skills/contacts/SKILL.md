@@ -5,7 +5,7 @@ description: The people Vesta knows, a living address book and CRM. Who they are
 
 # Contacts
 
-Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user. Before you message someone, read their file; after you learn something, write it down. Over time this lets you sound like you actually know them.
+Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user. Read the file before you message someone; write down what you learn after. Over time this lets you sound like you actually know them.
 
 Plain markdown, edited with Read, Write, Glob, Grep. No CLI, no database.
 
@@ -49,7 +49,7 @@ morning, goes dark after 6pm. Sarcasm lands; corporate tone does not.
 - Owes the user dinner from the bet they lost
 ```
 
-Only fill what's real. A near-stranger might be three lines; someone central a page. Personality and communication style matter most, they change how you talk to and about this person.
+Only fill what's real. A near-stranger might be three lines; someone central a page. Personality and communication style matter most: they change how you talk to and about this person.
 
 ## When to touch it
 

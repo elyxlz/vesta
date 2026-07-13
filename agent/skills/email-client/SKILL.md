@@ -11,28 +11,28 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 A uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-Google Calendar is also available here for Gmail accounts (see "Calendar"): one Gmail sign-in grants both mail and calendar, so a lightweight calendar surface lives in this skill. Do **not** use it for the full Gmail API surface or Google contacts/Meet (use `google`), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use `microsoft`; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Google Calendar is also available here for Gmail accounts (see "Calendar"): one Gmail sign-in grants both mail and calendar, so a lightweight calendar surface lives here. Do **not** use it for the full Gmail API surface or Google contacts/Meet (use `google`), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use `microsoft`; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 
-Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task (especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (SETUP.md step 6 adds a MEMORY.md pointer reminding you to load this on every `email-client` notification.)
+Standing rules the user has given about handling their email live here. **Read this section at the start of every email task (especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (SETUP.md step 6 adds a MEMORY.md pointer reminding you to load this on every `email-client` notification.)
 
-When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action**. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions, only durable rules.
+When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below with the Edit tool so it survives across sessions. One line per entry, prefixed with the account it applies to (or `[all]`), written as **trigger -> action**. Update or delete an entry when the user changes or revokes it. Record only durable rules, not one-offs.
 
 How rules map to commands:
 
-- *Categorize / prioritize by sender or content* → `mark --keyword <label>` (e.g. a `priority` keyword / Outlook category) or `mark --flagged`.
-- *Route by content or sender* → `move --to-folder <folder>` (`archive` / `delete` for those destinations).
-- *Auto-draft replies* → `email-client-send --reply-to-uid <uid> --draft` so the user reviews before it sends.
-- *Suppress noise* → `notify remove --folder <f>`, or note "don't surface" so you stay silent on matching mail.
+- *Categorize / prioritize by sender or content* -> `mark --keyword <label>` (e.g. a `priority` keyword / Outlook category) or `mark --flagged`.
+- *Route by content or sender* -> `move --to-folder <folder>` (`archive` / `delete` for those destinations).
+- *Auto-draft replies* -> `email-client-send --reply-to-uid <uid> --draft` so the user reviews before it sends.
+- *Suppress noise* -> `notify remove --folder <f>`, or note "don't surface" so you stay silent on matching mail.
 
-Format: `- [account|all] when <trigger> → <action>`. Examples:
+Format: `- [account|all] when <trigger> -> <action>`. Examples:
 
 ```text
-- [work] when from boss@example.com → mark --keyword priority and notify me
-- [personal] when subject/body mentions an invoice or receipt → move --to-folder Finance
-- [all] when a new email lands in the Support folder → draft a reply (--draft) for review
-- [work] when from noreply@* → auto-archive, do not notify
+- [work] when from boss@example.com -> mark --keyword priority and notify me
+- [personal] when subject/body mentions an invoice or receipt -> move --to-folder Finance
+- [all] when a new email lands in the Support folder -> draft a reply (--draft) for review
+- [work] when from noreply@* -> auto-archive, do not notify
 ```
 
 <!-- Agent: add the user's real rules below this line, one per line. The block above is illustrative; this list starts empty. -->
@@ -41,7 +41,7 @@ _(no rules recorded yet)_
 
 ## Setup
 
-One-time per account, ~2 minutes. See [SETUP.md](SETUP.md) for install, every auth flow, and provider-specific notes. After `email-client auth add` runs once per account, no re-auth is needed until the refresh token expires (Microsoft ~90 days, Google until revoked) or the app password rotates.
+One-time per account, ~2 minutes. See [SETUP.md](SETUP.md) for install, every auth flow, and provider-specific notes. After `email-client auth add` runs once per account, no re-auth until the refresh token expires (Microsoft ~90 days, Google until revoked) or the app password rotates.
 
 Two binaries plus a daemon:
 
@@ -83,7 +83,7 @@ email-client status --folder INBOX            # counts without fetching
 email-client status --folder Archive --account work
 ```
 
-Returns `{folder, messages, unseen, recent, uidnext, uidvalidity}` via IMAP `STATUS` - far cheaper than `list` when you only need "how many unread". Loop over folders from `list-folders` for a full overview.
+Returns `{folder, messages, unseen, recent, uidnext, uidvalidity}` via IMAP `STATUS`, far cheaper than `list` when you only need "how many unread". Loop over folders from `list-folders` for a full overview.
 
 ## Manage messages
 
@@ -113,7 +113,7 @@ email-client folder subscribe --name Newsletters
 email-client folder subscribe --name Newsletters --unsubscribe
 ```
 
-Nest using the server's hierarchy delimiter (usually `/` or `.` - check `list-folders`). `move --to-folder X` fails if `X` doesn't exist, so create it first. `subscribe` toggles whether a folder appears in clients that only show subscribed mailboxes. All honor `--account`.
+Nest using the server's hierarchy delimiter (usually `/` or `.`, check `list-folders`). `move --to-folder X` fails if `X` doesn't exist, so create it first. `subscribe` toggles whether a folder appears in clients that only show subscribed mailboxes. All honor `--account`.
 
 ## Send
 
@@ -161,7 +161,7 @@ Pass `--forward-uid <uid>` (and `--forward-folder` if not in `INBOX`). `--to` is
 
 ### Drafts
 
-`--draft` saves the composed message to the Drafts folder (flagged `\Draft`) instead of sending. It accepts the full compose surface: `--cc`/`--bcc`, `--body-html`, `--attach` - and crucially `--reply-to-uid` / `--forward-uid`, so you can draft a threaded reply or forward for the user to review and send from any mail client.
+`--draft` saves the composed message to the Drafts folder (flagged `\Draft`) instead of sending. It accepts the full compose surface: `--cc`/`--bcc`, `--body-html`, `--attach`, and crucially `--reply-to-uid` / `--forward-uid`, so you can draft a threaded reply or forward for the user to review and send from any mail client.
 
 ```bash
 email-client-send --account personal --to recipient@example.com --subject "Proposal" --body "rough notes..." --draft
@@ -173,7 +173,7 @@ A draft does not contact SMTP and does not flag the original `\Answered` (nothin
 
 ### Draft-only mode
 
-`EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) **hard-disables sending**: any send/reply/forward is refused before touching SMTP (non-zero exit, clear message); `--draft` and `--dry-run` preview still work. A CLI-level safety guarantee, not a behavioral promise. Default off: unset/empty = today's behavior.
+`EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) **hard-disables sending**: any send/reply/forward is refused before touching SMTP (non-zero exit, clear message); `--draft` and `--dry-run` preview still work. A CLI-level safety guarantee. Default off: unset/empty = today's behavior.
 
 ## Calendar (Gmail accounts only)
 
@@ -191,7 +191,7 @@ email-client calendar respond --account personal --id <eventId> --response accep
 
 `--calendar` defaults to `primary`; pass a calendar id (from `list-calendars`) to target a shared or secondary calendar. `list` returns a JSON array of `{id, summary, start, end, location, attendees, status}` over the window (default: next 7 days). `create` defaults `--end` to one hour after `--start` for timed events, or the next day for all-day events (a date with no `T`); `--timezone` defaults to UTC. `--attendees` accepts a comma-separated list and is repeatable. `update` requires `--timezone` whenever you change `--start` or `--end`.
 
-**Invites are a real send.** Creating or updating an event with attendees makes Google email them an invite or update (and `delete` sends a cancellation) — an outward action like sending mail, so treat it with the same care. `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
+**Invites are a real send.** Creating or updating an event with attendees makes Google email them an invite or update (and `delete` sends a cancellation): an outward action like sending mail, so treat it with the same care. `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
 
 **Re-auth for existing accounts.** Any Gmail account added before this feature must re-auth once to grant the calendar scope (and move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. Freshly added accounts get mail and calendar in one sign-in. A calendar scope error means the token predates calendar support: re-auth as above.
 

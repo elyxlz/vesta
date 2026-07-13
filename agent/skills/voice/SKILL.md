@@ -6,19 +6,19 @@ serve: voice-keys daemon start
 
 # Voice setup (STT/TTS)
 
-Voice lets the user talk to you via mic and hear your responses in the Vesta app. This skill is the one voice backend: it owns the STT/TTS providers, keys, and chosen voice, so anything that speaks or listens on your behalf uses the same config. Other capabilities consume it rather than configuring speech themselves.
+Lets the user talk to you via mic and hear responses in the Vesta app. The one voice backend: owns STT/TTS providers, keys, and chosen voice, so anything that speaks or listens uses the same config.
 
-Once configured, the user manages voice settings from the **agent settings page** in the app: change voices, hear previews, toggle STT/TTS, adjust sensitivity. Tell them this after setup.
+Once configured, the user manages voice settings from the **agent settings page**: change voices, hear previews, toggle STT/TTS, adjust sensitivity. Tell them this after setup.
 
 ## When to offer setup
 
 - User mentions voice, mic, speaking aloud, hearing you, TTS, STT, transcription
 - User says the mic button is disabled or they can't hear you
-- New container, voice not set up yet. Offer once early, then drop it (track in memory so you don't nag)
+- New container, voice not set up. Offer once early, then drop it (track in memory)
 
 ## The setup flow
 
-1. **Ask which they want**: Deepgram for input (STT), ElevenLabs for output (TTS). Independent; the user may configure only one.
+1. **Ask which they want**: Deepgram for input (STT), ElevenLabs for output (TTS). Independent; may configure only one.
 2. **Walk them through getting a key**: see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate before saving**:
    ```bash
@@ -55,7 +55,7 @@ voice-keys validate --provider {deepgram|elevenlabs} --key <k>
 voice-keys set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
 voice-keys clear --domain {stt|tts}   # removes provider + keys entirely
 
-# Enable/disable (keeps configuration intact, just toggles on/off)
+# Enable/disable (keeps config, just toggles on/off)
 voice-keys enable --domain {stt|tts}
 voice-keys disable --domain {stt|tts}
 
@@ -64,7 +64,7 @@ voice-keys set-voice --id <voice_id>
 voice-keys add-voice --id <voice_id> --name <name> --description "..."
 voice-keys remove-voice --id <voice_id>
 
-# STT keyterms (words the transcription should bias toward)
+# STT keyterms (words transcription should bias toward)
 voice-keys add-keyterm <term>
 voice-keys remove-keyterm <term>
 
@@ -75,14 +75,14 @@ voice-keys set-eot --timeout-ms 10000
 
 ## Common asks
 
-- **"Disable TTS / stop speaking"** → `disable --domain tts` (keeps keys)
-- **"Enable TTS / start speaking again"** → `enable --domain tts`
-- **"Disable STT / turn off the mic"** → `disable --domain stt`
-- **"Remove voice completely"** → `clear --domain tts` (wipes provider + keys)
-- **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>` (or point them to app settings to browse/preview)
-- **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
-- **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
-- **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
+- **"Disable TTS / stop speaking"** -> `disable --domain tts` (keeps keys)
+- **"Enable TTS / start speaking again"** -> `enable --domain tts`
+- **"Disable STT / turn off the mic"** -> `disable --domain stt`
+- **"Remove voice completely"** -> `clear --domain tts` (wipes provider + keys)
+- **"I want you to sound like <name>"** -> `set-voice --id <matching voice_id from status>` (or point them to app settings)
+- **"Make sure you recognize '{AGENT_NAME}'"** -> `add-keyterm {AGENT_NAME}`
+- **"Finalize my turns faster"** -> lower `--threshold` (e.g. 0.6)
+- **"Stop cutting me off"** -> raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
 
 ## Providers
 

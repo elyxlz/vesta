@@ -14,7 +14,7 @@ Provides the `voice-server` and `voice-keys` commands.
    ```bash
    voice-keys daemon start
    ```
-   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)), so there's nothing else to wire up. Check with `voice-keys daemon status`.
+   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)). Check with `voice-keys daemon status`.
 2. Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
    voice-keys daemon start
@@ -22,7 +22,7 @@ Provides the `voice-server` and `voice-keys` commands.
 
 ## 3. API keys
 
-Each user needs their own keys: one Deepgram key for STT (voice input), one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's configuration.
+Each user needs their own keys: one Deepgram key for STT (voice input), one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's config.
 
 ## Deepgram (STT, voice input)
 
@@ -33,8 +33,8 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
 3. Click **Create a New API Key**.
 4. Pick a role with at least these scopes:
    - `projects:read` (list project)
-   - `usage:read` (monthly usage shown in Settings)
-   - `billing:read` (remaining balance shown in Settings)
+   - `usage:read` (monthly usage in Settings)
+   - `billing:read` (remaining balance in Settings)
    - scopes for real-time transcription (the "Member" preset covers all of these)
 
    The **Admin** preset is easiest if you don't want to think about scopes.
@@ -48,7 +48,7 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
 **Dashboard:** https://elevenlabs.io
 
 1. Sign in or create an account.
-2. Profile (top right) → **My Account** → **API Keys**.
+2. Profile (top right) -> **My Account** -> **API Keys**.
 3. Click **Create New Key**.
 4. Give the key permission for:
    - **Text to Speech** (required for synthesis)
@@ -61,7 +61,7 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
 
 ## Adding a custom ElevenLabs voice
 
-1. In the dashboard, open **Voices** → **VoiceLab** or the Voice Library.
+1. In the dashboard, open **Voices** -> **VoiceLab** or the Voice Library.
 2. Create or clone a voice.
 3. Copy the **Voice ID** (looks like `FGY2WhTYpPnrIDTdsKH5`).
 4. Ask the agent in chat: "add this voice: <id> named <name>".

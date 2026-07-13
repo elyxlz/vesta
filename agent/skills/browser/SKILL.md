@@ -8,11 +8,11 @@ description: Browse, navigate, click, fill forms, screenshot, or scrape web page
 Camoufox (anti-detection Firefox that spoofs its fingerprint in C++ below JS) driven over raw
 WebDriver BiDi. Accessibility-tree snapshots with numbered refs (`e1`, `e2`) for the ergonomic
 path; `click(x, y)` + screenshots for what accessibility can't see. Helpers are Python, short,
-and agent-editable. When something is missing, write it.
+agent-editable. When something is missing, write it.
 
 Stealth is structural, not a flag: Camoufox is always fingerprint-spoofed, and headless leaks
-nothing (unlike stock Chromium). Each profile gets one coherent fingerprint, stable across
-restarts, different across profiles.
+nothing. Each profile gets one coherent fingerprint, stable across restarts, different across
+profiles.
 
 **Setup**: [SETUP.md](SETUP.md)
 
@@ -69,7 +69,7 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 ```bash
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
-browser launch --mode screenshot                  # ... report screenshots, not the a11y tree
+browser launch --mode screenshot                  # report screenshots, not the a11y tree
 browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
 browser connect http://192.168.1.10:9222          # attach to user's Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
@@ -96,7 +96,7 @@ browser fetch "URL" --navigate-first              # render through stealth brows
 
 # Actions on refs
 browser click e5 [--double|--right]
-browser click --at 320 180                        # coordinate click (goes through shadow DOM)
+browser click --at 320 180                        # coordinate click (through shadow DOM)
 browser type e3 "text" [--submit] [--slowly]
 browser press Enter
 browser press a --modifiers Control               # Ctrl+A
@@ -182,5 +182,5 @@ most-preferred first:
 - **First launch is slow**: Camoufox (~650 MB) is fetched and cached under
   `~/.cache/camoufox/<version>/` on first `browser launch`; later launches are instant.
 - **Bot detection / blocked**: `browser screenshot` to see the page. Camoufox is already stealthy,
-  so a block is usually account-trust, geo/IP, or a CAPTCHA — try handover.
+  so a block is usually account-trust, geo/IP, or a CAPTCHA: try handover.
 - **Stale refs**: take a fresh `browser snapshot` after navigation or major DOM change.
