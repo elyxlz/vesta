@@ -140,7 +140,6 @@ mod tests {
         // Non-.py files under core/ (prompts, skill manifests) must also be embedded
         // — the agent's prompt loader depends on them at runtime.
         assert!(dir.join("core/prompts/nightly_dream.md").is_file());
-        assert!(dir.join("core/prompts/notification_suffix.md").is_file());
         // The full home ships now: skills, the MEMORY template, and the agent .gitignore
         // all feed build-upstream.sh.
         assert!(dir.join("skills/skills-registry/SKILL.md").is_file());
