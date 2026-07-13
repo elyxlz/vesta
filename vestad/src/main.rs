@@ -423,6 +423,21 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
+            // Best-effort convergence before the surfaces below read
+            // tunnel.json: create a missing tunnel (fresh BYOK box) or
+            // reconcile a changed pinned subdomain, so agent env files, /info,
+            // and the banner get the right identity URL on first boot. Failure
+            // is fine here; the supervisor keeps converging after boot.
+            if !no_tunnel
+                && !is_cloud_managed()
+                && tunnel::has_cf_creds(&config)
+                && !tunnel::has_declined_tunnel(&config)
+            {
+                if let Err(e) = tunnel::ensure_tunnel(&config) {
+                    tracing::warn!("boot tunnel converge failed (supervisor will retry): {e}");
+                }
+            }
+
             // Boot renders no verdict on tunnel health: the supervisor owns
             // establish/verify/repair and mirrors sustained state into
             // status.json via on_tunnel_up. Boot only decides whether a tunnel
@@ -430,7 +445,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let tunnel_intended = !no_tunnel
                 && (is_cloud_managed()
                     || tunnel::get_tunnel_config(&config).is_some()
-                    || tunnel::has_cf_creds(&config));
+                    || (tunnel::has_cf_creds(&config) && !tunnel::has_declined_tunnel(&config)));
             let tunnel_url = tunnel_intended
                 .then(|| {
                     tunnel::get_tunnel_config(&config)
@@ -484,6 +499,14 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             // Keep status.json honest: on a SUSTAINED tunnel outage the supervisor
             // flips the tunnel field to an error and back to enabled on recovery.
             // Transient blips it recovers from on its own don't change it.
+            // Recovery guidance differs by who owns the tunnel: a managed
+            // (vesta.run) tunnel is the control plane's to fix, a self-hosted
+            // one is re-created by `vestad connect`.
+            let tunnel_down_hint = if is_cloud_managed() {
+                "tunnel down 2+ min; the vesta.run control plane owns it and should recover it"
+            } else {
+                "tunnel down 2+ min; if it persists, run vestad connect"
+            };
             let status = std::sync::Arc::new(std::sync::Mutex::new(status));
             let on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync> = {
                 let status = status.clone();
@@ -491,10 +514,10 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 let tunnel_url = tunnel_url.clone();
                 std::sync::Arc::new(move |up: bool| {
                     let next = if up {
-                        match tunnel_url.clone().or_else(|| {
-                            tunnel::get_tunnel_config(&config)
-                                .map(|tc| format!("https://{}", tc.hostname))
-                        }) {
+                        match tunnel::get_tunnel_config(&config)
+                            .map(|tc| format!("https://{}", tc.hostname))
+                            .or_else(|| tunnel_url.clone())
+                        {
                             Some(url) => TunnelStatus::Active(url),
                             None => return, // can't name the URL; leave the field as-is
                         }
@@ -503,9 +526,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                         // TUNNEL_DOWN_SUSTAINED_SECS, whatever the failure mode
                         // (wedged connector, fast-exiting cloudflared, dead
                         // config): a general recovery hint, not revoked-specific.
-                        TunnelStatus::Failed(
-                            "tunnel down 2+ min — if it persists, run vestad connect".to_string(),
-                        )
+                        TunnelStatus::Failed(tunnel_down_hint.to_string())
                     };
                     if let Ok(mut s) = status.lock() {
                         s.set_tunnel(next);
@@ -887,6 +908,12 @@ fn main() {
                 }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config).unwrap_or_else(|e| die(e));
+                    if let Err(e) = tunnel::decline_tunnel(&config) {
+                        eprintln!(
+                            "warning: tunnel destroyed but failed to persist the no-tunnel preference: {}",
+                            e
+                        );
+                    }
                     eprintln!("✓ tunnel removed");
                 }
             }
