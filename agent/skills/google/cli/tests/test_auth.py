@@ -1,15 +1,16 @@
-"""Auth reuses Thunderbird's published client by default; credentials.json overrides (Parts 1 & 2)."""
+"""Auth requires the user's own OAuth client (~/.google/credentials.json)."""
 
 import json as _json
 from datetime import datetime, timedelta
 
 import pytest
+from google.auth.exceptions import RefreshError
 
-from google_cli import auth, thunderbird_client
-from google_cli.config import CALENDAR_SCOPES, GMAIL_SCOPES, MEET_SCOPE, SCOPES
+from google_cli import auth
+from google_cli.config import CALENDAR_SCOPES, GMAIL_SCOPES, SCOPES
 
 
-# -- Part 2: the default scope set --------------------------------------
+# -- the default scope set -----------------------------------------------
 
 
 def test_default_scope_set_is_exactly_mail_and_calendar():
@@ -25,61 +26,37 @@ def test_full_gmail_scope_replaces_modify_and_send():
     assert "https://www.googleapis.com/auth/gmail.send" not in SCOPES
 
 
-def test_meet_scope_dropped_from_default_set():
-    assert MEET_SCOPE == "https://www.googleapis.com/auth/meetings.space.created"
-    assert MEET_SCOPE not in SCOPES
-
-
 def test_calendar_scope_present():
     assert CALENDAR_SCOPES == ["https://www.googleapis.com/auth/calendar"]
 
 
-# -- Part 1: build_client_config reuses the Thunderbird client ----------
-
-
-@pytest.fixture(autouse=True)
-def _isolate_state(tmp_path, monkeypatch):
-    # No cache -> resolver returns the hardcoded Thunderbird constants (the floor).
-    monkeypatch.setenv("GOOGLE_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("GOOGLE_NO_DYNAMIC_CLIENT", raising=False)
-    return tmp_path
-
-
-def test_build_client_config_is_thunderbird_installed_client():
-    cfg = auth.build_client_config()
-    assert set(cfg.keys()) == {"installed"}
-    inst = cfg["installed"]
-    assert inst["client_id"] == thunderbird_client.THUNDERBIRD_GOOGLE_CLIENT_ID
-    assert inst["client_secret"] == thunderbird_client.THUNDERBIRD_GOOGLE_CLIENT_SECRET
-    assert inst["auth_uri"] == "https://accounts.google.com/o/oauth2/v2/auth"
-    assert inst["token_uri"] == "https://oauth2.googleapis.com/token"
-    assert "http://127.0.0.1" in inst["redirect_uris"]
-
-
-# -- Part 1: _make_flow dispatch (client_config vs credentials.json) ----
+# -- credentials.json is required ----------------------------------------
 
 
 class _FakeFlow:
     """Stand-in for InstalledAppFlow that records which constructor was used."""
 
     @staticmethod
-    def from_client_config(client_config, scopes):
-        return {"via": "client_config", "config": client_config, "scopes": scopes}
-
-    @staticmethod
     def from_client_secrets_file(path, scopes):
         return {"via": "secrets_file", "path": path, "scopes": scopes}
 
 
-def test_make_flow_defaults_to_in_memory_thunderbird_config(monkeypatch, tmp_path):
-    monkeypatch.setattr(auth, "InstalledAppFlow", _FakeFlow)
+def test_missing_credentials_file_is_a_clear_actionable_error(tmp_path):
     creds_file = tmp_path / "credentials.json"  # does NOT exist
-    flow = auth._make_flow(creds_file, ["s"])
-    assert flow["via"] == "client_config"
-    assert flow["config"]["installed"]["client_id"] == thunderbird_client.THUNDERBIRD_GOOGLE_CLIENT_ID
+    with pytest.raises(ValueError) as ei:
+        auth._make_flow(creds_file, ["s"])
+    msg = str(ei.value)
+    assert str(creds_file) in msg
+    assert "SETUP.md" in msg
+    assert "email-client" in msg
 
 
-def test_make_flow_credentials_file_overrides_when_present(monkeypatch, tmp_path):
+def test_start_auth_flow_without_credentials_file_errors(tmp_path):
+    with pytest.raises(ValueError, match="SETUP.md"):
+        auth.start_auth_flow(tmp_path / "credentials.json", ["s"])
+
+
+def test_make_flow_uses_the_credentials_file(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, "InstalledAppFlow", _FakeFlow)
     creds_file = tmp_path / "credentials.json"
     creds_file.write_text('{"installed": {"client_id": "own-app"}}')
@@ -165,3 +142,19 @@ def test_get_credentials_refreshes_when_expiry_unknown(tmp_path, monkeypatch):
     creds = auth.get_credentials(tok, tmp_path / "credentials.json", ["https://mail.google.com/"])
     assert calls["n"] == 1
     assert creds.token == "fresh-access"
+
+
+def test_refresh_failure_tells_user_to_sign_in_again(tmp_path, monkeypatch):
+    # A token minted under a different OAuth client (e.g. the old shared client)
+    # cannot refresh under the user's own client; the error must say to re-run
+    # sign-in rather than surface a raw RefreshError.
+    tok = tmp_path / "token.json"
+    _write_token(tok, expiry_iso=(datetime.now() - timedelta(hours=2)).isoformat())
+
+    def failing_refresh(self, request):
+        raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(auth.Credentials, "refresh", failing_refresh, raising=True)
+    monkeypatch.setattr(auth, "Request", lambda: object())
+    with pytest.raises(ValueError, match="google auth login"):
+        auth.get_credentials(tok, tmp_path / "credentials.json", ["https://mail.google.com/"])
