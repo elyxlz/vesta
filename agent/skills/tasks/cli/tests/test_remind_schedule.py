@@ -14,14 +14,6 @@ from tasks_cli import commands, db
 from tasks_cli.config import Config
 
 
-@pytest.fixture
-def tmp_config(tmp_path: Path) -> Config:
-    cfg = Config(data_dir=tmp_path / "tasks", log_dir=tmp_path / "tasks" / "logs")
-    cfg.data_dir.mkdir(parents=True, exist_ok=True)
-    db.init_db(cfg.data_dir)
-    return cfg
-
-
 def _trigger_data(config: Config, reminder_id: str) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
         row = conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
@@ -261,7 +253,7 @@ def test_migration_v2_to_v3_rewrites_legacy_cron(tmp_path: Path):
     assert _read_trigger(data_dir, "interval1") == {"type": "interval", "hours": 1}  # non-cron untouched
     assert _read_trigger(data_dir, "date1") == {"type": "date", "run_date": "2026-01-01T00:00:00+00:00"}
     with closing(db.get_db(data_dir)) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 3
+        assert conn.execute("SELECT version FROM schema_version").fetchone()["version"] == 4
 
 
 def test_migration_preserves_firing_instant(tmp_path: Path):
