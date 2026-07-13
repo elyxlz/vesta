@@ -19,7 +19,7 @@ tricount --help
 
 ## Step 2: Register this device
 
-Tricount uses **anonymous device registration** — no Tricount account or password is needed. This creates a unique device identity and gets an auth token.
+Tricount uses **anonymous device registration**: no Tricount account or password is needed. This creates a unique device identity and gets an auth token.
 
 ```bash
 tricount auth register
