@@ -6,10 +6,12 @@ import { fileURLToPath } from "node:url";
 const appsDir = fileURLToPath(new URL("../..", import.meta.url));
 const desktopDir = fileURLToPath(new URL("..", import.meta.url));
 
+// shell:true so `npm`/`npx` resolve to their .cmd shims on Windows.
 const vite = spawn("npm", ["-w", "@vesta/web", "run", "dev"], {
   cwd: appsDir,
   env: { ...process.env, VESTA_DESKTOP_DEV: "1", HTTPS: "false" },
   stdio: "inherit",
+  shell: true,
 });
 
 async function waitForPort(port, host, tries = 100) {
@@ -32,6 +34,7 @@ const electron = spawn("npx", ["electron", "."], {
   cwd: desktopDir,
   env: { ...process.env, VESTA_DESKTOP_DEV: "1" },
   stdio: "inherit",
+  shell: true,
 });
 
 const stop = () => {

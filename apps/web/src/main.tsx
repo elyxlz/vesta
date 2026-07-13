@@ -21,13 +21,9 @@ if (isDesktopApp) {
   }
 }
 
-const isMacDesktop = isDesktopApp && platform === "macos";
-d.style.setProperty("--titlebar-center-mt", isMacDesktop ? "-0.75rem" : "0px");
-d.style.setProperty("--titlebar-pt", isMacDesktop ? "1.1rem" : "0rem");
-
 await Promise.all([
-  document.fonts.load("normal 400 16px 'Public Sans Variable'"),
-  document.fonts.load("normal 400 16px 'Outfit Variable'"),
+  document.fonts.load("normal 400 16px 'Archivo Variable'"),
+  document.fonts.load("normal 500 16px 'Source Serif 4 Variable'"),
 ]);
 
 const rootElement = document.getElementById("root");

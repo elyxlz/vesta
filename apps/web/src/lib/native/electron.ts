@@ -19,9 +19,10 @@ function isConnectionConfig(value: unknown): value is ConnectionConfig {
 }
 
 export function createElectronBridge(api: VestaNativeApi): NativeBridge {
+  const platform = NODE_PLATFORM_MAP[api.platform] ?? "linux";
   return {
     runtime: "electron",
-    platform: NODE_PLATFORM_MAP[api.platform] ?? "linux",
+    platform,
     connectionStore: {
       async read() {
         const value = await api.storeRead();
@@ -43,6 +44,17 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
       onCallback: (cb) => api.onOauthCallback(cb),
       cancel: (port) => api.oauthCancel(port),
     },
+    // macOS keeps its native traffic lights; only Windows draws custom controls.
+    windowControls:
+      platform === "windows"
+        ? {
+            minimize: () => api.windowMinimize(),
+            toggleMaximize: () => api.windowToggleMaximize(),
+            close: () => api.windowClose(),
+            isMaximized: () => api.windowIsMaximized(),
+            onMaximizedChange: (cb) => api.onWindowMaximizedChange(cb),
+          }
+        : null,
     installAppUpdate: (version) => api.installUpdate(version),
   };
 }

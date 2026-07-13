@@ -25,4 +25,10 @@ contextBridge.exposeInMainWorld("vestaNative", {
     ipcRenderer.invoke("update:install", version),
   onWindowFocus: (cb: (focused: boolean) => void) =>
     subscribe<boolean>("window-focus", cb),
+  windowMinimize: () => ipcRenderer.invoke("window:minimize"),
+  windowToggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+  windowClose: () => ipcRenderer.invoke("window:close"),
+  windowIsMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+  onWindowMaximizedChange: (cb: (maximized: boolean) => void) =>
+    subscribe<boolean>("window-maximized", cb),
 });

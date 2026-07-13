@@ -1,5 +1,6 @@
 import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { useLayout } from "@/stores/use-layout";
+import { WindowControls } from "@/components/WindowControls";
 
 interface NavbarProps {
   leading?: React.ReactNode;
@@ -15,10 +16,10 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
     <div
       ref={measureRef}
       data-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3.5 pb-1 sm:pb-2"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-2.5"
       style={{
-        paddingTop:
-          "calc(var(--titlebar-pt, 0.5rem) + var(--safe-area-pt, 0.5rem))",
+        paddingTop: "var(--safe-area-pt)",
+        paddingBottom: "var(--navbar-pb)",
       }}
     >
       <div
@@ -28,15 +29,12 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
         <div
           data-drag-region
           className="flex items-center gap-2 justify-self-start"
+          style={{ paddingLeft: "var(--titlebar-inset-left, 0px)" }}
         >
           {leading}
         </div>
 
-        <div
-          data-drag-region
-          className="flex items-center justify-self-center"
-          style={{ marginTop: "var(--titlebar-center-mt, 0px)" }}
-        >
+        <div data-drag-region className="flex items-center justify-self-center">
           {center}
         </div>
 
@@ -45,6 +43,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
           className="flex items-center gap-2 justify-self-end"
         >
           {trailing}
+          <WindowControls />
         </div>
       </div>
     </div>

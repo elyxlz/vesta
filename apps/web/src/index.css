@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/public-sans";
+@import "@fontsource-variable/archivo";
 @import "@fontsource-variable/outfit";
 @import "@fontsource-variable/source-serif-4";
 @import "@fontsource-variable/source-serif-4/wght-italic.css";
@@ -12,6 +13,22 @@
 :root {
   --safe-area-pt: max(0.5rem, calc(1rem - env(safe-area-inset-top, 0px)));
   --safe-area-pb: max(0rem, calc(1rem - env(safe-area-inset-bottom, 0px)));
+  /* Navbar bottom padding: the gap it leaves below itself. The agent panel
+     subtracts this to sit its cards flush under the navbar row
+     (layouts/AgentLayout/DesktopPanelView.tsx). */
+  --navbar-pb: 0.625rem;
+}
+
+/* macOS desktop app: the navbar row is the titlebar. The traffic lights are
+   centered on it by the main process (TRAFFIC_LIGHTS_POSITION in
+   apps/desktop/src/window.ts) and the leading column reserves their width;
+   keep these two values and that constant in sync. */
+:root.desktop[data-platform="macos"] {
+  --safe-area-pt: 10px;
+  --titlebar-inset-left: 80px;
+}
+
+:root {
   --background: oklch(0.995 0.005 80);
   --foreground: oklch(0.147 0.005 80);
   --card: oklch(0.995 0.005 80);
@@ -26,7 +43,7 @@
   --secondary: oklch(0.97 0.006 80);
   --secondary-foreground: oklch(0.216 0.006 80);
   --muted: oklch(0.97 0.006 80);
-  --muted-foreground: oklch(0.553 0.015 80);
+  --muted-foreground: oklch(0.34 0.01 80);
   --accent: oklch(0.97 0.006 80);
   --accent-foreground: oklch(0.216 0.006 80);
   --destructive: oklch(0.577 0.245 27.325);
@@ -70,21 +87,21 @@ html[data-platform="android"] {
 }
 
 .vibrancy {
-  --background: oklch(0.995 0.005 80 / 50%);
-  --card: oklch(0.995 0.005 80 / 50%);
-  --muted: oklch(0.97 0.006 80 / 60%);
-  --accent: oklch(0.97 0.006 80 / 50%);
-  --sidebar: oklch(0.985 0.006 80 / 50%);
-  --sidebar-accent: oklch(0.97 0.006 80 / 50%);
+  --background: oklch(0.995 0.005 80 / 44%);
+  --card: oklch(0.995 0.005 80 / 44%);
+  --muted: oklch(0.97 0.006 80 / 54%);
+  --accent: oklch(0.97 0.006 80 / 44%);
+  --sidebar: oklch(0.985 0.006 80 / 44%);
+  --sidebar-accent: oklch(0.97 0.006 80 / 44%);
 }
 
 .vibrancy.dark {
-  --background: oklch(0.147 0.005 80 / 50%);
-  --card: oklch(0.216 0.007 80 / 50%);
-  --muted: oklch(0.19 0.007 80 / 60%);
-  --accent: oklch(0.268 0.008 80 / 50%);
-  --sidebar: oklch(0.216 0.007 80 / 50%);
-  --sidebar-accent: oklch(0.268 0.008 80 / 50%);
+  --background: oklch(0.147 0.005 80 / 46%);
+  --card: oklch(0.216 0.007 80 / 46%);
+  --muted: oklch(0.19 0.007 80 / 54%);
+  --accent: oklch(0.268 0.008 80 / 46%);
+  --sidebar: oklch(0.216 0.007 80 / 46%);
+  --sidebar-accent: oklch(0.268 0.008 80 / 46%);
 }
 
 /* Frameless desktop-app drag regions; interactive children stay clickable. */
@@ -110,7 +127,7 @@ html[data-platform="android"] {
   --secondary: oklch(0.268 0.008 80);
   --secondary-foreground: oklch(0.985 0.006 80);
   --muted: oklch(0.19 0.007 80);
-  --muted-foreground: oklch(0.709 0.02 80);
+  --muted-foreground: oklch(0.86 0.012 80);
   --accent: oklch(0.268 0.008 80);
   --accent-foreground: oklch(0.985 0.006 80);
   --destructive: oklch(0.704 0.191 22.216);
@@ -134,8 +151,8 @@ html[data-platform="android"] {
 }
 
 @theme inline {
-  --font-sans: "Public Sans Variable", sans-serif;
-  --font-heading: "Outfit Variable", sans-serif;
+  --font-sans: "Archivo Variable", sans-serif;
+  --font-heading: "Source Serif 4 Variable", Georgia, serif;
   --font-serif: "Source Serif 4 Variable", Georgia, serif;
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
@@ -256,6 +273,57 @@ html[data-platform="android"] {
   to {
     --scroll-fade-bottom: 0px;
   }
+}
+
+/* macOS-style scrollbars app-wide: a thin, inset, rounded pill thumb over a transparent track, no
+   arrow buttons. Electron is always Chromium, so the WebKit pseudo-elements render identically on
+   macOS/Windows/Linux; Firefox falls back to the standard scrollbar-* properties. Radix ScrollArea
+   hides its own native bar (a more specific selector), so this styles only plain overflow scrollers. */
+/* Firefox uses the standard scrollbar-* properties (it has no ::-webkit-scrollbar).
+   Guarded to Firefox only: in Blink/WebKit, setting scrollbar-color/width makes the
+   engine ignore every ::-webkit-scrollbar rule below (re-showing the native arrow
+   buttons and dropping the pill thumb), so the pseudo-element path must own those. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0 0 0 / 0.28) transparent;
+  }
+  .dark * {
+    scrollbar-color: oklch(1 0 0 / 0.28) transparent;
+  }
+}
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:single-button,
+::-webkit-scrollbar-button:double-button {
+  width: 0;
+  height: 0;
+  display: none;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background: oklch(0 0 0 / 0.28);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0 0 0 / 0.45);
+  background-clip: padding-box;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 0.28);
+  background-clip: padding-box;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 0.4);
+  background-clip: padding-box;
 }
 
 /* Soft, scroll-aware fade at the top/bottom of a scroll container: the top edge fades only once you've

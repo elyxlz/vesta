@@ -17,6 +17,15 @@ export interface OauthLoopback {
   cancel(port: number): Promise<void>;
 }
 
+export interface WindowControls {
+  minimize(): Promise<void>;
+  toggleMaximize(): Promise<void>;
+  close(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  /** Maximize/unmaximize events; returns an unsubscribe function. */
+  onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+}
+
 export interface NativeBridge {
   runtime: Runtime;
   platform: Platform;
@@ -28,6 +37,8 @@ export interface NativeBridge {
   onWindowFocusChange(cb: (focused: boolean) => void): () => void;
   /** Loopback server for the native PKCE login; null in the browser. */
   oauthLoopback: OauthLoopback | null;
+  /** Custom title-bar controls; null when the OS draws them (browser, macOS). */
+  windowControls: WindowControls | null;
   /** Converge the app onto the gateway's exact version. */
   installAppUpdate(version: string): Promise<void>;
 }
@@ -49,6 +60,11 @@ export interface VestaNativeApi {
   oauthCancel(port: number): Promise<void>;
   installUpdate(version: string): Promise<void>;
   onWindowFocus(cb: (focused: boolean) => void): () => void;
+  windowMinimize(): Promise<void>;
+  windowToggleMaximize(): Promise<void>;
+  windowClose(): Promise<void>;
+  windowIsMaximized(): Promise<boolean>;
+  onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void;
 }
 
 declare global {

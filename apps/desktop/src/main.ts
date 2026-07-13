@@ -1,4 +1,5 @@
 import { BrowserWindow, Menu, app, ipcMain, nativeTheme, shell } from "electron";
+import path from "node:path";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
 import { clearConnection, readConnection, writeConnection } from "./store";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
@@ -31,6 +32,17 @@ if (!gotLock) {
     ipcMain.handle("focus-window", () => {
       if (mainWindow) showMainWindow(mainWindow);
     });
+    ipcMain.handle("window:minimize", () => mainWindow?.minimize());
+    ipcMain.handle("window:toggle-maximize", () => {
+      if (!mainWindow) return;
+      if (mainWindow.isMaximized()) mainWindow.unmaximize();
+      else mainWindow.maximize();
+    });
+    ipcMain.handle("window:close", () => mainWindow?.close());
+    ipcMain.handle(
+      "window:is-maximized",
+      () => mainWindow?.isMaximized() ?? false,
+    );
     ipcMain.on("set-theme", (_event, theme: unknown) => {
       if (theme === "light" || theme === "dark") nativeTheme.themeSource = theme;
     });
@@ -74,6 +86,11 @@ if (!gotLock) {
   });
 
   void app.whenReady().then(() => {
+    // Packaged builds get the icon from electron-builder; set it explicitly so
+    // the dock icon is Vesta in `npm run dev` too (raw electron shows its own).
+    if (process.platform === "darwin" && !app.isPackaged) {
+      app.dock?.setIcon(path.join(__dirname, "..", "build", "icon.png"));
+    }
     buildMenu();
     wireIpc();
     mainWindow = createMainWindow();

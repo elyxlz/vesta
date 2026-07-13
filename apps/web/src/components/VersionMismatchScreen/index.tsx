@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
-import { ConnectionControls } from "@/components/ConnectionControls";
 import { Footer } from "@/components/Footer";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
@@ -13,25 +12,23 @@ import {
   EmptyHeader,
   EmptyTitle,
   EmptyDescription,
+  EmptyContent,
 } from "@/components/ui/empty";
 import { native } from "@/lib/native";
-import { compareVersions } from "@/lib/version";
 
 interface VersionMismatchScreenProps {
   gatewayVersion: string;
-  onUpdateGateway: () => Promise<boolean>;
 }
 
 // Full-screen takeover shown in place of the whole app when the app and gateway
-// run different versions. It renders outside the router (so /settings is
-// unreachable), so it carries its own connection controls — disconnect + release
-// channel + auto-update — so the user can resolve the mismatch while blocked.
+// run different versions. The app is a client of vestad, so it always conforms
+// to the gateway's version (up or down); upgrading the gateway itself is a
+// separate, deliberate action (the UpdatePill). It renders outside the router
+// (so /settings is unreachable), so it carries its own disconnect action for
+// the user to bail out otherwise.
 export function VersionMismatchScreen({
   gatewayVersion,
-  onUpdateGateway,
 }: VersionMismatchScreenProps) {
-  const appIsOlder = compareVersions(__APP_VERSION__, gatewayVersion) < 0;
-  const hint = appIsOlder ? "update your app" : "update your gateway";
   const { disconnect } = useAuth();
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,22 +38,13 @@ export function VersionMismatchScreen({
     setUpdating(false);
   }, [gatewayVersion]);
 
-  const handleUpdateGateway = async () => {
-    setUpdating(true);
-    setError(null);
-    const ok = await onUpdateGateway();
-    if (!ok) {
-      setError("update failed");
-      setUpdating(false);
-    }
-  };
-
   const handleUpdateApp = async () => {
     setUpdating(true);
     setError(null);
     try {
-      // Targets the gateway's exact version so beta (prerelease) gateways
-      // update correctly; releases/latest never resolves a prerelease.
+      // Converge on the gateway's exact version, up or down (allowDowngrade).
+      // Targets that version's release so beta (prerelease) gateways update
+      // correctly; releases/latest never resolves a prerelease.
       await native.installAppUpdate(gatewayVersion);
     } catch (err) {
       setError(err instanceof Error ? err.message : "update failed");
@@ -68,28 +56,36 @@ export function VersionMismatchScreen({
     <>
       <Navbar center={<LogoText />} trailing={<StatusPill />} />
       <Empty>
-        <EmptyHeader>
+        <EmptyHeader className="max-w-lg">
           <EmptyTitle>version mismatch</EmptyTitle>
           <EmptyDescription>
-            your app (v{__APP_VERSION__}) and gateway (v{gatewayVersion}) are on
-            different versions and need to match. {hint} to reconnect.
+            your app (v{__APP_VERSION__}) and your gateway (v{gatewayVersion})
+            don't match.
           </EmptyDescription>
         </EmptyHeader>
-        <Button
-          onClick={appIsOlder ? handleUpdateApp : handleUpdateGateway}
-          disabled={updating}
-        >
-          {updating && <Spinner className="size-4" />}
-          {hint}
-        </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="mt-4 flex w-full max-w-sm flex-col gap-3">
-          <Button variant="destructive" onClick={() => disconnect()}>
-            <LogOut data-icon="inline-start" />
-            disconnect
-          </Button>
-          <ConnectionControls />
-        </div>
+        <EmptyContent className="relative">
+          <div className="flex items-center gap-2">
+            <Button onClick={handleUpdateApp} disabled={updating}>
+              {updating && <Spinner className="size-4" />}
+              update app
+            </Button>
+            <Button
+              variant="destructive"
+              size="icon"
+              aria-label="disconnect"
+              title="disconnect"
+              onClick={() => disconnect()}
+            >
+              <LogOut />
+            </Button>
+          </div>
+          {/* absolute so an error never shifts the buttons or header */}
+          {error && (
+            <p className="absolute top-full mt-4 w-full text-center text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </EmptyContent>
       </Empty>
       <Footer />
     </>

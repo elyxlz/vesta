@@ -71,6 +71,11 @@ describe("electron bridge", () => {
       oauthCancel: vi.fn(async () => {}),
       installUpdate: vi.fn(async () => {}),
       onWindowFocus: vi.fn(() => () => {}),
+      windowMinimize: vi.fn(async () => {}),
+      windowToggleMaximize: vi.fn(async () => {}),
+      windowClose: vi.fn(async () => {}),
+      windowIsMaximized: vi.fn(async () => false),
+      onWindowMaximizedChange: vi.fn(() => () => {}),
       ...overrides,
     };
   }

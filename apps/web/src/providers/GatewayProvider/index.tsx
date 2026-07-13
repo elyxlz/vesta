@@ -258,10 +258,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchScreen
-          gatewayVersion={gatewayVersion}
-          onUpdateGateway={triggerGatewayUpdate}
-        />
+        <VersionMismatchScreen gatewayVersion={gatewayVersion} />
       ) : (
         children
       )}

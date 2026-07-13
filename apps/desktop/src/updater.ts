@@ -19,7 +19,8 @@ export async function installAppUpdate(version: string): Promise<void> {
     await installLinuxPackage(version);
     return;
   }
-  const { autoUpdater } = await import("electron-updater");
+  // electron-updater is CommonJS; its exports come through under `.default`.
+  const { autoUpdater } = (await import("electron-updater")).default;
   autoUpdater.autoDownload = false;
   autoUpdater.allowDowngrade = true;
   autoUpdater.setFeedURL({

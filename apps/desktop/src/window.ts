@@ -10,6 +10,11 @@ const DEV_SERVER_URL =
 const WINDOW_WIDTH = 1200;
 const WINDOW_HEIGHT = 750;
 const WINDOW_MIN_SIZE = 380;
+// Center the traffic lights on the navbar's content row (10px top padding +
+// 40px row = center y=30; y eyeballed from there). The web-side geometry lives
+// in one block in apps/web/src/index.css (:root.desktop[data-platform="macos"]);
+// keep the two in sync.
+const TRAFFIC_LIGHTS_POSITION = { x: 18, y: 23 };
 
 export function registerAppScheme(): void {
   protocol.registerSchemesAsPrivileged([
@@ -67,13 +72,20 @@ export function createMainWindow(): BrowserWindow {
     },
     ...(process.platform === "darwin" && {
       titleBarStyle: "hiddenInset" as const,
-      vibrancy: "hud" as const,
-      visualEffectState: "active" as const,
+      trafficLightPosition: TRAFFIC_LIGHTS_POSITION,
+      // under-window is the native main-window glass (the base layer beneath
+      // window content); followWindow dims it when the window is inactive. No
+      // transparent backgroundColor: it would switch the window to Electron's
+      // transparent path and override the native squircle corner radius.
+      vibrancy: "under-window" as const,
+      visualEffectState: "followWindow" as const,
       acceptFirstMouse: true,
     }),
     ...(process.platform === "win32" && {
+      // Hidden title bar with no OS caption buttons (no titleBarOverlay); the
+      // app draws its own min/max/close (see components/WindowControls). Keeps
+      // the resizable frame + Mica backdrop.
       titleBarStyle: "hidden" as const,
-      titleBarOverlay: true,
       backgroundMaterial: "mica" as const,
     }),
   });
@@ -95,6 +107,11 @@ export function createMainWindow(): BrowserWindow {
     window.webContents.send("window-focus", focused);
   window.on("focus", sendFocus(true));
   window.on("blur", sendFocus(false));
+
+  const sendMax = (maximized: boolean) => () =>
+    window.webContents.send("window-maximized", maximized);
+  window.on("maximize", sendMax(true));
+  window.on("unmaximize", sendMax(false));
 
   void window.loadURL(DEV_SERVER_URL ?? `${APP_ORIGIN}/`);
   return window;
