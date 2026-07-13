@@ -31,6 +31,9 @@ ln -sf ~/agent/skills/email-client/smtp_send.py ~/.email-client/smtp_send.py
 ln -sf ~/agent/skills/email-client/poll_daemon.py ~/.email-client/poll_daemon.py
 ln -sf ~/agent/skills/email-client/providers.py ~/.email-client/providers.py
 ln -sf ~/agent/skills/email-client/auth.py ~/.email-client/auth.py
+ln -sf ~/agent/skills/email-client/thunderbird_client.py ~/.email-client/thunderbird_client.py
+ln -sf ~/agent/skills/email-client/calendar_client.py ~/.email-client/calendar_client.py
+ln -sf ~/agent/skills/email-client/google_health.py ~/.email-client/google_health.py
 sudo cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client
 sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send
 chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
