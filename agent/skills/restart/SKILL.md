@@ -35,6 +35,21 @@ screen -wipe >/dev/null 2>&1 || true
 # so a live session is still seen as running even if a same-name corpse lingers.
 running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -v "Dead")"; }
 
+# Remove stray skill-CLI shims that leak into the engine venv. The agent runs
+# with VIRTUAL_ENV=/root/agent/.venv active, so `uv tool install --editable`
+# (run to reinstall a skill CLI, e.g. after an edit or by a claude-code build)
+# can drop a console script into agent/.venv/bin/<name>. That path sits ahead of
+# ~/.local/bin in PATH, so the stray SHADOWS the canonical uv-tool CLI and often
+# cannot import its own package, so the CLI and its daemon break (hit repeatedly:
+# browser, microsoft, google). Any agent/.venv/bin entry whose name matches an
+# installed uv tool is always the stray (uv tools are canonical), so delete it
+# here, before the daemons start, so every daemon launches on the correct binary.
+for _t in "$HOME/.local/share/uv/tools"/*/; do
+  _n=$(basename "$_t")
+  [ -e "/root/agent/.venv/bin/$_n" ] && rm -f "/root/agent/.venv/bin/$_n"
+done
+unset _t _n
+
 # Skills append guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
 # The trailing `sleep 1` is defensive: firing several `screen -dmS` back-to-back
