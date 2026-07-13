@@ -1,6 +1,6 @@
 ---
 name: email-client
-description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications.
+description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Calendar over CalDAV with the same credential (Gmail, iCloud, Fastmail, any CalDAV server): list/create/update/delete/respond to events. Requires the poll daemon for notifications.
 ---
 
 # Email Client
@@ -9,13 +9,22 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 ## When to use this skill
 
-Google Calendar is also available here for Gmail accounts (see "Calendar" below). Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
+
+A calendar surface also lives in this skill (see "Calendar" below): CalDAV with the account's existing mail credential, so Gmail, iCloud, Fastmail, and any generic CalDAV server work with no extra sign-in. Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), an Outlook/M365 calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 
 Standing rules the user has given about how to handle their email live here. **Read this section at the start of every email task (and especially when processing a new-mail notification), and apply every rule that matches.** These rules override default behavior. (Setup adds a pointer in `~/agent/MEMORY.md` reminding you to load and apply this section on every `email-client` notification; see SETUP.md step 6.)
 
-When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands below. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task, only durable rules.
+When the user states a durable rule or fact ("categorize every email from her as priority", "if an email mentions an invoice move it to Finance", "always draft a reply to everything in the Support folder", "my accountant is acct@example.com"), append it below using the Edit tool so it survives across sessions. Keep each entry to one line, prefix it with the account it applies to (or `[all]`), and write it as a **trigger → action** so it maps cleanly to the commands above. Update or delete an entry when the user changes or revokes it. Do not record one-off instructions for a single task, only durable rules.
+
+How rules map to commands:
+
+- *Categorize / prioritize by sender or content* → `mark --keyword <label>` (e.g. a `priority` keyword / Outlook category) or `mark --flagged`.
+- *Route by content or sender* → `move --to-folder <folder>` (`archive` / `delete` for those destinations).
+- *Auto-draft replies* → `email-client-send --reply-to-uid <uid> --draft` so the user reviews before it sends.
+- *Suppress noise* → use `notify remove --folder <f>`, or note "don't surface" so you stay silent on matching mail.
 
 Format: `- [account|all] when <trigger> → <action>`. Examples:
 
@@ -164,11 +173,17 @@ A draft does not contact SMTP and does not flag the original `\Answered` (nothin
 
 ### Draft-only mode
 
-Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset or empty leaves sending enabled.
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset/empty means today's behavior, no change.
 
-## Calendar (Gmail accounts only)
+## Calendar (CalDAV, cross-provider)
 
-Google Calendar rides the same Gmail sign-in: one consent grants mail and calendar together (the reused verified Thunderbird client bundles `https://www.googleapis.com/auth/calendar`), so there is no separate Google app, no verification, and no CASA. These commands reuse the account's stored Google token (with the same transparent refresh as mail) and call the Google Calendar REST API v3. They only work on Google accounts; on any other provider they exit with a clear "only supported for Google accounts" error.
+Calendar rides the account's existing mail credential over **CalDAV**, so no separate calendar auth is ever needed:
+
+- **Gmail**: the stored OAuth token, with the same transparent refresh as mail. One Gmail consent grants mail and calendar together (the reused verified Thunderbird client bundles `https://www.googleapis.com/auth/calendar`), and CalDAV needs only that scope, so there is no separate Google app, no verification, and no CASA.
+- **iCloud**: the account's app-specific password against `https://caldav.icloud.com` (per-user partition hosts are discovered automatically).
+- **Fastmail**: the app password against `https://caldav.fastmail.com` (when generating the app password, scope it to include CalDAV, or use a full-access one).
+- **Generic IMAP providers** that also run a CalDAV server (Mailbox.org, Zoho, a self-hosted Radicale/Baikal, ...): set `"caldav_url"` in `$EMAIL_CLIENT_DIR/accounts/<name>/config.json` to the server's CalDAV root.
+- **Microsoft accounts have no CalDAV**; calendar commands on them exit with a pointer to the `microsoft` skill.
 
 ```bash
 email-client calendar list-calendars --account personal
@@ -177,14 +192,17 @@ email-client calendar get --account personal --id <eventId>
 email-client calendar create --account personal --subject "Design sync" --start 2026-07-20T15:00:00 --end 2026-07-20T16:00:00 --attendees a@x.com,b@y.com --location "Room 1" --timezone Europe/London
 email-client calendar update --account personal --id <eventId> --start 2026-07-20T16:00:00 --end 2026-07-20T17:00:00 --timezone Europe/London
 email-client calendar delete --account personal --id <eventId>
+email-client calendar delete --account personal --id <eventId> --occurrence 2026-07-22T14:00:00   # cancel one occurrence
 email-client calendar respond --account personal --id <eventId> --response accept   # accept|decline|tentative
 ```
 
-`--calendar` defaults to `primary` on every command; pass a calendar id (from `list-calendars`) to target a shared or secondary calendar. `list` returns a JSON array of `{id, summary, start, end, location, attendees, status}` over the window (default: next 7 days). `create` defaults `--end` to one hour after `--start` for timed events, or the next day for all-day events (a date with no `T`); `--timezone` defaults to UTC. `--attendees` accepts a comma-separated list and is repeatable. `update` requires `--timezone` whenever you change `--start` or `--end`.
+**Ids name the series.** Event ids are iCalendar UIDs, and for a recurring event the UID names the whole series: `update`, `delete`, and `respond` affect **every occurrence**, not just the one you saw in `list`. To cancel a single occurrence, pass its start (as shown by `list`) to `delete --occurrence`; there is no per-occurrence update or respond.
 
-**Invites are a real send.** Creating or updating an event that has attendees makes Google email them a calendar invite or update (and `delete` sends a cancellation). That is an outward action just like sending mail, so treat it with the same care. Note that `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
+`--calendar` defaults to `primary` on every command; pass a calendar id (from `list-calendars`) to target a shared or secondary calendar. On Google, primary is the account's own calendar. On app-password providers, primary is the server's advertised scheduling default where available, otherwise the first listed calendar, so on a multi-calendar iCloud/Fastmail account pass `--calendar` explicitly rather than trusting `primary`. `list` returns a JSON array of `{id, summary, start, end, location, attendees, status}` over the window (default: next 7 days), with recurring events expanded into their concrete occurrences; an entry may carry `timezone_warning`, `rrule_unsupported`, or `parse_error` when the server's data could not be fully interpreted, so treat those entries as degraded rather than authoritative. `create` defaults `--end` to one hour after `--start` for timed events, or the next day for all-day events (a date with no `T`); `--timezone` defaults to UTC. `--attendees` accepts a comma-separated list and is repeatable. `update` requires `--timezone` whenever you change `--start` or `--end`.
 
-**Re-auth for existing accounts.** Any Gmail account added before this feature must re-auth once to grant the calendar scope (and to move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. A calendar command that reports a scope error means the token predates calendar support: re-auth as above.
+**Invites are a real send.** Attendee emails (invites, updates, cancellations) are sent by the **server's implicit scheduling** (RFC 6638): the skill writes the event over CalDAV and the provider does the emailing. Google, iCloud, and Fastmail implement this; a generic CalDAV server that does not will simply not email anyone, so on an unfamiliar provider confirm with an attendee once. Either way, treat any write to an event with attendees as an outward action just like sending mail. Note that `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
+
+**Re-auth for existing Gmail accounts.** Any Gmail account added before calendar support must re-auth once to grant the calendar scope (and to move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. Freshly added accounts get mail and calendar in one sign-in. A Gmail calendar command that reports a scope error means the token predates calendar support: re-auth as above.
 
 ## Account management
 
@@ -199,9 +217,9 @@ The first added account becomes the default. To change it, edit `default` in `$E
 
 ## Notifications
 
-Start the poll daemon with `email-client daemon start`; manage it only through `email-client daemon start|stop|restart|status`, never raw `screen`. Start is idempotent; `daemon status` reports process state and per-account auth health in one JSON blob.
+Start the poll daemon with `email-client daemon start` (see SETUP.md); manage it only through `email-client daemon start|stop|restart|status`, never raw `screen` or signals. Start is idempotent (never stacks a duplicate daemon); `daemon status` reports process state and per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand.
 
-The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
+The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `--interval` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
 
 ### Choosing which folders notify
 
