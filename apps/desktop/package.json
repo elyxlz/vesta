@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.176",
   "description": "Vesta desktop app (Electron wrapper around @vesta/web)",
+  "author": "elyxlz <58893694+elyxlz@users.noreply.github.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
