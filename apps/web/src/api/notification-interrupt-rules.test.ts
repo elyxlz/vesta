@@ -10,11 +10,11 @@ describe("notification rules api", () => {
 
   it("getNotificationInterruptRules reads notification_rules from config", async () => {
     const spy = vi.spyOn(client, "apiJson").mockResolvedValue({
-      notification_rules: [{ id: "a", source: "twitter", action: "pool" }],
+      notification_rules: [{ id: "a", source: "twitter", action: "snooze" }],
     });
     const rules = await getNotificationInterruptRules("bob");
     expect(spy).toHaveBeenCalledWith("/agents/bob/config");
-    expect(rules).toEqual([{ id: "a", source: "twitter", action: "pool" }]);
+    expect(rules).toEqual([{ id: "a", source: "twitter", action: "snooze" }]);
   });
 
   it("getNotificationInterruptRules defaults to [] when absent", async () => {
@@ -27,7 +27,7 @@ describe("notification rules api", () => {
     const spy = vi
       .spyOn(client, "apiFetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
-    const rules = [{ id: "x", source: "twitter", action: "pool" as const }];
+    const rules = [{ id: "x", source: "twitter", action: "snooze" as const }];
     const out = await setNotificationInterruptRules("bob", rules);
     expect(spy).toHaveBeenCalledWith(
       "/agents/bob/config",

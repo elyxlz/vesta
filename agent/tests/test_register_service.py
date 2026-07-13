@@ -12,7 +12,7 @@ import subprocess
 import threading
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "agent/skills/service/scripts/register-service"
+SCRIPT = REPO_ROOT / "agent/skills/vestad/scripts/register-service"
 
 
 def _free_port():

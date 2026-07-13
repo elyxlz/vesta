@@ -1,9 +1,8 @@
-"""Tests for the default priority:"now" preemption (send_preempt + pre-sent turns) — issue #982.
+"""Tests for priority:"now" preemption (send_preempt + pre-sent turns) — issue #982.
 
-The SDK interrupt control request kills every backgrounded subagent in headless mode, so the
-default preempt mode delivers the preempting prompt itself as a priority:"now" user message and
-never touches the interrupt path. The interrupt mode keeps its coverage in
-test_interrupts.py (pinned with config.preempt_mode = "interrupt")."""
+The SDK interrupt control request kills every backgrounded subagent in headless mode, so
+preemption delivers the preempting prompt itself as a priority:"now" user message and never
+touches the interrupt path (interrupt() fires only on failure paths; see test_interrupts.py)."""
 
 import asyncio
 import datetime as dt
@@ -11,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import core.models as vm
+from core.notification import Notification
 from conftest import assistant_msg, consuming, make_stream_harness, result_msg
 from wait_util import wait_for_condition
 
@@ -153,21 +153,21 @@ async def test_dash_correction_skipped_while_preempt_outstanding():
     assert len(sent) == 1, f"the dash correction must not be queried with a preempt outstanding: {sent}"
 
 
-# --- process_batch in the default message mode ---
+# --- process_batch ---
 
 
-def _notif(tmp_path, name: str, source: str = "whatsapp") -> vm.Notification:
+def _notif(tmp_path, name: str, source: str = "whatsapp") -> Notification:
     f = tmp_path / f"{name}.json"
     f.write_text("x")
-    return vm.Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type="message", body=name, file_path=str(f))
+    return Notification(timestamp=dt.datetime(2025, 1, 1), source=source, type="message", body=name, file_path=str(f))
 
 
 @pytest.mark.anyio
 async def test_process_batch_renders_and_queues_sections_plain(config, state, tmp_path):
     """process_batch only renders and enqueues (system section first): preempt delivery is
-    owned by the queue-watcher, so nothing is sent or interrupted from here even mid-turn."""
+    owned by the queue-watcher, so nothing is sent from here even mid-turn."""
     from core.loops import process_batch
-    from core.models import CORE_SOURCE
+    from core.notification import CORE_SOURCE
 
     state.client = MagicMock()
     state.client.query = AsyncMock()
@@ -175,10 +175,9 @@ async def test_process_batch_renders_and_queues_sections_plain(config, state, tm
     queue: asyncio.Queue = asyncio.Queue()
     batch = [_notif(tmp_path, "sys", source=CORE_SOURCE), _notif(tmp_path, "ext")]
 
-    with patch("core.loops.attempt_interrupt", new_callable=AsyncMock) as mock_interrupt, patch("core.loops.load_prompt", return_value=""):
-        await process_batch(batch, queue=queue, state=state, config=config)
+    with patch("core.loops.load_prompt", return_value=""):
+        await process_batch(batch, queue=queue, config=config)
 
-    mock_interrupt.assert_not_called()
     state.client.query.assert_not_called()
     first, second = queue.get_nowait(), queue.get_nowait()
     assert not first.pre_sent and not second.pre_sent
@@ -206,14 +205,14 @@ async def test_notification_preempts_running_turn_end_to_end(tmp_path):
     await queue.put(vm.QueuedTurn("first message", True, []))
 
     with (
-        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
         patch("core.loops.load_prompt", return_value=""),
     ):
         processor = asyncio.create_task(message_processor(queue, state=state, config=config))
         await wait_for_condition(lambda: state.turn is not None, message="first turn never opened")
 
-        await process_batch([_notif(tmp_path, "urgent")], queue=queue, state=state, config=config)
+        await process_batch([_notif(tmp_path, "urgent")], queue=queue, config=config)
         # The queue-watcher pre-sends the item as it lands mid-turn.
         await wait_for_condition(lambda: state.preempt_outstanding == 1, message="the watcher never pre-sent the notification")
 
@@ -263,13 +262,13 @@ async def test_processor_runs_pre_sent_items_before_earlier_plain_items(config, 
     """A pre-sent item jumped the CLI's prompt queue (priority:"now"), so the processor must
     take it before plain items that queued earlier — otherwise Vesta's turn pairing crosses
     the CLI's actual turn order and notification files are cleared against the wrong turn."""
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
     fake_process, processed, first_started, release_first = _blocking_processor()
 
     with patch("core.loops.process_message", fake_process), patch("core.loops.send_preempt", AsyncMock(return_value=False)):
-        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("plain", False, []))
         await queue.put(vm.QueuedTurn("preempt", False, [], pre_sent=True))
@@ -284,14 +283,14 @@ async def test_processor_runs_pre_sent_items_before_earlier_plain_items(config, 
 async def test_watcher_retries_missed_presend_when_item_lands_mid_turn(config, state):
     """A producer's pre-send that missed (inter-turn gap, failed write) queues a plain item;
     when it lands while a turn is running, the watcher delivers the preempt itself."""
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
     fake_process, processed, first_started, release_first = _blocking_processor()
 
     retried = AsyncMock(return_value=True)
     with patch("core.loops.process_message", fake_process), patch("core.loops.send_preempt", retried):
-        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("urgent", False, []))
         await wait_for_condition(lambda: retried.called, message="watcher never retried the pre-send")
@@ -302,26 +301,26 @@ async def test_watcher_retries_missed_presend_when_item_lands_mid_turn(config, s
     assert processed == [("first", False), ("urgent", True)], f"retried item must run pre-sent: {processed}"
 
 
-# --- the processor never interrupts in message mode ---
+# --- the processor never interrupts ---
 
 
 @pytest.mark.anyio
 async def test_processor_collects_mid_turn_items_without_interrupting(config, state):
-    """In the default mode a mid-turn queue item never fires the interrupt path: the running
-    turn ends CLI-side (pre-sent) or completes naturally (plain item), and the item runs next."""
-    from core.loops import _run_messages_with_interrupts
+    """A mid-turn queue item never aborts the running turn from Vesta's side: the turn ends
+    CLI-side (pre-sent) or completes naturally (plain item), and the item runs next."""
+    from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
     fake_process, processed, first_started, release_first = _blocking_processor()
 
     with patch("core.loops.process_message", fake_process):
-        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("second", False, [], pre_sent=True))
-        # Negative assertion: prove the watcher does NOT fire the interrupt path. Waiting for
+        # Negative assertion: prove the watcher does NOT abort the running turn. Waiting for
         # absence requires a real time window; this sleep is intentional.
         await asyncio.sleep(0.1)
-        assert state.interrupt_event is not None and not state.interrupt_event.is_set(), "message mode must never fire the interrupt path"
+        assert [m for m, _ in processed] == ["first"], "a mid-turn item must never abort the running turn"
         # In production the pre-send has already ended the first turn CLI-side; the fake stands in for that.
         release_first.set()
         await task

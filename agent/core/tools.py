@@ -7,11 +7,12 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from . import logger
 from . import models as vm
+from . import config as cfg
 from . import state_store
 from . import vestad_client
 from .api import start_ws_server
 from .helpers import clear_notifications
-from .workspace_sync import vesta_version
+from .upstream_sync import vesta_version
 
 
 def _opt_str(value: tp.Any) -> str:
@@ -19,7 +20,7 @@ def _opt_str(value: tp.Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
-def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
+def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
         # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
         # SIGTERMs this process, the agent shuts down cleanly, and vestad restarts it or keeps it
@@ -54,7 +55,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     )
     async def mark_setup_done(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.first_start_done = True
-        state_store.save_state(state.persisted, config)
+        await state_store.save_state_async(state.persisted, config)
         if state.ws_runner is None:
             state.ws_runner = await start_ws_server(state.event_bus, config, state)
             logger.init(f"WebSocket server started on port {config.ws_port}")
@@ -72,23 +73,30 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
             return {"content": [{"type": "text", "text": "error: name required"}]}
         if name not in state.persisted.applied_migrations:
             state.persisted.applied_migrations.append(name)
-            state_store.save_state(state.persisted, config)
+            await state_store.save_state_async(state.persisted, config)
         logger.startup(f"Migration marked applied by agent: {name}")
         return {"content": [{"type": "text", "text": f"applied: {name}"}]}
 
     @tool(
-        "mark_workspace_synced",
-        "Call once the workspace sync completed: the workspace was rebased onto this version's snapshot "
+        "mark_upstream_synced",
+        "Call once the upstream sync completed: the workspace was rebased onto this version's snapshot "
         "(agent-v<version>) and any conflicts are resolved. Records the synced version; without this call "
         "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
         {},
     )
-    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def mark_upstream_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         version = vesta_version(config)
         state.persisted.last_synced_version = version
-        state_store.save_state(state.persisted, config)
-        logger.startup(f"Workspace sync marked complete by agent at v{version}")
+        await state_store.save_state_async(state.persisted, config)
+        logger.startup(f"Upstream sync marked complete by agent at v{version}")
         return {"content": [{"type": "text", "text": f"synced: {version}"}]}
+
+    # LEGACY(remove-when: no agent predating the release that ships this rename remains and
+    # the 2026-07 workspace migrations are fleet-applied): released migration prompts call
+    # the old tool name verbatim.
+    @tool("mark_workspace_synced", "Legacy alias of mark_upstream_synced.", {})
+    async def mark_workspace_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        return await mark_upstream_synced.handler(args)
 
     @tool(
         "mark_dreamer_complete",
@@ -100,7 +108,7 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
     )
     async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
-        state_store.save_state(state.persisted, config)
+        await state_store.save_state_async(state.persisted, config)
         logger.dreamer("Dreamer run recorded by agent")
         return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 
@@ -132,8 +140,17 @@ def _vesta_tools(state: vm.State, config: vm.VestaConfig) -> list[tp.Any]:
         logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
         return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
 
-    return [restart_vesta, stop_vesta, mark_setup_done, mark_migration_applied, mark_workspace_synced, mark_dreamer_complete, compact_context]
+    return [
+        restart_vesta,
+        stop_vesta,
+        mark_setup_done,
+        mark_migration_applied,
+        mark_upstream_synced,
+        mark_workspace_synced,
+        mark_dreamer_complete,
+        compact_context,
+    ]
 
 
-def build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
+def build_vesta_tools_server(state: vm.State, config: cfg.VestaConfig) -> tp.Any:
     return create_sdk_mcp_server("vesta-tools", tools=_vesta_tools(state, config))

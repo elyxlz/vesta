@@ -9,13 +9,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import core.models as vm
+import core.config as cfg
+from core.notification import Notification, TYPE_COMPACTION_FOLLOWUP
 from conftest import consuming
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, ResultMessage, SystemMessage
 from wait_util import wait_for_condition
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     return config
@@ -225,7 +227,7 @@ def _mock_compact_client():
 
 
 def _followup_files(config):
-    return list(config.notifications_dir.glob(f"{vm.TYPE_COMPACTION_FOLLOWUP}-*.json"))
+    return list(config.notifications_dir.glob(f"{TYPE_COMPACTION_FOLLOWUP}-*.json"))
 
 
 async def _drain(tmp_path, *, followup, restart, restart_ok=True, compact_exc=None):
@@ -328,7 +330,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
 
     # Simulate a user notification arriving while the dreamer's compaction is running.
     notif_file = config.notifications_dir / "user-msg.json"
-    notif = vm.Notification(
+    notif = Notification(
         timestamp=dt.datetime(2025, 1, 1),
         source="telegram",
         type="message",
@@ -341,8 +343,8 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
 
     # monitor_loop calls process_batch on the interrupt notification.
     # process_batch queues the message and keeps the file on disk until processing completes.
-    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
-        await process_batch([notif], queue=dying_queue, state=state, config=config)
+    with patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=dying_queue, config=config)
 
     # File is preserved on disk until after the message is fully processed (the fix).
     assert notif_file.exists(), "process_batch must not delete the file before processing completes"

@@ -13,3 +13,10 @@ pub fn config_dir() -> Option<PathBuf> {
 pub fn config_dir_or_relative() -> PathBuf {
     config_dir().unwrap_or_else(|| PathBuf::from(".config/vesta/vestad"))
 }
+
+/// The host user vestad runs as (container names and tunnel subdomains are keyed by it).
+pub fn current_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".into())
+}

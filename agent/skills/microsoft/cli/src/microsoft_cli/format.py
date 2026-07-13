@@ -66,6 +66,58 @@ def format_folder_list(folders: list[dict[str, Any]]) -> str:
     )
 
 
+def _strip_html(value: Any) -> str:
+    """Best-effort plain text from a Teams message body (HTML or text)."""
+    import re
+
+    return re.sub(r"<[^>]+>", " ", str(value or ""))
+
+
+def format_teams_chat_list(chats: list[dict[str, Any]]) -> str:
+    """One line per chat: last-message-time  topic-or-members  preview  id."""
+    if not chats:
+        return "(no chats)"
+    rows = []
+    for c in chats:
+        preview = _pick(c, "lastMessagePreview", "body", "content")
+        members = ", ".join(m["displayName"] for m in (c["members"] if "members" in c else []) if "displayName" in m)
+        label = _pick(c, "topic") or members or _pick(c, "chatType")
+        rows.append(
+            f"{_trunc(_pick(c, 'lastMessagePreview', 'createdDateTime'), 20)}\t"
+            f"{_trunc(label, 40)}\t"
+            f"{_trunc(_strip_html(preview), 60)}\t"
+            f"{_pick(c, 'id')}"
+        )
+    return "\n".join(rows)
+
+
+def format_teams_message_list(messages: list[dict[str, Any]]) -> str:
+    """One line per message: time  from  text  id."""
+    if not messages:
+        return "(no messages)"
+    return "\n".join(
+        f"{_trunc(_pick(m, 'createdDateTime'), 20)}\t"
+        f"{_trunc(_pick(m, 'from', 'user', 'displayName'), 24)}\t"
+        f"{_trunc(_strip_html(_pick(m, 'body', 'content')), 80)}\t"
+        f"{_pick(m, 'id')}"
+        for m in messages
+    )
+
+
+def format_teams_team_list(teams_list: list[dict[str, Any]]) -> str:
+    """One line per team: name  id."""
+    if not teams_list:
+        return "(no teams)"
+    return "\n".join(f"{_trunc(_pick(t, 'displayName'), 48)}\t{_pick(t, 'id')}" for t in teams_list)
+
+
+def format_teams_channel_list(channels: list[dict[str, Any]]) -> str:
+    """One line per channel: name  membership-type  id."""
+    if not channels:
+        return "(no channels)"
+    return "\n".join(f"{_trunc(_pick(c, 'displayName'), 40)}\t{_pick(c, 'membershipType')}\t{_pick(c, 'id')}" for c in channels)
+
+
 def format_calendar_name_list(calendars: list[dict[str, Any]]) -> str:
     """One line per calendar: default-marker  name  id."""
     if not calendars:

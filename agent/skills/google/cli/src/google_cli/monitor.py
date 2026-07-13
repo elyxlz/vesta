@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
 
-from . import api, notifications
+from . import api, calendar, google_health, notifications
 from .context import GoogleContext
 from .gmail import _get_header
 
@@ -100,6 +100,15 @@ def run(ctx: GoogleContext):
 
             logger.info(f"Checking for updates since {query_since.isoformat()}")
 
+            # Low-frequency (≤ once/day) OAuth client health probe + automatic
+            # self-heal ladder. Silent when it can swap in a fresh Thunderbird
+            # client; only ever reaches the user as a last resort. Isolated in its
+            # own try so a probe error never disrupts mail/calendar polling.
+            try:
+                google_health.maybe_run_daily_probe(config, ctx.notif_dir, log=logger.info)
+            except Exception as e:
+                logger.error(f"Error in google-health probe: {e}")
+
             try:
                 gmail = api.gmail_service(config)
 
@@ -141,25 +150,20 @@ def run(ctx: GoogleContext):
                 logger.error(f"Error fetching Gmail: {e}")
 
             try:
-                cal = api.calendar_service(config)
-
                 max_threshold = max(config.get_calendar_notify_thresholds())
                 window_end = new_check_time + timedelta(minutes=max_threshold + 60)
 
-                events_result = (
-                    cal.events()
-                    .list(
-                        calendarId="primary",
-                        timeMin=query_since.isoformat(),
-                        timeMax=window_end.isoformat(),
-                        singleEvents=True,
-                        orderBy="startTime",
-                        maxResults=50,
-                    )
-                    .execute()
+                # Calendar runs on CalDAV now (the REST API is disabled for the
+                # reused Thunderbird client). list_events_between returns the same
+                # REST-shaped event dicts this loop already consumes.
+                events = calendar.list_events_between(
+                    config,
+                    calendar_id="primary",
+                    start=query_since,
+                    end=window_end,
+                    include_details=False,
+                    limit=50,
                 )
-
-                events = events_result["items"] if "items" in events_result else []
                 logger.info(f"Found {len(events)} upcoming calendar events")
 
                 for event in events:
@@ -196,7 +200,9 @@ def run(ctx: GoogleContext):
                             missed=(catching_up and event_time < new_check_time) or None,
                         )
 
-            except HttpError as e:
+            except Exception as e:
+                # CalDAV surfaces its own error type, not HttpError; a calendar
+                # failure must not sink the whole poll cycle (Gmail still ran).
                 logger.error(f"Error fetching calendar: {e}")
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")

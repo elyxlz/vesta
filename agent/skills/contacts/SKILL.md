@@ -5,13 +5,13 @@ description: The people Vesta knows, a living address book and CRM. Who they are
 
 # Contacts
 
-Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user. This is how you stop treating each person like a stranger. Before you message someone, read their file. After you learn something, write it down. Over time this becomes the thing that lets you sound like you actually know them.
+Your memory of people. Everyone in the user's world gets a file: who they are, how they talk, what you know, what's open between them and the user.
 
 Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and Grep. No CLI, no database.
 
 ## Where it lives
 
-`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
+`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces.
 
 To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
 
@@ -65,7 +65,7 @@ People don't live in one place, and you learn about them all day long. Two thing
 - **Capture the day**: go back over the day's conversations and activity and fold everything you learned about anyone into their file, a new fact, a mood, a plan, something they're going through, a handle you saw. Anyone who came up for the first time gets a file.
 - **Reconcile the sources**: the same person is a thread in one messaging app, an address in another, a guest on a calendar, a row in an address book. Contacts is the hub of truth that ties them together. Pull new people and facts in from everywhere that holds contacts, and push your canonical fields (name, number, email) back out to the services that can be written to. Non-destructive: fill gaps and fix what's clearly stale, never bulk-overwrite a service's data.
 
-The nightly `dream` runs this pass, so there's no separate reminder to maintain. On that pass, do both: sweep the day's activity into the files, then work out which sources are worth reconciling this time and bring them in line.
+The nightly `dream` runs this pass, so there's no separate reminder to maintain.
 
 ## [Your setup]
 

@@ -124,7 +124,7 @@ def test_parse_sdk_message_extracts_thinking_blocks_and_ignores_tool_use():
         TextBlock("done"),
     ]
 
-    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+    texts, thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
 
     # Tool-use blocks contribute no text/thinking: tool activity is surfaced via hooks.
     assert texts == ["done"]
@@ -138,7 +138,7 @@ def test_parse_sdk_message_returns_session_id_from_result():
     from claude_agent_sdk import ResultMessage
 
     msg = ResultMessage(subtype="success", duration_ms=100, duration_api_ms=80, is_error=False, num_turns=1, session_id="sess-abc")
-    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+    texts, thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
 
     assert texts == []
     assert thinking_blocks == []
@@ -152,7 +152,7 @@ def test_parse_sdk_message_returns_session_id_from_init():
 
     msg = SystemMessage(subtype="init", data={"session_id": "sess-abc-123", "slash_commands": ["compact"]})
 
-    texts, thinking_blocks, session_id = parse_sdk_message(msg)
+    texts, thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
 
     assert session_id == "sess-abc-123"
     assert texts == []
@@ -168,7 +168,7 @@ def test_parse_sdk_message_skips_thinking_tokens_system_message():
     msg = SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5})
 
     with patch("core.sdk_parsing.logger.system") as mock_system:
-        texts, thinking_blocks, session_id = parse_sdk_message(msg)
+        texts, thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
 
     mock_system.assert_not_called()
     assert texts == []

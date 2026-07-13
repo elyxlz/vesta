@@ -67,16 +67,16 @@ describe("useRestartPending", () => {
 
   it("withdraws one reason without dropping another or losing the boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().markPending("ada", "preempt-mode", BOOT_T0);
-    useRestartPending.getState().clearReason("ada", "files");
+    useRestartPending.getState().markPending("ada", "settings", BOOT_T0);
+    useRestartPending.getState().clearReason("ada", "settings");
     const entry = useRestartPending.getState().pending["ada"];
-    expect(entry.reasons).toEqual(["preempt-mode"]);
+    expect(entry.reasons).toEqual(["files"]);
     expect(entry.since).toBe(BOOT_T0);
   });
 
   it("keeps a known baseline when a later reason is flagged with no boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().markPending("ada", "preempt-mode", undefined);
+    useRestartPending.getState().markPending("ada", "settings", undefined);
     expect(useRestartPending.getState().pending["ada"].since).toBe(BOOT_T0);
   });
 

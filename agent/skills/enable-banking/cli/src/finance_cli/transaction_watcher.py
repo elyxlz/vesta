@@ -1,6 +1,7 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
+import os
 import sys
 import time
 from datetime import datetime, UTC, timedelta
@@ -9,6 +10,15 @@ from pathlib import Path
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
 NOTIFICATIONS_DIR = Path.home() / "notifications"
 POLL_INTERVAL = 300  # 5 minutes
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write text to path atomically: write a sibling temp file, then rename over the target, so a
+    monitor tick globbing the notifications dir never observes a half-written file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def load_seen() -> set[str]:
@@ -96,8 +106,6 @@ def poll_once() -> list[dict]:
 
 def write_notification(tx: dict) -> None:
     """Write a notification JSON for a new transaction."""
-    NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
-
     formatted = format_tx(tx)
     notification = {
         "type": "finance",
@@ -109,8 +117,8 @@ def write_notification(tx: dict) -> None:
         "message": f"New transaction: {formatted}",
     }
 
-    filename = f"finance_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{hash(formatted) % 10000:04d}.json"
-    (NOTIFICATIONS_DIR / filename).write_text(json.dumps(notification, indent=2))
+    filename = f"{time.time_ns()}-finance-message.json"
+    atomic_write_text(NOTIFICATIONS_DIR / filename, json.dumps(notification, indent=2))
 
 
 def seed_seen() -> None:

@@ -11,10 +11,7 @@ pub fn check_endpoint(url: &str) {
             "{url} returned {}",
             resp.status()
         ),
-        Err(ureq::Error::StatusCode(code)) => assert!(
-            code < 500,
-            "{url} returned {code}"
-        ),
+        Err(ureq::Error::StatusCode(code)) => assert!(code < 500, "{url} returned {code}"),
         Err(e) => panic!("{url} unreachable: {e}"),
     }
 }

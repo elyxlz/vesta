@@ -1,43 +1,15 @@
 import asyncio
 import collections
 import dataclasses as dc
-import datetime as dt
 import time
 import typing as tp
-import xml.sax.saxutils as xml_utils
 
-import pydantic as pyd
 from aiohttp.web import AppRunner
 from claude_agent_sdk import ClaudeSDKClient
 
-from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config
 from .events import EventBus
-from .notification_interrupt_policy import CORE_SOURCE
 from .provider import ProviderStatus
 from .state_store import PersistedState
-
-__all__ = [
-    "State",
-    "Notification",
-    "VestaConfig",
-    "ClaudeConfig",
-    "OpenRouterConfig",
-    "Provider",
-    "PersistedState",
-    "CORE_SOURCE",
-    "load_config",
-]
-
-# Notification `type` values for the `source=core` notifications that remain notifications (periodic
-# control-flow). Boot-time control-flow (greeting, migrations, skill-sync, config issues) is delivered
-# as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
-TYPE_PROACTIVE_CHECK = "proactive_check"
-TYPE_NIGHTLY_DREAM = "nightly_dream"
-TYPE_COMPACTION_FOLLOWUP = "compaction_followup"
-
-# Core notifications are exempt from the user's rules; loops.py derives their disposition from the type.
-# Types listed here pool (wait for idle); every other core type interrupts.
-CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK, TYPE_COMPACTION_FOLLOWUP})
 
 
 class QueuedTurn(tp.NamedTuple):
@@ -135,10 +107,6 @@ class State:
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
-    # preempt_mode="interrupt" only: per-turn event the queue-watcher sets so converse
-    # fires the SDK interrupt. Dormant (never set) in the default "message" mode, where
-    # preemption is the producer's priority:"now" pre-send (client.send_preempt).
-    interrupt_event: asyncio.Event | None = None
     # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet (send_preempt
     # increments, converse(pre_sent=True) decrements at open), and the results of pre-sent
     # turns that finished before their Vesta turn opened (banked by the stream consumer,
@@ -149,15 +117,19 @@ class State:
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None
     compacting: bool = False
-    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt (and, in
-    # interrupt mode, process_batch) consults this, so a concurrent interrupting
-    # notification queues and waits rather than preempting the boot turn mid-stream.
+    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt consults
+    # this, so a concurrent interrupting notification queues and waits rather than preempting the
+    # boot turn mid-stream.
     noninterruptible_turn_active: bool = False
     # File paths of the notification the current turn is handling (empty for user-message turns).
     # The message loop clears these after the turn; the restart/stop tools clear them first when an
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDelivered): the
+    # message loop then keeps in_flight_notification_paths instead of clearing it, since the
+    # resumed session never saw the message. Reset at the start of every turn.
+    query_not_delivered: bool = False
     # A deferred compaction scheduled by the compact_context tool, drained after the turn's
     # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
     pending_compaction: PendingCompaction | None = None
@@ -176,56 +148,3 @@ class State:
     # True while context usage is above the warning threshold, so log_context_usage emits
     # the warning event once on crossing rather than on every per-message check.
     context_warning_active: bool = False
-
-
-# Fields promoted to the <channel> element's inner body (the message), in priority order.
-# Everything else on a notification renders as an attribute. Skills that carry a human-readable
-# message use one of these keys (whatsapp/app-chat write `message`); metadata-only notifications
-# (email, reactions) have none and render as attributes with an empty body.
-_CONTENT_FIELDS = ("message", "text", "content")
-
-
-class Notification(pyd.BaseModel):
-    model_config = pyd.ConfigDict(extra="allow")
-
-    timestamp: dt.datetime
-    source: str
-    type: str
-    # The producing skill's default disposition, used when no user rule matches (True -> interrupt,
-    # False -> pool). See notification_interrupt_policy.notif_disposition.
-    interrupt: bool = True
-    body: str | None = None
-    file_path: str | None = pyd.Field(default=None, exclude=True)
-
-    def format_for_display(self) -> str:
-        """Render the notification as a <channel> element: routing metadata as attributes, the
-        message as the inner body. This mirrors the shape Claude Code injects for native channel
-        events, so the model reads Vesta notifications in a structure it already handles well.
-
-        A multi-line `body` (core/system notifications) becomes the inner text directly. Otherwise
-        the first present content field (message/text/content) becomes the body and every other
-        field renders as an attribute.
-
-        Drops empty strings, False bools, empty lists, and None since they cost tokens without
-        carrying information. Booleans should be named so True is the interesting case
-        (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
-        datetime field.
-        """
-        if self.body is not None:
-            return f'<channel source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</channel>'
-        data = self.model_dump(exclude={"file_path", "type", "source", "body", "interrupt"})
-        content = ""
-        for field in _CONTENT_FIELDS:
-            if field in data and isinstance(data[field], str) and data[field].strip():
-                content = xml_utils.escape(data.pop(field).strip())
-                break
-        attrs = [f'source="{self.source}"', f'type="{self.type}"']
-        for key, value in data.items():
-            if value is None or value == "" or value is False or value == []:
-                continue
-            if isinstance(value, dt.datetime):
-                value = value.replace(microsecond=0).isoformat()
-            if value is True:
-                value = "true"
-            attrs.append(f"{key}={xml_utils.quoteattr(str(value))}")
-        return f"<channel {' '.join(attrs)}>{content}</channel>"

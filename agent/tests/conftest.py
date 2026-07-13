@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import core.models as vm
+import core.config as cfg
 from core.events import EventBus
 
 os.environ.pop("CLAUDECODE", None)
@@ -19,7 +20,7 @@ def config(tmp_path, monkeypatch):
     # resolve from the env), keeping the writable settings store inside the test's tmp dir rather
     # than the real ~/agent. model/provider/personality fall back to the shipped defaults.json.
     monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
-    return vm.VestaConfig()
+    return cfg.VestaConfig()
 
 
 @pytest.fixture
@@ -62,6 +63,10 @@ def result_msg():
 
     msg = MagicMock(spec=ResultMessage)
     msg.content = []
+    msg.usage = None
+    msg.total_cost_usd = None
+    msg.duration_ms = 0
+    msg.session_id = None  # no persist: harness configs point at the real home, not a tmp dir
     return msg
 
 
@@ -78,9 +83,9 @@ def make_stream_harness(response_timeout: int | None = None):
 
     emitted: list[tuple[str, float]] = []
     if response_timeout is None:
-        config = vm.VestaConfig(interrupt_timeout=0.5)
+        config = cfg.VestaConfig(interrupt_timeout=0.5)
     else:
-        config = vm.VestaConfig(interrupt_timeout=0.5, response_timeout=response_timeout)
+        config = cfg.VestaConfig(interrupt_timeout=0.5, response_timeout=response_timeout)
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.event_bus = EventBus()

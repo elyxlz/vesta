@@ -54,6 +54,19 @@ def test_page_connects_to_relative_websockify_path():
     assert "base + 'websockify'" in page
 
 
+def test_page_is_mobile_usable():
+    # On a phone the decorative MacBook frame is dropped and the live screen fills the viewport,
+    # and a soft-keyboard affordance is present so the user can type email/password/MFA. Guard the
+    # pieces that make touch sign-in work; desktop still keeps the frame.
+    page = handover.render_page()
+    assert "@media (max-width: 820px), (pointer: coarse)" in page  # responsive breakpoint
+    assert ".frame, .engraving { display: none; }" in page  # frame dropped on mobile
+    assert 'id="kbd-button"' in page and 'id="kbdinput"' in page  # keyboard button + hidden input
+    assert "import Keyboard from './core/input/keyboard.js'" in page  # noVNC keyboard wiring
+    assert "keysyms.lookup" in page  # Android input-diff -> keysym fallback
+    assert "user-scalable=no" not in page  # pinch-zoom must stay enabled on touch
+
+
 # ── web-root assembly ─────────────────────────────────────────
 
 
@@ -144,6 +157,19 @@ def test_free_port_returns_a_bindable_port():
         s.bind(("127.0.0.1", port))  # actually free
     finally:
         s.close()
+
+
+def test_free_display_skips_existing_seats(monkeypatch):
+    # A real desktop seat (:0/:1) already has an X socket; handover must never pick it, else x11vnc
+    # grabs the live seat and noVNC hangs. Pretend :99 and :100 are taken; it must land on :101.
+    taken = {"/tmp/.X11-unix/X99", "/tmp/.X11-unix/X100"}
+    monkeypatch.setattr(handover.Path, "exists", lambda self: str(self) in taken)
+    assert handover._free_display() == ":101"
+
+
+def test_free_display_returns_base_when_free(monkeypatch):
+    monkeypatch.setattr(handover.Path, "exists", lambda self: False)
+    assert handover._free_display() == ":99"
 
 
 def test_alive_false_for_none_and_dead_pid():

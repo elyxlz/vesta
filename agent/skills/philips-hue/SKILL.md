@@ -68,31 +68,18 @@ Mirror the mood the user described. They shouldn't have to know hex.
 ## Examples
 
 ```bash
-# Turn off the bedroom
-~/agent/skills/philips-hue/hue off bedroom
-
-# Set living room to cinema scene
-~/agent/skills/philips-hue/hue scene cinema living
-
-# Dim the office to 30%
-~/agent/skills/philips-hue/hue dim 30 office
-
-# Set all lights to warm white
-~/agent/skills/philips-hue/hue color warm
-
-# Check what's on
-~/agent/skills/philips-hue/hue status
+~/agent/skills/philips-hue/hue off bedroom          # turn a room off
+~/agent/skills/philips-hue/hue scene cinema living  # activate a scene
+~/agent/skills/philips-hue/hue dim 30 office        # dim to 30%
+~/agent/skills/philips-hue/hue color warm           # warm white everywhere
+~/agent/skills/philips-hue/hue status               # what's on
 ```
 
 ## Troubleshooting
 
-**Connection refused / no response.** Bridge IP probably changed (DHCP). Re-discover via mDNS (see Setup) and update `HUE_BRIDGE_IP`. Reserve a static lease to avoid this.
+**Connection refused / no response.** Bridge IP probably changed (DHCP). Re-discover via mDNS (see Setup) and update `HUE_BRIDGE_IP`.
 
 **`unauthorized user`.** API key is invalid or was wiped (factory reset, deleted from the app). Re-run the Setup curl to mint a fresh key.
-
-**`link button not pressed`.** You missed the ~30s window after pressing the bridge button. Press it again and retry the curl immediately.
-
-**Cert errors on direct curl.** The bridge serves a self-signed cert; pass `-k`. The `hue` wrapper handles this for you.
 
 **Room or scene not matching.** Fuzzy match is case-insensitive substring. Run `hue rooms` or `hue scenes` to see exact names; if multiple match, the first wins.
 

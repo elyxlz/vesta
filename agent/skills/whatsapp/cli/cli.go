@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -44,23 +45,18 @@ func extractFlag(name string) string {
 func extractInstance() string         { return extractFlag("instance") }
 func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
-func isNoNotifications() bool {
+// hasBareFlag reports whether --name is present as a standalone flag.
+func hasBareFlag(name string) bool {
 	for _, arg := range os.Args {
-		if arg == "--no-notifications" {
+		if arg == "--"+name {
 			return true
 		}
 	}
 	return false
 }
 
-func isReadOnly() bool {
-	for _, arg := range os.Args {
-		if arg == "--read-only" {
-			return true
-		}
-	}
-	return false
-}
+func isNoNotifications() bool { return hasBareFlag("no-notifications") }
+func isReadOnly() bool        { return hasBareFlag("read-only") }
 
 func extractSkipSenders() map[string]bool {
 	val := extractFlag("skip-senders")
@@ -101,6 +97,13 @@ func printJSON(v any) {
 		os.Exit(1)
 	}
 	fmt.Println(string(data))
+}
+
+// failJSON prints an {"error": ...} object and exits nonzero, the single owner
+// of the print-error-then-exit pattern the daemon and link commands share.
+func failJSON(format string, args ...any) {
+	printJSON(map[string]any{"error": fmt.Sprintf(format, args...)})
+	os.Exit(1)
 }
 
 func writeDeathNotification(notifDir string, sig string) {
@@ -152,8 +155,7 @@ func runServe(logger waLog.Logger) {
 	notifDir := extractNotificationsDir()
 	noNotify := isNoNotifications()
 	if notifDir == "" && !noNotify {
-		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve (or pass --no-notifications)")
-		os.Exit(1)
+		notifDir = defaultNotificationsDir()
 	}
 
 	var err error
@@ -162,6 +164,7 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	writeDaemonInfo(dataDir, os.Args[1:])
 	if notifDir != "" {
 		notifDir, err = resolveDir(notifDir)
 		if err != nil {
@@ -180,6 +183,9 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Live voice calling wraps the connected client; it answers inbound calls from here on.
+	wac.callMgr = NewCallManager(wac)
 
 	sockPath := filepath.Join(dataDir, "whatsapp.sock")
 	listener, err := startSocketServer(sockPath, wac)
@@ -224,7 +230,11 @@ func runServe(logger waLog.Logger) {
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	writeDeathNotification(notifDir, sig.String())
+	if _, err := os.Stat(stopRequestedPath(dataDir)); err == nil {
+		os.Remove(stopRequestedPath(dataDir))
+	} else {
+		writeDeathNotification(notifDir, sig.String())
+	}
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}
@@ -255,8 +265,11 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		printJSON(map[string]any{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
-		os.Exit(1)
+		hint := "daemon not running. Start with: whatsapp daemon start"
+		if instance := extractInstance(); instance != "" {
+			hint += " --instance " + instance
+		}
+		failJSON("%s", hint)
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)
@@ -301,6 +314,69 @@ var commands = []command{
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
 	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
 	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
+	{name: "call", positionals: []string{"to"}, write: true, run: cmdCall},
+	{name: "say", positionals: []string{"text"}, write: true, run: cmdSay},
+	{name: "hangup", write: true, run: cmdHangup},
+	{name: "call-status", run: cmdCallStatus},
+	{name: "daemon-status", run: cmdDaemonStatus},
+	{name: "link-start", run: cmdLinkStart},
+	{name: "link-status", run: cmdLinkStatus},
+	{name: "link-stop", run: cmdLinkStop},
+}
+
+func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
+	var port int
+	var acknowledged bool
+	fs := flag.NewFlagSet("link-start", flag.ContinueOnError)
+	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
+	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if wac.IsAuthenticated() {
+		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
+	}
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	wac.startLinkMode(port)
+	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
+}
+
+func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
+	status := wac.GetAuthStatus()
+	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
+}
+
+func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
+	wac.stopLinkMode()
+	return map[string]any{"status": "link_stopped"}, nil
+}
+
+func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
+	status := wac.GetAuthStatus()
+	info, _ := readDaemonInfo(wac.dataDir)
+	now := time.Now()
+	result := map[string]any{
+		"connected":                wac.client.IsConnected(),
+		"logged_in":                wac.client.IsLoggedIn(),
+		"auth_status":              string(status),
+		"started_at":               info.StartedAt,
+		"serve_args":               info.Args,
+		"sync_window_seconds_left": int(syncWindowRemaining(wac.dataDir, now).Seconds()),
+		"pair_attempts_last_hour":  pairAttemptsInWindow(wac.dataDir, now),
+	}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range build.Deps {
+			if dep.Path == "go.mau.fi/whatsmeow" {
+				result["whatsmeow_version"] = dep.Version
+			}
+		}
+	}
+	return result, nil
 }
 
 // lookupCommand finds a command by its canonical name or one of its aliases.
@@ -777,13 +853,24 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 
 func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	var phone string
+	var acknowledged bool
 	fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164 format)")
+	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if phone == "" {
 		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
+	}
+	if wac.IsAuthenticated() {
+		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
+	}
+	wac.pairGuardMu.Lock()
+	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
+	wac.pairGuardMu.Unlock()
+	if guardErr != nil {
+		return nil, guardErr
 	}
 	code, err := wac.PairPhone(phone)
 	if err != nil {
@@ -792,6 +879,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,
+		"confirm":      fmt.Sprintf("Code generated for %s. CONFIRM this is exactly the number being linked: a typo'd number produces a code that silently never matches.", phone),
 		"instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number",
 	}, nil
 }

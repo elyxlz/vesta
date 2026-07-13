@@ -2,17 +2,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# mail.google.com is the full-Gmail scope (a superset the Gmail REST API accepts,
+# covering everything gmail.modify + gmail.send did). It rides the same verified
+# Thunderbird consent screen as calendar, so one sign-in grants both. Using the
+# full scope keeps the default sign-in to a single verified consent screen.
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
+    "https://mail.google.com/",
 ]
 CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
 ]
-MEET_SCOPES = [
-    "https://www.googleapis.com/auth/meetings.space.created",
-]
-SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES + MEET_SCOPES
+# Documented constant only - NOT wired into any command. Google Meet cannot work
+# under the reused Thunderbird client: the standalone Meet API needs this
+# "restricted" scope the client is not verified for, and the calendar
+# conferenceData path needs the Calendar REST API, which is disabled on that
+# client's Cloud project. Kept here purely as a reference for a future own-app
+# (credentials.json) integration; the `meet` command has been removed.
+MEET_SCOPE = "https://www.googleapis.com/auth/meetings.space.created"
+SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES
 
 
 @dataclass

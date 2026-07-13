@@ -1,0 +1,111 @@
+#!/bin/sh
+set -u
+
+# Dashboard daemon lifecycle: start|stop|status. Wraps the self-healing
+# `serve` script (which rebuilds node_modules/dist if a sparse-checkout prune
+# dropped them) under a screen session, so the agent manages the dashboard
+# through one command instead of raw screen incantations.
+
+SESSION="dashboard"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  echo "Usage: daemon <start|stop|status>"
+}
+
+# True iff a LIVE screen session named $SESSION exists. A "(Dead ???)" corpse
+# left behind by a restart that preserves /run does not count; wipe first so
+# it can't be mistaken for a live session.
+running() {
+  screen -wipe >/dev/null 2>&1 || true
+  test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.${SESSION}[[:space:]]" | grep -v "Dead")"
+}
+
+# Port registered with vestad; empty when vestad is unreachable.
+service_port() {
+  ~/agent/skills/vestad/scripts/register-service dashboard --public 2>/dev/null || true
+}
+
+# True iff the dashboard answers a 200 on port $1.
+answers_http() {
+  [ -n "$1" ] && curl -fsS -o /dev/null "http://localhost:$1" 2>/dev/null
+}
+
+# Blocks until the server actually answers a 200, so callers can probe
+# immediately after start; the session existing is not readiness (serve may
+# still be installing deps or building before vite binds the port).
+daemon_start() {
+  if running; then
+    echo '{"status":"already_running"}'
+    return 0
+  fi
+  screen -dmS "$SESSION" "$DIR/serve"
+  seen="false"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    if running; then
+      seen="true"
+      if answers_http "$(service_port)"; then
+        echo '{"status":"started"}'
+        return 0
+      fi
+    elif [ "$seen" = "true" ]; then
+      break
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  if running; then
+    echo '{"error":"dashboard is up but never answered a 200 on its port; inspect with: screen -r dashboard"}' >&2
+  else
+    echo '{"error":"dashboard exited during startup; run scripts/serve in the foreground to see the error"}' >&2
+  fi
+  return 1
+}
+
+daemon_stop() {
+  if ! running; then
+    echo '{"status":"already_stopped"}'
+    return 0
+  fi
+  screen -S "$SESSION" -X quit
+  i=0
+  while [ "$i" -lt 30 ]; do
+    running || break
+    sleep 0.5
+    i=$((i + 1))
+  done
+  if running; then
+    echo '{"error":"dashboard still running after screen quit; inspect with: screen -r dashboard"}' >&2
+    return 1
+  fi
+  echo '{"status":"stopped"}'
+}
+
+daemon_status() {
+  running_flag="false"
+  running && running_flag="true"
+
+  port=""
+  http_ok="false"
+  if [ "$running_flag" = "true" ]; then
+    port=$(service_port)
+    answers_http "$port" && http_ok="true"
+  fi
+
+  if [ -n "$port" ]; then
+    port_json="\"$port\""
+  else
+    port_json="null"
+  fi
+
+  printf '{"running":%s,"session":"%s","port":%s,"http_ok":%s}\n' "$running_flag" "$SESSION" "$port_json" "$http_ok"
+}
+
+case "${1:-}" in
+  start) daemon_start ;;
+  stop) daemon_stop ;;
+  status) daemon_status ;;
+  ""|-h|--help|help) usage; exit 0 ;;
+  *) usage >&2; exit 1 ;;
+esac

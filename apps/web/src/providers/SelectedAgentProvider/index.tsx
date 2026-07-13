@@ -3,7 +3,6 @@ import {
   startAgent,
   stopAgent,
   restartAgent,
-  rebuildAgent,
   createBackup,
   listBackups,
   restoreBackup,
@@ -14,6 +13,7 @@ import {
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
 import type { SelectedAgentContextValue } from "./context";
@@ -33,7 +33,6 @@ export function SelectedAgentProvider({
   );
 
   const withOp = useAgentOps((s) => s.withOp);
-  const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
@@ -59,7 +58,7 @@ export function SelectedAgentProvider({
 
   const start = op("starting", () => startAgent(name), "start failed");
   const stop = op("stopping", () => stopAgent(name), "stop failed");
-  // A restart/rebuild applies any pending saved changes, so clear the "restart to apply" reminder on
+  // A restart applies any pending saved changes, so clear the "restart to apply" reminder on
   // success (the run callback throws on failure, so a failed op keeps the reminder). For most reasons
   // reconcile (use-restart-pending) is the owner — it clears the flag once the agent is observed to
   // restart by any path — and this optimistic clear only hides the ~3s status-poll latency so the
@@ -84,16 +83,9 @@ export function SelectedAgentProvider({
     () => restartAgent(name),
     "restart failed",
   );
-  const rebuild = applyPending(
-    "rebuilding",
-    () => rebuildAgent(name),
-    "rebuild failed",
-  );
-
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
   const refreshBackups = async () => {
-    if (!name) return;
     try {
       setBackups(await listBackups(name));
     } catch {
@@ -102,11 +94,10 @@ export function SelectedAgentProvider({
   };
 
   useEffect(() => {
-    if (!name) return;
     let ignore = false;
     listBackups(name)
-      .then((b) => {
-        if (!ignore) setBackups(b);
+      .then((fetched) => {
+        if (!ignore) setBackups(fetched);
       })
       .catch(() => {});
     return () => {
@@ -147,9 +138,19 @@ export function SelectedAgentProvider({
     );
   };
 
+  // Delete is terminal: unlike the other ops it hands off to the agent's
+  // disappearance, not to a new status. So it holds "deleting" on success and
+  // lets reconcile drop the op when the agent leaves the list, rather than
+  // clearing to idle and flashing the card back to the gray stopped orb.
   const remove = async () => {
-    await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
-    removeAgentOp(name);
+    const ops = useAgentOps.getState();
+    if (ops.getOp(name).operation !== "idle") return;
+    ops.setOp(name, "deleting");
+    try {
+      await deleteAgent(name);
+    } catch (e) {
+      ops.setOp(name, "idle", errorMessage(e, "delete failed"));
+    }
   };
 
   const value: SelectedAgentContextValue = {
@@ -165,7 +166,6 @@ export function SelectedAgentProvider({
     start,
     stop,
     restart,
-    rebuild,
     backup,
     backups,
     refreshBackups,

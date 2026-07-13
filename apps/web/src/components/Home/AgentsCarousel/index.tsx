@@ -19,12 +19,12 @@ function Pagination() {
   if (totalPages <= 1) return null;
 
   return (
-    <div className="flex justify-center gap-2 pt-4 absolute bottom-12 left-0 right-0">
+    <div className="flex justify-center gap-0 pt-4 absolute bottom-12 left-0 right-0">
       {Array.from({ length: totalPages }, (_, i) => (
         <motion.button
           key={i}
           aria-label={`page ${i + 1}`}
-          className={"p-2 rounded-full"}
+          className="grid size-10 place-items-center rounded-full"
           animate={{
             opacity: currentPage === i ? 1 : 0.3,
             scale: currentPage === i ? 1.4 : 1,
