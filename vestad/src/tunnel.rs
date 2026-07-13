@@ -839,11 +839,13 @@ pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
 // Cloudflare edge would conflate probe-path failures (host DNS/egress, an edge
 // incident) with a wedged connector and kill a healthy tunnel — dropping every
 // live session through it. /ready measures exactly the thing a restart fixes.
-// Config-level death (tunnel deleted server-side, token revoked) is not fixed by
-// a restart: cloudflared keeps exiting with the reason, so the respawn backoff
-// stretches toward its cap and the failure lands in `vestad logs` via the stderr
-// forwarder; recovery is `vestad connect`. It still self-heals for free if the
-// cause turns out to be transient (a slow resolver at boot).
+// The supervisor owns the whole lifecycle: it converges tunnel.json before each
+// run (ensure_tunnel: create from BYOK creds, or wait for the managed seed), and
+// after a run that never registered it recreates the tunnel from scratch on a
+// BYOK box (repair_tunnel), so config-level death (tunnel deleted server-side,
+// token revoked) self-heals when the box holds creds. A creds-less box keeps
+// retrying with the reason in `vestad logs`; recovery there is `vestad connect`.
+// Nothing here ever deletes tunnel.json: only explicit user action does.
 
 /// Respawn backoff. A respawn whose run reconnects to the edge (a transient blip
 /// on a working tunnel) resets to BASE for prompt recovery; a run that never
@@ -916,35 +918,53 @@ pub fn supervise_tunnel(
         let mut last_registered = tokio::time::Instant::now();
         let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
         loop {
-            match start_tunnel(&config_dir, port).await {
-                Ok((mut child, metrics_port)) => {
-                    let (reason, registered) = tokio::select! {
-                        _ = shutdown_rx.changed() => {
-                            child.kill().await.ok();
-                            return;
-                        }
-                        outcome = run_until_unhealthy(
-                            &mut child,
-                            probe_client.as_ref(),
-                            metrics_port,
-                            on_tunnel_up.as_ref(),
-                            &mut reported,
-                            &mut last_registered,
-                        ) => outcome,
-                    };
-                    child.kill().await.ok();
-                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
-                    tracing::warn!(
-                        delay_secs = respawn_delay_secs,
-                        "tunnel unhealthy ({reason}), restarting cloudflared"
-                    );
-                }
+            // Establish before each run: converge tunnel.json. Idempotent when
+            // the saved config already matches; created from BYOK creds when
+            // missing; a managed box keeps erroring here until the control
+            // plane seeds it. The Cloudflare API call goes through blocking
+            // curl, so it runs off the async runtime.
+            let ensure_dir = config_dir.clone();
+            let established = tokio::task::spawn_blocking(move || ensure_tunnel(&ensure_dir))
+                .await
+                .unwrap_or_else(|join_err| Err(format!("ensure_tunnel task failed: {join_err}")));
+            match established {
                 Err(e) => {
-                    // start_tunnel never reached the edge, so this counts as a run
-                    // that did not register — back off.
                     respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
-                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel not establishable: {e}");
                 }
+                Ok(_) => match start_tunnel(&config_dir, port).await {
+                    Ok((mut child, metrics_port)) => {
+                        let (reason, registered) = tokio::select! {
+                            _ = shutdown_rx.changed() => {
+                                child.kill().await.ok();
+                                return;
+                            }
+                            outcome = run_until_unhealthy(
+                                &mut child,
+                                probe_client.as_ref(),
+                                metrics_port,
+                                on_tunnel_up.as_ref(),
+                                &mut reported,
+                                &mut last_registered,
+                            ) => outcome,
+                        };
+                        child.kill().await.ok();
+                        respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
+                        tracing::warn!(
+                            delay_secs = respawn_delay_secs,
+                            "tunnel unhealthy ({reason}), restarting cloudflared"
+                        );
+                        if should_attempt_repair(registered, has_cf_creds(&config_dir)) {
+                            repair_tunnel(&config_dir).await;
+                        }
+                    }
+                    Err(e) => {
+                        // start_tunnel never reached the edge, so this counts as a run
+                        // that did not register — back off.
+                        respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
+                        tracing::warn!(delay_secs = respawn_delay_secs, "tunnel start failed: {e}");
+                    }
+                },
             }
             tokio::select! {
                 _ = shutdown_rx.changed() => return,
@@ -1061,6 +1081,33 @@ fn edge_report(reported: Option<bool>, ok: bool, sustained_down: bool) -> Option
     None
 }
 
+/// Whether a finished run warrants recreating the tunnel from scratch: only when
+/// it never registered an edge connection (a run that registered failed
+/// transiently and a plain respawn recovers it) and the box holds its own
+/// Cloudflare creds to rebuild with.
+fn should_attempt_repair(registered: bool, has_creds: bool) -> bool {
+    !registered && has_creds
+}
+
+/// Recreate the saved tunnel from scratch (same subdomain, fresh tunnel + token +
+/// DNS record) after a run that never registered. During a network outage the
+/// API call fails fast and changes nothing; with a live network and a revoked or
+/// deleted tunnel this restores it. Never deletes the saved config on failure.
+async fn repair_tunnel(config_dir: &Path) {
+    let Some(saved) = get_tunnel_config(config_dir) else {
+        return; // nothing saved yet; the establish step owns creation
+    };
+    let subdomain = saved.hostname.split('.').next().unwrap_or("").to_string();
+    let repair_dir = config_dir.to_path_buf();
+    match tokio::task::spawn_blocking(move || setup_tunnel(&repair_dir, &subdomain)).await {
+        Ok(Ok(fresh)) => {
+            tracing::info!(hostname = %fresh.hostname, "tunnel recreated after a run that never registered")
+        }
+        Ok(Err(e)) => tracing::warn!("tunnel repair failed: {e}"),
+        Err(join_err) => tracing::warn!("tunnel repair task failed: {join_err}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1145,6 +1192,17 @@ mod tests {
         assert_eq!(edge_report(None, false, true), Some(false));
         // Boot, not yet sustained: silent.
         assert_eq!(edge_report(None, false, false), None);
+    }
+
+    #[test]
+    fn repair_runs_only_for_unregistered_runs_on_byok_boxes() {
+        // A run that never registered, on a box holding its own creds: repair.
+        assert!(should_attempt_repair(false, true));
+        // A run that registered failed transiently; the tunnel itself is fine.
+        assert!(!should_attempt_repair(true, true));
+        // No creds (managed / legacy): nothing to rebuild with.
+        assert!(!should_attempt_repair(false, false));
+        assert!(!should_attempt_repair(true, false));
     }
 
     #[test]
