@@ -11,8 +11,7 @@ A multi-player trivia game. The user picks a topic, you generate 15 questions on
 
 - **15 questions per topic, easy to hard**: 5 easy (Q1-Q5), 5 medium (Q6-Q10), 5 hard (Q11-Q15)
 - **4 multiple-choice options per question**: A, B, C, D
-- **Mark the correct answer** clearly so the user knows it without having to recall
-- **Track scores** across one or more players, updating after each "X gets a point" / "X loses a point" / "X gets 2 points" / "X gets 0.5" type input from the user
+- **Track scores** across one or more players
 
 ## How to Run
 
@@ -59,7 +58,7 @@ No commentary unless the round ends or the user asks for context.
 
 ## Topic Tips
 
-- Ask topic at start. Suggest some if the user is stuck: sports, food, music, films, geography, history, science, languages.
+- Suggest some if the user is stuck: sports, food, music, films, geography, history, science, languages.
 - Mix question styles: facts, people, places, dates, numbers, definitions, "which of these is..." comparisons.
 - Avoid contested or trick questions in the easy band. Save those for hard with a clarifying note.
 - If a "fact" is contested (e.g. longest river Nile vs Amazon), either swap the question or note the dispute in the answer.

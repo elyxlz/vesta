@@ -5,8 +5,6 @@ description: Weather, forecast, temperature, wind, humidity for any location via
 
 # Windy Weather Skill
 
-Use this skill when the user asks about weather, forecasts, "will it rain", "what's the temperature", etc.
-
 ## Usage
 
 ```bash
@@ -30,7 +28,6 @@ weather --hours 24             # Show next 24 hours (default: 12)
 
 ## Notes
 
-- Requires a [Windy API key](https://api.windy.com) (free tier available)
 - Auto-location requires Home Assistant with a GPS-reporting device; use `--lat`/`--lon` as fallback
 - Always present temperatures in Celsius and wind in km/h
 - Always state the location used (auto-detected or specified)

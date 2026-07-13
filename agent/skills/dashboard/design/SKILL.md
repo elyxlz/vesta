@@ -61,7 +61,7 @@ In a dense card a chart is a glance, not a report. Drop gridlines, legends, and 
 
 ## Match complexity to the data
 
-A dense, minimal surface needs precision in spacing, type scale, and detail rather than more elements. Elegance is executing the chosen layout well. Combine related information into single rows, and let each widget say one thing clearly.
+A dense, minimal surface needs precision in spacing, type scale, and detail rather than more elements. Elegance is executing the chosen layout well.
 
 ## Widgets are a family
 

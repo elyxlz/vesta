@@ -68,15 +68,7 @@ uv tool install --editable ~/agent/skills/tasks/cli
 
 ## Background Daemon
 
-Register with vestad to get a port (see [vestad](../vestad/SKILL.md)), then start:
-```bash
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-screen -dmS tasks tasks serve --port $PORT
-```
-
-One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest. `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.
-
-**Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest. `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override. Register with vestad to get a port (see [vestad](../vestad/SKILL.md)) and add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
 ```

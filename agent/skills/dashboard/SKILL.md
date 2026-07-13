@@ -10,7 +10,7 @@ A React app embedded in the Vesta app, the user's **life HQ**: a personal comman
 
 You do not build the dashboard yourself. You understand what the user wants, design the change, capture it as a spec, and dispatch the `dashboard-builder` subagent (a UI/UX specialist primed on this dashboard) to build it. It works in an isolated context, so the token-heavy build churn (shadcn docs, large React files, vite output) stays out of your conversation; it returns a summary, and you confirm it serves and relay.
 
-**The design is yours.** The user is a non-technical owner: they tell you what they want to see or do, not how to build it. You own every technical and design decision (placement, widgets, layout, data source, visual treatment). Ask the user only to resolve genuine intent, one question at a time, and only when the request is actually ambiguous. Never make them review a design or a spec.
+**The design is yours.** The user is a non-technical owner: they tell you what they want to see or do, not how to build it. You own every technical and design decision. Never make them review a design or a spec.
 
 ## Checklist
 
@@ -20,37 +20,14 @@ Create a task per item and work them in order:
 2. **Clarify intent (only if needed)**: if the ask is ambiguous, ask the user one focused question at a time about what they want to see or do. Skip this when the ask is already clear.
 3. **Design the change**: decide the placement, widgets, layout, data source, and visual treatment yourself.
 4. **Write the spec**: a short brief the builder implements (template below).
-5. **Dispatch the dashboard-builder**: a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec.
+5. **Dispatch the dashboard-builder**: a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec as `{SPEC}`. Give it a strong coding model.
 6. **Verify and relay**: confirm the dashboard actually serves before you tell the user it is done, then summarize what changed in plain terms.
 
 **Exception, dreamer auto-builds.** During a dream pass you may add widgets without asking: compose the spec yourself and dispatch the builder. See the `dream` skill.
 
-## Process flow
-
-```dot
-digraph dashboard {
-    "Explore the dashboard" [shape=box];
-    "Clear enough to design?" [shape=diamond];
-    "Ask one intent question" [shape=box];
-    "Design the change" [shape=box];
-    "Write the spec" [shape=box];
-    "Dispatch dashboard-builder" [shape=box];
-    "Verify it serves" [shape=doublecircle];
-
-    "Explore the dashboard" -> "Clear enough to design?";
-    "Clear enough to design?" -> "Ask one intent question" [label="no"];
-    "Ask one intent question" -> "Clear enough to design?";
-    "Clear enough to design?" -> "Design the change" [label="yes"];
-    "Design the change" -> "Write the spec";
-    "Write the spec" -> "Dispatch dashboard-builder";
-    "Dispatch dashboard-builder" -> "Verify it serves";
-}
-```
-
 ## Understanding intent
 
-- Read the current dashboard first (`config.tsx`, pages, widgets) and build on it rather than duplicating.
-- The user tells you what they care about, not how to build it. Ask only to resolve real ambiguity: what they want to see, what a number should mean to them, whether something is view only or interactive. One question per message, multiple choice when you can.
+- Ask only to resolve real ambiguity: what they want to see, what a number should mean to them, whether something is view only or interactive. One question per message, multiple choice when you can.
 - Do not ask about implementation (files, components, styling). Those decisions are yours.
 
 ## Designing the change
@@ -89,18 +66,6 @@ Example, for a request like "show me my running this week":
     Out of scope: No history beyond 7 days, no goals, no live device sync.
     Done when:    Health page shows the Running card and the dashboard serves.
 
-## Dispatch the dashboard-builder
-
-Dispatch a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec as `{SPEC}`. Give it a strong coding model. It builds in isolation, verifies the app serves, and returns a summary. The subagent cannot ask the user anything, so your spec must be complete.
-
 ## Verify and relay
 
 When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
-
-## Key principles
-
-- **You hold the design.** The user gives intent; you make the calls.
-- **One question at a time**, and only to resolve real ambiguity.
-- **YAGNI**: the smallest change that satisfies the intent.
-- **Build on what exists**: extend pages and widgets rather than duplicating.
-- **Verify before done**: confirm it serves, don't assume.

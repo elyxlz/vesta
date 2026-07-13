@@ -158,15 +158,13 @@ structure.
 Camoufox stealth handles the large majority of sites. When one still blocks you, escalate in this
 order, most-preferred first:
 
-1. **Stealth (default).** Just `browser launch`. The fingerprint is spoofed in C++, so most
-   automated-browser detection never fires. Try this first, always.
+1. **Stealth (default).** Just `browser launch`. Try this first, always.
 2. **Handover (primary fallback).** If a site gates on *account trust* (sign-in walls, banking,
    locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
    the session persists in the shared profile and you resume automating. One command does it:
    `browser handover start --url "<sign-in URL>"` registers the public route itself and returns a
    ready-to-send `user_url` (send the user that link, not `web_port`). See
-   [interaction-skills/handover.md](interaction-skills/handover.md). This is the go-to when
-   stealth is not enough.
+   [interaction-skills/handover.md](interaction-skills/handover.md).
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
@@ -175,8 +173,6 @@ order, most-preferred first:
 
 Occasional topics live in their own files so this one stays lean:
 
-- [interaction-skills/handover.md](interaction-skills/handover.md) : hand the browser to the user to sign in (primary fallback)
-- [interaction-skills/remote-control.md](interaction-skills/remote-control.md) : drive the user's own Chrome over a tunnel (last resort)
 - [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
 - [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
 

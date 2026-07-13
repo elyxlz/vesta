@@ -37,8 +37,8 @@ claude "take the best 30 seconds for a twitter post, vertical 9:16, punchy subti
 ## Data locations
 
 - **Install root**: `~/Developer/video-use`
-- **Env file**: `~/Developer/video-use/.env` (ElevenLabs API key lives here)
-- **Working directory**: wherever the source clips are. The nested session runs in that cwd and writes outputs alongside the inputs.
+- **Env file**: `~/Developer/video-use/.env`
+- **Working directory**: wherever the source clips are.
 
 ## Requirements
 
@@ -50,6 +50,5 @@ claude "take the best 30 seconds for a twitter post, vertical 9:16, punchy subti
 ## Notes
 
 - **Token cost**: each run spawns a nested Claude Code session that reasons over transcripts, timelines, and per-shot decisions. Long or high-res edits can burn a meaningful amount of tokens. Prefer trimming the input directory to only the clips you want considered before invoking.
-- Run from the directory that contains the clips. The nested session uses the cwd as its working set.
 - First run on a new machine will download models / deps via `uv sync`; subsequent runs are fast.
 - For diagnosing a weird cut, check the nested session's transcript output in the video directory before re-running.
