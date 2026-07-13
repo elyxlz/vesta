@@ -14,29 +14,12 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 import { compareVersions } from "@/lib/version";
 
 interface VersionMismatchScreenProps {
   gatewayVersion: string;
   onUpdateGateway: () => Promise<boolean>;
-}
-
-async function updateApp(gatewayVersion: string) {
-  if (!isTauri) {
-    window.location.reload();
-    return;
-  }
-
-  // Both paths target the gateway's exact version so beta (prerelease) gateways
-  // update correctly: Linux installs that version's .deb/.rpm, macOS/Windows point
-  // the Tauri updater at that version's manifest (run_update), instead of the static
-  // releases/latest endpoint which never resolves a prerelease.
-  const { detectPlatform } = await import("@/lib/platform");
-  const platform = detectPlatform();
-  const { invoke } = await import("@tauri-apps/api/core");
-  const command = platform === "linux" ? "install_update" : "run_update";
-  await invoke(command, { version: gatewayVersion });
 }
 
 // Full-screen takeover shown in place of the whole app when the app and gateway
@@ -72,7 +55,9 @@ export function VersionMismatchScreen({
     setUpdating(true);
     setError(null);
     try {
-      await updateApp(gatewayVersion);
+      // Targets the gateway's exact version so beta (prerelease) gateways
+      // update correctly; releases/latest never resolves a prerelease.
+      await native.installAppUpdate(gatewayVersion);
     } catch (err) {
       setError(err instanceof Error ? err.message : "update failed");
       setUpdating(false);
