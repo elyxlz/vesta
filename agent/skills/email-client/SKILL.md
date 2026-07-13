@@ -11,7 +11,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
 
-A calendar surface also lives in this skill (see "Calendar" below): CalDAV with the account's existing mail credential, so Gmail, iCloud, Fastmail, and any generic CalDAV server work with no extra sign-in. Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), an Outlook/M365 calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+A calendar surface also lives in this skill (see "Calendar" below): CalDAV with the account's existing mail credential, so Gmail, iCloud, Fastmail, and any generic CalDAV server work with no extra sign-in. For Microsoft accounts (personal or work: Outlook.com, Hotmail, Live, Microsoft 365) prefer the `microsoft` skill (Graph) over this one; fall back here only when Graph is unavailable and IMAP is enabled (see SETUP.md "Microsoft 365 with a custom domain"). The `google` skill is only for Google-native APIs (full Gmail API, Contacts, Meet) and requires the user's own Google OAuth client; everyday Gmail mail and calendar belong here. For an agent-owned inbox instead of personal mail, use `agentmail`.
 
 ## Notes & rules
 
