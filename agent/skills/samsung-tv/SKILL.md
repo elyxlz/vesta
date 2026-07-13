@@ -180,7 +180,7 @@ The Lounge API uses DIAL on port 8080 to get the screen ID, then the YouTube Lou
 
 #### Preferred method: pyytlounge (pip: pyytlounge)
 
-The `pyytlounge` library wraps the Lounge API and provides playback control, event listening, and session management. This is the recommended approach.
+The `pyytlounge` library wraps the Lounge API and provides playback control, event listening, and session management.
 
 **Auth persistence:** The Lounge API auth state is saved to `~/.tv/youtube_lounge_auth.json` after first successful pairing. On subsequent runs, the saved `screen_id` is used to refresh the lounge token without triggering the TV pairing popup. Only falls back to full `pair_with_screen_id()` if the saved state is invalid. If YouTube restarts on the TV the `screen_id` changes, but the code re-fetches it via DIAL automatically; the pairing popup only fires when `connect()` opens a brand-new session with an unknown device. Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()`, which has a key naming bug in v3.2.0).
 
@@ -275,7 +275,7 @@ curl -s "https://www.youtube.com/results?search_query=QUERY" -H "User-Agent: Moz
 
 Replace `QUERY` with a URL-encoded search term (e.g., `lo+fi+beats`). Each result gives `"videoId":"XXXXXXXXXXX"` -- extract the 11-character ID.
 
-### Deep Link Method -- may not work on all models
+### Deep Link Method
 
 `tv.run_app('111299001912', app_type='DEEP_LINK', meta_tag=f'v={video_id}')` may not work on all models; prefer the Lounge API above.
 

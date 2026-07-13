@@ -28,7 +28,7 @@ They should paste the full output (one line starting with `ssh-ed25519` or `ssh-
 ## Start the tunnel
 
 ```bash
-~/vesta/skills/ssh/scripts/start.sh "ssh-ed25519 AAAA... user@laptop"
+~/agent/skills/ssh/scripts/start.sh "ssh-ed25519 AAAA... user@laptop"
 ```
 
 Running `start.sh` again with a different key adds it without removing existing ones (idempotent).
@@ -41,7 +41,7 @@ The script prints the exact command. It will look like:
 ssh -o StrictHostKeyChecking=accept-new root@bore.pub -p 12345
 ```
 
-`StrictHostKeyChecking=accept-new` accepts the host key on first connect and warns if it changes later (safer than `no`). The host key is the container's sshd key and stays stable across bore reconnects.
+The host key is the container's sshd key and stays stable across bore reconnects.
 
 If the connecting machine has multiple SSH keys and the wrong one is picked:
 ```bash
@@ -51,7 +51,7 @@ ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new root@bore.pub -p 12
 ## Check status
 
 ```bash
-~/vesta/skills/ssh/scripts/status.sh
+~/agent/skills/ssh/scripts/status.sh
 ```
 
 Shows whether sshd and bore are running, the current connection command, and which keys are authorized.
@@ -59,7 +59,7 @@ Shows whether sshd and bore are running, the current connection command, and whi
 ## Stop
 
 ```bash
-~/vesta/skills/ssh/scripts/stop.sh
+~/agent/skills/ssh/scripts/stop.sh
 ```
 
 Stops both the bore tunnel and the sshd process. Authorized keys remain in `~/.ssh/authorized_keys` for the next session.

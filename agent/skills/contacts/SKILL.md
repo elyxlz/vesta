@@ -11,7 +11,7 @@ Keep it plain. The whole thing is markdown you edit with Read, Write, Glob, and 
 
 ## Where it lives
 
-`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces. No index and no database, the files are the whole thing.
+`~/.contacts/` (personal, never leaves this box), one markdown file per person: `mom.md`, `jane-cofounder.md`, `emilio.md`. Slug is lowercase, dashes for spaces.
 
 To see who you know, derive the roster from the files instead of keeping a separate list (nothing to fall out of sync):
 

@@ -9,9 +9,7 @@ Provider-agnostic IMAP/SMTP for the user's email accounts, any number side by si
 
 ## When to use this skill
 
-Use it for a uniform IMAP/SMTP interface across one or many personal accounts: read, send, reply, forward, manage, and get notified on new mail.
-
-Google Calendar is also available here for Gmail accounts (see "Calendar" below): one Gmail sign-in grants both mail and calendar, so a lightweight calendar surface lives in this skill. Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
+Google Calendar is also available here for Gmail accounts (see "Calendar" below). Do not use it when the user wants the full Gmail API surface or Google contacts/Meet (use the `google` skill), a non-Google calendar or Graph/M365 *work* mail with IMAP/SMTP disabled (use the `microsoft` skill; M365 work *with* IMAP enabled works here, see SETUP.md "Microsoft 365 with a custom domain"), or an agent-owned inbox instead of personal mail (use `agentmail`).
 
 ## Notes & rules
 
@@ -166,7 +164,7 @@ A draft does not contact SMTP and does not flag the original `\Answered` (nothin
 
 ### Draft-only mode
 
-Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset/empty means today's behavior, no change.
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode any send/reply/forward invocation is refused before touching SMTP (non-zero exit with a clear message); `--draft` (and `--dry-run` preview) still work. This is a CLI-level safety guarantee, not a behavioral promise. Default off: unset or empty leaves sending enabled.
 
 ## Calendar (Gmail accounts only)
 
@@ -186,7 +184,7 @@ email-client calendar respond --account personal --id <eventId> --response accep
 
 **Invites are a real send.** Creating or updating an event that has attendees makes Google email them a calendar invite or update (and `delete` sends a cancellation). That is an outward action just like sending mail, so treat it with the same care. Note that `EMAIL_DRAFT_ONLY` guards *email* sending only; it does **not** block calendar writes, so use judgment before creating or updating events with attendees.
 
-**Re-auth for existing accounts.** Any Gmail account added before this feature must re-auth once to grant the calendar scope (and to move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. Freshly added accounts get mail and calendar in one sign-in. A calendar command that reports a scope error means the token predates calendar support: re-auth as above.
+**Re-auth for existing accounts.** Any Gmail account added before this feature must re-auth once to grant the calendar scope (and to move to the corrected client id): `email-client auth add --account <name> --provider gmail --reauth`. A calendar command that reports a scope error means the token predates calendar support: re-auth as above.
 
 ## Account management
 

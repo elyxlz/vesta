@@ -25,12 +25,10 @@ present in the container). Setup installs it globally so plain `link-cli` works.
 
 ## Trigger / Skip
 
-Use when the user asks Vesta to buy or pay for something at a merchant ("order me
-X", "renew my domain", "pay this invoice", "grab those tickets"). Not for P2P
-sends (Link for Agents is merchant-only) and not for read-only expense logging
-(use `enable-banking`). Paying an external invoice or third party is this skill;
-buying a vesta for someone else is `onboard`; this box's own hosting bill is
-`vesta-cloud-account`.
+Not for P2P sends (Link for Agents is merchant-only) and not for read-only
+expense logging (use `enable-banking`). Paying an external invoice or third
+party is this skill; buying a vesta for someone else is `onboard`; this box's
+own hosting bill is `vesta-cloud-account`.
 
 ## Before spending: check auth
 

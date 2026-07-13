@@ -25,15 +25,6 @@ So:
   **Stripe-hosted link**; the owner opens it and confirms the change in Stripe's
   own UI.
 
-## Trigger
-
-Invoke when the **owner** asks about *their own* hosting:
-
-- "what plan am I on", "how much am I paying", "when does it renew", "is my
-  subscription active".
-- "upgrade my plan", "cancel my account", "change my card", "manage my billing",
-  "take me to my account".
-
 ## Skip
 
 Self-hosted boxes have no plan (`vesta-cloud-account plan` says so). Buying a vesta for someone else is `onboard`; paying an external invoice or third party is `stripe-pay`.
@@ -58,8 +49,7 @@ unreachable, 1 unexpected.
   (`renews_at`). Do not read raw JSON at them; summarize.
 - **Any change (upgrade, cancel, card):** run `vesta-cloud-account manage`, give them the
   `url`, and say something like "here is your billing page, you can upgrade,
-  change your card, or cancel from there." Then stop. **Do not claim** you
-  upgraded or cancelled anything; you did not. They confirm it on that page.
+  change your card, or cancel from there." Then stop.
 - If `vesta-cloud-account plan` returns an error that this is not a hosted box, tell them
   they are self-hosted and there is no Vesta plan to manage.
 

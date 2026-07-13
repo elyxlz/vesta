@@ -69,7 +69,7 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
-**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and file it upstream (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
+**A corrected wrong-assumption or a discovered bug in a skill (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work) is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
 
 ### 4. Validate each fix
 
@@ -79,7 +79,7 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 ### 5. Upstream
 
-Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it. Note in the summary what was filed (or that it was a no-op, and why).
+Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
 
 **File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make the fix; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now. Then empty the upstream queue's `## Open` to zero: spawn one subagent per open item (in parallel) that does the whole job end to end, cleanup, lint/type checks, and the PR filing via `upstream-pr`, and VERIFY each PR URL exists (subagent claims are hearsay) before marking it filed. "Needs a cleanup pass" is NOT a blocker, it is the filing work. The only item allowed to survive a dream open has a real, tested, external blocker (waiting on the user, a key, or genuine design work that is its own task), tagged with the exact unblock condition.
 
@@ -132,7 +132,7 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 
 **Consolidate:**
 - If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
-- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md"). MEMORY.md is for things needed at all times, not the full archive.
+- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md").
 
 **Keep:**
 - Core identity, preferences, relationships, security rules
@@ -166,7 +166,7 @@ Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for AP
 
 Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-04-14T0347.md`). The minutes matter: two dreams in the same hour must not overwrite each other.
 
-The user reviews this summary, so it's an accountability record, not a private log: it captures what you actually did across the night, and it's where the user confirms the work was done properly.
+The user reviews this summary, so it's an accountability record, not a private log.
 
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 

@@ -70,7 +70,7 @@ printf '{"fulfillment":{"methods":[]}}' | shop checkout update --shop-domain exa
 printf '%s' "$CREATE_CHECKOUT_RESPONSE_JSON" | shop checkout complete --shop-domain example.myshopify.com --checkout-id CHECKOUT_ID --checkout-stdin --idempotency-key UNIQUE_KEY --confirm
 ```
 
-`--shop-domain` must be a bare merchant hostname (no scheme, path, port, or IP). `checkout complete` requires `--confirm`. See *Checkout* for rules.
+`--shop-domain` must be a bare merchant hostname (no scheme, path, port, or IP). See *Checkout* for rules.
 
 ### Orders
 ```bash

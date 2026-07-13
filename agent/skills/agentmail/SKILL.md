@@ -86,9 +86,6 @@ Fields: `source` (`agentmail`), `type`, `from`, `to`, `subject`, `thread_id`,
 | Inbox id, address, webhook id, username | `~/.agentmail/config.json` |
 | Official npm CLI | `~/.agentmail/node_modules/.bin/agentmail` |
 
-`~/.bashrc` is sourced by the agent process on container start, so secrets
-persist across restarts without any host-side mechanism.
-
 ## When to use this vs cloudflare-email
 
 Pick `agentmail` for free outbound + inbound with no domain or Cloudflare

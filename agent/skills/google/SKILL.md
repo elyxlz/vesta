@@ -37,8 +37,7 @@ google calendar respond --id <event_id> --response accept
 
 Event ids are the iCalendar UID (e.g. `abc123@google.com`). Recurring events are
 expanded into concrete occurrences in the query window. `list` returns events
-sorted by start time; pass `--no-details` for compact output and `--user-timezone`
-to convert times into a given IANA zone.
+sorted by start time.
 
 ## Google Meet
 

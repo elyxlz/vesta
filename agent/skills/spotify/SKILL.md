@@ -5,8 +5,6 @@ description: Spotify: music, playlists, tracks, playback, queue, library managem
 
 # Spotify - CLI: spotify
 
-Manage your Spotify account. Playlists, search, playback control, library organization.
-
 ## Setup
 
 See [SETUP.md](SETUP.md) for initial configuration instructions.
@@ -54,7 +52,7 @@ spotify organize config
 # Reset config to defaults
 spotify organize config --init
 
-# Watch daemon - detect newly liked songs and notify (run in a screen session)
+# Watch daemon - detect newly liked songs and notify
 spotify organize watch                   # polls every 60 seconds (default)
 spotify organize watch --interval 30     # custom poll interval in seconds
 spotify organize watch --init            # initialize state file without processing
@@ -128,7 +126,7 @@ spotify playback transfer --device-id <ID> --play
 ## Playback Gotchas
 - **Playlists use `--context`, not `--uri`**: `spotify playback play --context spotify:playlist:xxx`. The `--uri` flag is for individual tracks only. Playlist URIs (especially `playlist_v2` type) fail with `--uri`.
 - **Device flag is `--device`**, not `--device-id`: `spotify playback play --device <ID> --context spotify:playlist:xxx`
-- **Artist context URIs give 403 premium_required**: `--context 'spotify:artist:...'` fails. For individual songs, always use `--uri 'spotify:track:...'`. For albums/playlists, `--context` works fine.
+- **Artist context URIs give 403 premium_required**: `--context 'spotify:artist:...'` fails. For albums/playlists, `--context` works fine.
 - **No active device?** Open Spotify on a device first, then retry the play command.
 
 ## Notes

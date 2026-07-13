@@ -17,7 +17,7 @@ A framework for building ui, components and design systems.
 !`npx shadcn@latest info --json`
 ```
 
-The JSON above contains the project config and installed components. Use `npx shadcn@latest docs <component>` to get documentation and example URLs for any component.
+The JSON above contains the project config and installed components.
 
 ## Principles
 

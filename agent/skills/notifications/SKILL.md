@@ -7,9 +7,9 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 
 ## What these rules do
 
-These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **snooze** one does not touch your current work, it waits and is handed to you in a batch once you have been idle a little while. Snoozing changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you work through the batch (below). Each rule is about **timing**, not visibility: "worth dropping everything for right now" vs. "this can wait until I'm free". Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
+These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **snooze** one does not touch your current work, it waits and is handed to you in a batch once you have been idle a little while. Snoozing changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you work through the batch (below). Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
 
-A third disposition, **trash**, is different in kind: it drops the notification entirely. It never reaches you, never becomes a turn, never waits in the snoozed batch, so it changes *whether* you ever see something, not just when. It still shows in the notification history (marked "trashed") and the file is moved to a trash folder rather than deleted, so a too-aggressive rule stays recoverable. Use it only for high-volume noise the user has said to *always* ignore (e.g. WhatsApp status broadcasts) where even a snoozed glance is wasted attention, so **only add a trash rule when the user has explicitly said to ignore that kind of notification outright**; when unsure, snooze instead.
+A third disposition, **trash**, is different in kind: it drops the notification entirely. It never reaches you, never becomes a turn, never waits in the snoozed batch, so it changes *whether* you ever see something, not just when. It still shows in the notification history (marked "trashed") and the file is moved to a trash folder rather than deleted, so a too-aggressive rule stays recoverable. Use it only for high-volume noise the user has said to *always* ignore (e.g. WhatsApp status broadcasts) where even a snoozed glance is wasted attention; when unsure, snooze instead.
 
 ## Your active role
 
@@ -94,7 +94,7 @@ Before deep work you don't want broken, add a broad `--action snooze` rule (with
 
 ## Working through snoozed notifications
 
-Snoozed notifications wait; they are handed to you as one batch once you've been idle a little while. Work through them deliberately, not by reflexively replying to each:
+Work through them deliberately, not by reflexively replying to each:
 
 - **Act** on what genuinely needs you now: reply, run the task, whatever it calls for.
 - **Note** anything worth surfacing: fold it into a brief mention to the user, or into memory.

@@ -15,8 +15,3 @@ The timezone lives in the agent's config store (`~/agent/data/config.json`, key 
    cd ~/agent && uv run python -c "from core.config import update_config_store; update_config_store({'timezone': 'Europe/London'})"
    ```
 3. Applies on the next restart (`restart_vesta` to apply now).
-
-## When to use
-
-- First start, if the timezone is still the default `UTC`.
-- The user relocates, moves, travels, or goes on holiday somewhere on a different timezone.

@@ -13,11 +13,6 @@ then, once you have, you make them *want* it by showing how their own vesta gets
 toward the life they're reaching for. The velvet rope builds the desire; the goal-anchored
 sell closes it.
 
-Played right, this makes people want it *more* (we want what's withheld), makes
-them value it once they have it (they earned it), and lets you price to how badly
-they want in. Played wrong (desperate, pushy, instant yes), it's just another SaaS
-signup. So: be a little reluctant. Make them lean in.
-
 ## Trigger
 
 Invoke when someone **who doesn't already have a vesta**:
@@ -165,8 +160,7 @@ onboard presets                                        # personalities + skills 
 onboard links                                          # marketing + app install URLs
 ```
 
-All commands print **JSON** to stdout. Send the checkout `url` as a Markdown link
-where the channel renders one, otherwise on its own line, and stop. (There is no
+All commands print **JSON** to stdout. (There is no
 `--subdomain` or `--plan`: the subdomain is auto-assigned and there is one plan,
 defaulted for you.)
 
@@ -205,7 +199,7 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 
 ### Handling errors
 
-Every command prints JSON. On a failure it is
+On a failure the output is
 `{ "error": "<short code>", "message": "<what went wrong and what to do next>" }`
 (some add a hint, e.g. `floor_usd`). The **`message` is written for you**: read it,
 do what it says, then relay a friendly version to the person and keep the flow

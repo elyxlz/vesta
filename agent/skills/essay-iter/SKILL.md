@@ -17,8 +17,6 @@ User has academic writing to plan, draft, or refine. Triggers:
 . conference papers (with venue rubric or accepted-paper exemplars)
 . anything where there's a target rubric or set of in-distribution writing to fit
 
-The skill is generic. Inputs adapt to whatever the user can provide.
-
 ## The two phases
 
 ### Phase 1: approach session (with user)
@@ -108,12 +106,6 @@ for round = 1, 2, 3, ...:
 The two phases above are the whole workflow: run the approach session, write the initial draft to `<task_id>_essay/draft.md` (or copy the user's existing draft in as v0), run the loop saving each round's reviews and a `summary.md` under `iterations/round_<N>/`, then present the final draft with a round-by-round score table per axis and any residual gaps flagged honestly. The user submits or asks for another round.
 
 ## Reviewer prompt templates
-
-See sibling files in this directory:
-
-. `rubric_prompt.md`
-. `adversarial_prompt.md`
-. `citation_prompt.md`
 
 The AI detector is a Python module, not a sub-agent: `python ~/agent/skills/essay-iter/gptzero.py <file.md>` returns the JSON.
 

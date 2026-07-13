@@ -37,7 +37,7 @@ tasks delete <id>                          # cascades
 Reminders take the message as the first positional argument to `tasks remind`. There is no `create` subcommand, so don't reach for one:
 
 ```bash
-# Set a reminder (the message IS the first argument, no subcommand needed)
+# Set a reminder
 tasks remind "Call mom" --in-minutes 30
 tasks remind "Check report" --in-hours 2
 tasks remind "Weekly review" --in-days 7
@@ -82,7 +82,7 @@ When a task has a due date, 4 auto-generated reminders fire: 1 week, 1 day, 1 ho
 
 There is **no at-due fire**: when the due time itself is reached, no notification is emitted. If you want a fire at the exact due time (e.g. user says "remind me at 6pm to X"), set an explicit reminder with `tasks remind "X" --at "..." --tz "..."` instead of relying on `tasks add --due-datetime`.
 
-Skipped if the trigger time is already past. Cleaned up when the task is marked done (`--status done`) or deleted (FK cascade); each can also be deleted individually with `tasks remind delete <id>`.
+Skipped if the trigger time is already past. Cleaned up when the task is marked done (`--status done`); each can also be deleted individually with `tasks remind delete <id>`.
 
 ### Cascade Deletion
 Deleting a task deletes all linked reminders (FK ON DELETE CASCADE); deleting a reminder does NOT affect the linked task.

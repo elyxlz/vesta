@@ -5,7 +5,7 @@ description: Personal bank spending, transactions, balances via Enable Banking o
 
 # Enable Banking - CLI: finance / finance-watcher
 
-Tracks personal bank spending via Enable Banking open banking API (restricted mode, own accounts only, no commercial contract required).
+Tracks personal bank spending via Enable Banking open banking API.
 
 ## Coverage and limitations
 

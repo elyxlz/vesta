@@ -34,7 +34,7 @@ Skills that run a service register it with vestad to get a port, then start it. 
 ```bash
 # token-only service
 PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-# public service (reachable through the tunnel without a token)
+# public service
 PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
 ```
 

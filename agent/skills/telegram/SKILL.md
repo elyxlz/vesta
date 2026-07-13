@@ -48,8 +48,7 @@ telegram edit-message 'Elio' '<message_id>' 'Approved ✓' [--buttons '...']
 
 ## Other commands
 ```bash
-telegram edit-message '<to>' '<message_id>' 'new text' [--buttons '...']  # edit in place
-telegram delete-message '<to>' '<message_id>'                              # unsend (alias: del)
+telegram delete-message '<to>' '<message_id>'                              # unsend
 telegram send-chat-action '<to>' typing                                   # transient "typing…" status
 telegram pin-message '<to>' '<message_id>' [--silent]
 telegram unpin-message '<to>' ['<message_id>']                            # omit id to unpin latest
