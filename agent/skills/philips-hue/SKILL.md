@@ -65,6 +65,16 @@ Built-in names: red, blue, green, yellow, orange, purple, pink, cyan, warm, cool
 
 Mirror the mood the user described. They shouldn't have to know hex.
 
+## Examples
+
+```bash
+~/agent/skills/philips-hue/hue off bedroom          # turn a room off
+~/agent/skills/philips-hue/hue scene cinema living  # activate a scene
+~/agent/skills/philips-hue/hue dim 30 office        # dim to 30%
+~/agent/skills/philips-hue/hue color warm           # warm white everywhere
+~/agent/skills/philips-hue/hue status               # what's on
+```
+
 ## Troubleshooting
 
 **Connection refused / no response.** Bridge IP probably changed (DHCP). Re-discover via mDNS (see Setup) and update `HUE_BRIDGE_IP`.
