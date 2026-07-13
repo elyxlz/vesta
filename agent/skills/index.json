@@ -140,10 +140,6 @@
     "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
   },
   {
-    "name": "service",
-    "description": "Register a background daemon with vestad to get a port, and keep it alive across restarts. Use when a skill runs a long-lived serve process (dashboard, tasks, voice, webhook receivers)."
-  },
-  {
     "name": "shop",
     "description": "Shop for real products on the user's behalf via Shop.app. Catalog search, checkout, order tracking, returns, reorder. Use when the user wants to buy or find something to buy ('order me X', 'find me running shoes', 'track my order', 'reorder the coffee'). For paying non-Shop merchants, use the stripe-pay skill instead."
   },
@@ -194,6 +190,10 @@
   {
     "name": "vesta-cloud-account",
     "description": "Owner asks about THIS box's Vesta hosting plan, billing, subscription, or renewal, or wants to upgrade/cancel/change card. Hosted (vesta.run) boxes only; not `onboard` (buying for someone else) or `stripe-pay` (third-party invoices)."
+  },
+  {
+    "name": "vestad",
+    "description": "Talk to vestad, the host daemon that runs this container. Register a background service to get a port, build public URLs, update vestad to the latest release, check its version, and read gateway logs. Use when a skill needs an inbound port or a shareable link, when the user asks to update Vesta, or when debugging gateway/container issues."
   },
   {
     "name": "video-use",

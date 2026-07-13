@@ -8,7 +8,7 @@ authenticate:
 
 1. Install: `uv tool install --editable ~/agent/skills/microsoft/cli`
 2. Start background daemon: `screen -dmS microsoft microsoft serve`
-3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
+3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
    ```
    screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```

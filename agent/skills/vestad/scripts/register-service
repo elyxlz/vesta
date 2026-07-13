@@ -14,8 +14,8 @@ set -euo pipefail
 # stdout, so `PORT=$(register-service ...) && start` short-circuits cleanly.
 #
 # Usage: register-service <name> [--public]
-#   PORT=$(~/agent/skills/service/scripts/register-service tasks)
-#   PORT=$(~/agent/skills/service/scripts/register-service dashboard --public)
+#   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
+#   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 PUBLIC="false"

@@ -13,7 +13,7 @@ used; calendar therefore runs entirely over CalDAV, which needs only the
 
 1. Install: `uv tool install --editable ~/agent/skills/google/cli`
 2. Start background daemon: `screen -dmS google google serve`
-3. Register it for restart (see [service](../service/SKILL.md)) with this startup command:
+3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
    ```
    screen -dmS google google serve --notifications-dir ~/agent/notifications
    ```
