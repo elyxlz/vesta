@@ -742,6 +742,11 @@ jobs:
             npx electron-builder --mac dmg zip --universal --publish never
           else
             echo "No signing certificate configured; building unsigned."
+            # The empty secrets above still define the env vars: electron-builder resolves an
+            # empty CSC_LINK against the project dir and dies with "not a file" on non-PR
+            # events (PR builds skip signing wholesale, so only push/release hit it). Unset
+            # them so the unsigned path is genuinely unsigned.
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             CSC_IDENTITY_AUTO_DISCOVERY=false \
               npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=false
           fi
