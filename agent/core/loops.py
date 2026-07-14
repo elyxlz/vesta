@@ -486,6 +486,8 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
 
 async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: cfg.VestaConfig) -> None:
     last_proactive = _now()
+    # Log a busy-deferral once per due window, not every 2s tick while the agent stays busy.
+    proactive_defer_logged = False
     # Init one hour back so the first dreamer check runs on the first tick after boot.
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_snoozed: list[Notification] = []
@@ -513,9 +515,12 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
 
             if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
                 if state.processor_busy or not queue.empty():
-                    logger.debug("Proactive check skipped: agent is busy, retrying next tick")
+                    if not proactive_defer_logged:
+                        logger.debug("Proactive check deferred: agent busy, will run when idle")
+                        proactive_defer_logged = True
                 else:
                     last_proactive = now
+                    proactive_defer_logged = False
                     check_proactive_task(config=config)
 
             if (now - last_dreamer_check).total_seconds() >= 3600:
