@@ -17,6 +17,11 @@ import {
 const EDGE_FADE =
   "linear-gradient(to right, transparent, black 10%, black 90%, transparent)";
 
+// scrollLeft that places the card's center at the scroller's horizontal center.
+function centerScrollLeft(scroller: HTMLDivElement, card: HTMLDivElement) {
+  return card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2;
+}
+
 function Pagination({
   total,
   current,
@@ -91,8 +96,7 @@ export function AgentsCarousel({
     const scroller = scrollerRef.current;
     const card = cardRefs.current[initialIndex];
     if (scroller && card && initialIndex > 0) {
-      scroller.scrollLeft =
-        card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2;
+      scroller.scrollLeft = centerScrollLeft(scroller, card);
     }
     applyEffects();
   }, [applyEffects, initialIndex]);
@@ -125,7 +129,7 @@ export function AgentsCarousel({
     const card = cardRefs.current[index];
     if (!scroller || !card) return;
     scroller.scrollTo({
-      left: card.offsetLeft + card.offsetWidth / 2 - scroller.clientWidth / 2,
+      left: centerScrollLeft(scroller, card),
       behavior: "smooth",
     });
   };
@@ -134,7 +138,7 @@ export function AgentsCarousel({
     <div className="relative flex min-h-0 w-full flex-1 items-center">
       <div
         ref={scrollerRef}
-        className="flex w-full items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex w-full items-center overflow-x-auto no-scrollbar"
         style={{
           gap: AGENT_CAROUSEL_GAP,
           scrollSnapType: "x mandatory",
