@@ -1,27 +1,9 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { defineConfig, type Plugin } from "vite";
 import path from "path";
-
-function resolveInNodeModules(pkgRelPath: string): string {
-  let dir = __dirname;
-  while (true) {
-    const candidate = path.join(dir, "node_modules", pkgRelPath);
-    if (existsSync(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      throw new Error(
-        `could not find node_modules/${pkgRelPath} walking up from ${__dirname}`,
-      );
-    }
-    dir = parent;
-  }
-}
-const motionPlusDomEntry = resolveInNodeModules(
-  "motion-plus-dom/dist/es/index.mjs",
-);
 
 // Set by apps/desktop/scripts/dev.mjs: plain http on a fixed port so the
 // Electron dev window can load it.
@@ -80,7 +62,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "motion-plus-dom": motionPlusDomEntry,
     },
   },
   clearScreen: false,
