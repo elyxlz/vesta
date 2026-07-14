@@ -5,7 +5,10 @@ on:
     branches: [master]
   pull_request:
   release:
-    types: [created, published]
+    # published only: gh release create fires created+published together, and two
+    # racing runs each execute test-live (double flake exposure and token spend) while
+    # either one failing deletes the release even when the other fully passed.
+    types: [published]
   workflow_dispatch:
 
 permissions:
