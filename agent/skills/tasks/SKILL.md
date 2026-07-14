@@ -114,8 +114,9 @@ One daemon handles everything, both task due-date monitoring and reminder schedu
 
 **Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+PORT=$(~/agent/skills/service/scripts/register-service tasks 2>/dev/null) || PORT=61000; running tasks || { screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
 ```
+Note: `|| PORT=61000` is a fallback for when the service registry is temporarily unreachable (e.g. cold boot, sandbox). Without it, `&&` short-circuits and the daemon silently never starts. The `running tasks ||` guard prevents duplicate sessions on re-run.
 
 ### Reminder Patterns
 [User's common reminder types and preferences]
