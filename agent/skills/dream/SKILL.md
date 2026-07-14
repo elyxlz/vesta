@@ -164,7 +164,7 @@ Keep the container's filesystem organized and disk usage under control.
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
