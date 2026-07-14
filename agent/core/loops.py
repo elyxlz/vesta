@@ -411,12 +411,22 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
             try:
                 turn = await asyncio.wait_for(queue.get(), timeout=1.0)
             except TimeoutError:
+                # The one drain site for deferred compactions, on the idle tick rather than
+                # after queue items: a compaction can be requested by a turn the processor
+                # never ran (a delivered preempt executing as its own CLI turn calls
+                # compact_context turnlessly), and /compact needs the whole session idle,
+                # which the bus state tracks across turnless work too.
+                if state.pending_compaction is not None and state.event_bus.state == "idle":
+                    state.processor_busy = True
+                    try:
+                        await drain_compaction_request(state=state, config=config)
+                    finally:
+                        state.processor_busy = False
                 continue
 
             state.processor_busy = True
             try:
                 await _run_messages_with_preempts(turn, queue=queue, state=state, config=config)
-                await drain_compaction_request(state=state, config=config)
             finally:
                 state.processor_busy = False
 

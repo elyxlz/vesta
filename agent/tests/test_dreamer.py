@@ -367,3 +367,54 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
         f"Message queued mid-compact must survive restart (recovered {len(recovered)})."
         f" dying_queue qsize={dying_queue.qsize()} is dropped on restart."
     )
+
+
+# --- the processor drains a turnless compaction request on its idle tick ---
+
+
+@pytest.mark.anyio
+async def test_processor_drains_turnless_compaction_on_idle_tick():
+    """A compaction can be requested by a turn the processor never ran: a delivered preempt
+    executing as its own CLI turn calls compact_context turnlessly while the processor is parked
+    on queue.get(). The idle tick must drain it, and only once the whole session is idle (the
+    bus state tracks turnless work), never mid-stream. Regression: the drain used to fire only
+    after queue items, stranding exactly this request (v0.1.177 release, live dreamer test)."""
+    from claude_agent_sdk import TextBlock
+
+    from core.loops import message_processor
+    from conftest import assistant_msg, make_stream_harness, result_msg
+
+    state, config, mock_client, _, message_queue, _ = make_stream_harness()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    with (
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
+    ):
+        processor = asyncio.create_task(message_processor(queue, state=state, config=config))
+
+        # Turnless CLI work is streaming (a delivered preempt running as its own turn); during
+        # it the tool call lands the request. The bus reads thinking, so the drain must hold.
+        await message_queue.put(assistant_msg([TextBlock("turnless work")]))
+        await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless activity never set thinking")
+        state.pending_compaction = vm.PendingCompaction(prompt="curate the open threads", followup=None, restart=False)
+        # Negative assertion: prove the drain does NOT fire mid-stream. Waiting for absence
+        # requires a real time window past the 1s idle tick; this sleep is intentional.
+        await asyncio.sleep(1.5)
+        assert state.pending_compaction is not None, "the drain must not fire while turnless work streams"
+        mock_client.query.assert_not_called()
+
+        # The turnless turn ends: bus flips idle, the next tick drains, /compact goes out.
+        await message_queue.put(result_msg())
+        await wait_for_condition(
+            lambda: any(call.args == ("/compact curate the open threads",) for call in mock_client.query.call_args_list),
+            timeout=5.0,
+            message="idle tick never drained the pending compaction",
+        )
+        await message_queue.put(result_msg())  # closes the compaction turn
+        await wait_for_condition(lambda: state.pending_compaction is None and not state.processor_busy, message="drain never completed")
+
+        state.shutdown_event.set()
+        await asyncio.wait_for(processor, timeout=5)
