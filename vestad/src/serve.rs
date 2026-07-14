@@ -1522,13 +1522,32 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
-/// Bindable = reusable. A port that merely has a listener isn't enough:
-/// callers always bind the returned port themselves, so a squatter would
-/// trap them in a crash loop. See #371 and #433.
+/// A cached service port is reusable when it's the service's own live server
+/// (TCP connect succeeds) or genuinely free (bind succeeds). Only a port that is
+/// neither — a zombie/TIME_WAIT corpse left by a crashed startup (#371) — is
+/// dropped so the caller gets a fresh one.
+///
+/// The bind-only probe this replaced (#436) assumed every caller binds the
+/// returned port, so any listener meant a squatter that would crash the caller.
+/// That no longer holds: resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
+/// status/stop/restart) POST here purely to *find* the live port, and treating
+/// their own live server as a squatter reallocated the port out from under a
+/// resident service — every later lookup then resolved a fresh, dead port. The
+/// one caller that binds (voice `start`) guards with `port_alive` first, so it
+/// never binds a live port.
 async fn is_cached_port_reusable(port: u16) -> bool {
-    tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .is_ok()
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+    let alive = tokio::time::timeout(
+        Duration::from_millis(200),
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
+    alive
+        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
 }
 
 async fn register_service_handler(
@@ -3074,14 +3093,17 @@ mod tests {
         );
     }
 
-    // Regression for #433.
+    // A live listener is the service's own resident server (voice-server, a
+    // dashboard, etc.): reuse must return its port so register stays idempotent
+    // and lookups keep resolving the live port. Reallocating here moved the port
+    // out from under resident services (vesta#1254).
     #[tokio::test]
-    async fn cached_port_is_not_reusable_when_squatted() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    async fn cached_port_is_reusable_when_listening() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(
-            !is_cached_port_reusable(port).await,
-            "a port held by another listener must not be reported reusable",
+            is_cached_port_reusable(port).await,
+            "a port with a live listener must be reported reusable",
         );
     }
 
