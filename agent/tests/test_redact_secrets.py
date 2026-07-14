@@ -1,4 +1,4 @@
-"""Tests for the dream skill's redact_secrets script: known-literal scrub + pattern scan."""
+"""Tests for the dream skill's redact_secrets script: masked pattern scan + in-place scrub by id."""
 
 import importlib.util
 import pathlib as pl
@@ -15,14 +15,7 @@ assert spec is not None and spec.loader is not None
 redact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(redact)
 
-SECRET = "hunter2secret9000"
-
-
-@pytest.fixture
-def known_file(tmp_path, monkeypatch):
-    path = tmp_path / "redact_known.txt"
-    monkeypatch.setattr(redact, "KNOWN_FILE", str(path))
-    return path
+SECRET = "AKIAABCDEFGHIJKLMNOP"
 
 
 @pytest.fixture
@@ -32,23 +25,42 @@ def db_conn(tmp_path, event_bus):
     conn.close()
 
 
-def test_scrub_replaces_literal_in_every_event_and_keeps_context(event_bus, db_conn, known_file):
-    event_bus.emit(ChatEvent(type="chat", text=f"the password is {SECRET} for gmail"))
-    event_bus.emit(UserEvent(type="user", text=f"I found {SECRET} again while cleaning up"))
-    known_file.write_text(f"{SECRET}\n")
+def test_scan_masks_the_secret_but_keeps_context(event_bus, db_conn):
+    event_bus.emit(ChatEvent(type="chat", text=f"the aws key is {SECRET} for backups"))
 
-    assert redact.scrub_known(db_conn) == 2
+    matches = redact.scan(db_conn)
 
-    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
-    assert all(SECRET not in data for data in rows)
-    assert any("the password is [REDACTED] for gmail" in data for data in rows)
+    assert len(matches) == 1
+    _, snippet = matches[0]
+    assert SECRET not in snippet
+    assert "[REDACTED]" in snippet
+    assert "the aws key is" in snippet and "for backups" in snippet
 
 
-def test_scrub_keeps_fts_in_sync(event_bus, db_conn, known_file):
+def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
+    event_bus.emit(ChatEvent(type="chat", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 2
+    assert all("AKIA" not in snippet and "xoxb-1234" not in snippet for _, snippet in matches)
+
+
+def test_scrub_redacts_the_secret_in_place_and_keeps_context(event_bus, db_conn):
     event_bus.emit(ChatEvent(type="chat", text=f"leaked {SECRET} during backup"))
-    known_file.write_text(f"{SECRET}\n")
+    ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
 
-    redact.scrub_known(db_conn)
+    assert redact.scrub(db_conn, ids) == 1
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    assert SECRET not in data
+    assert "leaked [REDACTED] during backup" in data
+
+
+def test_scrub_keeps_fts_in_sync(event_bus, db_conn):
+    event_bus.emit(ChatEvent(type="chat", text=f"leaked {SECRET} during backup"))
+
+    redact.scrub(db_conn, [row_id for row_id, _ in redact.scan(db_conn)])
 
     assert event_bus.search(SECRET) == []
     hits = event_bus.search("backup")
@@ -60,61 +72,63 @@ def test_scrub_keeps_fts_in_sync(event_bus, db_conn, known_file):
     assert event_bus.search("backup") == []
 
 
-def test_scrub_converges_when_secret_reseeds(event_bus, db_conn, known_file):
+def test_scrub_only_touches_the_given_events(event_bus, db_conn):
+    event_bus.emit(ChatEvent(type="chat", text=f"real leak {SECRET}"))
+    event_bus.emit(ChatEvent(type="chat", text=f"benign discussion of {SECRET} to keep"))
+    rows = list(db_conn.execute("SELECT id FROM events ORDER BY id"))
+    keep_id = rows[1][0]
+
+    redact.scrub(db_conn, [rows[0][0]])
+
+    kept = db_conn.execute("SELECT data FROM events WHERE id = ?", (keep_id,)).fetchone()[0]
+    assert SECRET in kept
+
+
+def test_scan_and_scrub_converge_when_secret_reseeds(event_bus, db_conn):
     event_bus.emit(ChatEvent(type="chat", text=f"original leak {SECRET}"))
-    known_file.write_text(f"{SECRET}\n")
-    assert redact.scrub_known(db_conn) == 1
+    redact.scrub(db_conn, [row_id for row_id, _ in redact.scan(db_conn)])
+    assert redact.scan(db_conn) == []
 
     event_bus.emit(ChatEvent(type="chat", text=f"last night I redacted {SECRET} from history"))
-    assert redact.scrub_known(db_conn) == 1
-    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
-    assert all(SECRET not in data for data in rows)
+    reseeded = redact.scan(db_conn)
+    assert len(reseeded) == 1
+    redact.scrub(db_conn, [row_id for row_id, _ in reseeded])
+    assert redact.scan(db_conn) == []
+    assert all(SECRET not in row[0] for row in db_conn.execute("SELECT data FROM events"))
 
 
-def test_scrub_without_known_file_is_noop(event_bus, db_conn, known_file):
-    event_bus.emit(ChatEvent(type="chat", text=f"leak {SECRET}"))
-    assert redact.scrub_known(db_conn) == 0
+def test_scrub_is_noop_on_events_without_secrets(event_bus, db_conn):
+    event_bus.emit(ChatEvent(type="chat", text="nothing sensitive here"))
+    row_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+
+    assert redact.scrub(db_conn, [row_id]) == 0
 
 
-def test_scrub_ignores_comments_and_blank_lines(event_bus, db_conn, known_file):
-    event_bus.emit(ChatEvent(type="chat", text=f"leak {SECRET}"))
-    known_file.write_text(f"# known leaked literals\n\n{SECRET}\n")
-    assert redact.scrub_known(db_conn) == 1
-
-
-def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
-
-    matches = redact.scan(db_conn)
-
-    snippets = [snippet for _, snippet in matches]
-    assert len(matches) == 2
-    assert any("AKIAABCDEFGHIJKLMNOP" in snippet for snippet in snippets)
-    assert any("xoxb-1234-abcdef" in snippet for snippet in snippets)
-
-
-def test_scan_skips_scrubbed_values(event_bus, db_conn, known_file):
+def test_scan_skips_already_redacted_values(event_bus, db_conn):
     event_bus.emit(ChatEvent(type="chat", text=f"password={SECRET}"))
-    known_file.write_text(f"{SECRET}\n")
+    ids = [row_id for row_id, _ in redact.scan(db_conn)]
 
-    assert len(redact.scan(db_conn)) == 1
-    redact.scrub_known(db_conn)
+    redact.scrub(db_conn, ids)
+
     assert redact.scan(db_conn) == []
 
 
-def test_main_reports_candidates_and_scrubs_known(tmp_path, event_bus, db_conn, known_file, monkeypatch, capsys):
-    event_bus.emit(ChatEvent(type="chat", text="my key is AKIAABCDEFGHIJKLMNOP"))
-    event_bus.emit(ChatEvent(type="chat", text=f"and the password {SECRET} too"))
-    known_file.write_text(f"{SECRET}\n")
+def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(ChatEvent(type="chat", text=f"my key is {SECRET}"))
+    event_bus.emit(UserEvent(type="user", text="just a normal message"))
     monkeypatch.setattr(redact, "DB", str(tmp_path / "events.db"))
+
     monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
-
     assert redact.main() == 0
-
     out = capsys.readouterr().out
-    assert "Scrubbed 1 events" in out
-    assert "Found 1 events" in out
+    assert "Found 1 event(s)" in out
+    assert SECRET not in out
+    leak_id = int(out.splitlines()[-1].split("|", 1)[0])
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(leak_id)])
+    assert redact.main() == 0
+    assert "Scrubbed secrets in 1 event(s)" in capsys.readouterr().out
+
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
-    assert any("AKIAABCDEFGHIJKLMNOP" in data for data in rows)
