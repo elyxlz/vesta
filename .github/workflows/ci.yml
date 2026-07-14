@@ -722,9 +722,12 @@ jobs:
         working-directory: apps
         run: npm -w @vesta/web run build
 
-      # Signing/notarization env is empty on PRs; electron-builder then skips
-      # both and produces unsigned artifacts, which is exactly what PR
-      # validation needs.
+      # electron-builder auto-skips signing on pull_request builds, but on a
+      # push it attempts to sign and fails when no cert is configured. Key the
+      # signed path on the cert being present: with a cert, sign + notarize;
+      # without one, force an unsigned build so master stays green until the
+      # Apple secrets are added, after which the signed path engages with no
+      # further change.
       - name: Build Electron app
         working-directory: apps/desktop
         env:
@@ -735,7 +738,13 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           npx tsc
-          npx electron-builder --mac dmg zip --universal --publish never
+          if [ -n "$CSC_LINK" ]; then
+            npx electron-builder --mac dmg zip --universal --publish never
+          else
+            echo "No signing certificate configured; building unsigned."
+            CSC_IDENTITY_AUTO_DISCOVERY=false \
+              npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=false
+          fi
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
