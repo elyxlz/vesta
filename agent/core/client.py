@@ -211,6 +211,14 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
+    else:
+        # Turnless CLI activity (a delivered preempt running as its own turn, or a
+        # CLI-initiated turn such as a background task notification): keep the activity state
+        # honest, since it drives the snoozed-batch flush and the proactive-check gate.
+        if isinstance(msg, AssistantMessage):
+            state.event_bus.set_state("thinking")
+        elif isinstance(msg, ResultMessage):
+            state.event_bus.set_state("idle")
     if isinstance(msg, AssistantMessage):
         state.compacting = False
     # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the

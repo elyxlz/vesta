@@ -323,3 +323,22 @@ async def test_burst_of_preempts_with_merged_results_never_wedges(tmp_path):
     assert not state.graceful_shutdown.is_set(), "the burst must not crash the agent"
     assert any("merged reply" in text for text, _ in emitted), f"merged output must stream: {emitted}"
     assert any("plain reply" in text for text, _ in emitted), f"later work must stream: {emitted}"
+
+
+# --- turnless activity drives the state machine ---
+
+
+@pytest.mark.anyio
+async def test_turnless_stream_activity_drives_state():
+    """Output with no open Vesta turn (a delivered preempt running as its own CLI turn, or a
+    CLI-initiated turn) flips the activity state to thinking, and its result flips it back to
+    idle. The state drives the snoozed-batch flush and the proactive gate, so it must track
+    the stream, not Vesta's turn bookkeeping."""
+    from claude_agent_sdk import TextBlock
+
+    state, config, _, _, message_queue, _ = make_stream_harness()
+    async with consuming(state, config):
+        await message_queue.put(assistant_msg([TextBlock("turnless reply")]))
+        await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless activity never set thinking")
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: state.event_bus.state == "idle", message="turnless result never set idle")
