@@ -116,7 +116,7 @@ One daemon handles everything, both task due-date monitoring and reminder schedu
 
 **Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
+running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT; sleep 1; }
 ```
 
 `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override.

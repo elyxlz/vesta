@@ -43,13 +43,15 @@ So the service comes back after a container restart, add its startup command to 
 single line that re-registers and starts, e.g.:
 
 ```bash
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
 ```
 
 vestad's API may still be coming up when the daemon block runs, so `register-service` polls
 until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
 exits non-zero with a stderr message and no port. Keep the `&&` between registration and start:
-a failed registration short-circuits the chain, so the daemon never launches portless.
+a failed registration short-circuits the chain, so the daemon never launches portless. Wrap the
+whole line in the `running <name> ||` guard the Daemons block defines, so re-running it (crash
+recovery re-enters the block) never stacks a duplicate daemon.
 
 List registrations, or tell connected clients to reload after changing what a service serves:
 
