@@ -152,9 +152,10 @@ async def process_batch(
     """Render a batch as one prompt and queue it. Mixed batches render in two sections, system (`source=core`) first.
 
     Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_preempts):
-    an item landing mid-turn is pre-sent there as a priority:"now" message. File paths are
-    carried in the queue item and deleted only after the message is processed, so that a
-    mid-compaction restart can recover unprocessed notifications from disk."""
+    an item landing mid-turn is delivered as a priority:"now" message and consumed at delivery.
+    File paths are carried in the queue item; for items that run as turns they are deleted only
+    after the message is processed, so that a mid-compaction restart can recover unprocessed
+    notifications from disk."""
     if not notifications:
         return
 
@@ -220,10 +221,11 @@ async def _run_messages_with_preempts(
     config: cfg.VestaConfig,
 ) -> None:
     """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
-    mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
+    mid-turn is delivered via send_preempt as a priority:"now" message and consumed on the spot
+    (delivery is completion, see send_preempt); only undeliverable items queue as turns. This
     loop never aborts anything."""
 
-    async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
+    async def run_one(text: str, *, user: bool) -> None:
         try:
             if user:
                 logger.user(text)
@@ -232,7 +234,7 @@ async def _run_messages_with_preempts(
                 preview = text[:1000] + "..." if len(text) > 1000 else text
                 logger.system(preview.replace("\n", " "))
             state.event_bus.set_state("thinking")
-            await process_message(text, state=state, config=config, is_user=user, pre_sent=pre_sent)
+            await process_message(text, state=state, config=config, is_user=user)
         except asyncio.CancelledError:
             if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
                 raise
@@ -272,11 +274,7 @@ async def _run_messages_with_preempts(
                     await queue.put(remaining)
                 break
 
-            # Pre-sent items already jumped the CLI's prompt queue (priority:"now"), so they
-            # must jump ours too: taking them first keeps Vesta's turn pairing aligned with
-            # the order the CLI actually runs turns.
-            index = next((i for i, item in enumerate(pending) if item.pre_sent), 0)
-            current = pending.pop(index)
+            current = pending.pop(0)
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
@@ -287,7 +285,7 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
-            process_task = asyncio.create_task(run_one(current.text, user=current.is_user, pre_sent=current.pre_sent))
+            process_task = asyncio.create_task(run_one(current.text, user=current.is_user))
 
             while not process_task.done():
                 queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())
@@ -295,13 +293,16 @@ async def _run_messages_with_preempts(
 
                 if queue_task in done:
                     arrived = queue_task.result()
-                    # The single owner of preempt delivery: an item landing while a turn runs is
-                    # pre-sent as a priority:"now" message, ending the turn at its next step
-                    # boundary with background subagents intact (issue #982). send_preempt
-                    # self-gates (idle, boot turn, compaction, auth), so a miss just queues plain.
-                    if not arrived.pre_sent and await send_preempt(arrived.text, state=state, config=config):
-                        arrived = arrived._replace(pre_sent=True)
-                    pending.append(arrived)
+                    # The single owner of preempt delivery: an item landing while a turn runs
+                    # is delivered as a priority:"now" message, ending the turn at its next
+                    # step boundary with background subagents intact (issue #982). Delivery is
+                    # the item's completion (see send_preempt): clear its files now, no Vesta
+                    # turn is opened for it. send_preempt self-gates (idle, boot turn,
+                    # compaction, auth), so a miss just queues plain.
+                    if await send_preempt(arrived.text, state=state, config=config):
+                        clear_notifications(state, arrived.file_paths)
+                    else:
+                        pending.append(arrived)
                 else:
                     await cancel_task(queue_task)
 
